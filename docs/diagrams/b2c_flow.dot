@@ -1,0 +1,15 @@
+digraph G {
+ graph [rankdir=TB,bgcolor="white",pad=0.25,nodesep=0.35,ranksep=0.42];
+ node [shape=box,style="rounded,filled",fontname="DejaVu Sans",fontsize=10,color="#d1d5db",fillcolor="#f8fafc"];
+ edge [color="#64748b",arrowsize=0.7];
+ a[label="Approved loan ready for disbursement"];
+ b[label="Finance officer enters borrower M-Pesa number"];
+ c[label="Query Beneficiary Name",fillcolor="#fff7ed",color="#ea580c"];
+ d[label="Officer confirms masked beneficiary name"];
+ e[label="LoanHub creates outbound payment and provider attempt"];
+ f[label="Send B2C Single Stage request",fillcolor="#fef2f2",color="#dc2626"];
+ g[label="Callback or Query Transaction Status"];
+ h[label="Mark disbursement complete and activate loan",fillcolor="#f0fdf4",color="#16a34a"];
+ i[label="Post accounting and generate disbursement confirmation"];
+ a->b->c->d->e->f->g->h->i;
+}

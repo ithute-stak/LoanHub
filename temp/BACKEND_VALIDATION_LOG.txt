@@ -1,0 +1,18 @@
+LoanHub backend validation log
+Generated: 2026-07-22
+
+===== compileall =====
+PASS
+
+===== pytest =====
+..............................................                           [100%]
+46 passed in 2.85s
+
+===== release validator =====
+LoanHub release validation passed
+Alembic head: m5d7c9e2a140
+SQLAlchemy mappers: 71
+Database tables: 71
+Registered router modules: 31
+OpenAPI paths: 192
+HTTP operations: 245

@@ -1,0 +1,111 @@
+from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        case_sensitive=True,
+        extra='ignore',
+    )
+
+    ENVIRONMENT: str = 'development'
+    EXPOSE_ERROR_DETAILS: bool = False
+    APP_TIMEZONE: str = 'Africa/Maseru'
+    PUBLIC_APP_URL: str = 'http://localhost:3000'
+
+    DATABASE_URL: Optional[str] = None
+    DB_HOST: str = 'localhost'
+    DB_PORT: int = 5432
+    DB_USER: str = 'postgres'
+    DB_PASSWORD: str = 'postgres'
+    DB_NAME: str = 'loan_db'
+
+    CORS_ORIGINS: str = 'http://localhost:3000'
+
+    JWT_PRIVATE_KEY: Optional[str] = None
+    JWT_PUBLIC_KEY: Optional[str] = None
+    JWT_PRIVATE_KEY_PATH: Optional[str] = None
+    JWT_PUBLIC_KEY_PATH: Optional[str] = None
+
+    SECRET_KEY: str
+    FERNET_SECRET_KEY: str
+    CHAT_ENCRYPTION_KEY: Optional[str] = None
+    FILE_ENCRYPTION_KEY: Optional[str] = None
+    FILE_ENCRYPTION_ENABLED: bool = True
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    RATE_LIMIT: str = '100/minute'
+    ALGORITHM: str = 'RS256'
+
+    ENABLE_ROLE_IMPERSONATION: bool = True
+    IMPERSONATION_MAX_MINUTES: int = 30
+
+    MARKETPLACE_DEFAULT_UNLOCK_FEE: float = 25.0
+
+    MAINTENANCE_INTERVAL_SECONDS: int = 300
+    MIDNIGHT_REPORTS_ENABLED: bool = True
+    MIDNIGHT_REPORT_FORMATS: str = 'pdf,csv'
+
+    TREASURY_AUTO_SUBMIT_ENABLED: bool = True
+    TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS: int = 60
+
+    REDIS_URL: Optional[str] = None
+    REDIS_REALTIME_CHANNEL: str = 'loanhub:realtime'
+
+    FILE_STORAGE_PATH: str = 'storage/uploads'
+    FILE_MAX_UPLOAD_MB: int = 25
+    FILE_AUDIO_MAX_UPLOAD_MB: int = 20
+    FILE_RETENTION_DAYS: int = 3650
+
+    PRODUCT_NAME: str = 'LoanHub'
+    DEVELOPER_NAME: str = 'Ithute Solutions'
+    LOANHUB_LOGO_PATH: str = 'assets/loanhub-horizontal-logo.png'
+    LOANHUB_APP_ICON_PATH: str = 'assets/loanhub-app-icon.png'
+    DEVELOPER_LOGO_PATH: str = 'assets/ithute-solutions-developer-logo.png'
+    # Backward-compatible alias used by older report code.
+    BRAND_NAME: str = 'Ithute Solutions'
+    BRAND_LOGO_PATH: str = 'assets/ithute-solutions-developer-logo.png'
+
+
+    @property
+    def database_url(self) -> str:
+        if self.DATABASE_URL:
+            url = make_url(self.DATABASE_URL)
+            if url.drivername in {'postgres', 'postgresql'}:
+                url = url.set(drivername='postgresql+psycopg2')
+            return url.render_as_string(hide_password=False)
+
+        url = URL.create(
+            drivername='postgresql+psycopg2',
+            username=self.DB_USER,
+            password=self.DB_PASSWORD,
+            host=self.DB_HOST,
+            port=self.DB_PORT,
+            database=self.DB_NAME,
+        )
+        return url.render_as_string(hide_password=False)
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.CORS_ORIGINS.split(',')
+            if origin.strip()
+        ]
+
+    @property
+    def midnight_report_formats(self) -> tuple[str, ...]:
+        allowed = {'pdf', 'csv'}
+        values = tuple(
+            value.strip().lower()
+            for value in self.MIDNIGHT_REPORT_FORMATS.split(',')
+            if value.strip().lower() in allowed
+        )
+        return values or ('pdf',)
+
+
+settings = Settings()

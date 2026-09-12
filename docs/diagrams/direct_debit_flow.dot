@@ -1,0 +1,19 @@
+digraph G {
+ graph [rankdir=TB,bgcolor="white",pad=0.25,nodesep=0.35,ranksep=0.42];
+ node [shape=box,style="rounded,filled",fontname="DejaVu Sans",fontsize=10,color="#d1d5db",fillcolor="#f8fafc"];
+ edge [color="#64748b",arrowsize=0.7];
+ a[label="Borrower gives explicit mandate consent"];
+ b[label="LoanHub sends Direct Debit Create"];
+ c[label="Mandate saved as pending confirmation",fillcolor="#fff7ed",color="#ea580c"];
+ d[label="Customer confirms on handset"];
+ e[label="Query Direct Debit"];
+ f[label="Mandate active?",shape=diamond,fillcolor="#f8fafc"];
+ g[label="Finance collects due instalment\nusing Direct Debit Payment",fillcolor="#fef2f2",color="#dc2626"];
+ h[label="Allocate successful payment and issue receipt",fillcolor="#f0fdf4",color="#16a34a"];
+ i[label="Remain pending / investigate"];
+ j[label="Cancel when settled or consent withdrawn"];
+ a->b->c->d->e->f;
+ f->g[label="Yes"];
+ f->i[label="No"];
+ g->h->j;
+}

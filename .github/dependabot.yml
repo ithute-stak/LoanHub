@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /apps/backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend-runtime:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Passlib 1.7.4 is intentionally held on bcrypt 4.x. A bcrypt 5.x
+      # upgrade requires a password-hashing migration and dedicated testing.
+      - dependency-name: bcrypt
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: npm
+    directory: /apps/frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

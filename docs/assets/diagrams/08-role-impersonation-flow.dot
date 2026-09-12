@@ -1,0 +1,16 @@
+digraph G { rankdir=LR; graph [bgcolor="transparent", fontname="DejaVu Sans", nodesep=0.35, ranksep=0.55, pad=0.2]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#b9c8d3", fillcolor="#ffffff", fontcolor="#0d2942", margin="0.14,0.09"]; edge [fontname="DejaVu Sans", fontsize=9, color="#658093", fontcolor="#526c7e", arrowsize=0.75];
+owner [label="Platform owner opens Switch role"];
+search [label="Search eligible active users"];
+select [label="Select user, company context,
+and enter audit reason"];
+validate [shape=diamond,label="Target membership and role valid?"];
+token [label="Issue short-lived impersonation token"];
+preserve [label="Preserve original owner session locally"];
+banner [label="Show persistent impersonation banner"];
+work [label="Test permitted workflow"];
+end [shape=diamond,label="Stop or session expires?"];
+restore [label="Restore original platform-owner session"];
+audit [label="Audit start, context and return"];
+deny [label="Reject request",fillcolor="#fee9e9"];
+owner->search->select->validate; validate->deny [label="No"]; validate->token [label="Yes"]; token->preserve->banner->work->end; end->work [label="Continue"]; end->restore [label="Yes"]; token->audit; restore->audit;
+}

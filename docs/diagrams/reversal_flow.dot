@@ -1,0 +1,13 @@
+digraph G {
+ graph [rankdir=TB,bgcolor="white",pad=0.25,nodesep=0.35,ranksep=0.42];
+ node [shape=box,style="rounded,filled",fontname="DejaVu Sans",fontsize=10,color="#d1d5db",fillcolor="#f8fafc"];
+ edge [color="#64748b",arrowsize=0.7];
+ a[label="Finance requests reversal with reason"];
+ b[label="Management reviews and approves"];
+ c[label="LoanHub verifies original successful M-Pesa transaction"];
+ d[label="Send M-Pesa Reversal request",fillcolor="#fef2f2",color="#dc2626"];
+ e[label="Callback / status query confirms reversal"];
+ f[label="Create compensating loan allocation and accounting entries",fillcolor="#fff7ed",color="#ea580c"];
+ g[label="Keep original receipt; issue reversal evidence",fillcolor="#f0fdf4",color="#16a34a"];
+ a->b->c->d->e->f->g;
+}

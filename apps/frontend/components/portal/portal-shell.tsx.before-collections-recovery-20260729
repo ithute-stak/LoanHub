@@ -1,0 +1,396 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+    Banknote,
+    BriefcaseBusiness,
+    Building2,
+    ChartNoAxesCombined,
+    ChevronDown,
+    ChevronRight,
+    CircleDollarSign,
+    ContactRound,
+    CreditCard,
+    FileChartColumn,
+    FilePenLine,
+    FileText,
+    FolderOpen,
+    GitBranch,
+    HandCoins,
+    History,
+    Landmark,
+    LayoutDashboard,
+    LogOut,
+    Menu,
+    MessageCircleMore,
+    MessageSquarePlus,
+    PackageSearch,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Settings,
+    ShieldCheck,
+    Store,
+    Users,
+    WalletCards,
+    X,
+    type LucideIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+
+import { IthuteBrand, IthutePoweredBy } from "@/components/brand/ithute-brand";
+import { ChatLauncher } from "@/components/chat/chat-launcher";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { ThemeSwitcher } from "@/components/theme-switcher";
+import { NativeSelect } from "@/components/ui/native-select";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { titleCase } from "@/lib/format";
+import { useAppData } from "@/provider/appDataProvider";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppDispatch } from "@/store/hooks";
+import { logoutUser } from "@/store/slices/authSlice";
+import {
+    ACCOUNTING_ROLES,
+    CASHIER_ROLES,
+    COMPANY_MANAGEMENT_ROLES,
+    DIRECT_APPLICATION_ROLES,
+    HR_ROLES,
+    LENDING_ROLES,
+    LENDING_OPERATIONS_ROLES,
+    PERFORMANCE_ROLES,
+    REPORTING_ROLES,
+    TRANSPARENCY_ROLES,
+    TREASURY_ROLES,
+    hasRole,
+    type UserRole,
+} from "@/types/auth";
+
+type NavItem = {
+    label: string;
+    href: string;
+    icon: LucideIcon;
+    roles?: readonly UserRole[];
+};
+
+const companyNavigation: NavItem[] = [
+    { label: "Dashboard", href: "/company", icon: LayoutDashboard },
+    { label: "Chat", href: "/company/chat", icon: MessageCircleMore },
+    { label: "Marketplace", href: "/company/marketplace", icon: Store, roles: DIRECT_APPLICATION_ROLES },
+    { label: "Clients", href: "/company/clients", icon: ContactRound, roles: LENDING_ROLES },
+    { label: "Credit origination", href: "/company/origination", icon: ShieldCheck, roles: DIRECT_APPLICATION_ROLES },
+    { label: "Loans & contracts", href: "/company/loans", icon: HandCoins },
+    { label: "Payment desk", href: "/company/cashier", icon: Banknote, roles: CASHIER_ROLES },
+    { label: "Payment register", href: "/company/payments", icon: WalletCards },
+    { label: "Accounting & expenses", href: "/company/expense-management", icon: CircleDollarSign, roles: TREASURY_ROLES },
+    { label: "Lending operations", href: "/company/lending-operations", icon: BriefcaseBusiness, roles: LENDING_OPERATIONS_ROLES },
+    { label: "Agreements & charges", href: "/company/finance", icon: Landmark, roles: ACCOUNTING_ROLES },
+    { label: "Reports", href: "/company/reports", icon: FileChartColumn, roles: REPORTING_ROLES },
+    { label: "Documents", href: "/company/documents", icon: FilePenLine },
+    { label: "Files", href: "/company/files", icon: FolderOpen },
+    { label: "Loan products", href: "/company/products", icon: PackageSearch, roles: COMPANY_MANAGEMENT_ROLES },
+    { label: "Branches", href: "/company/branches", icon: GitBranch },
+    { label: "Staff", href: "/company/staff", icon: Users, roles: COMPANY_MANAGEMENT_ROLES },
+    { label: "Employees", href: "/company/employees", icon: ContactRound, roles: HR_ROLES },
+    { label: "Performance", href: "/company/performance", icon: ChartNoAxesCombined, roles: PERFORMANCE_ROLES },
+    { label: "Activity log", href: "/company/activity", icon: History, roles: TRANSPARENCY_ROLES },
+    { label: "Subscription", href: "/company/billing", icon: CreditCard, roles: COMPANY_MANAGEMENT_ROLES },
+    { label: "Support queries", href: "/company/queries", icon: MessageSquarePlus },
+    { label: "Settings", href: "/company/settings", icon: Settings, roles: COMPANY_MANAGEMENT_ROLES },
+];
+
+const borrowerNavigation: NavItem[] = [
+    { label: "Dashboard", href: "/borrower", icon: LayoutDashboard },
+    { label: "Chat", href: "/borrower/chat", icon: MessageCircleMore },
+    { label: "Loan requests", href: "/borrower/requests", icon: FileText },
+    { label: "My loans", href: "/borrower/loans", icon: HandCoins },
+    { label: "Payments", href: "/borrower/payments", icon: Banknote },
+    { label: "Documents", href: "/borrower/documents", icon: FilePenLine },
+    { label: "My files", href: "/borrower/files", icon: FolderOpen },
+    { label: "Support queries", href: "/borrower/queries", icon: MessageSquarePlus },
+    { label: "Profile", href: "/borrower/profile", icon: Users },
+];
+
+function SidebarTooltip({
+    collapsed,
+    label,
+    children,
+}: {
+    collapsed: boolean;
+    label: string;
+    children: ReactNode;
+}) {
+    if (!collapsed) return children;
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>{children}</TooltipTrigger>
+            <TooltipContent side="right" sideOffset={10}>{label}</TooltipContent>
+        </Tooltip>
+    );
+}
+
+export function PortalShell({ children, mode }: { children: ReactNode; mode: "company" | "borrower" }) {
+    const pathname = usePathname();
+    const router = useRouter();
+    const dispatch = useAppDispatch();
+    const [mobileOpen, setMobileOpen] = useState(false);
+    const [desktopCollapsed, setDesktopCollapsed] = useState(false);
+    const { user, currentCompany, getCompanyName } = useAppData();
+    const {
+        companyMemberships,
+        availableRoles,
+        activeCompanyId,
+        activeRole,
+        hasMultipleCompanies,
+        hasMultipleRoles,
+        switchCompany,
+        switchRole,
+    } = useTenant();
+
+    useEffect(() => {
+        const stored = window.localStorage.getItem(`loanhub.${mode}.sidebar-collapsed`);
+        setDesktopCollapsed(stored === "true");
+    }, [mode]);
+
+    useEffect(() => {
+        window.localStorage.setItem(`loanhub.${mode}.sidebar-collapsed`, String(desktopCollapsed));
+    }, [desktopCollapsed, mode]);
+
+    const navigation = useMemo(() => {
+        const items = mode === "company" ? companyNavigation : borrowerNavigation;
+        return items.filter((item) => !item.roles || hasRole(activeRole, item.roles));
+    }, [activeRole, mode]);
+
+    const displayName = user?.person?.full_name
+        || [user?.person?.first_name, user?.person?.last_name].filter(Boolean).join(" ")
+        || user?.phone
+        || "LoanHub user";
+    const accountHref = mode === "company" ? "/company/account" : "/borrower/account";
+    const initials = displayName
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0])
+        .join("")
+        .toUpperCase();
+
+    async function handleLogout() {
+        await dispatch(logoutUser());
+        router.replace("/login");
+    }
+
+    function renderSidebar(collapsed: boolean, mobile = false) {
+        return (
+            <div className="flex h-full flex-col bg-card">
+                <div className={`relative border-b ${collapsed ? "px-3 py-4" : "p-5"}`}>
+                    <IthuteBrand
+                        href={mode === "company" ? "/company" : "/borrower"}
+                        compact={collapsed}
+                        subtitle={mode === "company" ? "Company lending workspace" : "Borrower financial portal"}
+                    />
+                    {!mobile && (
+                        <button
+                            type="button"
+                            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            onClick={() => setDesktopCollapsed((value) => !value)}
+                            className={`absolute top-1/2 hidden -translate-y-1/2 rounded-xl border bg-background p-2 text-muted-foreground shadow-sm transition hover:border-primary hover:text-primary lg:inline-flex ${collapsed ? "-right-4" : "right-3"}`}
+                        >
+                            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                        </button>
+                    )}
+                </div>
+
+                {mode === "company" && (
+                    collapsed ? (
+                        <div className="border-b px-3 py-4">
+                            <SidebarTooltip collapsed label={`${currentCompany?.name ?? "Company account"} · Working as ${titleCase(activeRole)}`}>
+                                <button
+                                    type="button"
+                                    onClick={() => setDesktopCollapsed(false)}
+                                    className="flex h-11 w-full items-center justify-center rounded-xl bg-primary/10 text-primary transition hover:bg-primary hover:text-primary-foreground"
+                                    aria-label="Expand sidebar to switch company or role"
+                                >
+                                    <Building2 className="h-5 w-5" />
+                                </button>
+                            </SidebarTooltip>
+                        </div>
+                    ) : (
+                        <div className="border-b p-4">
+                            <div className="space-y-3">
+                                {hasMultipleCompanies ? (
+                                    <label className="block">
+                                        <span className="mb-2 block text-xs font-bold uppercase text-muted-foreground">Active company</span>
+                                        <div className="relative">
+                                            <NativeSelect
+                                                value={activeCompanyId ?? ""}
+                                                onChange={(event) => switchCompany(event.target.value)}
+                                                className="h-11 w-full appearance-none rounded-xl border bg-background px-3 pr-9 text-sm font-bold"
+                                            >
+                                                {companyMemberships.map((membership) => (
+                                                    <option key={membership.company_id} value={membership.company_id}>
+                                                        {getCompanyName(membership.company_id)}
+                                                    </option>
+                                                ))}
+                                            </NativeSelect>
+                                            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2" />
+                                        </div>
+                                    </label>
+                                ) : (
+                                    <div className="rounded-2xl bg-muted/60 p-3">
+                                        <p className="truncate text-sm font-black">{currentCompany?.name ?? "Company account"}</p>
+                                    </div>
+                                )}
+                                {hasMultipleRoles ? (
+                                    <label className="block">
+                                        <span className="mb-2 block text-xs font-bold uppercase text-muted-foreground">Working as</span>
+                                        <div className="relative">
+                                            <NativeSelect
+                                                value={activeRole ?? ""}
+                                                onChange={(event) => switchRole(event.target.value as UserRole)}
+                                                className="h-11 w-full appearance-none rounded-xl border bg-background px-3 pr-9 text-sm font-bold"
+                                            >
+                                                {availableRoles.map((membership) => (
+                                                    <option key={membership.id} value={membership.role}>
+                                                        {titleCase(membership.role)}{membership.is_primary ? " (primary)" : ""}
+                                                    </option>
+                                                ))}
+                                            </NativeSelect>
+                                            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2" />
+                                        </div>
+                                    </label>
+                                ) : (
+                                    <p className="px-1 text-xs font-semibold text-muted-foreground">Working as {titleCase(activeRole)}</p>
+                                )}
+                            </div>
+                        </div>
+                    )
+                )}
+
+                <nav className={`flex-1 space-y-1 overflow-y-auto ${collapsed ? "px-3 py-4" : "p-4"}`}>
+                    {navigation.map((item) => {
+                        const active = item.href === pathname
+                            || (item.href !== `/${mode}` && pathname.startsWith(`${item.href}/`));
+                        const Icon = item.icon;
+                        const link = (
+                            <Link
+                                key={item.href}
+                                href={item.href}
+                                onClick={() => setMobileOpen(false)}
+                                aria-label={collapsed ? item.label : undefined}
+                                className={`flex items-center rounded-2xl text-sm font-bold transition ${collapsed ? "h-11 justify-center px-2" : "gap-3 px-4 py-3"} ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                            >
+                                <Icon className="h-5 w-5 shrink-0" />
+                                {!collapsed && <span className="truncate">{item.label}</span>}
+                            </Link>
+                        );
+                        return (
+                            <SidebarTooltip key={item.href} collapsed={collapsed} label={item.label}>
+                                {link}
+                            </SidebarTooltip>
+                        );
+                    })}
+                </nav>
+
+                <div className={`border-t ${collapsed ? "p-3" : "p-4"}`}>
+                    <SidebarTooltip collapsed={collapsed} label="My profile & security">
+                        <Link
+                            href={accountHref}
+                            onClick={() => setMobileOpen(false)}
+                            aria-label="Open my LoanHub profile and security settings"
+                            className={`group mb-3 flex items-center rounded-2xl border transition hover:border-primary/40 hover:bg-primary/5 ${collapsed ? "h-12 justify-center p-1" : "gap-3 p-3"} ${pathname === accountHref ? "border-primary/40 bg-primary/5" : ""}`}
+                        >
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-sm font-black text-primary">
+                                {initials}
+                            </div>
+                            {!collapsed && (
+                                <>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-black">{displayName}</p>
+                                        <p className="mt-1 truncate text-xs text-muted-foreground">{user?.email ?? user?.phone}</p>
+                                        <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-primary">My profile & security</p>
+                                    </div>
+                                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" />
+                                </>
+                            )}
+                        </Link>
+                    </SidebarTooltip>
+                    <SidebarTooltip collapsed={collapsed} label="Logout">
+                        <button
+                            type="button"
+                            onClick={() => void handleLogout()}
+                            aria-label="Logout"
+                            className={`flex w-full items-center rounded-2xl text-sm font-bold text-red-600 transition hover:bg-red-50 dark:hover:bg-red-950/30 ${collapsed ? "h-11 justify-center px-2" : "gap-3 px-4 py-3"}`}
+                        >
+                            <LogOut className="h-4 w-4 shrink-0" />
+                            {!collapsed && "Logout"}
+                        </button>
+                    </SidebarTooltip>
+                    {!collapsed && <div className="mt-4"><IthutePoweredBy /></div>}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <TooltipProvider delayDuration={150}>
+            <div className="min-h-screen bg-muted/20">
+                <aside className={`fixed inset-y-0 left-0 z-40 hidden border-r bg-card transition-[width] duration-300 lg:block ${desktopCollapsed ? "w-[5.25rem]" : "w-72"}`}>
+                    {renderSidebar(desktopCollapsed)}
+                </aside>
+
+                {mobileOpen && (
+                    <div className="fixed inset-0 z-50 lg:hidden">
+                        <button
+                            type="button"
+                            aria-label="Close menu overlay"
+                            className="absolute inset-0 bg-black/50"
+                            onClick={() => setMobileOpen(false)}
+                        />
+                        <aside className="relative h-full w-[88%] max-w-80 bg-card shadow-2xl">
+                            <button
+                                type="button"
+                                aria-label="Close menu"
+                                onClick={() => setMobileOpen(false)}
+                                className="absolute right-3 top-3 z-10 rounded-xl border bg-background p-2"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                            {renderSidebar(false, true)}
+                        </aside>
+                    </div>
+                )}
+
+                <div className={`transition-[padding] duration-300 ${desktopCollapsed ? "lg:pl-[5.25rem]" : "lg:pl-72"}`}>
+                    <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-4 border-b bg-background/90 px-4 py-3 backdrop-blur sm:px-6">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <button
+                                type="button"
+                                aria-label="Open menu"
+                                onClick={() => setMobileOpen(true)}
+                                className="rounded-xl border p-2 lg:hidden"
+                            >
+                                <Menu className="h-5 w-5" />
+                            </button>
+                            <div className="min-w-0">
+                                <p className="truncate text-sm font-black sm:text-base">
+                                    {mode === "company" ? currentCompany?.name ?? "Company workspace" : "Borrower workspace"}
+                                </p>
+                                <p className="truncate text-xs text-muted-foreground">Secure lending, communication and document management</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <ThemeSwitcher />
+                            <ChatLauncher role={user?.role} />
+                            <NotificationBell role={user?.role} />
+                        </div>
+                    </header>
+                    <main className="p-3 sm:p-5 lg:p-6">{children}</main>
+                </div>
+            </div>
+        </TooltipProvider>
+    );
+}

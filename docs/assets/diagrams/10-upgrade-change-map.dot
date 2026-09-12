@@ -1,0 +1,19 @@
+digraph G { rankdir=TB; graph [bgcolor="transparent", fontname="DejaVu Sans", nodesep=0.35, ranksep=0.55, pad=0.2]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#b9c8d3", fillcolor="#ffffff", fontcolor="#0d2942", margin="0.14,0.09"]; edge [fontname="DejaVu Sans", fontsize=9, color="#658093", fontcolor="#526c7e", arrowsize=0.75];
+need [shape=oval,label="New feature or change request"];
+domain [shape=diamond,label="Which layer changes?"];
+frontend [label="Frontend
+page/component/api/type/provider"];
+backend [label="Backend
+router/schema/service/model"];
+db [label="Database schema change?",shape=diamond];
+migration [label="Create reviewed Alembic migration"];
+security [label="Review role, tenant, branch,
+audit and error behaviour"];
+tests [label="Add/update tests and documentation"];
+validate [label="Run compile, typecheck, lint, build,
+route/model and migration checks"];
+stage [label="Apply to staging backup
+and smoke-test every affected role"];
+release [label="Tag release and deploy",fillcolor="#dff7ed"];
+need->domain; domain->frontend [label="UI/state"]; domain->backend [label="API/business"]; frontend->security; backend->db; db->migration [label="Yes"]; db->security [label="No"]; migration->security; security->tests->validate->stage->release;
+}

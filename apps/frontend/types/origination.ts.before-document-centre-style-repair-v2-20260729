@@ -1,0 +1,340 @@
+export type OriginationPolicyUpdate = {
+  currency: string;
+  is_active: boolean;
+  allow_concurrent_active_loans: boolean;
+  max_active_loans: number;
+  max_open_applications: number;
+  allow_top_up: boolean;
+  top_up_min_paid_percent: number;
+  top_up_min_paid_installments: number;
+  top_up_owner_exception_enabled: boolean;
+  top_up_require_positive_history: boolean;
+  top_up_settle_existing_balance: boolean;
+  cooling_off_days: number;
+  min_age: number;
+  max_age: number;
+  min_verified_net_income: number;
+  max_dti_percent: number;
+  max_installment_income_percent: number;
+  disposable_income_usage_percent: number;
+  min_disposable_after_installment: number;
+  living_expense_buffer: number;
+  dependant_allowance: number;
+  min_employment_months: number;
+  required_payslips: number;
+  required_bank_statement_months: number;
+  require_kyc_verified: boolean;
+  require_signed_contract: boolean;
+  allow_blacklisted: boolean;
+  manager_override_enabled: boolean;
+};
+
+export type OriginationPolicy = OriginationPolicyUpdate & {
+  id: string;
+  company_id: string;
+  version: number;
+  configured_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+};
+
+export type KYCProfileInput = {
+  status: "not_started" | "documents_pending" | "under_review" | "verified" | "failed" | "enhanced_due_diligence" | "expired";
+  identity_verified: boolean;
+  address_verified: boolean;
+  phone_verified: boolean;
+  sanctions_hit: boolean;
+  politically_exposed: boolean;
+  adverse_media_hit: boolean;
+  fraud_flag: boolean;
+  source_of_funds: string | null;
+  residence_status: string | null;
+  years_at_address: number | null;
+  dependants: number;
+  next_of_kin: Record<string, string>;
+  emergency_contact: Record<string, string>;
+  document_file_ids: string[];
+  verification_notes: string | null;
+  expires_at: string | null;
+};
+
+export type EmploymentProfileInput = {
+  employment_status: string;
+  employer_name: string | null;
+  employer_registration: string | null;
+  employer_phone: string | null;
+  employer_address: string | null;
+  employee_number: string | null;
+  job_title: string | null;
+  employment_start_date: string | null;
+  contract_type: string | null;
+  contract_expiry_date: string | null;
+  salary_frequency: string;
+  gross_salary: number;
+  net_salary: number;
+  verified_net_income: number;
+  salary_day: number | null;
+  verification_method: string | null;
+  verification_status: "unverified" | "pending" | "verified" | "failed";
+  payslip_count: number;
+  bank_statement_months: number;
+  notes: string | null;
+};
+
+export type IncomeSourceInput = {
+  source_type: string;
+  description: string | null;
+  declared_amount: number;
+  verified_amount: number;
+  frequency: string;
+  verification_method: string | null;
+  is_verified: boolean;
+};
+
+export type ExpenseInput = {
+  category: string;
+  description: string | null;
+  monthly_amount: number;
+  is_verified: boolean;
+  verification_notes: string | null;
+};
+
+export type DebtObligationInput = {
+  creditor: string;
+  account_reference: string | null;
+  debt_type: string;
+  original_amount: number;
+  current_balance: number;
+  monthly_installment: number;
+  settlement_amount: number | null;
+  remaining_term_months: number | null;
+  source: string;
+  is_verified: boolean;
+};
+
+export type BankAccountInput = {
+  account_holder: string;
+  bank_name: string;
+  branch_name: string | null;
+  branch_code: string | null;
+  account_type: string;
+  currency: string;
+  account_number: string | null;
+  salary_account: boolean;
+  verification_status: "unverified" | "pending" | "verified" | "failed";
+  verification_reference: string | null;
+  tokenized_card_provider: string | null;
+  tokenized_card_reference: string | null;
+  masked_card_number: string | null;
+  card_brand: string | null;
+  card_expiry_month: number | null;
+  card_expiry_year: number | null;
+};
+
+export type FinancialProfileUpdate = {
+  kyc: KYCProfileInput;
+  employment: EmploymentProfileInput;
+  income_sources: IncomeSourceInput[];
+  expenses: ExpenseInput[];
+  debts: DebtObligationInput[];
+  bank_account: BankAccountInput | null;
+};
+
+export type BorrowerIdentity = {
+  borrower_id: string;
+  user_id: string;
+  full_name: string;
+  date_of_birth: string | null;
+  national_id: string | null;
+  passport_number: string | null;
+  phone: string;
+  email: string | null;
+};
+
+export type FinancialProfile = {
+  identity: BorrowerIdentity;
+  kyc: (KYCProfileInput & { id: string; reviewed_at?: string | null }) | null;
+  employment: (EmploymentProfileInput & { id: string }) | null;
+  income_sources: Array<IncomeSourceInput & { id: string }>;
+  expenses: Array<ExpenseInput & { id: string }>;
+  debts: Array<DebtObligationInput & { id: string }>;
+  bank_account: ({
+    id: string;
+    account_holder: string;
+    bank_name: string;
+    branch_name: string | null;
+    branch_code: string | null;
+    account_type: string;
+    currency: string;
+    account_number_last4: string;
+    masked_account_number: string;
+    salary_account: boolean;
+    verification_status: string;
+    verification_reference: string | null;
+    masked_card_number: string | null;
+    card_brand: string | null;
+    card_expiry_month: number | null;
+    card_expiry_year: number | null;
+    has_tokenized_card: boolean;
+  }) | null;
+};
+
+export type DuplicateCheck = {
+  has_open_application: boolean;
+  has_active_loan: boolean;
+  open_applications: Array<{ id: string; reference: string; status: string; requested_amount: number }>;
+  active_loans: Array<{ id: string; reference: string; status: string; balance: number }>;
+};
+
+export type OriginationApplication = {
+  id: string;
+  company_id: string;
+  branch_id: string | null;
+  borrower_id: string;
+  product_id: string | null;
+  application_reference: string;
+  channel: string;
+  application_type: "new_loan" | "top_up";
+  parent_loan_id: string | null;
+  top_up_cash_requested: number | null;
+  top_up_settlement_amount: number | null;
+  top_up_cash_to_borrower: number | null;
+  top_up_eligibility_snapshot: Record<string, unknown>;
+  top_up_exception_requested: boolean;
+  top_up_exception_reason: string | null;
+  top_up_exception_approved: boolean;
+  top_up_exception_approved_at: string | null;
+  top_up_exception_approved_by_user_id: string | null;
+  requested_amount: number;
+  approved_amount: number | null;
+  interest_rate: number | null;
+  term_count: number;
+  repayment_type: string;
+  purpose: string | null;
+  status: string;
+  preferred_payment_day: number | null;
+  first_payment_date: string | null;
+  installment_due_dates: string[];
+  application_step: number;
+  kyc_status: string | null;
+  affordability_decision: string | null;
+  affordability_assessment_id: string | null;
+  affordability_assessment: AffordabilityAssessment | null;
+  borrower_name: string;
+  identity: BorrowerIdentity;
+  product_name: string | null;
+  loan_id: string | null;
+  loan_reference: string | null;
+  contract_status: string | null;
+  contract_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AffordabilityReason = {
+  severity: "pass" | "warning" | "error" | string;
+  code: string;
+  message: string;
+};
+
+export type AffordabilityAssessment = {
+  id: string;
+  application_id: string;
+  policy_version: number;
+  assessment_number: number;
+  decision: string;
+  verified_income: number;
+  household_expenses: number;
+  existing_debt_installments: number;
+  configured_buffer: number;
+  dependant_allowance_total: number;
+  disposable_income: number;
+  dti_percent: number;
+  disposable_income_limit: number;
+  dti_limit: number;
+  installment_income_limit: number;
+  maximum_affordable_installment: number;
+  proposed_installment: number;
+  affordability_headroom: number;
+  result_reasons: AffordabilityReason[];
+  overridden: boolean;
+  override_decision: string | null;
+  override_reason: string | null;
+  created_at: string;
+};
+
+export type OriginationWorkspace = {
+  application: OriginationApplication;
+  policy: OriginationPolicy;
+  profile: FinancialProfile;
+  duplicate_check: DuplicateCheck;
+  assessments: AffordabilityAssessment[];
+};
+
+export type TopUpEligibility = {
+  eligible: boolean;
+  requires_owner_exception: boolean;
+  reason: string;
+  paid_percent: number;
+  paid_installments: number;
+  required_paid_percent: number;
+  required_paid_installments: number;
+  positive_history?: boolean;
+  loan: null | {
+    id: string;
+    reference: string;
+    status: string;
+    principal_amount: number;
+    total_repayable: number;
+    amount_paid: number;
+    balance: number;
+    installment_amount: number;
+  };
+};
+
+export type OriginationApplicationCreate = {
+  borrower_id: string;
+  branch_id?: string | null;
+  product_id?: string | null;
+  application_type?: "new_loan" | "top_up";
+  parent_loan_id?: string | null;
+  requested_amount: number;
+  top_up_cash_requested?: number | null;
+  top_up_exception_reason?: string | null;
+  term_count: number;
+  purpose?: string | null;
+  installment_due_dates: string[];
+};
+
+export type LoanContract = {
+  id: string;
+  company_id: string;
+  borrower_id: string;
+  application_id: string | null;
+  loan_id: string;
+  contract_number: string;
+  version: number;
+  status: string;
+  terms_snapshot: Record<string, unknown>;
+  template_style?: ContractTemplateStyle;
+  contract_hash: string;
+  pdf_file_id: string | null;
+  borrower_signature_name: string | null;
+  borrower_signed_at: string | null;
+  company_signed_at: string | null;
+  witness_name: string | null;
+  download_url: string | null;
+  created_at: string;
+};
+
+export type IntegrationConfiguration = {
+  id: string;
+  provider: string;
+  environment: string;
+  is_enabled: boolean;
+  configuration: Record<string, unknown>;
+  has_credentials: boolean;
+  last_test_status: string | null;
+};

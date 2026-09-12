@@ -1,0 +1,18 @@
+digraph G { rankdir=LR; graph [bgcolor="transparent", fontname="DejaVu Sans", nodesep=0.35, ranksep=0.55, pad=0.2]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#b9c8d3", fillcolor="#ffffff", fontcolor="#0d2942", margin="0.14,0.09"]; edge [fontname="DejaVu Sans", fontsize=9, color="#658093", fontcolor="#526c7e", arrowsize=0.75];
+selected [label="Accepted offer"];
+approve [label="Company approval and agreement checks"];
+disb [label="Create outbound disbursement payment"];
+provider [shape=diamond,label="Provider confirms success?"];
+schedule [label="Create repayment schedule"];
+active [label="Loan becomes active",fillcolor="#dff7ed"];
+repay [label="Borrower initiates repayment"];
+inbound [label="Create inbound payment
+with idempotency key"];
+confirm [shape=diamond,label="Verified callback/status?"];
+allocate [label="Allocate payment to instalments"];
+account [label="Post accounting journal"];
+complete [shape=diamond,label="Balance zero?"];
+done [label="Loan completed",fillcolor="#dff7ed"];
+fail [label="Pending/failed - investigate",fillcolor="#fee9e9"];
+selected->approve->disb->provider; provider->schedule [label="Yes"]; provider->fail [label="No"]; schedule->active->repay->inbound->confirm; confirm->allocate [label="Yes"]; confirm->fail [label="No"]; allocate->account->complete; complete->done [label="Yes"]; complete->active [label="No"];
+}

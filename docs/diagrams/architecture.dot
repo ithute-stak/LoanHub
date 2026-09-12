@@ -1,0 +1,24 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.25, nodesep=0.45, ranksep=0.65];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#d1d5db", fillcolor="#f8fafc", margin="0.16,0.10"];
+  edge [fontname="DejaVu Sans", fontsize=9, color="#64748b", arrowsize=0.7];
+  web [label="Next.js web app\nBorrower | Company | Platform"];
+  api [label="LoanHub FastAPI\nAuth, tenant, roles, payments", fillcolor="#eff6ff", color="#2563eb"];
+  db [label="PostgreSQL\nPayments, loans, receipts, audit"];
+  redis [label="Redis\nSession cache, realtime, locks"];
+  mpesa [label="Vodacom M-Pesa OpenAPI\nvodacomLES | LES | LSL", fillcolor="#fef2f2", color="#dc2626"];
+  callback [label="Public callback listener\nIdempotent result processing", fillcolor="#fff7ed", color="#ea580c"];
+  worker [label="Maintenance worker\nStatus query and reconciliation", fillcolor="#f0fdf4", color="#16a34a"];
+  files [label="Managed File Centre\nReceipts and confirmations"];
+  printer [label="Local print bridge\nOptional PDF printing"];
+  web -> api [label="HTTPS + JWT"];
+  api -> db;
+  api -> redis;
+  api -> mpesa [label="RSA session + Bearer"];
+  mpesa -> callback [label="Async result"];
+  callback -> api;
+  worker -> mpesa [label="Query status"];
+  worker -> db;
+  api -> files;
+  files -> printer;
+}

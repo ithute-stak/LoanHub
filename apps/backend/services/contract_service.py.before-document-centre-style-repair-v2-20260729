@@ -1,0 +1,1334 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from uuid import UUID
+from xml.sax.saxutils import escape
+
+from fastapi import HTTPException
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+from reportlab.platypus import (
+    KeepTogether,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from sqlalchemy.orm import Session
+
+from database.config.config import settings
+from database.models.branch import CompanyBranch
+from database.models.client_loan_company import ClientCompanyLoan
+from database.models.company import LoanCompany
+from database.models.file_management import ManagedFile
+from database.models.loan_product import LoanProduct
+from database.models.origination import BorrowerBankAccount, LoanContract
+from database.models.person import Person
+from database.models.professional_lending import DirectLoanApplication
+from database.models.user import User
+from services.credential_service import decrypt_credential
+from services.file_service import read_file_bytes, store_bytes
+from services.document_branding_service import get_company_document_branding
+from services.pdf_design_system import (
+    DocumentContext,
+    draw_page_chrome,
+    metric_grid,
+    money_text,
+    timeline_card,
+)
+
+
+NAVY = colors.HexColor("#062B55")
+BLUE = colors.HexColor("#0B69B7")
+TEAL = colors.HexColor("#0F8B8D")
+PALE_BLUE = colors.HexColor("#EAF4FB")
+PALE_TEAL = colors.HexColor("#E9F7F5")
+LIGHT = colors.HexColor("#F6F9FC")
+BORDER = colors.HexColor("#CFDAE6")
+MUTED = colors.HexColor("#52606D")
+TEXT = colors.HexColor("#172B4D")
+WARNING = colors.HexColor("#FFF5D6")
+
+
+def _asset_path(configured_value: str) -> Path | None:
+    configured = Path(configured_value).expanduser()
+    if not configured.is_absolute():
+        configured = Path(__file__).resolve().parents[1] / configured
+    return configured if configured.exists() else None
+
+
+def _logo_path() -> Path | None:
+    contract_logo = _asset_path("assets/loanhub-contract-logo.png")
+    return contract_logo or _asset_path(settings.LOANHUB_LOGO_PATH)
+
+
+def _as_decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or 0))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+
+
+def _money(value: Any) -> str:
+    return f"LSL {_as_decimal(value):,.2f}"
+
+
+def _percentage(value: Any) -> str:
+    number = _as_decimal(value)
+    return f"{number:,.3f}".rstrip("0").rstrip(".") + "%"
+
+
+def _date_text(value: Any) -> str:
+    if not value:
+        return "Not recorded"
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d %B %Y")
+    try:
+        return date.fromisoformat(str(value)[:10]).strftime("%d %B %Y")
+    except ValueError:
+        return str(value)
+
+
+def _timestamp_text(value: Any) -> str:
+    if not value:
+        return "Pending"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).strftime("%d %B %Y at %H:%M UTC")
+    return str(value)
+
+
+def _enum_text(value: Any) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw or "Not recorded").replace("_", " ").title()
+
+
+def _safe(value: Any, fallback: str = "Not recorded") -> str:
+    text = str(value).strip() if value is not None else ""
+    return escape(text or fallback)
+
+
+def _person_for_user(db: Session, user_id: UUID | None) -> Person | None:
+    if not user_id:
+        return None
+    return db.query(Person).filter(Person.user_id == user_id).first()
+
+
+def _borrower_snapshot(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
+    borrower = loan.borrower
+    user = db.get(User, borrower.user_id) if borrower else None
+    person = _person_for_user(db, user.id if user else None)
+    identity_number = None
+    identity_type = "Identity number"
+    if person and person.national_id:
+        identity_number = person.national_id
+        identity_type = "National ID"
+    elif person and person.passport_number:
+        identity_number = person.passport_number
+        identity_type = "Passport"
+    address_parts = []
+    if person:
+        address_parts = [person.physical_address, person.town_or_village, person.district]
+    return {
+        "id": str(loan.borrower_id),
+        "name": person.full_name if person else "Borrower",
+        "identity_type": identity_type,
+        "identity_number": identity_number,
+        "date_of_birth": person.date_of_birth.isoformat() if person and person.date_of_birth else None,
+        "marital_status": _enum_text(person.marital_status) if person else None,
+        "nationality": person.nationality if person else None,
+        "physical_address": ", ".join(str(item).strip() for item in address_parts if item and str(item).strip()) or None,
+        "phone": user.phone if user else None,
+        "email": user.email if user else None,
+        "employment_status": _enum_text(borrower.employment_status) if borrower else None,
+        "employer_name": borrower.employer_name if borrower else None,
+        "job_title": borrower.job_title if borrower else None,
+        "monthly_income": str(borrower.monthly_income or 0) if borrower else "0",
+        "salary_date": borrower.salary_date if borrower else None,
+    }
+
+
+def _borrower_bank_snapshot(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
+    """Freeze the borrower banking mandate without storing a plaintext account number.
+
+    The encrypted account value is copied into the immutable contract snapshot and is
+    decrypted only while the confidential PDF is being rendered. This keeps regenerated
+    signed versions consistent even if the borrower later edits their banking profile.
+    """
+    account = (
+        db.query(BorrowerBankAccount)
+        .filter(
+            BorrowerBankAccount.company_id == loan.company_id,
+            BorrowerBankAccount.borrower_id == loan.borrower_id,
+        )
+        .first()
+    )
+    if not account:
+        return {
+            "account_holder": None,
+            "bank_name": None,
+            "branch_name": None,
+            "branch_code": None,
+            "account_type": None,
+            "currency": "LSL",
+            "account_number_encrypted": None,
+            "account_number_last4": None,
+            "verification_status": "not_recorded",
+        }
+    return {
+        "account_holder": account.account_holder,
+        "bank_name": account.bank_name,
+        "branch_name": account.branch_name,
+        "branch_code": account.branch_code,
+        "account_type": account.account_type,
+        "currency": account.currency or "LSL",
+        "account_number_encrypted": account.account_number_encrypted,
+        "account_number_last4": account.account_number_last4,
+        "verification_status": account.verification_status,
+    }
+
+
+def _bank_account_number(bank: dict[str, Any] | None) -> str:
+    bank = bank or {}
+    encrypted = bank.get("account_number_encrypted")
+    if encrypted:
+        try:
+            return decrypt_credential(str(encrypted))
+        except RuntimeError:
+            pass
+    last4 = str(bank.get("account_number_last4") or "").strip()
+    return f"****{last4}" if last4 else "Not recorded"
+
+
+def build_terms(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
+    company = db.get(LoanCompany, loan.company_id)
+    branch = db.get(CompanyBranch, loan.branch_id) if loan.branch_id else None
+    application = db.get(DirectLoanApplication, loan.direct_application_id) if loan.direct_application_id else None
+    product = db.get(LoanProduct, application.product_id) if application and application.product_id else None
+    credit_officer = _person_for_user(db, application.captured_by_user_id if application else None)
+    bank_account = _borrower_bank_snapshot(db, loan)
+
+    schedule: list[dict[str, Any]] = []
+    for item in sorted(loan.installments, key=lambda row: row.installment_number):
+        schedule.append({
+            "number": item.installment_number,
+            "due_date": item.due_date.isoformat(),
+            "principal": str(item.principal_due or 0),
+            "interest": str(item.interest_due or 0),
+            "fee": str(item.fee_due or 0),
+            "amount": str(item.total_due or 0),
+        })
+
+    schedule_total = sum((_as_decimal(item["amount"]) for item in schedule), Decimal("0"))
+    total_repayable = _as_decimal(loan.total_repayable)
+    if abs(schedule_total - total_repayable) > Decimal("0.02"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The repayment schedule total does not equal the approved total repayable. "
+                "Recalculate the loan schedule before generating the agreement."
+            ),
+        )
+
+    total_interest = sum((_as_decimal(item["interest"]) for item in schedule), Decimal("0"))
+    total_schedule_fees = sum((_as_decimal(item["fee"]) for item in schedule), Decimal("0"))
+    total_cost = total_repayable - _as_decimal(loan.principal_amount)
+    total_fees = max(total_cost - total_interest, Decimal("0"))
+
+    return {
+        "template_version": "3.0-filizwa-merged",
+        "legal_basis": (
+            "Applicable Lesotho lending law, including the Money Lenders Order, 1989 as amended, "
+            "and the Financial Consumer Protection Act, 2022."
+        ),
+        "company": {
+            "id": str(company.id) if company else None,
+            "name": company.name if company else "Loan company",
+            "registration_number": company.registration_number if company else None,
+            "license_number": company.license_number if company else None,
+            "address": company.address if company else None,
+            "district": company.district if company else None,
+            "phone": company.phone if company else None,
+            "email": company.email if company else None,
+            "website": company.website if company else None,
+        },
+        "branch": {
+            "id": str(branch.id) if branch else None,
+            "name": branch.name if branch else "Head office",
+            "address": branch.address if branch else None,
+            "town": branch.town if branch else None,
+            "district": branch.district if branch else None,
+            "phone": branch.phone if branch else None,
+            "email": branch.email if branch else None,
+        },
+        "borrower": _borrower_snapshot(db, loan),
+        "bank_account": bank_account,
+        "application_reference": application.application_reference if application else None,
+        "application_purpose": application.purpose if application else None,
+        "loan_product_name": product.name if product else "Personal loan",
+        "credit_officer_name": credit_officer.full_name if credit_officer else None,
+        "loan_reference": loan.loan_reference,
+        "agreement_date": (loan.approved_at or datetime.now(timezone.utc)).date().isoformat(),
+        "approved_at": loan.approved_at.isoformat() if loan.approved_at else None,
+        "is_top_up": bool(loan.is_top_up),
+        "parent_loan_id": str(loan.parent_loan_id) if loan.parent_loan_id else None,
+        "top_up_settlement_amount": str(loan.top_up_settlement_amount or 0),
+        "top_up_cash_amount": str(loan.top_up_cash_amount or 0),
+        "principal_amount": str(loan.principal_amount),
+        "interest_rate": str(loan.interest_rate),
+        "interest_rate_basis": "Approved loan rate",
+        "total_interest": str(total_interest),
+        "processing_fee": str(loan.processing_fee or 0),
+        "total_fees": str(total_fees),
+        "schedule_fees": str(total_schedule_fees),
+        "total_cost_of_credit": str(total_cost),
+        "tax_amount": "0.00",
+        "total_repayable": str(loan.total_repayable),
+        "installment_amount": str(loan.installment_amount),
+        "repayment_period": loan.repayment_period,
+        "repayment_type": _enum_text(loan.repayment_type),
+        "first_payment_due": loan.first_payment_due.isoformat() if loan.first_payment_due else None,
+        "preferred_payment_day": loan.preferred_payment_day,
+        "maturity_date": loan.maturity_date.isoformat() if loan.maturity_date else None,
+        "calculation_method": loan.calculation_method,
+        "calculation_breakdown": loan.calculation_breakdown or {},
+        "schedule": schedule,
+        "schedule_total": str(schedule_total),
+        "payment_method": "Cash, mobile money, bank transfer, salary deduction, debit order or another approved method",
+        "disbursement_method": "To be recorded at disbursement",
+        "security_type": "Unsecured unless a separately signed security annexure states otherwise",
+        "insurance_status": "Not included unless a separately signed insurance addendum states otherwise",
+        "cooling_off_period": "Five working days after both parties enter into the agreement",
+        "partial_payment_rule": "Payments are allocated to the oldest outstanding instalment first, subject to applicable law.",
+        "advance_payment_rule": "The borrower may make additional or early payments and may request an early-settlement quotation.",
+        "complaints_email": company.email if company else None,
+        "complaints_phone": company.phone if company else None,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class _ContractCanvas(canvas.Canvas):
+    """Replays pages at save time so each page receives a branded header and Page X of Y footer."""
+
+    def __init__(
+        self,
+        *args: Any,
+        contract: LoanContract,
+        db: Session | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._saved_page_states: list[dict[str, Any]] = []
+        self.contract = contract
+        self.db = db
+
+    def showPage(self) -> None:  # noqa: N802 - ReportLab API
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self) -> None:
+        page_count = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self._draw_branding(page_count)
+            super().showPage()
+        super().save()
+
+    def _draw_branding(self, page_count: int) -> None:
+        """Draw the shared LoanHub/company Filizwa-style header on every page.
+
+        The system logo is always loaded from LoanHub backend assets. The logo
+        on the right is the current loan company's latest stored ManagedFile
+        logo. Company identity details are read from the current LoanCompany
+        record when the PDF is generated, with the immutable contract snapshot
+        used only as a fallback if the company record cannot be loaded.
+        """
+        terms = self.contract.terms_snapshot or {}
+        company_snapshot = terms.get("company", {})
+
+        company_model = getattr(self.contract, "company", None)
+        state = getattr(self.contract, "_sa_instance_state", None)
+        session = self.db or getattr(state, "session", None)
+
+        company_id = None
+        raw_company_id = company_snapshot.get("id")
+        if raw_company_id:
+            try:
+                company_id = UUID(str(raw_company_id))
+            except (TypeError, ValueError):
+                company_id = None
+
+        if company_model is None and session is not None and company_id is not None:
+            try:
+                company_model = session.get(LoanCompany, company_id)
+            except Exception:
+                company_model = None
+
+        if company_model is None:
+            company_model = SimpleNamespace(
+                id=company_id,
+                name=company_snapshot.get("name") or "Loan company",
+                registration_number=company_snapshot.get("registration_number"),
+                license_number=company_snapshot.get("license_number"),
+                phone=company_snapshot.get("phone"),
+                email=company_snapshot.get("email"),
+                website=company_snapshot.get("website"),
+                address=company_snapshot.get("address"),
+                district=company_snapshot.get("district"),
+            )
+
+        branding = get_company_document_branding(session, company_model)
+
+        width, height = A4
+        self.saveState()
+
+        def draw_logo(
+            payload: bytes | None,
+            *,
+            x: float,
+            y: float,
+            max_width: float,
+            max_height: float,
+            align: str,
+        ) -> None:
+            if not payload:
+                return
+            try:
+                reader = ImageReader(BytesIO(payload))
+                image_width, image_height = reader.getSize()
+                scale = min(max_width / float(image_width), max_height / float(image_height))
+                draw_width = image_width * scale
+                draw_height = image_height * scale
+                draw_x = x
+                if align == "right":
+                    draw_x = x - draw_width
+                elif align == "center":
+                    draw_x = x - (draw_width / 2)
+                self.drawImage(
+                    reader,
+                    draw_x,
+                    y - draw_height,
+                    width=draw_width,
+                    height=draw_height,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+            except Exception:
+                # A damaged/missing optional image must never prevent a legal
+                # document from rendering. The text identity remains visible.
+                return
+
+        logo_top = height - 7.5 * mm
+        draw_logo(
+            branding.system_logo,
+            x=18 * mm,
+            y=logo_top,
+            max_width=43 * mm,
+            max_height=15 * mm,
+            align="left",
+        )
+        draw_logo(
+            branding.company_logo,
+            x=width - 18 * mm,
+            y=logo_top,
+            max_width=34 * mm,
+            max_height=15 * mm,
+            align="right",
+        )
+
+        centre_x = width / 2
+        y = height - 9.5 * mm
+        self.setFillColor(NAVY)
+        self.setFont("Helvetica-Bold", 10.0)
+        self.drawCentredString(centre_x, y, branding.company_name[:72])
+
+        if branding.identity_line:
+            y -= 4.0 * mm
+            self.setFillColor(TEXT)
+            self.setFont("Helvetica-Bold", 7.2)
+            self.drawCentredString(centre_x, y, branding.identity_line[:92])
+
+        if branding.contact_line:
+            y -= 3.7 * mm
+            self.setFillColor(MUTED)
+            self.setFont("Helvetica", 6.8)
+            self.drawCentredString(centre_x, y, branding.contact_line[:100])
+
+        if branding.address_line:
+            y -= 3.5 * mm
+            self.setFillColor(MUTED)
+            self.setFont("Helvetica", 6.7)
+            self.drawCentredString(centre_x, y, branding.address_line[:100])
+
+        self.setStrokeColor(BLUE)
+        self.setLineWidth(0.8)
+        self.line(18 * mm, height - 30.5 * mm, width - 18 * mm, height - 30.5 * mm)
+
+        # Preserve LoanHub verification/audit information in the footer.
+        self.setStrokeColor(BORDER)
+        self.setLineWidth(0.45)
+        self.line(18 * mm, 14 * mm, width - 18 * mm, 14 * mm)
+        self.setFillColor(MUTED)
+        self.setFont("Helvetica", 6.7)
+        confidentiality = "CONFIDENTIAL | " if self.contract.status == "signed" else "DRAFT | "
+        self.drawString(18 * mm, 9.5 * mm, f"{confidentiality}{self.contract.contract_number}"[:92])
+        self.drawCentredString(
+            width / 2,
+            9.5 * mm,
+            f"Verification {self.contract.contract_hash[:16]} | {self._pageNumber} of {page_count}"[:100],
+        )
+        self.drawRightString(width - 18 * mm, 9.5 * mm, f"Page {self._pageNumber}")
+
+        self.restoreState()
+
+        if self.contract.status != "signed":
+            self.saveState()
+            self.setFillColor(colors.Color(0.7, 0.75, 0.8, alpha=0.11))
+            self.setFont("Helvetica-Bold", 40)
+            self.translate(width / 2, height / 2)
+            self.rotate(34)
+            self.drawCentredString(0, 0, "AWAITING SIGNATURES")
+            self.restoreState()
+
+
+def _styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    return {
+        "title": ParagraphStyle(
+            "ContractTitle",
+            parent=base["Title"],
+            fontName="Helvetica-Bold",
+            fontSize=19,
+            leading=22,
+            textColor=NAVY,
+            alignment=TA_CENTER,
+            spaceAfter=4 * mm,
+        ),
+        "subtitle": ParagraphStyle(
+            "ContractSubtitle",
+            parent=base["BodyText"],
+            fontSize=8.5,
+            leading=11,
+            textColor=MUTED,
+            alignment=TA_CENTER,
+            spaceAfter=5 * mm,
+        ),
+        "section": ParagraphStyle(
+            "ContractSection",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=11.5,
+            leading=14,
+            textColor=NAVY,
+            spaceBefore=3 * mm,
+            spaceAfter=2 * mm,
+            keepWithNext=True,
+        ),
+        "subsection": ParagraphStyle(
+            "ContractSubsection",
+            parent=base["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=9.3,
+            leading=11,
+            textColor=BLUE,
+            spaceBefore=2 * mm,
+            spaceAfter=1 * mm,
+            keepWithNext=True,
+        ),
+        "body": ParagraphStyle(
+            "ContractBody",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.0,
+            leading=10.4,
+            textColor=TEXT,
+            spaceAfter=1.2 * mm,
+            alignment=TA_LEFT,
+        ),
+        "small": ParagraphStyle(
+            "ContractSmall",
+            parent=base["BodyText"],
+            fontSize=7.2,
+            leading=9.2,
+            textColor=MUTED,
+        ),
+        "table_label": ParagraphStyle(
+            "ContractTableLabel",
+            parent=base["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.5,
+            leading=9,
+            textColor=NAVY,
+        ),
+        "table_value": ParagraphStyle(
+            "ContractTableValue",
+            parent=base["BodyText"],
+            fontSize=7.7,
+            leading=9.5,
+            textColor=TEXT,
+        ),
+        "center": ParagraphStyle(
+            "ContractCenter",
+            parent=base["BodyText"],
+            fontSize=8,
+            leading=10,
+            alignment=TA_CENTER,
+            textColor=TEXT,
+        ),
+        "right": ParagraphStyle(
+            "ContractRight",
+            parent=base["BodyText"],
+            fontSize=7.5,
+            leading=9,
+            alignment=TA_RIGHT,
+            textColor=TEXT,
+        ),
+        "signature": ParagraphStyle(
+            "ContractSignature",
+            parent=base["BodyText"],
+            fontSize=9,
+            leading=12,
+            textColor=TEXT,
+        ),
+    }
+
+
+def _p(value: Any, style: ParagraphStyle, fallback: str = "Not recorded") -> Paragraph:
+    return Paragraph(_safe(value, fallback), style)
+
+
+def _key_value_table(rows: list[tuple[str, Any]], styles: dict[str, ParagraphStyle], *, widths: tuple[float, float] = (52 * mm, 123 * mm)) -> Table:
+    """Render labelled values as soft cards rather than a spreadsheet-like grid."""
+    card_width = 85.5 * mm
+    cards: list[Table] = []
+    for label, value in rows:
+        card = Table(
+            [[_p(label.upper(), styles["table_label"])], [_p(value, styles["table_value"])]],
+            colWidths=[card_width],
+        )
+        card.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+            ("BOX", (0, 0), (-1, -1), 0.55, BORDER),
+            ("LINEBEFORE", (0, 0), (0, -1), 2.6, BLUE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, 0), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        cards.append(card)
+    grid: list[list[Any]] = []
+    for index in range(0, len(cards), 2):
+        row = cards[index:index + 2]
+        if len(row) == 1:
+            row.append("")
+        grid.append(row)
+    outer = Table(grid, colWidths=[87.5 * mm, 87.5 * mm])
+    outer.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, -1), 0),
+        ("RIGHTPADDING", (0, 0), (0, -1), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, -1), 2 * mm),
+        ("RIGHTPADDING", (1, 0), (1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+    ]))
+    return outer
+
+
+def _two_party_table(terms: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    company = terms["company"]
+    branch = terms["branch"]
+    borrower = terms["borrower"]
+    lender_address = ", ".join(
+        str(value).strip()
+        for value in [company.get("address"), company.get("district")]
+        if value and str(value).strip()
+    )
+    left = [
+        _p("LENDER", styles["table_label"]),
+        _p(company.get("name"), styles["table_value"]),
+        _p(f"Registration: {company.get('registration_number') or 'Not recorded'}", styles["small"]),
+        _p(f"Licence: {company.get('license_number') or 'Not recorded'}", styles["small"]),
+        _p(f"Address: {lender_address or 'Not recorded'}", styles["small"]),
+        _p(f"Contact: {company.get('phone') or 'Not recorded'} | {company.get('email') or 'Not recorded'}", styles["small"]),
+        _p(f"Branch: {branch.get('name') or 'Head office'}", styles["small"]),
+    ]
+    right = [
+        _p("BORROWER", styles["table_label"]),
+        _p(borrower.get("name"), styles["table_value"]),
+        _p(f"{borrower.get('identity_type') or 'Identity'}: {borrower.get('identity_number') or 'Not recorded'}", styles["small"]),
+        _p(f"Date of birth: {_date_text(borrower.get('date_of_birth'))}", styles["small"]),
+        _p(f"Address: {borrower.get('physical_address') or 'Not recorded'}", styles["small"]),
+        _p(f"Contact: {borrower.get('phone') or 'Not recorded'} | {borrower.get('email') or 'Not recorded'}", styles["small"]),
+        _p(f"Employment: {borrower.get('employment_status') or 'Not recorded'} - {borrower.get('employer_name') or 'Employer not recorded'}", styles["small"]),
+    ]
+    table = Table([[left, right]], colWidths=[87.5 * mm, 87.5 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), PALE_BLUE),
+        ("BACKGROUND", (1, 0), (1, 0), PALE_TEAL),
+        ("BOX", (0, 0), (-1, -1), 0.6, BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.6, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    return table
+
+
+def _cost_table(terms: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    return metric_grid([
+        ("Principal", _money(terms["principal_amount"]), "Capital advanced", "blue"),
+        ("Interest", _money(terms["total_interest"]), "Approved interest charge", "teal"),
+        ("Fees", _money(terms.get("total_fees", terms["processing_fee"])), "Approved fees", "slate"),
+        ("Total cost of credit", _money(terms["total_cost_of_credit"]), "Interest plus fees", "amber"),
+        ("Total repayable", _money(terms["total_repayable"]), "Full contractual obligation", "green"),
+        ("Instalment", _money(terms["installment_amount"]), "Regular scheduled payment", "blue"),
+    ], columns=2)
+
+
+def _conditions_of_loan_table(terms: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    rows = [
+        [
+            _p("1.1 LOAN AMOUNT", styles["table_label"]),
+            _p(_money(terms.get("principal_amount")), styles["table_value"]),
+            _p("1.2 NUMBER OF INSTALMENTS", styles["table_label"]),
+            _p(str(terms.get("repayment_period") or "Not recorded"), styles["table_value"]),
+        ],
+        [
+            _p("1.3 INSTALMENT AMOUNT", styles["table_label"]),
+            _p(_money(terms.get("installment_amount")), styles["table_value"]),
+            _p("1.4 INSTALMENTS PAYABLE", styles["table_label"]),
+            _p(terms.get("repayment_type"), styles["table_value"]),
+        ],
+        [
+            _p("1.5 FIRST INSTALMENT", styles["table_label"]),
+            _p(_date_text(terms.get("first_payment_due")), styles["table_value"]),
+            _p("1.6 LAST INSTALMENT", styles["table_label"]),
+            _p(_date_text(terms.get("maturity_date")), styles["table_value"]),
+        ],
+    ]
+    table = Table(rows, colWidths=[43 * mm, 44 * mm, 43 * mm, 44 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), PALE_BLUE),
+        ("BACKGROUND", (2, 0), (2, -1), PALE_BLUE),
+        ("GRID", (0, 0), (-1, -1), 0.55, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return table
+
+
+def _cost_elements_table(terms: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    processing_fee = _as_decimal(terms.get("processing_fee"))
+    total_fees = _as_decimal(terms.get("total_fees"))
+    other_fees = max(total_fees - processing_fee, Decimal("0"))
+    rows = [
+        ["2.1 Amount of interest charged", _money(terms.get("total_interest"))],
+        ["2.2 Initiation / processing fee", _money(processing_fee)],
+        ["2.3 Other service and schedule fees", _money(other_fees)],
+        ["2.4 Taxes included in disclosed charges", _money(terms.get("tax_amount"))],
+        ["2.5 Total charge of credit [2.1 to 2.4]", _money(terms.get("total_cost_of_credit"))],
+        ["3. Approved interest rate", _percentage(terms.get("interest_rate"))],
+        ["4. Total amount added to the loan amount", _money(terms.get("total_cost_of_credit"))],
+        ["5. Total amount repayable [1.1 + 4]", _money(terms.get("total_repayable"))],
+    ]
+    data = [[_p(label, styles["table_label"]), _p(value, styles["table_value"])] for label, value in rows]
+    table = Table(data, colWidths=[132 * mm, 42 * mm])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.55, BORDER),
+        ("BACKGROUND", (0, 4), (-1, 4), PALE_BLUE),
+        ("BACKGROUND", (0, 6), (-1, -1), PALE_TEAL),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    return table
+
+
+def _bank_details_table(terms: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    bank = terms.get("bank_account") or {}
+    rows = [
+        ("Account holder", bank.get("account_holder") or terms.get("borrower", {}).get("name")),
+        ("Bank", bank.get("bank_name")),
+        ("Branch", bank.get("branch_name")),
+        ("Branch code", bank.get("branch_code")),
+        ("Account number", _bank_account_number(bank)),
+        ("Account type", _enum_text(bank.get("account_type"))),
+        ("Verification", _enum_text(bank.get("verification_status"))),
+        ("Deduction amount", f"As stated in clause 1.3: {_money(terms.get('installment_amount'))}"),
+    ]
+    return _key_value_table(rows, styles)
+
+
+def _acceptance_heading(title: str, styles: dict[str, ParagraphStyle]) -> Table:
+    table = Table([[_p(title, styles["table_label"])]], colWidths=[174 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PALE_BLUE),
+        ("BOX", (0, 0), (-1, -1), 0.7, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return table
+
+
+def _callout(text: str, styles: dict[str, ParagraphStyle], *, background: colors.Color = WARNING) -> Table:
+    table = Table([[_p(text, styles["body"])]], colWidths=[175 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), background),
+        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#E2B93B") if background == WARNING else BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    return table
+
+
+def _clause(number: str, heading: str, text: str, styles: dict[str, ParagraphStyle]) -> list[Any]:
+    return [
+        Paragraph(f"{escape(number)}. {escape(heading)}", styles["subsection"]),
+        Paragraph(escape(text), styles["body"]),
+    ]
+
+
+def _signature_box(title: str, name: str | None, signed_at: Any, method: str | None, styles: dict[str, ParagraphStyle]) -> Table:
+    status = "SIGNED" if signed_at else "PENDING"
+    status_color = PALE_TEAL if signed_at else LIGHT
+    data = [
+        [_p(title, styles["table_label"]), _p(status, styles["right"])],
+        [_p("Name", styles["table_label"]), _p(name or "________________________________", styles["signature"])],
+        [_p("Signature", styles["table_label"]), _p(name if signed_at else "________________________________", styles["signature"])],
+        [_p("Date and time", styles["table_label"]), _p(_timestamp_text(signed_at), styles["table_value"])],
+        [_p("Method", styles["table_label"]), _p(_enum_text(method) if method else "Wet ink / electronic / OTP", styles["table_value"])],
+    ]
+    table = Table(data, colWidths=[35 * mm, 50 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), status_color),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return table
+
+
+def _contract_pdf(db: Session, contract: LoanContract) -> bytes:
+    """Render the Filizwa-inspired LoanHub agreement with dynamic Lesotho data.
+
+    The clause order follows the uploaded two-page Filizwa agreement, while the
+    presentation, key-facts disclosure, repayment schedule, dual-logo branding,
+    signatures and audit controls are retained from LoanHub's existing contract.
+    Legal wording is deliberately localised to Lesotho rather than copying South
+    African statutory references that may not apply to the lender.
+    """
+    terms = contract.terms_snapshot
+    company = terms["company"]
+    borrower = terms["borrower"]
+    styles = _styles()
+    company_signer_person = _person_for_user(db, contract.company_signer_user_id)
+    company_signer_name = company_signer_person.full_name if company_signer_person else None
+
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=38 * mm,
+        bottomMargin=21 * mm,
+        title=f"Loan Agreement {contract.contract_number}",
+        author=f"{company.get('name') or 'Loan company'} via {settings.PRODUCT_NAME}",
+        subject="Loan agreement, cost of credit and repayment conditions",
+        creator=f"{settings.PRODUCT_NAME} by {settings.DEVELOPER_NAME}",
+    )
+
+    story: list[Any] = [
+        Paragraph("LOAN AGREEMENT", styles["title"]),
+        Paragraph("CONDITIONS OF LOAN, COST OF CREDIT AND REPAYMENT TERMS", styles["subtitle"]),
+        _key_value_table([
+            ("Agreement number", contract.contract_number),
+            ("Loan account", terms["loan_reference"]),
+            ("Application reference", terms.get("application_reference") or "Not applicable"),
+            ("Agreement date", _date_text(terms.get("agreement_date"))),
+            ("Document version", str(contract.version)),
+            ("Status", _enum_text(contract.status)),
+        ], styles),
+        Spacer(1, 3 * mm),
+        _two_party_table(terms, styles),
+        Spacer(1, 3 * mm),
+        _callout(
+            "IMPORTANT: Read the full agreement, cost disclosure and repayment schedule before signing. "
+            "Do not sign while required information is blank. Ask the lender to explain any term that is unclear.",
+            styles,
+            background=PALE_BLUE,
+        ),
+        Paragraph("1. CONDITIONS OF LOAN", styles["section"]),
+        _conditions_of_loan_table(terms, styles),
+        Paragraph("2. COST ELEMENTS OF THE LOAN", styles["section"]),
+        _cost_elements_table(terms, styles),
+    ]
+
+    if terms.get("is_top_up"):
+        story.extend([
+            Spacer(1, 3 * mm),
+            _callout(
+                f"TOP-UP DISCLOSURE: {_money(terms.get('top_up_settlement_amount'))} is allocated to settle the previous loan. "
+                f"The amount made available to the borrower is {_money(terms.get('top_up_cash_amount'))}.",
+                styles,
+                background=PALE_TEAL,
+            ),
+        ])
+
+    story.extend([
+        Spacer(1, 3 * mm),
+        _callout(
+            f"LEGAL BASIS: {terms.get('legal_basis') or 'Applicable law of the Kingdom of Lesotho.'}",
+            styles,
+            background=LIGHT,
+        ),
+        Spacer(1, 4 * mm),
+        Paragraph("LOAN CONDITIONS", styles["title"]),
+        Paragraph(
+            f"Agreement {escape(contract.contract_number)} | Loan {escape(str(terms['loan_reference']))}",
+            styles["subtitle"],
+        ),
+        *_clause(
+            "6",
+            "Credit charges and payment schedule",
+            "The cost disclosure, Key Facts Statement and repayment schedule form part of this agreement. "
+            "They record the approved principal, interest, fees, instalments and payment dates and must be read together with these conditions.",
+            styles,
+        ),
+        *_clause(
+            "7",
+            "Early settlement",
+            "The borrower may settle this agreement at any time by paying the unpaid principal, accrued disclosed interest, "
+            "disclosed fees and any other amount permitted by applicable law up to the settlement date. The lender must provide "
+            "an early-settlement quotation or account calculation on request.",
+            styles,
+        ),
+        *_clause(
+            "8.1",
+            "Proposed loan agreement",
+            "This document, together with the cost disclosure and repayment schedule, constitutes the proposed loan agreement. "
+            "The agreement becomes binding when accepted and signed through the lender's approved process and all approval conditions are met.",
+            styles,
+        ),
+        *_clause(
+            "8.2",
+            "Inconsistency in disclosed charges",
+            "If an inconsistency exists between a pre-agreement quotation, the Key Facts Statement and this agreement, the lower lawful "
+            "credit charge applies unless applicable law requires another result. No undisclosed fee or charge may be collected.",
+            styles,
+        ),
+        *_clause(
+            "9",
+            "Interest rate",
+            f"Interest is calculated on the outstanding principal using the approved rate of {_percentage(terms.get('interest_rate'))} "
+            f"and the recorded calculation method ({terms.get('calculation_method') or 'approved loan calculation'}). "
+            "A rate may change only where this agreement and applicable law permit the change, and only after the borrower receives any required written notice.",
+            styles,
+        ),
+        *_clause(
+            "10",
+            "Settlement of the loan and payment mandate",
+            "The borrower agrees to repay the loan using an approved payment method. Where a bank deduction, salary deduction, debit order, "
+            "mobile-money mandate or similar collection instruction is separately authorised, that mandate forms an annexure to this agreement. "
+            "A failed third-party collection does not remove the borrower's obligation to pay by the due date.",
+            styles,
+        ),
+        Spacer(1, 2 * mm),
+        _bank_details_table(terms, styles),
+        *_clause(
+            "11",
+            "Penalty clause",
+            "When a repayment is overdue, the lender may charge only penalty interest, service fees and reasonable recovery costs that were "
+            "properly disclosed, agreed and permitted by applicable law. Collection and legal costs may be recovered only through a lawful process.",
+            styles,
+        ),
+        *_clause(
+            "12",
+            "Lender's right to terminate or enforce",
+            "If the borrower defaults on an agreed repayment or commits another material breach, the lender may issue the notices required by law, "
+            "terminate or accelerate the agreement where legally permitted, and institute lawful recovery proceedings. Any court judgment or credit-bureau "
+            "reporting must follow applicable notice, accuracy and procedural requirements.",
+            styles,
+        ),
+        *_clause(
+            "13",
+            "Document provided and available",
+            "A completed copy of this signed agreement and its repayment schedule must be provided or made securely available to the borrower without charge. "
+            "The lender must also make applicable lending rules, complaint information and required notices reasonably accessible.",
+            styles,
+        ),
+        *_clause(
+            "14",
+            "Conditions, rights and obligations",
+            "The borrower and lender agree that their rights and obligations are governed by this agreement, its signed annexures and the mandatory requirements "
+            "of the laws of the Kingdom of Lesotho. A contractual term cannot remove a right that the law makes non-waivable.",
+            styles,
+        ),
+        *_clause(
+            "15",
+            "Account statements",
+            "The lender must provide statements at the intervals required by law and on reasonable request. Each statement should show payments, allocations, "
+            "arrears, charges and the outstanding balance. A statement fee may be charged only if it was disclosed and is permitted by law.",
+            styles,
+        ),
+        *_clause(
+            "16",
+            "Administration, insolvency or similar order",
+            "The borrower confirms that any current administration, insolvency, debt-relief or similar court process has been disclosed. If such a process begins "
+            "after signature, the borrower must notify the lender promptly. The lender may prove or recover its lawful claim only through the procedure allowed by law.",
+            styles,
+        ),
+        *_clause(
+            "17",
+            "Debt review or repayment arrangement",
+            "The borrower confirms that any current debt review, restructuring or repayment arrangement has been disclosed. The borrower should contact the lender "
+            "as soon as payment difficulty is expected. Any revised arrangement must be affordable, written and accepted by the parties where required.",
+            styles,
+        ),
+        *_clause(
+            "18",
+            "Dispute resolution",
+            f"The borrower should first raise a dispute with {company.get('name') or 'the lender'} using "
+            f"{terms.get('complaints_phone') or 'the recorded telephone number'} or {terms.get('complaints_email') or 'the recorded email address'}. "
+            "If the matter is not resolved, the borrower may approach the Central Bank of Lesotho, another competent regulator, an ombudsman where available, "
+            "or a court with jurisdiction. This clause does not limit any statutory remedy.",
+            styles,
+        ),
+        Paragraph("19. PRIVACY, NOTICES AND GENERAL TERMS", styles["section"]),
+        *_clause(
+            "19.1",
+            "Privacy and credit reporting",
+            "The lender must protect personal information and use or disclose it only for lawful lending, account administration, fraud prevention, compliance, "
+            "collection and authorised credit-reporting purposes. Adverse credit information may be reported only after any required notice and accuracy checks.",
+            styles,
+        ),
+        *_clause(
+            "19.2",
+            "Addresses and notices",
+            "Each party chooses the physical and electronic contact details recorded in this agreement for notices. A party must notify the other promptly when those "
+            "details change. Delivery records and electronic acknowledgements may form part of the contract audit trail.",
+            styles,
+        ),
+        *_clause(
+            "19.3",
+            "Complete agreement and severability",
+            "This agreement, its cost disclosure, repayment schedule and signed annexures form the complete agreement. Amendments must be written and lawfully accepted. "
+            "If a clause is invalid, the remaining lawful clauses continue to apply.",
+            styles,
+        ),
+        PageBreak(),
+        Paragraph("ANNEXURE A - REPAYMENT SCHEDULE", styles["title"]),
+        Paragraph(
+            f"Agreement {escape(contract.contract_number)} | Loan {escape(str(terms['loan_reference']))} | Borrower {escape(str(borrower['name']))}",
+            styles["subtitle"],
+        ),
+    ])
+
+    schedule_cards: list[Any] = []
+    for row in terms.get("schedule", []):
+        number = str(row["number"])
+        opening = row.get("opening_balance")
+        closing = row.get("closing_balance")
+        body = (
+            f"Due on <b>{_date_text(row['due_date'])}</b>. The scheduled payment is <b>{_money(row['amount'])}</b>, "
+            f"made up of principal <b>{_money(row['principal'])}</b>, interest <b>{_money(row['interest'])}</b> "
+            f"and fees <b>{_money(row['fee'])}</b>."
+        )
+        meta = None
+        if opening is not None or closing is not None:
+            meta = f"Opening principal {_money(opening)} | Closing principal {_money(closing)}"
+        schedule_cards.extend([
+            timeline_card(number, f"Instalment {number}", body, meta=meta, status="scheduled", tone="blue"),
+            Spacer(1, 2.5 * mm),
+        ])
+    story.extend(schedule_cards)
+    story.extend([
+        metric_grid([
+            ("Scheduled principal", _money(terms["principal_amount"]), "Capital component", "blue"),
+            ("Scheduled interest", _money(terms["total_interest"]), "Interest component", "teal"),
+            ("Scheduled fees", _money(terms["schedule_fees"]), "Fee component", "slate"),
+            ("Scheduled total", _money(terms["schedule_total"]), "Must equal total repayable", "green"),
+        ], columns=2),
+        Spacer(1, 4 * mm),
+        _callout(
+            "The sum of the scheduled instalments equals the total repayable disclosed in this agreement. Any lawful rescheduling must be "
+            "recorded in writing and delivered to the borrower.",
+            styles,
+            background=PALE_TEAL,
+        ),
+        PageBreak(),
+        Paragraph("ANNEXURE B - ACCEPTANCE AND SIGNATURES", styles["title"]),
+        _acceptance_heading("CONDITIONS ACCEPTED BY BORROWER", styles),
+        Spacer(1, 2 * mm),
+        Paragraph(
+            "By signing, the borrower confirms that the loan amount, interest, fees, total repayable, repayment dates, default consequences, "
+            "payment mandate and complaint process were disclosed and explained; the supplied personal and financial information is truthful; "
+            "and a completed copy of the agreement will be provided or made securely available.",
+            styles["body"],
+        ),
+        Spacer(1, 3 * mm),
+    ])
+
+    signature_table = Table([
+        [
+            _signature_box(
+                "BORROWER",
+                contract.borrower_signature_name or borrower.get("name"),
+                contract.borrower_signed_at,
+                contract.borrower_signature_method,
+                styles,
+            ),
+            _signature_box(
+                "BORROWER WITNESS",
+                contract.witness_name,
+                None,
+                None,
+                styles,
+            ),
+        ],
+        [
+            _signature_box(
+                "LENDER REPRESENTATIVE",
+                company_signer_name,
+                contract.company_signed_at,
+                contract.company_signature_method,
+                styles,
+            ),
+            _signature_box(
+                "LENDER WITNESS",
+                contract.witness_name,
+                None,
+                None,
+                styles,
+            ),
+        ],
+    ], colWidths=[87 * mm, 87 * mm], rowHeights=None)
+    signature_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
+    ]))
+    story.extend([
+        signature_table,
+        _key_value_table([
+            ("Place of borrower signature", "________________________________"),
+            ("Place of lender signature", "________________________________"),
+            ("Copy delivered to borrower", "[ ] Printed copy    [ ] Email    [ ] Secure portal    [ ] Other"),
+            ("Payment mandate annexed", "[ ] Yes    [ ] No    [ ] Not applicable"),
+        ], styles),
+        Spacer(1, 4 * mm),
+        KeepTogether([
+            Paragraph("DOCUMENT INTEGRITY AND AUDIT TRAIL", styles["section"]),
+            _key_value_table([
+                ("Contract hash", contract.contract_hash),
+                ("Generated", _timestamp_text(terms.get("generated_at"))),
+                ("Borrower signature", _timestamp_text(contract.borrower_signed_at)),
+                ("Company signature", _timestamp_text(contract.company_signed_at)),
+                ("Locked", _timestamp_text(contract.locked_at)),
+                ("System", f"{settings.PRODUCT_NAME} by {settings.DEVELOPER_NAME}"),
+            ], styles),
+        ]),
+        Spacer(1, 4 * mm),
+        Paragraph(
+            "LEGAL REVIEW NOTICE: This template follows the structure and commercial content of the supplied Filizwa agreement but has been "
+            "localised for Lesotho and merged with LoanHub disclosures, branding and audit controls. Each lender remains responsible for legal review, "
+            "licence details, pricing, notices, mandates, statement charges, enforcement wording and regulatory compliance before production use.",
+            styles["small"],
+        ),
+    ])
+
+    document.build(
+        story,
+        canvasmaker=lambda *args, **kwargs: _ContractCanvas(*args, contract=contract, db=db, **kwargs),
+    )
+    return buffer.getvalue()
+
+
+def _store_contract_pdf(
+    db: Session,
+    *,
+    contract: LoanContract,
+    requested_by_user_id: UUID,
+    increment_version: bool,
+) -> ManagedFile:
+    if increment_version:
+        contract.version = int(contract.version or 1) + 1
+    content = _contract_pdf(db, contract)
+    managed = store_bytes(
+        db,
+        content=content,
+        original_name=f"{contract.contract_number}-v{contract.version}.pdf",
+        mime_type="application/pdf",
+        owner_user_id=requested_by_user_id,
+        company_id=contract.company_id,
+        branch_id=contract.loan.branch_id if contract.loan else None,
+        category="loan_contract",
+        visibility="company",
+        description=f"Credit agreement {contract.contract_number}, PDF version {contract.version}",
+        linked_entity_type="loan_contract",
+        linked_entity_id=str(contract.id),
+        is_confidential=True,
+    )
+    contract.pdf_file_id = managed.id
+    return managed
+
+
+def contract_pdf_bytes(
+    db: Session,
+    *,
+    contract: LoanContract,
+    requested_by_user_id: UUID,
+) -> bytes:
+    """Return the current contract PDF, repairing missing local storage on demand.
+
+    Managed-file rows can survive a database restore while the corresponding
+    local storage directory does not. A print action must therefore treat a
+    missing physical PDF as a recoverable generated-artifact problem, not as a
+    permanently gone document. Recovery preserves the contract version and is
+    allowed for locked/signed contracts because the legal terms are unchanged.
+    """
+    if contract.pdf_file_id:
+        managed = db.get(ManagedFile, contract.pdf_file_id)
+        if managed and not managed.is_deleted:
+            try:
+                return read_file_bytes(managed)
+            except HTTPException as error:
+                if error.status_code != 410:
+                    raise
+
+    managed = _store_contract_pdf(
+        db,
+        contract=contract,
+        requested_by_user_id=requested_by_user_id,
+        increment_version=False,
+    )
+    db.commit()
+    db.refresh(contract)
+    return read_file_bytes(managed)
+
+
+def generate_contract(
+    db: Session,
+    *,
+    loan: ClientCompanyLoan,
+    requested_by_user_id: UUID,
+    witness_name: str | None = None,
+) -> LoanContract:
+    existing = db.query(LoanContract).filter(LoanContract.loan_id == loan.id).first()
+    if existing:
+        return existing
+    if not loan.installments:
+        raise HTTPException(status_code=409, detail="Repayment schedule must exist before contract generation")
+
+    terms = build_terms(db, loan)
+    canonical = json.dumps(terms, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    contract = LoanContract(
+        company_id=loan.company_id,
+        borrower_id=loan.borrower_id,
+        application_id=loan.direct_application_id,
+        loan_id=loan.id,
+        contract_number=f"LHC-{datetime.now(timezone.utc):%Y%m%d}-{str(loan.id).replace('-', '')[:10].upper()}",
+        version=1,
+        status="awaiting_signatures",
+        terms_snapshot=terms,
+        contract_hash=digest,
+        witness_name=witness_name.strip() if witness_name and witness_name.strip() else None,
+    )
+    db.add(contract)
+    db.flush()
+    _store_contract_pdf(
+        db,
+        contract=contract,
+        requested_by_user_id=requested_by_user_id,
+        increment_version=False,
+    )
+    db.commit()
+    db.refresh(contract)
+    return contract
+
+
+def regenerate_contract_pdf(
+    db: Session,
+    *,
+    contract: LoanContract,
+    requested_by_user_id: UUID,
+    increment_version: bool = True,
+) -> LoanContract:
+    if contract.locked_at and contract.status == "signed":
+        raise HTTPException(status_code=409, detail="A fully signed contract is locked and cannot be regenerated")
+    _store_contract_pdf(
+        db,
+        contract=contract,
+        requested_by_user_id=requested_by_user_id,
+        increment_version=increment_version,
+    )
+    db.commit()
+    db.refresh(contract)
+    return contract
+
+
+def refresh_contract_pdf_after_signature(
+    db: Session,
+    *,
+    contract: LoanContract,
+    requested_by_user_id: UUID,
+) -> None:
+    """Refresh the PDF in the same transaction after a signature is recorded."""
+    _store_contract_pdf(
+        db,
+        contract=contract,
+        requested_by_user_id=requested_by_user_id,
+        increment_version=True,
+    )
+
+
+def update_contract_status(contract: LoanContract) -> None:
+    if contract.borrower_signed_at and contract.company_signed_at:
+        contract.status = "signed"
+        contract.locked_at = datetime.now(timezone.utc)
+    elif contract.borrower_signed_at:
+        contract.status = "borrower_signed"
+    elif contract.company_signed_at:
+        contract.status = "company_signed"
+    else:
+        contract.status = "awaiting_signatures"

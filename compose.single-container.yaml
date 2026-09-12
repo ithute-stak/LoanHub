@@ -1,0 +1,78 @@
+name: ${COMPOSE_PROJECT_NAME:-loanhub}-single-app
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-loan_db}
+      POSTGRES_USER: ${DB_USER:-loanhub}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-loanhub} -d ${DB_NAME:-loan_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  loanhub:
+    image: loanhub-all-in-one:${LOANHUB_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Maseru}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-loan_db}
+      DB_USER: ${DB_USER:-loanhub}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      RUN_MIGRATIONS: "true"
+      JWT_PRIVATE_KEY_PATH: /app/backend/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /app/backend/secrets/jwt_public.pem
+      FILE_STORAGE_PATH: /app/backend/media/uploads
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./secrets:/app/backend/secrets:ro
+      - loanhub_files:/app/backend/media
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:3000/ >/dev/null"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  redis_data:
+  loanhub_files:

@@ -1,0 +1,20 @@
+digraph G { rankdir=LR; graph [bgcolor="transparent", fontname="DejaVu Sans", nodesep=0.35, ranksep=0.55, pad=0.2]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#b9c8d3", fillcolor="#ffffff", fontcolor="#0d2942", margin="0.14,0.09"]; edge [fontname="DejaVu Sans", fontsize=9, color="#658093", fontcolor="#526c7e", arrowsize=0.75];
+compose [label="User writes message,
+records voice note, or selects file"];
+member [shape=diamond,label="Conversation member?"];
+validate [label="Validate size, extension,
+MIME and context"];
+checksum [label="Compute SHA-256 checksum"];
+encrypt [label="Encrypt content at rest
+AES-GCM"];
+metadata [label="Save managed-file metadata
+and chat attachment link"];
+broadcast [label="Broadcast message event
+through shared realtime socket"];
+download [label="Authenticated download"];
+authorise [shape=diamond,label="Visibility and tenant
+authorisation passes?"];
+decrypt [label="Stream decrypted file"];
+reject [label="Reject safely",fillcolor="#fee9e9"];
+compose->member; member->validate [label="Yes"]; member->reject [label="No"]; validate->checksum->encrypt->metadata->broadcast; metadata->download->authorise; authorise->decrypt [label="Yes"]; authorise->reject [label="No"];
+}

@@ -1,0 +1,20 @@
+digraph G { rankdir=LR; graph [bgcolor="transparent", fontname="DejaVu Sans", nodesep=0.35, ranksep=0.55, pad=0.2]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#b9c8d3", fillcolor="#ffffff", fontcolor="#0d2942", margin="0.14,0.09"]; edge [fontname="DejaVu Sans", fontsize=9, color="#658093", fontcolor="#526c7e", arrowsize=0.75];
+subgraph cluster_users {label="Users"; color="#dfe8ee"; style="rounded"; platform [label="Platform owner",fillcolor="#dff7ed"]; company [label="Company and branch teams"]; borrower [label="Borrowers"];}
+web [label="Next.js 16
+Web/PWA interface",fillcolor="#e8f2ff",color="#7ca8c6"];
+proxy [label="Caddy
+HTTPS + reverse proxy",fillcolor="#eef7f4"];
+api [label="FastAPI modular monolith
+REST + WebSocket",fillcolor="#dff7ed",color="#65a897"];
+db [shape=cylinder,label="PostgreSQL 16
+Tenant data + audit"];
+redis [shape=cylinder,label="Redis 7
+Realtime pub/sub"];
+media [shape=folder,label="Encrypted media volume
+Files + reports"];
+maint [label="Maintenance worker
+Midnight reconciliation"];
+provider [label="M-Pesa / EcoCash
+adapter boundary",fillcolor="#fff6df"];
+platform->web; company->web; borrower->web; web->proxy [label="HTTPS/WSS"]; proxy->api; api->db; api->redis; api->media; maint->db; maint->media; api->provider [style=dashed,label="provider-specific"];
+}

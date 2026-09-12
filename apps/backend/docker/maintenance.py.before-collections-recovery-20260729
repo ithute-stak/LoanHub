@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from database.config.config import settings
+from database.session import SessionLocal
+from services.maintenance_service import run_maintenance
+from services.nightly_service import run_midnight_reconciliation
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("loanhub.maintenance")
+
+
+def _seconds_until_next_midnight() -> float:
+    zone = ZoneInfo(settings.APP_TIMEZONE)
+    now = datetime.now(zone)
+    tomorrow = now.date() + timedelta(days=1)
+    next_midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=zone)
+    return max(1.0, (next_midnight - now).total_seconds())
+
+
+def main() -> None:
+    interval = max(60, settings.MAINTENANCE_INTERVAL_SECONDS)
+    logger.info("Cash-only maintenance worker started; interval=%s; timezone=%s", interval, settings.APP_TIMEZONE)
+    last_midnight_date = None
+    while True:
+        db = SessionLocal()
+        try:
+            result = run_maintenance(db)
+            logger.info("Maintenance completed: %s", result.to_dict())
+        except Exception:
+            db.rollback()
+            logger.exception("Maintenance run failed")
+        finally:
+            db.close()
+
+        zone = ZoneInfo(settings.APP_TIMEZONE)
+        local_now = datetime.now(zone)
+        if settings.MIDNIGHT_REPORTS_ENABLED and last_midnight_date != local_now.date():
+            if local_now.hour == 0 or last_midnight_date is None:
+                nightly_db = SessionLocal()
+                try:
+                    outcome = run_midnight_reconciliation(nightly_db, local_now.date())
+                    logger.info("Nightly report outcome: %s", outcome)
+                    last_midnight_date = local_now.date()
+                except Exception:
+                    nightly_db.rollback()
+                    logger.exception("Nightly reconciliation/report generation failed")
+                finally:
+                    nightly_db.close()
+        time.sleep(min(interval, _seconds_until_next_midnight()))
+
+
+if __name__ == "__main__":
+    main()

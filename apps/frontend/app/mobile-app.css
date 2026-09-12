@@ -1,0 +1,301 @@
+/* LoanHub mobile/tablet application shell.
+ * The desktop dashboard remains unchanged at lg (1024px) and above.
+ */
+
+.loanhub-mobile-bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  min-height: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.loanhub-safe-area-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+
+.loanhub-mobile-more-sheet {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: loanhub-mobile-sheet-in 180ms ease-out;
+}
+
+@keyframes loanhub-mobile-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1023.98px) {
+  /* One vertical scroll owner on phones: the document. Nested dashboard page
+   * roots must stay in normal flow so touch gestures cannot become trapped in
+   * a second 100dvh scroller. */
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100%;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  html {
+    overflow-y: auto;
+    scroll-behavior: auto;
+  }
+
+  body {
+    position: relative;
+    overflow-y: visible;
+    overscroll-behavior-x: none;
+    /* Keep native browser overscroll/pull-to-refresh disabled because LoanHub
+     * already owns a guarded mobile pull-to-refresh gesture. This does not stop
+     * normal document scrolling; it only controls the viewport boundary. */
+    overscroll-behavior-y: none;
+    touch-action: pan-y pinch-zoom;
+  }
+
+  body > main#main-content {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 100dvh;
+    height: auto !important;
+    max-height: none !important;
+    overflow-x: clip;
+    overflow-y: visible !important;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y pinch-zoom;
+  }
+
+  /* Explicit LoanHub page roots are always normal-flow containers on mobile.
+   * Tables/editors/dialogs are deliberately excluded and keep local scrolling. */
+  body > main#main-content [data-loanhub-scroll-root],
+  body > main#main-content [data-loanhub-borrower-scroll] {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 100dvh;
+    height: auto !important;
+    max-height: none !important;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+    overscroll-behavior-y: auto !important;
+    touch-action: pan-y pinch-zoom;
+  }
+
+  /* Desktop full-screen page wrappers are a common source of trapped phone
+   * screens. Keep the original generic direct-main selectors for compatibility
+   * and add the stricter main-content selectors for the current app shell. */
+  main > .h-screen,
+  main > .h-dvh,
+  main > .h-full,
+  body > main#main-content > .h-screen,
+  body > main#main-content > .h-dvh,
+  body > main#main-content > .h-full,
+  body > main#main-content > [class*="h-[100dvh]"],
+  body > main#main-content main.h-screen,
+  body > main#main-content main.h-dvh,
+  body > main#main-content main.h-full,
+  body > main#main-content main[class*="h-[100dvh]"] {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 100dvh;
+    overflow-y: visible !important;
+  }
+
+  main > .overflow-hidden,
+  body > main#main-content > .overflow-hidden,
+  body > main#main-content main.overflow-hidden {
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+  }
+
+  /* Shell content mains must grow with their pages. This covers company,
+   * platform and system-owner screens without overriding nested data panes. */
+  body > main#main-content main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  html[data-loanhub-mobile-app="true"],
+  html[data-loanhub-mobile-app="true"] body {
+    width: 100%;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  html[data-loanhub-mobile-app="true"] {
+    overflow-y: auto;
+  }
+
+  html[data-loanhub-mobile-app="true"] body {
+    overflow-y: visible;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html[data-loanhub-mobile-app="true"] body > main#main-content {
+    width: 100%;
+    min-width: 0;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    overflow-y: visible;
+    padding-bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Keep the existing LoanHub assistant as a floating app action, but lift it
+   * above the fixed mobile navigation so both controls remain touchable. */
+  html[data-loanhub-mobile-app="true"] nav[aria-label="LoanHub floating tools"] {
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  html[data-loanhub-mobile-app="true"] header {
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:first-child > div {
+    min-width: 0;
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:last-child {
+    min-width: 0;
+    flex: 0 1 auto;
+    gap: 0.375rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:last-child::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Horizontal data remains horizontally scrollable without taking ownership
+   * of the vertical gesture. */
+  html[data-loanhub-mobile-app="true"] [data-slot="table-container"],
+  html[data-loanhub-mobile-app="true"] .loanhub-responsive-scroll,
+  html[data-loanhub-mobile-app="true"] .responsive-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  /* Dialogs and sheets are legitimate bounded scroll regions because the
+   * document is intentionally covered while they are open. */
+  html[data-loanhub-mobile-app="true"] [data-slot="dialog-content"],
+  html[data-loanhub-mobile-app="true"] [role="dialog"] .overflow-y-auto {
+    max-height: calc(100dvh - 1rem);
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  html[data-loanhub-mobile-app="true"] [data-slot="dialog-content"] {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    overflow-y: auto;
+  }
+
+  html[data-loanhub-mobile-app="true"] [data-slot="popover-content"] {
+    max-width: calc(100vw - 1rem);
+  }
+
+  html[data-loanhub-mobile-app="true"] img,
+  html[data-loanhub-mobile-app="true"] video,
+  html[data-loanhub-mobile-app="true"] canvas {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 639.98px) {
+  html[data-loanhub-mobile-app="true"] header {
+    min-height: 3.5rem;
+    gap: 0.5rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+    padding-bottom: 0.5rem;
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:first-child {
+    gap: 0.5rem;
+  }
+
+  html[data-loanhub-mobile-app="true"] header > div:first-child p:last-child {
+    display: none;
+  }
+
+  html[data-loanhub-mobile-app="true"] header button[data-workspace-mode],
+  html[data-loanhub-mobile-app="true"] header button[aria-label^="Open display size controls"],
+  html[data-loanhub-mobile-app="true"] header button[aria-label^="Switch to"][aria-label$="theme"] {
+    display: none;
+  }
+
+  /* Full-screen workspace toolbars become a compact, horizontally scrollable app bar. */
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-2"][class*="z-40"],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-3"][class*="z-40"] {
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    max-width: none;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-2"][class*="z-40"]::-webkit-scrollbar,
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-3"][class*="z-40"]::-webkit-scrollbar {
+    display: none;
+  }
+
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-2"][class*="z-40"] button[data-workspace-mode],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-3"][class*="z-40"] button[data-workspace-mode],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-2"][class*="z-40"] button[aria-label^="Open display size controls"],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-3"][class*="z-40"] button[aria-label^="Open display size controls"],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-2"][class*="z-40"] button[aria-label^="Switch to"][aria-label$="theme"],
+  html[data-loanhub-mobile-app="true"] div[class*="fixed"][class*="top-3"][class*="z-40"] button[aria-label^="Switch to"][aria-label$="theme"] {
+    display: none;
+  }
+
+  html[data-loanhub-mobile-app="true"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  html[data-loanhub-mobile-app="true"] select,
+  html[data-loanhub-mobile-app="true"] textarea {
+    font-size: max(1rem, 16px);
+  }
+
+  html[data-loanhub-mobile-app="true"] [data-slot="dialog-content"] {
+    gap: 1rem;
+    border-radius: 1.5rem;
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loanhub-mobile-more-sheet {
+    animation: none;
+  }
+}

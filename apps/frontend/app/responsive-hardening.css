@@ -1,0 +1,149 @@
+/*
+ * LoanHub responsive hardening
+ *
+ * System-wide guards for every company, borrower, platform and public route.
+ * Page-level components keep their own intentional desktop layouts; narrow
+ * screens receive safe dimensions, reachable controls and scrollable data.
+ */
+
+html,
+body {
+  max-width: 100%;
+}
+
+body {
+  overflow-x: clip;
+}
+
+main,
+main > *,
+section,
+article,
+aside,
+header,
+footer,
+form,
+fieldset,
+[role="dialog"],
+[role="tabpanel"] {
+  min-inline-size: 0;
+}
+
+img,
+picture,
+svg,
+video,
+canvas,
+iframe {
+  max-inline-size: 100%;
+}
+
+input,
+select,
+textarea,
+button {
+  max-inline-size: 100%;
+}
+
+.loanhub-responsive-scroll,
+[data-slot="table-container"],
+.responsive-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.loanhub-responsive-scroll > table,
+[data-slot="table-container"] > table,
+.responsive-table-wrap > table {
+  min-width: max-content;
+}
+
+@media (max-width: 1023.98px) {
+  .loanhub-page {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .loanhub-hero,
+  .loanhub-panel,
+  .loanhub-stat {
+    max-width: 100%;
+  }
+
+  .loanhub-hero {
+    border-radius: 1.5rem;
+  }
+
+  .loanhub-panel {
+    border-radius: 1.25rem;
+  }
+
+  .loanhub-stat {
+    min-width: 0;
+  }
+
+  /* The common Tailwind overflow utilities become explicit mobile data regions. */
+  main .overflow-x-auto,
+  main .overflow-auto {
+    max-width: 100%;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  main .overflow-x-auto > table,
+  main .overflow-auto > table {
+    min-width: max-content;
+  }
+}
+
+@media (max-width: 639.98px) {
+  .loanhub-page {
+    gap: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .loanhub-hero,
+  .loanhub-panel,
+  .loanhub-stat,
+  .form-section {
+    border-radius: 1rem;
+  }
+
+  .loanhub-stat,
+  .form-section {
+    padding: 1rem;
+  }
+
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Avoid iOS zoom and keep the smallest common action comfortably tappable. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: max(16px, 1rem);
+  }
+
+  button,
+  [role="button"],
+  a[data-slot="button"] {
+    min-height: 2.75rem;
+  }
+
+  [data-slot="dialog-content"] {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

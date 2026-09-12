@@ -1,0 +1,140 @@
+/* LoanHub form polish
+ * Loaded after the core and responsive styles so forms remain consistent across
+ * auth, borrower, company, platform and administration screens.
+ */
+
+:where(form, [data-slot="dialog-content"], [role="dialog"]) {
+  min-width: 0;
+}
+
+:where(form) :where(fieldset, .grid, .flex) {
+  min-width: 0;
+}
+
+:where(form label) {
+  overflow-wrap: anywhere;
+}
+
+:where(form input[type="text"],
+       form input[type="email"],
+       form input[type="tel"],
+       form input[type="password"],
+       form input[type="number"],
+       form input[type="date"],
+       form input[type="datetime-local"],
+       form input[type="month"],
+       form input[type="search"],
+       form input[type="url"],
+       form input[type="time"],
+       form select,
+       form textarea) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Native controls that are not built from LoanHub's shared UI primitives still
+ * get a comfortable touch target. :where() intentionally keeps specificity low
+ * so purpose-built component classes can override these defaults.
+ */
+:where(form input[type="text"]:not([data-slot="input"]),
+       form input[type="email"]:not([data-slot="input"]),
+       form input[type="tel"]:not([data-slot="input"]),
+       form input[type="password"]:not([data-slot="input"]),
+       form input[type="number"]:not([data-slot="input"]),
+       form input[type="date"]:not([data-slot="input"]),
+       form input[type="datetime-local"]:not([data-slot="input"]),
+       form input[type="month"]:not([data-slot="input"]),
+       form input[type="search"]:not([data-slot="input"]),
+       form input[type="url"]:not([data-slot="input"]),
+       form input[type="time"]:not([data-slot="input"]),
+       form select:not([data-slot]),
+       form textarea:not([data-slot="textarea"])) {
+  min-height: 2.75rem;
+  border-radius: 0.75rem;
+}
+
+:where([data-slot="input"], [data-slot="select-trigger"], [data-slot="textarea"]) {
+  max-width: 100%;
+}
+
+:where([data-slot="dialog-content"], [role="dialog"]) :where(form) {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* The login form deliberately uses icon-wrapped inputs. Keep those wrappers
+ * compact and balanced instead of creating oversized 64px+ form rows.
+ */
+form:has(#login-phone) > * + * {
+  margin-top: 1rem;
+}
+
+form:has(#login-phone) div:has(> #login-phone),
+form:has(#login-password) div:has(> #login-password),
+form:has(#login-second-factor) div:has(> #login-second-factor) {
+  min-height: 3.25rem;
+  border-radius: 0.875rem;
+  padding-inline: 0.75rem;
+}
+
+#login-phone,
+#login-password,
+#login-second-factor {
+  height: 3rem;
+}
+
+/* Long helper text should never force a form wider than the viewport. */
+form:has(#login-phone) label,
+form:has(#login-phone) span,
+form:has(#login-phone) p {
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  /* 16px prevents mobile Safari/Chrome from zooming the page when a field gains
+   * focus, while still allowing the desktop components to use compact text.
+   */
+  :where(form input[type="text"],
+         form input[type="email"],
+         form input[type="tel"],
+         form input[type="password"],
+         form input[type="number"],
+         form input[type="date"],
+         form input[type="datetime-local"],
+         form input[type="month"],
+         form input[type="search"],
+         form input[type="url"],
+         form input[type="time"],
+         form select,
+         form textarea,
+         [data-slot="input"],
+         [data-slot="select-trigger"],
+         [data-slot="textarea"]) {
+    font-size: 16px;
+  }
+
+  :where(form) :where(.grid[class*="grid-cols-2"], .grid[class*="grid-cols-3"], .grid[class*="grid-cols-4"]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :where(form) :where(button, [role="button"], [data-slot="button"]) {
+    max-width: 100%;
+  }
+
+  form:has(#login-phone) > * + * {
+    margin-top: 0.875rem;
+  }
+
+  form:has(#login-phone) div:has(> #login-phone),
+  form:has(#login-password) div:has(> #login-password),
+  form:has(#login-second-factor) div:has(> #login-second-factor) {
+    min-height: 3.125rem;
+    padding-inline: 0.625rem;
+  }
+
+  #login-phone,
+  #login-password,
+  #login-second-factor {
+    height: 2.875rem;
+  }
+}
