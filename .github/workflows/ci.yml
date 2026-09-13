@@ -17,6 +17,20 @@ jobs:
     name: Quality gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: loan_db
+          POSTGRES_USER: loanhub
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loanhub -d loan_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ENVIRONMENT: test
       SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
@@ -25,6 +39,12 @@ jobs:
       FILE_ENCRYPTION_KEY: ci-only-file-encryption-key
       RATE_LIMIT_ENABLED: 'false'
       METRICS_ENABLED: 'false'
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: loan_db
+      DB_USER: loanhub
+      DB_PASSWORD: ci-only-postgres-password
+      LOANHUB_VALIDATE_LIVE_MIGRATIONS: 'true'
 
     steps:
       - name: Checkout
