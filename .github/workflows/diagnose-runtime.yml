@@ -71,44 +71,36 @@ jobs:
             fi
           }
 
-          mapfile -t compose_ids < <(docker ps -aq --filter label=com.docker.compose.project=loanhub)
-          if [ "${#compose_ids[@]}" -gt 0 ]; then
-            echo "Found ${#compose_ids[@]} container(s) labelled as Compose project loanhub."
-            for id in "${compose_ids[@]}"; do
-              name="$(docker inspect -f '{{.Name}}' "$id" | sed 's#^/##')"
-              workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id" 2>/dev/null || true)"
-              config_files="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id" 2>/dev/null || true)"
-              secrets_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/secrets"}}{{.Source}}{{end}}{{end}}' "$id" 2>/dev/null || true)"
-              echo "Container: $name"
-              [ -n "$workdir" ] && echo "  compose working dir: $workdir"
-              [ -n "$config_files" ] && echo "  compose config files: $config_files"
-              [ -n "$secrets_src" ] && echo "  secrets mount source: $secrets_src"
-              add_candidate "$workdir"
-              if [ -n "$secrets_src" ]; then
-                add_candidate "$(dirname "$secrets_src")"
-              fi
-            done
-          else
-            echo 'No containers are currently labelled com.docker.compose.project=loanhub.'
-          fi
-
-          while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            id="${line%% *}"
-            name="${line#* }"
-            case "${name,,}" in
+          echo 'LoanHub-related containers:'
+          related=0
+          while IFS='|' read -r id name image; do
+            case "${name,,}|${image,,}" in
               *loanhub*)
+                related=$((related + 1))
+                project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$id" 2>/dev/null || true)"
+                service="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$id" 2>/dev/null || true)"
                 workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id" 2>/dev/null || true)"
+                config_files="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id" 2>/dev/null || true)"
+                state="$(docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null || true)"
+                echo "Container: $name image=$image state=$state project=${project:-none} service=${service:-none}"
+                [ -n "$workdir" ] && echo "  compose working dir: $workdir"
+                [ -n "$config_files" ] && echo "  compose config files: $config_files"
+                echo '  mounts:'
+                docker inspect -f '{{range .Mounts}}{{println "   " .Source "->" .Destination}}{{end}}' "$id" 2>/dev/null || true
+                add_candidate "$workdir"
                 secrets_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/secrets"}}{{.Source}}{{end}}{{end}}' "$id" 2>/dev/null || true)"
-                [ -n "$workdir" ] && add_candidate "$workdir"
                 [ -n "$secrets_src" ] && add_candidate "$(dirname "$secrets_src")"
                 ;;
             esac
-          done < <(docker ps -a --format '{{.ID}} {{.Names}}')
+          done < <(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}')
+          echo "LoanHub-related container count: $related"
+
+          echo 'LoanHub-related Docker volumes:'
+          docker volume ls --format '{{.Name}}' | grep -i 'loanhub' || true
 
           while IFS= read -r path; do
             [ -n "$path" ] && add_candidate "$path"
-          done < <(find /home /opt /srv -maxdepth 5 -type f -name '.env.production' -printf '%h\n' 2>/dev/null | grep -i 'loanhub' || true)
+          done < <(find /home /opt /srv -maxdepth 6 -type f \( -name '.env.production' -o -name '.env' \) -printf '%h\n' 2>/dev/null | grep -i 'loanhub' || true)
 
           echo 'Validated candidate state:'
           valid=0
@@ -126,10 +118,5 @@ jobs:
               valid=$((valid + 1))
             fi
           done
-
           echo "Valid LoanHub runtime candidates: $valid"
-          test "$valid" -ge 1 || {
-            echo 'No existing LoanHub runtime with environment file and JWT keys was found.' >&2
-            exit 1
-          }
           REMOTE
