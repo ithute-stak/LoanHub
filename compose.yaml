@@ -1,0 +1,143 @@
+name: ${COMPOSE_PROJECT_NAME:-loanhub}
+
+x-backend: &backend
+  image: ${LOANHUB_BACKEND_IMAGE:-loanhub-backend}:${LOANHUB_IMAGE_TAG:-local}
+  build:
+    context: ./apps/backend
+    dockerfile: Dockerfile
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Maseru}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://loanhub.co.ls}
+  CORS_ORIGINS: ${CORS_ORIGINS:-https://loanhub.co.ls}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-loanhub}
+  DB_USER: ${DB_USER:-loanhub}
+  DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.production}
+  REDIS_URL: redis://redis:6379/0
+  JWT_PRIVATE_KEY_PATH: /app/secrets/jwt_private.pem
+  JWT_PUBLIC_KEY_PATH: /app/secrets/jwt_public.pem
+  FILE_STORAGE_PATH: /app/media/uploads
+  RUN_MIGRATIONS: "false"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-loanhub}
+      POSTGRES_USER: ${DB_USER:-loanhub}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-loanhub} -d ${DB_NAME:-loanhub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [loanhub]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [loanhub]
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    env_file: ${LOANHUB_ENV_FILE:-.env.production}
+    environment:
+      <<: *backend-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
+    networks: [loanhub]
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    env_file: ${LOANHUB_ENV_FILE:-.env.production}
+    environment:
+      <<: *backend-environment
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - loanhub_files:/app/media
+    ports:
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    networks: [loanhub]
+
+  maintenance:
+    <<: *backend
+    restart: unless-stopped
+    env_file: ${LOANHUB_ENV_FILE:-.env.production}
+    environment:
+      <<: *backend-environment
+    command: ["python", "docker/maintenance.py"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - loanhub_files:/app/media
+    networks: [loanhub]
+
+  frontend:
+    image: ${LOANHUB_FRONTEND_IMAGE:-loanhub-frontend}:${LOANHUB_IMAGE_TAG:-local}
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.loanhub.co.ls/api/v1}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    networks: [loanhub]
+
+networks:
+  loanhub:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  loanhub_files:
