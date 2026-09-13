@@ -38,13 +38,38 @@ jobs:
         with:
           ref: ${{ env.RELEASE_SHA }}
 
-      - name: Validate protected inputs
+      - name: Validate and normalize protected inputs
         run: |
           set -euo pipefail
           test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret' >&2; exit 1; }
           test -n "$VPS_USER" || { echo 'Missing VPS_USER secret' >&2; exit 1; }
           test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret' >&2; exit 1; }
           test -n "$VPS_APP_DIR" || { echo 'Missing VPS_APP_DIR secret' >&2; exit 1; }
+
+          normalized_host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          normalized_user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          normalized_app_dir="$(printf '%s' "$VPS_APP_DIR" | tr -d '\r\n')"
+
+          # Accept a common secret-entry mistake where VPS_USER was saved as
+          # user@host. The authoritative host still comes from VPS_HOST.
+          case "$normalized_user" in
+            *@*) normalized_user="${normalized_user%%@*}" ;;
+          esac
+          # Likewise tolerate VPS_HOST accidentally being saved as user@host.
+          case "$normalized_host" in
+            *@*) normalized_host="${normalized_host##*@}" ;;
+          esac
+
+          test -n "$normalized_user" || { echo 'VPS_USER resolves to an empty username.' >&2; exit 1; }
+          test -n "$normalized_host" || { echo 'VPS_HOST resolves to an empty hostname.' >&2; exit 1; }
+          [[ "$normalized_user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_USER contains unsupported SSH username characters.' >&2; exit 1; }
+          [[ "$normalized_host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_HOST contains unsupported hostname characters.' >&2; exit 1; }
+          [[ "$normalized_app_dir" == /* ]] || { echo 'VPS_APP_DIR must be an absolute path.' >&2; exit 1; }
+
+          printf 'LOANHUB_VPS_HOST=%s\n' "$normalized_host" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_USER=%s\n' "$normalized_user" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_APP_DIR=%s\n' "$normalized_app_dir" >> "$GITHUB_ENV"
+          echo 'VPS connection inputs normalized without exposing their values.'
 
       - name: Build immutable application images
         run: |
@@ -79,23 +104,23 @@ jobs:
           else
             ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
           fi
-          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          ssh-keyscan -T 10 -H "$LOANHUB_VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
       - name: Transfer tested runtime bundle
         run: |
           set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          release_dir="${VPS_APP_DIR}/releases/${RELEASE_SHA}"
-          ssh "$remote" "mkdir -p '$release_dir' '$VPS_APP_DIR/backups'"
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          release_dir="${LOANHUB_VPS_APP_DIR}/releases/${RELEASE_SHA}"
+          ssh "$remote" "mkdir -p '$release_dir' '$LOANHUB_VPS_APP_DIR/backups'"
           scp compose.yaml compose.edge.yml "$remote:$release_dir/"
           scp /tmp/loanhub-backend.tar.gz /tmp/loanhub-frontend.tar.gz "$remote:$release_dir/"
 
       - name: Deploy without replacing persistent data
         run: |
           set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" "APP_DIR='$LOANHUB_VPS_APP_DIR' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
           set -Eeuo pipefail
           release_dir="$APP_DIR/releases/$RELEASE_SHA"
           cleanup() {
