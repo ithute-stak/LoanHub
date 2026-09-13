@@ -1,0 +1,182 @@
+name: Deploy LoanHub Production
+
+on:
+  workflow_run:
+    workflows: ["LoanHub CI"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: loanhub-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy tested LoanHub release
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Validate protected inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret' >&2; exit 1; }
+          test -n "$VPS_USER" || { echo 'Missing VPS_USER secret' >&2; exit 1; }
+          test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret' >&2; exit 1; }
+          test -n "$VPS_APP_DIR" || { echo 'Missing VPS_APP_DIR secret' >&2; exit 1; }
+
+      - name: Build immutable application images
+        run: |
+          set -euo pipefail
+          docker build -t "loanhub-backend:${RELEASE_SHA}" apps/backend
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.loanhub.co.ls/api/v1 \
+            -t "loanhub-frontend:${RELEASE_SHA}" \
+            apps/frontend
+          docker save "loanhub-backend:${RELEASE_SHA}" | gzip -1 > /tmp/loanhub-backend.tar.gz
+          docker save "loanhub-frontend:${RELEASE_SHA}" | gzip -1 > /tmp/loanhub-frontend.tar.gz
+          sha256sum /tmp/loanhub-backend.tar.gz /tmp/loanhub-frontend.tar.gz
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_deploy"
+          chmod 600 "$HOME/.ssh/loanhub_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/loanhub-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/loanhub-askpass.sh
+            SSH_ASKPASS=/tmp/loanhub-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
+            rm -f /tmp/loanhub-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Transfer tested runtime bundle
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          release_dir="${VPS_APP_DIR}/releases/${RELEASE_SHA}"
+          ssh "$remote" "mkdir -p '$release_dir' '$VPS_APP_DIR/backups'"
+          scp compose.yaml compose.edge.yml "$remote:$release_dir/"
+          scp /tmp/loanhub-backend.tar.gz /tmp/loanhub-frontend.tar.gz "$remote:$release_dir/"
+
+      - name: Deploy without replacing persistent data
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          release_dir="$APP_DIR/releases/$RELEASE_SHA"
+          cleanup() {
+            rm -f "$release_dir/loanhub-backend.tar.gz" "$release_dir/loanhub-frontend.tar.gz"
+          }
+          trap cleanup EXIT
+
+          test -f "$APP_DIR/.env.production" || { echo "Missing $APP_DIR/.env.production; refusing to invent production secrets." >&2; exit 1; }
+          test -d "$APP_DIR/secrets" || { echo "Missing $APP_DIR/secrets directory." >&2; exit 1; }
+          test -f "$APP_DIR/secrets/jwt_private.pem" || { echo 'Missing LoanHub JWT private key.' >&2; exit 1; }
+          test -f "$APP_DIR/secrets/jwt_public.pem" || { echo 'Missing LoanHub JWT public key.' >&2; exit 1; }
+
+          cp "$release_dir/compose.yaml" "$APP_DIR/compose.yaml"
+          cp "$release_dir/compose.edge.yml" "$APP_DIR/compose.edge.yml"
+          chmod 600 "$APP_DIR/.env.production"
+
+          echo '[LoanHub] Loading tested immutable images'
+          gzip -dc "$release_dir/loanhub-backend.tar.gz" | docker load
+          gzip -dc "$release_dir/loanhub-frontend.tar.gz" | docker load
+          docker network inspect ithute-edge >/dev/null 2>&1 || docker network create ithute-edge >/dev/null
+
+          cd "$APP_DIR"
+          set -a
+          source .env.production
+          set +a
+          export LOANHUB_ENV_FILE=.env.production
+          export LOANHUB_BACKEND_IMAGE=loanhub-backend
+          export LOANHUB_FRONTEND_IMAGE=loanhub-frontend
+          export LOANHUB_IMAGE_TAG="$RELEASE_SHA"
+          compose=(docker compose --env-file .env.production -p loanhub -f compose.yaml -f compose.edge.yml)
+
+          echo '[LoanHub] Starting persistent database and cache first'
+          "${compose[@]}" up -d --no-build --pull never db redis
+
+          db_id="$("${compose[@]}" ps -q db)"
+          test -n "$db_id" || { echo 'LoanHub PostgreSQL container did not start.' >&2; exit 1; }
+          db_health=''
+          for _ in $(seq 1 45); do
+            db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$db_id" 2>/dev/null || true)"
+            [ "$db_health" = healthy ] && break
+            sleep 2
+          done
+          if [ "$db_health" != healthy ]; then
+            echo "LoanHub PostgreSQL is not healthy: ${db_health:-unknown}" >&2
+            "${compose[@]}" logs --tail=200 db
+            exit 1
+          fi
+
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          backup="$APP_DIR/backups/loanhub-before-${RELEASE_SHA}-${timestamp}.dump"
+          echo "[LoanHub] Backing up PostgreSQL before migrations: $backup"
+          "${compose[@]}" exec -T db pg_dump --format=custom --no-owner --no-privileges -U "$DB_USER" "$DB_NAME" > "$backup"
+          test -s "$backup"
+
+          echo '[LoanHub] Applying Alembic migrations'
+          "${compose[@]}" up --no-build --pull never migrate
+
+          echo '[LoanHub] Starting backend, maintenance worker and frontend'
+          "${compose[@]}" up -d --no-build --pull never db redis backend maintenance frontend
+
+          wait_healthy() {
+            service="$1"
+            container_id="$("${compose[@]}" ps -q "$service")"
+            test -n "$container_id" || { echo "Missing container for $service" >&2; return 1; }
+            state=''
+            for _ in $(seq 1 60); do
+              state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+              [ "$state" = healthy ] && return 0
+              sleep 3
+            done
+            echo "$service failed health verification: ${state:-unknown}" >&2
+            "${compose[@]}" logs --tail=250 "$service"
+            return 1
+          }
+          wait_healthy backend
+          wait_healthy frontend
+          "${compose[@]}" ps
+          echo '[LoanHub] VPS deployment is healthy. Existing persistent volumes were reused.'
+          REMOTE
+
+      - name: Deployment summary
+        run: |
+          echo "LoanHub release ${RELEASE_SHA} deployed to the VPS."
+          echo "The application is attached to the private shared edge network as loanhub-web and loanhub-api."
