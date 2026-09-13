@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose-backups:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: production
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -65,4 +65,25 @@ jobs:
             \( -iname '*.dump' -o -iname '*.backup' -o -iname '*.sql' -o -iname '*.sql.gz' -o -iname '*postgres*.tar*' -o -iname '*loanhub*.tar*' \) \
             -printf '%p|%s|%TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
             | sort || true
+          REMOTE
+
+      - name: Validate newest PostgreSQL archive without restoring it
+        run: |
+          set -euo pipefail
+          ssh "$TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          backup_dir=/opt/loanhub.legacy-test/backups
+          test -d "$backup_dir"
+          latest="$(find "$backup_dir" -maxdepth 1 -type f -name 'loanhub-before-*.dump' -printf '%T@|%f\n' | sort -nr | head -n1 | cut -d'|' -f2-)"
+          test -n "$latest" || { echo 'No LoanHub pg_dump archive found.' >&2; exit 1; }
+          bytes="$(stat -c '%s' "$backup_dir/$latest")"
+          echo "Validating newest archive: $latest ($bytes bytes)"
+          docker run --rm \
+            -v "$backup_dir:/backups:ro" \
+            postgres:16-alpine \
+            pg_restore --list "/backups/$latest" >/tmp/loanhub-pgrestore-list.txt
+          objects="$(grep -Ec '^[0-9]+;' /tmp/loanhub-pgrestore-list.txt || true)"
+          rm -f /tmp/loanhub-pgrestore-list.txt
+          test "$objects" -gt 0 || { echo 'Archive contains no restorable objects.' >&2; exit 1; }
+          echo "PostgreSQL archive is readable and contains $objects restorable objects."
           REMOTE
