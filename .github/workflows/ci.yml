@@ -17,6 +17,14 @@ jobs:
     name: Quality gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
+      FERNET_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CHAT_ENCRYPTION_KEY: ci-only-chat-encryption-key
+      FILE_ENCRYPTION_KEY: ci-only-file-encryption-key
+      RATE_LIMIT_ENABLED: 'false'
+      METRICS_ENABLED: 'false'
 
     steps:
       - name: Checkout
