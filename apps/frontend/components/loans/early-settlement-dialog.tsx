@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CircleDollarSign, ShieldCheck } from "lucide-react";
+import { CalendarClock, CircleDollarSign, History, ShieldCheck } from "lucide-react";
 
 import {
   createEarlySettlementQuote,
@@ -43,6 +43,15 @@ function localDateValue(): string {
     .slice(0, 10);
 }
 
+function legacySettlementStartDate(loan: Loan | null): string {
+  if (!loan) return localDateValue();
+  return (
+    loan.disbursed_at?.slice(0, 10)
+    || loan.approved_at?.slice(0, 10)
+    || localDateValue()
+  );
+}
+
 function Stat({
   label,
   value,
@@ -79,6 +88,19 @@ export function EarlySettlementDialog({
   const [evidence, setEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
   const [idempotencyKey, setIdempotencyKey] = useState("");
 
+  const isLegacyCashout = Boolean(
+    loan
+    && (
+      loan.origination_channel === "legacy_cashout"
+      || loan.calculation_breakdown?.source === "legacy_cashout_book"
+    )
+  );
+  const today = localDateValue();
+  const minimumSettlementDate = isLegacyCashout ? legacySettlementStartDate(loan) : today;
+  const isHistoricalLegacySettlement = Boolean(
+    isLegacyCashout && settlementDate && settlementDate < today
+  );
+
   const settlementMethods = useMemo(
     () => methods.filter((item) => item.value === "cash" || item.value === "lelefapaygate"),
     [methods],
@@ -105,9 +127,12 @@ export function EarlySettlementDialog({
       });
       setQuote(result);
       setIdempotencyKey(createIdempotencyKey(`early-settlement-${loan.id}-${result.id}`));
-      toast.success("Settlement quote calculated", {
-        description: `${formatMoney(result.unearned_interest_rebate)} of unearned interest will be removed.`,
-      });
+      toast.success(
+        isHistoricalLegacySettlement ? "Historical settlement quote calculated" : "Settlement quote calculated",
+        {
+          description: `${formatMoney(result.unearned_interest_rebate)} of unearned interest will be removed.`,
+        },
+      );
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "The settlement quote could not be calculated."));
     } finally {
@@ -126,8 +151,9 @@ export function EarlySettlementDialog({
       return;
     }
 
+    const paymentMethod = isHistoricalLegacySettlement ? "cash" : evidence.payment_method;
     if (
-      evidence.payment_method === "lelefapaygate"
+      paymentMethod === "lelefapaygate"
       && (!evidence.gateway_provider || !evidence.gateway_customer_phone.trim())
     ) {
       toast.warning("Choose a LelefaPayGate provider and enter the required customer phone number.");
@@ -137,9 +163,9 @@ export function EarlySettlementDialog({
     setPaying(true);
     try {
       const result = await payEarlySettlement(loan.id, quote.id, {
-        payment_method: evidence.payment_method,
-        gateway_provider: evidence.gateway_provider || null,
-        gateway_customer_phone: evidence.gateway_customer_phone.trim() || null,
+        payment_method: paymentMethod,
+        gateway_provider: paymentMethod === "lelefapaygate" ? evidence.gateway_provider || null : null,
+        gateway_customer_phone: paymentMethod === "lelefapaygate" ? evidence.gateway_customer_phone.trim() || null : null,
         borrower_acknowledged: acknowledged,
         agreement_note: agreementNote.trim(),
         agreement_reference: agreementReference.trim() || null,
@@ -148,7 +174,7 @@ export function EarlySettlementDialog({
       });
       setQuote(result.settlement);
       if (result.payment.status === "succeeded") {
-        toast.success("Loan settled early", {
+        toast.success(isHistoricalLegacySettlement ? "Historical settlement recorded" : "Loan settled early", {
           description: `${loan.loan_reference} now has a ${result.settlement.chargeable_periods}-month charge and ${formatMoney(result.settlement.unearned_interest_rebate)} interest rebate.`,
         });
         await onCompleted(loan.id);
@@ -192,13 +218,26 @@ export function EarlySettlementDialog({
               </AlertDescription>
             </Alert>
 
+            {isHistoricalLegacySettlement ? (
+              <Alert className="border-amber-500/30 bg-amber-500/5">
+                <History className="h-4 w-4 text-amber-700" />
+                <AlertTitle>Historical legacy settlement</AlertTitle>
+                <AlertDescription>
+                  This date is before today and belongs to a migrated cash-out book. LoanHub will
+                  record the settlement as Cash using {formatDate(settlementDate)} as the effective
+                  payment and settlement date, while preserving the current audit-recording time.
+                  Only the Company Owner can post this backdated settlement.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
               <div className="space-y-2">
-                <Label htmlFor="settlement-date">Interest charge-through date</Label>
+                <Label htmlFor="settlement-date">Interest charge-through / settlement date</Label>
                 <Input
                   id="settlement-date"
                   type="date"
-                  min={localDateValue()}
+                  min={minimumSettlementDate}
                   value={settlementDate}
                   disabled={quoting || paying}
                   onChange={(event) => {
@@ -206,6 +245,11 @@ export function EarlySettlementDialog({
                     setQuote(null);
                   }}
                 />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {isLegacyCashout
+                    ? "Legacy cash-out loans may use a past settlement date from the original book."
+                    : "Live LoanHub loans cannot be settled using a date before today."}
+                </p>
               </div>
               <LoadingButton
                 loading={quoting}
@@ -226,6 +270,11 @@ export function EarlySettlementDialog({
                     {quote.original_term_months} months → {quote.chargeable_periods} months
                   </Badge>
                   <Badge variant="outline">Valid until {formatDate(quote.quote_expires_at)}</Badge>
+                  {isHistoricalLegacySettlement ? (
+                    <Badge variant="outline" className="border-amber-500/30 text-amber-700">
+                      Historical · Cash only
+                    </Badge>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -258,12 +307,22 @@ export function EarlySettlementDialog({
                   </div>
                 </div>
 
-                <PaymentMethodFields
-                  methods={settlementMethods}
-                  value={evidence}
-                  onChange={setEvidence}
-                  disabled={paying}
-                />
+                {isHistoricalLegacySettlement ? (
+                  <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm">
+                    <p className="font-black">Historical payment method: Cash</p>
+                    <p className="mt-1 leading-5 text-muted-foreground">
+                      Electronic gateway settlement is disabled for a past book entry. The final
+                      settlement payment will carry the historical effective date above.
+                    </p>
+                  </div>
+                ) : (
+                  <PaymentMethodFields
+                    methods={settlementMethods}
+                    value={evidence}
+                    onChange={setEvidence}
+                    disabled={paying}
+                  />
+                )}
 
                 <div className="space-y-2">
                   <Label htmlFor="settlement-agreement">Settlement agreement / acknowledgement</Label>
@@ -271,18 +330,24 @@ export function EarlySettlementDialog({
                     id="settlement-agreement"
                     value={agreementNote}
                     disabled={paying}
-                    placeholder="Example: Borrower reviewed the revised one-month charge and settlement amount and agreed to settle the account in full."
+                    placeholder={
+                      isHistoricalLegacySettlement
+                        ? "Example: Original cash-out book confirms the borrower settled this account in full on the selected historical date."
+                        : "Example: Borrower reviewed the revised one-month charge and settlement amount and agreed to settle the account in full."
+                    }
                     onChange={(event) => setAgreementNote(event.target.value)}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="settlement-reference">Signed addendum reference (optional)</Label>
+                  <Label htmlFor="settlement-reference">
+                    {isHistoricalLegacySettlement ? "Original book / settlement reference (optional)" : "Signed addendum reference (optional)"}
+                  </Label>
                   <Input
                     id="settlement-reference"
                     value={agreementReference}
                     disabled={paying}
-                    placeholder="ADD-2026-001"
+                    placeholder={isHistoricalLegacySettlement ? "BOOK-01 / FOLIO-00124" : "ADD-2026-001"}
                     onChange={(event) => setAgreementReference(event.target.value)}
                   />
                 </div>
@@ -296,9 +361,12 @@ export function EarlySettlementDialog({
                     onChange={(event) => setAcknowledged(event.target.checked)}
                   />
                   <span>
-                    <strong className="block">Borrower acknowledgement recorded</strong>
-                    The borrower understands the revised term, retained fee, earned interest,
-                    interest rebate and final settlement amount.
+                    <strong className="block">
+                      {isHistoricalLegacySettlement ? "Historical settlement evidence confirmed" : "Borrower acknowledgement recorded"}
+                    </strong>
+                    {isHistoricalLegacySettlement
+                      ? "I confirm the original book or supporting record shows this account was settled on the selected historical date."
+                      : "The borrower understands the revised term, retained fee, earned interest, interest rebate and final settlement amount."}
                   </span>
                 </label>
               </>
@@ -313,12 +381,12 @@ export function EarlySettlementDialog({
           {quote ? (
             <LoadingButton
               loading={paying}
-              loadingText="Securing settlement…"
+              loadingText={isHistoricalLegacySettlement ? "Recording historical settlement…" : "Securing settlement…"}
               disabled={!acknowledged || agreementNote.trim().length < 3 || quote.settlement_amount <= 0}
               onClick={() => void settle()}
             >
               <CircleDollarSign className="h-4 w-4" />
-              Settle {formatMoney(quote.settlement_amount)}
+              {isHistoricalLegacySettlement ? "Record" : "Settle"} {formatMoney(quote.settlement_amount)}
             </LoadingButton>
           ) : null}
         </DialogFooter>
