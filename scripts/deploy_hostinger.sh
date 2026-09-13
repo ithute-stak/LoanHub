@@ -19,8 +19,8 @@ set +a
 LOANHUB_PRODUCTION_ENV_FILE="$ENV_FILE" bash ./scripts/production_preflight.sh
 
 export LOANHUB_ENV_FILE="${LOANHUB_ENV_FILE:-$ENV_FILE}"
-export LOANHUB_BACKEND_IMAGE="${LOANHUB_BACKEND_IMAGE:-ghcr.io/lelefe-dc/loanhub-backend}"
-export LOANHUB_FRONTEND_IMAGE="${LOANHUB_FRONTEND_IMAGE:-ghcr.io/lelefe-dc/loanhub-frontend}"
+export LOANHUB_BACKEND_IMAGE="${LOANHUB_BACKEND_IMAGE:-ghcr.io/ithute-stak/loanhub-backend}"
+export LOANHUB_FRONTEND_IMAGE="${LOANHUB_FRONTEND_IMAGE:-ghcr.io/ithute-stak/loanhub-frontend}"
 export LOANHUB_IMAGE_TAG="${LOANHUB_IMAGE_TAG:-latest}"
 
 COMPOSE=(docker compose --env-file "$ENV_FILE" --profile production)

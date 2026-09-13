@@ -1,0 +1,120 @@
+name: LoanHub CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: loanhub-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: loan_db
+          POSTGRES_USER: loanhub
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loanhub -d loan_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
+      FERNET_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CHAT_ENCRYPTION_KEY: ci-only-chat-encryption-key
+      FILE_ENCRYPTION_KEY: ci-only-file-encryption-key
+      RATE_LIMIT_ENABLED: 'false'
+      METRICS_ENABLED: 'false'
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: loan_db
+      DB_USER: loanhub
+      DB_PASSWORD: ci-only-postgres-password
+      LOANHUB_VALIDATE_LIVE_MIGRATIONS: 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Generate ephemeral CI JWT keys
+        run: |
+          set -euo pipefail
+          key_dir="$GITHUB_WORKSPACE/.ci-secrets"
+          mkdir -p "$key_dir"
+          chmod 700 "$key_dir"
+          openssl genpkey \
+            -algorithm RSA \
+            -pkeyopt rsa_keygen_bits:2048 \
+            -out "$key_dir/jwt_private.pem" >/dev/null 2>&1
+          openssl pkey \
+            -in "$key_dir/jwt_private.pem" \
+            -pubout \
+            -out "$key_dir/jwt_public.pem" >/dev/null 2>&1
+          chmod 600 "$key_dir/jwt_private.pem"
+          chmod 644 "$key_dir/jwt_public.pem"
+          printf 'JWT_PRIVATE_KEY_PATH=%s\n' "$key_dir/jwt_private.pem" >> "$GITHUB_ENV"
+          printf 'JWT_PUBLIC_KEY_PATH=%s\n' "$key_dir/jwt_public.pem" >> "$GITHUB_ENV"
+
+      - name: Install backend dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/backend/requirements.txt -r apps/backend/requirements-dev.txt
+
+      - name: Install frontend dependencies
+        run: pnpm --dir apps/frontend install --frozen-lockfile
+
+      - name: Run project validation
+        run: |
+          set -euo pipefail
+          bash ./scripts/validate_project.sh
+
+      - name: Validate system-owner recovery helper
+        run: |
+          set -euo pipefail
+          python -m py_compile apps/backend/scripts/sync_system_owner.py
+          grep -Fq 'DEFAULT_SYSTEM_OWNER_PHONE = "59001394"' apps/backend/scripts/sync_system_owner.py
+          grep -Fq 'password = os.getenv("SYSTEM_OWNER_PASSWORD", "")' apps/backend/scripts/sync_system_owner.py
+          grep -Fq 'SYSTEM_OWNER_PASSWORD: ${{ secrets.LOANHUB_SYSTEM_OWNER_PASSWORD }}' .github/workflows/system-owner-access.yml
+          echo 'System-owner recovery uses the protected GitHub Actions secret and contains no embedded password value.'
+
+      - name: Build backend production image
+        run: docker build -t loanhub-backend-ci:${{ github.sha }} apps/backend
+
+      - name: Build frontend production image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.loanhub.co.ls/api/v1 \
+            -t loanhub-frontend-ci:${{ github.sha }} \
+            apps/frontend
