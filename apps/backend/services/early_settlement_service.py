@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.company_staff import CompanyStaff
 from database.models.early_settlement import LoanEarlySettlement
 from database.models.enums import (
     InstallmentStatus,
@@ -21,6 +22,7 @@ from database.models.enums import (
     PaymentProvider,
     PaymentPurpose,
     PaymentStatus,
+    UserRole,
 )
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
@@ -30,6 +32,7 @@ from services.interest_calculation_service import (
     generate_monthly_due_dates,
     normalize_interest_method,
 )
+from utils.payment_dates import current_payment_date, payment_date_to_utc
 
 
 MONEY = Decimal("0.01")
@@ -46,6 +49,34 @@ def money(value: Decimal | int | float | str | None) -> Decimal:
     return Decimal(str(value or 0)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
+def is_legacy_cashout_loan(loan: ClientCompanyLoan) -> bool:
+    """Return True only for loans migrated from the historical cash-out book."""
+    breakdown = loan.calculation_breakdown or {}
+    return (
+        getattr(loan, "origination_channel", None) == "legacy_cashout"
+        or breakdown.get("source") == "legacy_cashout_book"
+    )
+
+
+def _is_company_owner(
+    db: Session,
+    *,
+    company_id: UUID,
+    user_id: UUID,
+) -> bool:
+    return (
+        db.query(CompanyStaff.id)
+        .filter(
+            CompanyStaff.company_id == company_id,
+            CompanyStaff.user_id == user_id,
+            CompanyStaff.role == UserRole.COMPANY_OWNER,
+            CompanyStaff.is_active.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
 def settlement_interest_start(loan: ClientCompanyLoan) -> date:
     raw = (loan.calculation_breakdown or {}).get("interest_start_date")
     if raw:
@@ -56,6 +87,39 @@ def settlement_interest_start(loan: ClientCompanyLoan) -> date:
     if loan.disbursed_at:
         return loan.disbursed_at.date()
     raise HTTPException(status_code=409, detail="The loan does not have a recorded interest start date")
+
+
+def validate_settlement_date(
+    loan: ClientCompanyLoan,
+    settlement_date: date,
+    *,
+    today: date | None = None,
+) -> date:
+    """Validate quote dates while allowing historical dates only for legacy loans.
+
+    Company-owner permission is enforced separately in the quote/payment
+    service when the selected date is in the past. Non-legacy backdates remain
+    forbidden so normal live loans cannot be rewritten historically.
+    """
+    current = today or current_payment_date()
+    if settlement_date < current and not is_legacy_cashout_loan(loan):
+        raise HTTPException(
+            status_code=422,
+            detail="Only legacy cash-out loans can use a historical settlement date",
+        )
+    if settlement_date > current + timedelta(days=30):
+        raise HTTPException(
+            status_code=422,
+            detail="Settlement quotes cannot be dated more than 30 days ahead",
+        )
+
+    start_date = settlement_interest_start(loan)
+    if settlement_date < start_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Settlement date cannot precede the interest start date",
+        )
+    return current
 
 
 def settlement_due_dates(loan: ClientCompanyLoan) -> list[date]:
@@ -186,6 +250,42 @@ def _payment_components(
     return money(principal), money(interest), money(fees)
 
 
+def _legacy_installment_paid_components(
+    loan: ClientCompanyLoan,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Split cumulative legacy-book payments without inventing payment rows.
+
+    Legacy import intentionally stores historic money in ``loan.amount_paid``
+    and installment ``paid_amount`` only. Later live repayments also update the
+    schedule, so the schedule is the single cumulative source for both periods.
+    """
+    principal = Decimal("0")
+    interest = Decimal("0")
+    fees = Decimal("0")
+    for installment in loan.installments:
+        if getattr(installment, "is_superseded", False):
+            continue
+        paid = min(
+            max(money(installment.paid_amount), Decimal("0")),
+            max(money(installment.total_due), Decimal("0")),
+        )
+        if paid <= 0:
+            continue
+        total = money(installment.total_due)
+        if total <= 0:
+            principal += paid
+            continue
+        principal += money(paid * money(installment.principal_due) / total)
+        interest += money(paid * money(installment.interest_due) / total)
+        fees += money(paid * money(installment.fee_due) / total)
+
+    # Absorb schedule/rounding differences into principal so the split always
+    # reconciles exactly to the authoritative migrated loan amount_paid value.
+    difference = money(loan.amount_paid) - money(principal + interest + fees)
+    principal = money(principal + difference)
+    return money(principal), money(interest), money(fees)
+
+
 def _daily_interest_with_actual_payments(
     db: Session,
     loan: ClientCompanyLoan,
@@ -265,15 +365,17 @@ def quote_early_settlement(
 ) -> LoanEarlySettlement:
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only an active or defaulted loan can be settled early")
-    today = date.today()
-    if settlement_date < today:
-        raise HTTPException(status_code=422, detail="Settlement quotes cannot be backdated")
-    if settlement_date > today + timedelta(days=30):
-        raise HTTPException(status_code=422, detail="Settlement quotes cannot be dated more than 30 days ahead")
-
+    today = validate_settlement_date(loan, settlement_date)
+    if settlement_date < today and not _is_company_owner(
+        db,
+        company_id=loan.company_id,
+        user_id=quoted_by_user_id,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the Company Owner can backdate a legacy settlement",
+        )
     start_date = settlement_interest_start(loan)
-    if settlement_date < start_date:
-        raise HTTPException(status_code=422, detail="Settlement date cannot precede the interest start date")
 
     processing = (
         db.query(LoanEarlySettlement)
@@ -299,25 +401,46 @@ def quote_early_settlement(
     repayments = _successful_repayments(db, loan)
     ledger_received = money(sum((money(item.amount) for item in repayments), Decimal("0")))
     payments_received = money(loan.amount_paid)
-    if abs(ledger_received - payments_received) > MONEY:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The loan balance and successful repayment ledger do not reconcile. "
-                "Reconcile the loan before issuing an early-settlement quote."
-            ),
-        )
-    paid_principal = Decimal("0")
-    paid_interest = Decimal("0")
-    paid_fees = Decimal("0")
-    for payment in repayments:
-        principal_part, interest_part, fee_part = _payment_components(db, payment)
-        paid_principal += principal_part
-        paid_interest += interest_part
-        paid_fees += fee_part
-    paid_principal, paid_interest, paid_fees = map(money, (paid_principal, paid_interest, paid_fees))
-
+    legacy_cashout = is_legacy_cashout_loan(loan)
     method = normalize_interest_method(loan.calculation_method)
+
+    if legacy_cashout:
+        historical_opening_amount = money(max(payments_received - ledger_received, Decimal("0")))
+        if (
+            method == LoanCalculationMethod.DAILY_ACCRUAL_REDUCING
+            and historical_opening_amount > MONEY
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This legacy daily-accrual loan has historic payments without individual payment dates. "
+                    "Capture or reconcile those dates before calculating a historical early settlement."
+                ),
+            )
+        paid_principal, paid_interest, paid_fees = _legacy_installment_paid_components(loan)
+    else:
+        historical_opening_amount = Decimal("0.00")
+        if abs(ledger_received - payments_received) > MONEY:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The loan balance and successful repayment ledger do not reconcile. "
+                    "Reconcile the loan before issuing an early-settlement quote."
+                ),
+            )
+        paid_principal = Decimal("0")
+        paid_interest = Decimal("0")
+        paid_fees = Decimal("0")
+        for payment in repayments:
+            principal_part, interest_part, fee_part = _payment_components(db, payment)
+            paid_principal += principal_part
+            paid_interest += interest_part
+            paid_fees += fee_part
+        paid_principal, paid_interest, paid_fees = map(
+            money,
+            (paid_principal, paid_interest, paid_fees),
+        )
+
     due_dates = settlement_due_dates(loan)
     if method == LoanCalculationMethod.DAILY_ACCRUAL_REDUCING:
         earned_interest, daily_segments = _daily_interest_with_actual_payments(
@@ -394,6 +517,10 @@ def quote_early_settlement(
         calculation_snapshot={
             "original": loan.calculation_breakdown or {},
             "settlement": method_details,
+            "legacy_cashout": legacy_cashout,
+            "historical_backdate": legacy_cashout and settlement_date < today,
+            "live_ledger_received": str(ledger_received),
+            "historical_opening_amount": str(historical_opening_amount),
             "paid_components": {
                 "principal": str(paid_principal),
                 "interest": str(paid_interest),
@@ -507,6 +634,9 @@ def finalize_early_settlement_payment(
             "unearned_interest_rebate": str(quote.unearned_interest_rebate),
             "chargeable_periods": quote.chargeable_periods,
             "method": quote.calculation_method,
+            "historical_legacy_settlement": bool(
+                (payment.provider_payload or {}).get("historical_legacy_settlement")
+            ),
         },
     }
 
@@ -597,6 +727,30 @@ def initiate_early_settlement_payment(
     if money(loan.amount_paid) != money(quote.original_amount_paid):
         raise HTTPException(status_code=409, detail="The loan changed after this quote; create a new quote")
 
+    historical_legacy_settlement = (
+        quote.settlement_date < current_payment_date()
+        and is_legacy_cashout_loan(loan)
+    )
+    if quote.settlement_date < current_payment_date() and not historical_legacy_settlement:
+        raise HTTPException(
+            status_code=422,
+            detail="Only legacy cash-out loans can use a historical settlement date",
+        )
+    if historical_legacy_settlement and not _is_company_owner(
+        db,
+        company_id=loan.company_id,
+        user_id=initiated_by_user_id,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the Company Owner can post a backdated legacy settlement",
+        )
+    if historical_legacy_settlement and payment_method != PaymentMethod.CASH:
+        raise HTTPException(
+            status_code=422,
+            detail="Historical legacy settlements must be recorded as Cash",
+        )
+
     quote.borrower_acknowledged = True
     quote.agreement_note = agreement_note.strip()
     quote.agreement_reference = (agreement_reference or "").strip() or None
@@ -607,6 +761,9 @@ def initiate_early_settlement_payment(
     integration_context = {
         "early_settlement_id": str(quote.id),
         "branch_id": str(loan.branch_id) if loan.branch_id else None,
+        "historical_legacy_settlement": historical_legacy_settlement,
+        "effective_payment_date": quote.settlement_date.isoformat() if historical_legacy_settlement else None,
+        "recorded_at": now.isoformat(),
     }
     if payment_method == PaymentMethod.LELEFAPAYGATE:
         from services.lelefa_paygate_service import initiate_gateway_payment
@@ -642,6 +799,11 @@ def initiate_early_settlement_payment(
         return payment
 
     reference = f"CIN-SETTLEMENT-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6].upper()}"
+    effective_completed_at = (
+        payment_date_to_utc(quote.settlement_date)
+        if historical_legacy_settlement
+        else now
+    )
     payment = PaymentTransaction(
         company_id=loan.company_id,
         borrower_id=loan.borrower_id,
@@ -659,7 +821,7 @@ def initiate_early_settlement_payment(
         provider_reference=reference,
         verified_by_user_id=initiated_by_user_id,
         verified_at=now,
-        completed_at=now,
+        completed_at=effective_completed_at,
         provider_payload={
             **integration_context,
             "method": "cash",
@@ -681,7 +843,11 @@ def initiate_early_settlement_payment(
             applied_amount=payment.amount,
             change_amount=0,
             forward_amount=0,
-            notes=notes or "Early loan settlement",
+            notes=notes or (
+                "Historical legacy early settlement"
+                if historical_legacy_settlement
+                else "Early loan settlement"
+            ),
         )
     )
     finalize_early_settlement_payment(db, payment)
