@@ -1,7 +1,7 @@
 """Persist CDAS booking monitoring opportunities.
 
 Revision ID: b2r6t8u0v025
-Revises: a1p5r7t9u913
+Revises: b2c3d4e5f912
 Create Date: 2026-09-13
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "b2r6t8u0v025"
-down_revision = "a1p5r7t9u913"
+down_revision = "b2c3d4e5f912"
 branch_labels = None
 depends_on = None
 
@@ -47,8 +47,22 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["booked_by_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    for column in ("company_id", "client_name", "client_reference", "status", "booking_open_date", "alert_start_date", "opportunity_reference_no", "booked_by_user_id"):
-        op.create_index(f"ix_cdas_booking_opportunities_{column}", "cdas_booking_opportunities", [column], unique=False)
+    for column in (
+        "company_id",
+        "client_name",
+        "client_reference",
+        "status",
+        "booking_open_date",
+        "alert_start_date",
+        "opportunity_reference_no",
+        "booked_by_user_id",
+    ):
+        op.create_index(
+            f"ix_cdas_booking_opportunities_{column}",
+            "cdas_booking_opportunities",
+            [column],
+            unique=False,
+        )
 
 
 def downgrade() -> None:
