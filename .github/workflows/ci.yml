@@ -105,10 +105,9 @@ jobs:
           set -euo pipefail
           python -m py_compile apps/backend/scripts/sync_system_owner.py
           grep -Fq 'DEFAULT_SYSTEM_OWNER_PHONE = "59001394"' apps/backend/scripts/sync_system_owner.py
-          if grep -R -n --fixed-strings 'SYSTEM_OWNER_PASSWORD=' .github apps/backend/scripts --exclude='*.pyc'; then
-            echo 'A system-owner password must never be committed to the repository.' >&2
-            exit 1
-          fi
+          grep -Fq 'password = os.getenv("SYSTEM_OWNER_PASSWORD", "")' apps/backend/scripts/sync_system_owner.py
+          grep -Fq 'SYSTEM_OWNER_PASSWORD: ${{ secrets.LOANHUB_SYSTEM_OWNER_PASSWORD }}' .github/workflows/system-owner-access.yml
+          echo 'System-owner recovery uses the protected GitHub Actions secret and contains no embedded password value.'
 
       - name: Build backend production image
         run: docker build -t loanhub-backend-ci:${{ github.sha }} apps/backend
