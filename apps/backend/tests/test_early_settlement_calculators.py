@@ -1,12 +1,16 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from database.models.enums import LoanCalculationMethod
 from services.early_settlement_service import (
     calculate_method_earned_interest,
     chargeable_months,
+    is_legacy_cashout_loan,
+    validate_settlement_date,
 )
 from services.interest_calculation_service import (
     calculate_daily_accrued_interest,
@@ -139,3 +143,49 @@ def test_three_month_simple_loan_settled_in_month_one_rebates_two_months_interes
     assert periods == 1
     assert earned == Decimal("12.00")
     assert Decimal(original["total_interest"]) - earned == Decimal("24.00")
+
+
+def _settlement_test_loan(*, legacy: bool):
+    return SimpleNamespace(
+        origination_channel="legacy_cashout" if legacy else "marketplace",
+        calculation_breakdown={"source": "legacy_cashout_book"} if legacy else {},
+        disbursed_at=datetime(2026, 1, 15),
+    )
+
+
+def test_legacy_cashout_detection_uses_origination_or_snapshot_source():
+    assert is_legacy_cashout_loan(_settlement_test_loan(legacy=True)) is True
+    source_only = _settlement_test_loan(legacy=False)
+    source_only.calculation_breakdown = {"source": "legacy_cashout_book"}
+    assert is_legacy_cashout_loan(source_only) is True
+
+
+def test_legacy_cashout_can_quote_a_historical_settlement_date():
+    current = date(2026, 9, 13)
+    assert validate_settlement_date(
+        _settlement_test_loan(legacy=True),
+        date(2026, 4, 20),
+        today=current,
+    ) == current
+
+
+def test_live_loan_still_rejects_a_historical_settlement_date():
+    with pytest.raises(HTTPException) as error:
+        validate_settlement_date(
+            _settlement_test_loan(legacy=False),
+            date(2026, 4, 20),
+            today=date(2026, 9, 13),
+        )
+    assert error.value.status_code == 422
+    assert "legacy cash-out" in str(error.value.detail).lower()
+
+
+def test_legacy_settlement_cannot_predate_original_disbursement():
+    with pytest.raises(HTTPException) as error:
+        validate_settlement_date(
+            _settlement_test_loan(legacy=True),
+            date(2025, 12, 31),
+            today=date(2026, 9, 13),
+        )
+    assert error.value.status_code == 422
+    assert "interest start" in str(error.value.detail).lower()
