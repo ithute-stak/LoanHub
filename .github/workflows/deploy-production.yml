@@ -192,7 +192,11 @@ jobs:
           timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
           backup="$APP_DIR/backups/loanhub-before-${RELEASE_SHA}-${timestamp}.dump"
           echo "[LoanHub] Backing up PostgreSQL before migrations: $backup"
-          "${compose[@]}" exec -T db pg_dump --format=custom --no-owner --no-privileges -U "$DB_USER" "$DB_NAME" > "$backup"
+          # The remote shell itself is reading this deployment script from stdin.
+          # Compose exec keeps stdin open by default even with -T, so without this
+          # redirect it can consume the remainder of the heredoc and make a partial
+          # deployment look successful.
+          "${compose[@]}" exec -T db pg_dump --format=custom --no-owner --no-privileges -U "$DB_USER" "$DB_NAME" < /dev/null > "$backup"
           test -s "$backup"
 
           echo '[LoanHub] Applying Alembic migrations'
