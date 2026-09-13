@@ -30,7 +30,9 @@ jobs:
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
-      VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+      # LoanHub's existing production state lives here. Keep this repo isolated
+      # from generic/shared VPS_APP_DIR secrets used by other Ithute products.
+      VPS_APP_DIR: /opt/loanhub
 
     steps:
       - name: Checkout tested commit
@@ -44,7 +46,7 @@ jobs:
           test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret' >&2; exit 1; }
           test -n "$VPS_USER" || { echo 'Missing VPS_USER secret' >&2; exit 1; }
           test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret' >&2; exit 1; }
-          test -n "$VPS_APP_DIR" || { echo 'Missing VPS_APP_DIR secret' >&2; exit 1; }
+          test -n "$VPS_APP_DIR" || { echo 'Missing LoanHub production directory' >&2; exit 1; }
 
           normalized_host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
           normalized_user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
@@ -64,7 +66,8 @@ jobs:
           test -n "$normalized_host" || { echo 'VPS_HOST resolves to an empty hostname.' >&2; exit 1; }
           [[ "$normalized_user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_USER contains unsupported SSH username characters.' >&2; exit 1; }
           [[ "$normalized_host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_HOST contains unsupported hostname characters.' >&2; exit 1; }
-          [[ "$normalized_app_dir" == /* ]] || { echo 'VPS_APP_DIR must be an absolute path.' >&2; exit 1; }
+          [[ "$normalized_app_dir" == /* ]] || { echo 'LoanHub production directory must be an absolute path.' >&2; exit 1; }
+          [ "$normalized_app_dir" = /opt/loanhub ] || { echo 'Refusing to deploy outside the established /opt/loanhub production directory.' >&2; exit 1; }
 
           printf 'LOANHUB_VPS_HOST=%s\n' "$normalized_host" >> "$GITHUB_ENV"
           printf 'LOANHUB_VPS_USER=%s\n' "$normalized_user" >> "$GITHUB_ENV"
@@ -107,6 +110,21 @@ jobs:
           ssh-keyscan -T 10 -H "$LOANHUB_VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Require existing LoanHub production state
+        run: |
+          set -euo pipefail
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" "APP_DIR='$LOANHUB_VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test "$APP_DIR" = /opt/loanhub
+          test -d "$APP_DIR" || { echo 'Existing /opt/loanhub production directory is missing.' >&2; exit 1; }
+          test -f "$APP_DIR/.env.production" || { echo 'Existing /opt/loanhub/.env.production is missing.' >&2; exit 1; }
+          test -d "$APP_DIR/secrets" || { echo 'Existing /opt/loanhub/secrets directory is missing.' >&2; exit 1; }
+          test -f "$APP_DIR/secrets/jwt_private.pem" || { echo 'Existing LoanHub JWT private key is missing.' >&2; exit 1; }
+          test -f "$APP_DIR/secrets/jwt_public.pem" || { echo 'Existing LoanHub JWT public key is missing.' >&2; exit 1; }
+          echo 'Existing LoanHub production state found at /opt/loanhub.'
+          REMOTE
+
       - name: Transfer tested runtime bundle
         run: |
           set -euo pipefail
@@ -128,6 +146,7 @@ jobs:
           }
           trap cleanup EXIT
 
+          test "$APP_DIR" = /opt/loanhub || { echo 'Refusing to deploy outside /opt/loanhub.' >&2; exit 1; }
           test -f "$APP_DIR/.env.production" || { echo "Missing $APP_DIR/.env.production; refusing to invent production secrets." >&2; exit 1; }
           test -d "$APP_DIR/secrets" || { echo "Missing $APP_DIR/secrets directory." >&2; exit 1; }
           test -f "$APP_DIR/secrets/jwt_private.pem" || { echo 'Missing LoanHub JWT private key.' >&2; exit 1; }
