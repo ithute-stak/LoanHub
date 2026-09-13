@@ -47,5 +47,5 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
   TEMP_ENV_CREATED=1
 fi
-docker compose config >/dev/null
+LOANHUB_ENV_FILE=.env docker compose config >/dev/null
 printf 'LoanHub project validation passed.\n'
