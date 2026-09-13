@@ -47,6 +47,25 @@ jobs:
           corepack prepare pnpm@11.21.0 --activate
           pnpm --version
 
+      - name: Generate ephemeral CI JWT keys
+        run: |
+          set -euo pipefail
+          key_dir="$GITHUB_WORKSPACE/.ci-secrets"
+          mkdir -p "$key_dir"
+          chmod 700 "$key_dir"
+          openssl genpkey \
+            -algorithm RSA \
+            -pkeyopt rsa_keygen_bits:2048 \
+            -out "$key_dir/jwt_private.pem" >/dev/null 2>&1
+          openssl pkey \
+            -in "$key_dir/jwt_private.pem" \
+            -pubout \
+            -out "$key_dir/jwt_public.pem" >/dev/null 2>&1
+          chmod 600 "$key_dir/jwt_private.pem"
+          chmod 644 "$key_dir/jwt_public.pem"
+          printf 'JWT_PRIVATE_KEY_PATH=%s\n' "$key_dir/jwt_private.pem" >> "$GITHUB_ENV"
+          printf 'JWT_PUBLIC_KEY_PATH=%s\n' "$key_dir/jwt_public.pem" >> "$GITHUB_ENV"
+
       - name: Install backend dependencies
         run: |
           set -euo pipefail
