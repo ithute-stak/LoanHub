@@ -38,13 +38,38 @@ jobs:
         with:
           ref: ${{ env.RELEASE_SHA }}
 
-      - name: Validate protected inputs
+      - name: Validate and normalize protected inputs
         run: |
           set -euo pipefail
           test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret' >&2; exit 1; }
           test -n "$VPS_USER" || { echo 'Missing VPS_USER secret' >&2; exit 1; }
           test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret' >&2; exit 1; }
           test -n "$VPS_APP_DIR" || { echo 'Missing VPS_APP_DIR secret' >&2; exit 1; }
+
+          normalized_host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          normalized_user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          normalized_app_dir="$(printf '%s' "$VPS_APP_DIR" | tr -d '\r\n')"
+
+          # Accept a common secret-entry mistake where VPS_USER was saved as
+          # user@host. The authoritative host still comes from VPS_HOST.
+          case "$normalized_user" in
+            *@*) normalized_user="${normalized_user%%@*}" ;;
+          esac
+          # Likewise tolerate VPS_HOST accidentally being saved as user@host.
+          case "$normalized_host" in
+            *@*) normalized_host="${normalized_host##*@}" ;;
+          esac
+
+          test -n "$normalized_user" || { echo 'VPS_USER resolves to an empty username.' >&2; exit 1; }
+          test -n "$normalized_host" || { echo 'VPS_HOST resolves to an empty hostname.' >&2; exit 1; }
+          [[ "$normalized_user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_USER contains unsupported SSH username characters.' >&2; exit 1; }
+          [[ "$normalized_host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'VPS_HOST contains unsupported hostname characters.' >&2; exit 1; }
+          [[ "$normalized_app_dir" == /* ]] || { echo 'VPS_APP_DIR must be an absolute path.' >&2; exit 1; }
+
+          printf 'LOANHUB_VPS_HOST=%s\n' "$normalized_host" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_USER=%s\n' "$normalized_user" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_APP_DIR=%s\n' "$normalized_app_dir" >> "$GITHUB_ENV"
+          echo 'VPS connection inputs normalized without exposing their values.'
 
       - name: Build immutable application images
         run: |
@@ -79,23 +104,23 @@ jobs:
           else
             ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
           fi
-          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          ssh-keyscan -T 10 -H "$LOANHUB_VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
       - name: Transfer tested runtime bundle
         run: |
           set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          release_dir="${VPS_APP_DIR}/releases/${RELEASE_SHA}"
-          ssh "$remote" "mkdir -p '$release_dir' '$VPS_APP_DIR/backups'"
-          scp compose.yaml compose.edge.yml "$remote:$release_dir/"
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          release_dir="${LOANHUB_VPS_APP_DIR}/releases/${RELEASE_SHA}"
+          ssh "$remote" "mkdir -p '$release_dir' '$LOANHUB_VPS_APP_DIR/backups'"
+          scp compose.yaml compose.edge.yml infrastructure/caddy/loanhub.caddy "$remote:$release_dir/"
           scp /tmp/loanhub-backend.tar.gz /tmp/loanhub-frontend.tar.gz "$remote:$release_dir/"
 
       - name: Deploy without replacing persistent data
         run: |
           set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" "APP_DIR='$LOANHUB_VPS_APP_DIR' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
           set -Eeuo pipefail
           release_dir="$APP_DIR/releases/$RELEASE_SHA"
           cleanup() {
@@ -107,6 +132,7 @@ jobs:
           test -d "$APP_DIR/secrets" || { echo "Missing $APP_DIR/secrets directory." >&2; exit 1; }
           test -f "$APP_DIR/secrets/jwt_private.pem" || { echo 'Missing LoanHub JWT private key.' >&2; exit 1; }
           test -f "$APP_DIR/secrets/jwt_public.pem" || { echo 'Missing LoanHub JWT public key.' >&2; exit 1; }
+          test -f "$release_dir/loanhub.caddy" || { echo 'Missing LoanHub-owned edge route.' >&2; exit 1; }
 
           cp "$release_dir/compose.yaml" "$APP_DIR/compose.yaml"
           cp "$release_dir/compose.edge.yml" "$APP_DIR/compose.edge.yml"
@@ -115,7 +141,7 @@ jobs:
           echo '[LoanHub] Loading tested immutable images'
           gzip -dc "$release_dir/loanhub-backend.tar.gz" | docker load
           gzip -dc "$release_dir/loanhub-frontend.tar.gz" | docker load
-          docker network inspect ithute-edge >/dev/null 2>&1 || docker network create ithute-edge >/dev/null
+          docker network inspect public-edge >/dev/null 2>&1 || docker network create public-edge >/dev/null
 
           cd "$APP_DIR"
           set -a
@@ -172,6 +198,52 @@ jobs:
           }
           wait_healthy backend
           wait_healthy frontend
+
+          echo '[LoanHub] Installing the LoanHub-owned public route'
+          edge_proxy_id="$(docker ps --filter publish=80 --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^caddy:/ {print $1; exit}')"
+          test -n "$edge_proxy_id" || { echo 'Unable to locate the VPS public Caddy proxy.' >&2; exit 1; }
+          docker exec "$edge_proxy_id" grep -Fq 'import /data/product-routes/*.caddy' /etc/caddy/Caddyfile || {
+            echo 'The public edge has not been migrated to product-owned route fragments yet.' >&2
+            exit 1
+          }
+          if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$edge_proxy_id" | grep -q '"public-edge"'; then
+            docker network connect public-edge "$edge_proxy_id"
+          fi
+          docker exec "$edge_proxy_id" mkdir -p /data/product-routes
+
+          had_previous_route=0
+          if docker exec "$edge_proxy_id" test -f /data/product-routes/loanhub.caddy; then
+            docker exec "$edge_proxy_id" cp /data/product-routes/loanhub.caddy /data/product-routes/loanhub.caddy.previous
+            had_previous_route=1
+          fi
+          docker cp "$release_dir/loanhub.caddy" "$edge_proxy_id:/data/product-routes/loanhub.caddy.next"
+          docker exec "$edge_proxy_id" mv /data/product-routes/loanhub.caddy.next /data/product-routes/loanhub.caddy
+
+          rollback_route() {
+            if [ "$had_previous_route" -eq 1 ]; then
+              docker exec "$edge_proxy_id" mv /data/product-routes/loanhub.caddy.previous /data/product-routes/loanhub.caddy || true
+            else
+              docker exec "$edge_proxy_id" rm -f /data/product-routes/loanhub.caddy || true
+            fi
+          }
+
+          if ! docker exec "$edge_proxy_id" caddy validate --config /etc/caddy/Caddyfile >/dev/null; then
+            rollback_route
+            echo 'LoanHub edge route failed Caddy validation; previous route restored.' >&2
+            exit 1
+          fi
+          if ! docker exec "$edge_proxy_id" caddy reload --config /etc/caddy/Caddyfile >/dev/null; then
+            rollback_route
+            docker exec "$edge_proxy_id" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+            echo 'LoanHub edge route failed to reload; previous route restored.' >&2
+            exit 1
+          fi
+          docker exec "$edge_proxy_id" rm -f /data/product-routes/loanhub.caddy.previous
+
+          echo '[LoanHub] Verifying public web and API endpoints'
+          curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://loanhub.co.ls/ >/dev/null
+          curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://api.loanhub.co.ls/health/ready >/dev/null
+
           "${compose[@]}" ps
           echo '[LoanHub] VPS deployment is healthy. Existing persistent volumes were reused.'
           REMOTE
@@ -179,4 +251,4 @@ jobs:
       - name: Deployment summary
         run: |
           echo "LoanHub release ${RELEASE_SHA} deployed to the VPS."
-          echo "The application is attached to the private shared edge network as loanhub-web and loanhub-api."
+          echo "LoanHub owns its route definition and is attached only to the generic public-edge transport network."
