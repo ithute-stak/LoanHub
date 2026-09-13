@@ -1,0 +1,74 @@
+name: LoanHub CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: loanhub-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
+
+      - name: Install backend dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/backend/requirements.txt -r apps/backend/requirements-dev.txt
+
+      - name: Install frontend dependencies
+        run: pnpm --dir apps/frontend install --frozen-lockfile
+
+      - name: Run project validation
+        run: |
+          set -euo pipefail
+          bash ./scripts/validate_project.sh
+
+      - name: Validate system-owner recovery helper
+        run: |
+          set -euo pipefail
+          python -m py_compile apps/backend/scripts/sync_system_owner.py
+          grep -Fq 'DEFAULT_SYSTEM_OWNER_PHONE = "59001394"' apps/backend/scripts/sync_system_owner.py
+          if grep -R -n --fixed-strings 'SYSTEM_OWNER_PASSWORD=' .github apps/backend/scripts --exclude='*.pyc'; then
+            echo 'A system-owner password must never be committed to the repository.' >&2
+            exit 1
+          fi
+
+      - name: Build backend production image
+        run: docker build -t loanhub-backend-ci:${{ github.sha }} apps/backend
+
+      - name: Build frontend production image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.loanhub.co.ls/api/v1 \
+            -t loanhub-frontend-ci:${{ github.sha }} \
+            apps/frontend
