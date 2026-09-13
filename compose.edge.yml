@@ -2,18 +2,18 @@ services:
   backend:
     networks:
       loanhub:
-      ithute_edge:
+      public_edge:
         aliases:
           - loanhub-api
 
   frontend:
     networks:
       loanhub:
-      ithute_edge:
+      public_edge:
         aliases:
           - loanhub-web
 
 networks:
-  ithute_edge:
+  public_edge:
     external: true
-    name: ithute-edge
+    name: public-edge
