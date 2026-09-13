@@ -1,0 +1,132 @@
+name: LoanHub System Owner Access
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: loanhub-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recover-and-verify:
+    name: Recover and verify system owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+      SYSTEM_OWNER_PASSWORD: ${{ secrets.LOANHUB_SYSTEM_OWNER_PASSWORD }}
+      SYSTEM_OWNER_PHONE: '59001394'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate protected inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret' >&2; exit 1; }
+          test -n "$VPS_USER" || { echo 'Missing VPS_USER secret' >&2; exit 1; }
+          test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret' >&2; exit 1; }
+          test -n "$SYSTEM_OWNER_PASSWORD" || { echo 'Missing LOANHUB_SYSTEM_OWNER_PASSWORD secret' >&2; exit 1; }
+          test "${#SYSTEM_OWNER_PASSWORD}" -ge 12 || { echo 'System-owner password is too short' >&2; exit 1; }
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_deploy"
+          chmod 600 "$HOME/.ssh/loanhub_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/loanhub-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/loanhub-askpass.sh
+            SSH_ASKPASS=/tmp/loanhub-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
+            rm -f /tmp/loanhub-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Synchronize owner and verify real login
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          app_dir="${VPS_APP_DIR:-/opt/loanhub}"
+
+          umask 077
+          printf '%s' "$SYSTEM_OWNER_PASSWORD" > /tmp/loanhub-owner-password
+          scp apps/backend/scripts/sync_system_owner.py "$remote:/tmp/loanhub-sync-system-owner.py"
+          scp /tmp/loanhub-owner-password "$remote:/tmp/loanhub-owner-password"
+          rm -f /tmp/loanhub-owner-password
+
+          ssh "$remote" "APP_DIR='$app_dir' SYSTEM_OWNER_PHONE='$SYSTEM_OWNER_PHONE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          password_file=/tmp/loanhub-owner-password
+          helper=/tmp/loanhub-sync-system-owner.py
+          cleanup() {
+            rm -f "$password_file" "$helper"
+          }
+          trap cleanup EXIT
+
+          test -d "$APP_DIR" || { echo "LoanHub deployment directory does not exist: $APP_DIR" >&2; exit 1; }
+          test -f "$APP_DIR/.env.production" || { echo "Missing $APP_DIR/.env.production" >&2; exit 1; }
+          test -f "$APP_DIR/compose.yaml" || { echo "Missing $APP_DIR/compose.yaml" >&2; exit 1; }
+          password="$(cat "$password_file")"
+          test -n "$password"
+
+          cd "$APP_DIR"
+          compose=(docker compose --env-file .env.production -p loanhub -f compose.yaml)
+          backend_id="$("${compose[@]}" ps -q backend)"
+          test -n "$backend_id" || { echo 'LoanHub backend container is not running.' >&2; exit 1; }
+
+          "${compose[@]}" exec -T \
+            -e SYSTEM_OWNER_PHONE="$SYSTEM_OWNER_PHONE" \
+            -e SYSTEM_OWNER_PASSWORD="$password" \
+            -e SYSTEM_OWNER_RESET_MFA=true \
+            backend python - < "$helper"
+
+          "${compose[@]}" exec -T \
+            -e SYSTEM_OWNER_PHONE="$SYSTEM_OWNER_PHONE" \
+            -e SYSTEM_OWNER_PASSWORD="$password" \
+            backend python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          phone = os.environ["SYSTEM_OWNER_PHONE"]
+          password = os.environ["SYSTEM_OWNER_PASSWORD"]
+          request = urllib.request.Request(
+              "http://127.0.0.1:8000/api/v1/auth/login",
+              data=json.dumps({"phone": phone, "password": password, "device_name": "github-owner-verification"}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              payload = json.load(response)
+          user = payload.get("user") or {}
+          if user.get("phone") != phone:
+              raise SystemExit("Owner login returned the wrong phone")
+          if user.get("role") != "superadmin":
+              raise SystemExit("Owner login did not return the superadmin role")
+          if not user.get("is_active") or not user.get("is_verified"):
+              raise SystemExit("Owner login returned an inactive or unverified account")
+          if not payload.get("access_token"):
+              raise SystemExit("Owner login did not return an access token")
+          print("LoanHub system-owner login verified successfully.")
+          PY
+          REMOTE
