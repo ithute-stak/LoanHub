@@ -24,8 +24,19 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_hrms_native_module.py \
   tests/test_hrms_hybrid_navigation_frontend.py
 "$PYTHON_BIN" -m alembic heads
-"$PYTHON_BIN" -m alembic upgrade head --sql >/tmp/loanhub-upgrade.sql
-"$PYTHON_BIN" -m alembic downgrade head:base --sql >/tmp/loanhub-downgrade.sql
+
+# Some production migrations inspect the actual database schema and therefore
+# cannot be validated with Alembic's offline MockConnection. CI supplies a
+# disposable PostgreSQL database and exercises the chain for real. Local
+# validation can opt in by setting LOANHUB_VALIDATE_LIVE_MIGRATIONS=true.
+if [[ "${LOANHUB_VALIDATE_LIVE_MIGRATIONS:-false}" == "true" ]]; then
+  echo "[LoanHub] Validating Alembic upgrade/downgrade against disposable PostgreSQL"
+  "$PYTHON_BIN" -m alembic upgrade head
+  "$PYTHON_BIN" -m alembic downgrade base
+  "$PYTHON_BIN" -m alembic upgrade head
+else
+  echo "[LoanHub] Live migration drill skipped; set LOANHUB_VALIDATE_LIVE_MIGRATIONS=true with a disposable database to enable it."
+fi
 
 cd "$ROOT_DIR/apps/frontend"
 pnpm typecheck
