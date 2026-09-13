@@ -15,14 +15,11 @@ from database.schemas.notification import (
     NotificationUnreadCountRead,
 )
 from database.session import get_db
+from services.cdas_booking_monitor import ensure_cdas_booking_alerts_for_user
 
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
-# Notifications are for events that need a person's attention. Routine CRUD and
-# presence/activity events belong in the audit/activity log and are intentionally
-# hidden from the normal notification inbox. Keeping the filter centralized here
-# also protects the UI from older producers that still persist low-value rows.
 ATTENTION_NOTIFICATION_TYPES = (
     NotificationType.LOAN_REQUEST,
     NotificationType.ACCESS_REQUEST,
@@ -66,6 +63,7 @@ def list_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    ensure_cdas_booking_alerts_for_user(db, current_user.id)
     query = db.query(Notification).filter(Notification.user_id == current_user.id)
 
     if not include_archived:
@@ -75,9 +73,6 @@ def list_notifications(
     if event_type:
         query = query.filter(Notification.event_type == event_type)
 
-    # Normal product surfaces always show attention-worthy events. The explicit
-    # include_routine escape hatch exists for administrators/support tooling and
-    # backwards compatibility; it must be requested deliberately.
     if (attention_only or not include_routine) and not event_type:
         query = query.filter(attention_notification_filter())
 
@@ -113,6 +108,7 @@ def unread_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    ensure_cdas_booking_alerts_for_user(db, current_user.id)
     query = db.query(func.count(Notification.id)).filter(
         Notification.user_id == current_user.id,
         Notification.is_read.is_(False),
