@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import {
     format,
-    formatDistanceToNow,
 } from "date-fns";
 import {
     useMemo,
@@ -24,6 +23,10 @@ import {
 import {
     NotificationIcon,
 } from "@/components/notifications/notification-icon";
+import {
+    formatApiRelativeTime,
+    parseApiDateTime,
+} from "@/lib/date-time";
 import {
     useNotifications,
 } from "@/provider/notificationProvider";
@@ -257,18 +260,13 @@ export function NotificationCenterPage() {
 
                                         <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-muted-foreground">
                                             <span>
-                                                {formatDistanceToNow(
-                                                    new Date(
-                                                        notification.created_at,
-                                                    ),
-                                                    {
-                                                        addSuffix: true,
-                                                    },
+                                                {formatApiRelativeTime(
+                                                    notification.created_at,
                                                 )}
                                             </span>
                                             <span>
                                                 {format(
-                                                    new Date(
+                                                    parseApiDateTime(
                                                         notification.created_at,
                                                     ),
                                                     "dd MMM yyyy, HH:mm",
