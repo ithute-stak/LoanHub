@@ -7,9 +7,6 @@ import {
     Loader2,
     Radio,
 } from "lucide-react";
-import {
-    formatDistanceToNow,
-} from "date-fns";
 
 import {
     Popover,
@@ -22,6 +19,9 @@ import {
 import {
     NotificationIcon,
 } from "@/components/notifications/notification-icon";
+import {
+    formatApiRelativeTime,
+} from "@/lib/date-time";
 import {
     useNotifications,
 } from "@/provider/notificationProvider";
@@ -90,13 +90,8 @@ function NotificationRow({
                 </span>
 
                 <span className="mt-1.5 block text-[11px] font-bold text-primary">
-                    {formatDistanceToNow(
-                        new Date(
-                            notification.created_at,
-                        ),
-                        {
-                            addSuffix: true,
-                        },
+                    {formatApiRelativeTime(
+                        notification.created_at,
                     )}
                 </span>
             </span>
