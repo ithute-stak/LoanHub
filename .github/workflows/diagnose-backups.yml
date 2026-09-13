@@ -1,0 +1,68 @@
+name: Diagnose LoanHub backup artifacts
+
+on:
+  push:
+    branches:
+      - diagnose/active-production-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-backups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          case "$user" in *@*) user="${user%%@*}" ;; esac
+          case "$host" in *@*) host="${host##*@}" ;; esac
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_recovery"
+          chmod 600 "$HOME/.ssh/loanhub_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\nSSH_AGENT_PID=%s\n' "$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/askpass.sh
+            SSH_ASKPASS=/tmp/askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+            rm -f /tmp/askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$host" >> "$HOME/.ssh/known_hosts"
+          printf 'TARGET=%s@%s\n' "$user" "$host" >> "$GITHUB_ENV"
+
+      - name: Inspect only backup metadata
+        run: |
+          set -euo pipefail
+          ssh "$TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo 'Legacy LoanHub directory structure:'
+          if [ -d /opt/loanhub.legacy-test ]; then
+            find /opt/loanhub.legacy-test -maxdepth 2 -type d -printf '%p\n' 2>/dev/null | sort
+            du -sh /opt/loanhub.legacy-test 2>/dev/null || true
+          else
+            echo '/opt/loanhub.legacy-test is absent.'
+          fi
+
+          echo 'Potential database backup artifacts (path, bytes, UTC timestamp):'
+          find /home/administrator /opt /srv -maxdepth 7 -type f \
+            \( -iname '*.dump' -o -iname '*.backup' -o -iname '*.sql' -o -iname '*.sql.gz' -o -iname '*postgres*.tar*' -o -iname '*loanhub*.tar*' \) \
+            -printf '%p|%s|%TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
+            | sort || true
+          REMOTE
