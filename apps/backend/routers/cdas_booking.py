@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext, get_tenant_context
 from database.config.config import settings
+from database.models.cdas_booking import CdasBookingOpportunity
+from database.session import get_db
 from services.cdas_booking_analyzer import analyse_cdas_booking
-
+from services.cdas_booking_monitor import create_opportunity_from_analysis, local_today, serialize_opportunity
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Analyzer"])
 
@@ -22,17 +27,18 @@ class CdasBookingAnalyseRequest(BaseModel):
     as_of: date | None = None
 
 
+class CdasBookingMonitorRequest(CdasBookingAnalyseRequest):
+    client_name: str | None = Field(default=None, max_length=200)
+    client_reference: str | None = Field(default=None, max_length=200)
+    alert_lead_days: int = Field(default=3, ge=0, le=31)
+
+
 def _require_company_member(context: TenantContext) -> None:
     if context.is_platform_admin or not context.company_id or not context.staff:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
 
 
-@router.post("/analyze")
-def analyze_cdas_booking(
-    payload: CdasBookingAnalyseRequest,
-    context: TenantContext = Depends(get_tenant_context),
-):
-    _require_company_member(context)
+def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
     as_of = payload.as_of or datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date()
     try:
         return analyse_cdas_booking(
@@ -44,3 +50,71 @@ def analyze_cdas_booking(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/analyze")
+def analyze_cdas_booking(payload: CdasBookingAnalyseRequest, context: TenantContext = Depends(get_tenant_context)):
+    _require_company_member(context)
+    return _analyze(payload)
+
+
+@router.post("/opportunities")
+def save_cdas_booking_opportunity(
+    payload: CdasBookingMonitorRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_member(context)
+    analysis = jsonable_encoder(_analyze(payload))
+    item = create_opportunity_from_analysis(
+        db,
+        company_id=context.company_id,
+        client_name=payload.client_name,
+        client_reference=payload.client_reference,
+        alert_lead_days=payload.alert_lead_days,
+        analysis=analysis,
+    )
+    if item.status == "booked":
+        item.booked_by_user_id = context.user.id
+        db.commit()
+        db.refresh(item)
+    return serialize_opportunity(item)
+
+
+@router.get("/opportunities")
+def list_cdas_booking_opportunities(
+    state: str | None = Query(default=None),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_member(context)
+    items = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.company_id == context.company_id
+    ).order_by(CdasBookingOpportunity.booking_open_date.asc().nullslast(), CdasBookingOpportunity.created_at.desc()).all()
+    values = [serialize_opportunity(item) for item in items]
+    if state:
+        wanted = state.upper()
+        values = [item for item in values if item["state"] == wanted]
+    return {"items": values, "total": len(values)}
+
+
+@router.patch("/opportunities/{opportunity_id}/booked")
+def mark_cdas_booking_opportunity_booked(
+    opportunity_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_member(context)
+    item = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.id == opportunity_id,
+        CdasBookingOpportunity.company_id == context.company_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="CDAS booking opportunity not found")
+    if item.status != "booked":
+        item.status = "booked"
+        item.booked_at = datetime.utcnow()
+        item.booked_by_user_id = context.user.id
+        db.commit()
+        db.refresh(item)
+    return serialize_opportunity(item, today=local_today())

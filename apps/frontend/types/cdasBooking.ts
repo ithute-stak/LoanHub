@@ -1,5 +1,6 @@
 export type CdasBookingDecision = "ALREADY_BOOKED" | "BOOK_NOW" | "WAIT_UNTIL";
 export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE";
+export type CdasOpportunityState = "UPCOMING" | "BOOK_NOW" | "BOOKED";
 
 export interface CdasBookingAnalyzeRequest {
   raw_text: string;
@@ -7,6 +8,12 @@ export interface CdasBookingAnalyzeRequest {
   own_item_codes: string[];
   own_agency_names: string[];
   as_of?: string;
+}
+
+export interface CdasBookingMonitorRequest extends CdasBookingAnalyzeRequest {
+  client_name?: string;
+  client_reference?: string;
+  alert_lead_days: number;
 }
 
 export interface CdasDeductionAnalysis {
@@ -39,4 +46,36 @@ export interface CdasBookingAnalysis {
   own_bookings: CdasDeductionAnalysis[];
   opportunity: CdasDeductionAnalysis | null;
   deductions: CdasDeductionAnalysis[];
+}
+
+export interface CdasBookingOpportunity {
+  id: string;
+  client_name: string | null;
+  client_reference: string | null;
+  status: string;
+  state: CdasOpportunityState;
+  booking_lead_months: number;
+  alert_lead_days: number;
+  booking_open_date: string | null;
+  alert_start_date: string | null;
+  days_until_booking: number | null;
+  opportunity_agency_name: string | null;
+  opportunity_item_code: string | null;
+  opportunity_reference_no: string | null;
+  opportunity_effective_date: string | null;
+  opportunity_expiry_date: string | null;
+  opportunity_deduction_amount: number;
+  total_monthly_deductions: number;
+  own_monthly_deductions: number;
+  competitor_monthly_deductions: number;
+  analysis_snapshot: CdasBookingAnalysis;
+  booked_at: string | null;
+  booked_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CdasBookingOpportunityList {
+  items: CdasBookingOpportunity[];
+  total: number;
 }
