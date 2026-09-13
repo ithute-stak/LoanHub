@@ -1,0 +1,135 @@
+name: Diagnose active LoanHub runtime
+
+on:
+  push:
+    branches:
+      - diagnose/active-production-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          normalized_host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          normalized_user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          case "$normalized_user" in *@*) normalized_user="${normalized_user%%@*}" ;; esac
+          case "$normalized_host" in *@*) normalized_host="${normalized_host##*@}" ;; esac
+          test -n "$normalized_host"
+          test -n "$normalized_user"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_diagnose"
+          chmod 600 "$HOME/.ssh/loanhub_diagnose"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/loanhub-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/loanhub-askpass.sh
+            SSH_ASKPASS=/tmp/loanhub-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_diagnose" </dev/null
+            rm -f /tmp/loanhub-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_diagnose" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$normalized_host" >> "$HOME/.ssh/known_hosts"
+          printf 'LOANHUB_VPS_HOST=%s\n' "$normalized_host" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_USER=%s\n' "$normalized_user" >> "$GITHUB_ENV"
+
+      - name: Locate active LoanHub runtime without reading secrets
+        run: |
+          set -euo pipefail
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          declare -A seen=()
+          candidates=()
+          add_candidate() {
+            local value="${1:-}"
+            [ -n "$value" ] || return 0
+            value="${value%/}"
+            [ -n "$value" ] || return 0
+            if [ -z "${seen[$value]+x}" ]; then
+              seen[$value]=1
+              candidates+=("$value")
+            fi
+          }
+
+          mapfile -t compose_ids < <(docker ps -aq --filter label=com.docker.compose.project=loanhub)
+          if [ "${#compose_ids[@]}" -gt 0 ]; then
+            echo "Found ${#compose_ids[@]} container(s) labelled as Compose project loanhub."
+            for id in "${compose_ids[@]}"; do
+              name="$(docker inspect -f '{{.Name}}' "$id" | sed 's#^/##')"
+              workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id" 2>/dev/null || true)"
+              config_files="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id" 2>/dev/null || true)"
+              secrets_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/secrets"}}{{.Source}}{{end}}{{end}}' "$id" 2>/dev/null || true)"
+              echo "Container: $name"
+              [ -n "$workdir" ] && echo "  compose working dir: $workdir"
+              [ -n "$config_files" ] && echo "  compose config files: $config_files"
+              [ -n "$secrets_src" ] && echo "  secrets mount source: $secrets_src"
+              add_candidate "$workdir"
+              if [ -n "$secrets_src" ]; then
+                add_candidate "$(dirname "$secrets_src")"
+              fi
+            done
+          else
+            echo 'No containers are currently labelled com.docker.compose.project=loanhub.'
+          fi
+
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            id="${line%% *}"
+            name="${line#* }"
+            case "${name,,}" in
+              *loanhub*)
+                workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id" 2>/dev/null || true)"
+                secrets_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/secrets"}}{{.Source}}{{end}}{{end}}' "$id" 2>/dev/null || true)"
+                [ -n "$workdir" ] && add_candidate "$workdir"
+                [ -n "$secrets_src" ] && add_candidate "$(dirname "$secrets_src")"
+                ;;
+            esac
+          done < <(docker ps -a --format '{{.ID}} {{.Names}}')
+
+          while IFS= read -r path; do
+            [ -n "$path" ] && add_candidate "$path"
+          done < <(find /home /opt /srv -maxdepth 5 -type f -name '.env.production' -printf '%h\n' 2>/dev/null | grep -i 'loanhub' || true)
+
+          echo 'Validated candidate state:'
+          valid=0
+          for candidate in "${candidates[@]}"; do
+            [ -d "$candidate" ] || continue
+            env_file='none'
+            [ -f "$candidate/.env.production" ] && env_file='.env.production'
+            [ "$env_file" = none ] && [ -f "$candidate/.env" ] && env_file='.env'
+            has_private=no
+            has_public=no
+            [ -f "$candidate/secrets/jwt_private.pem" ] && has_private=yes
+            [ -f "$candidate/secrets/jwt_public.pem" ] && has_public=yes
+            echo "  $candidate env=$env_file jwt_private=$has_private jwt_public=$has_public"
+            if [ "$env_file" != none ] && [ "$has_private" = yes ] && [ "$has_public" = yes ]; then
+              valid=$((valid + 1))
+            fi
+          done
+
+          echo "Valid LoanHub runtime candidates: $valid"
+          test "$valid" -ge 1 || {
+            echo 'No existing LoanHub runtime with environment file and JWT keys was found.' >&2
+            exit 1
+          }
+          REMOTE
