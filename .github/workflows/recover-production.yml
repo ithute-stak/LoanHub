@@ -1,0 +1,199 @@
+name: Recover LoanHub Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/recover-production.yml
+
+concurrency:
+  group: loanhub-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      TARGET_DIR: /opt/loanhub
+      LEGACY_DIR: /opt/loanhub.legacy-test
+      RECOVERY_ID: 20260904T050903Z
+      RECOVERY_DUMP: loanhub-before-20260904T050903Z.dump
+
+    steps:
+      - name: Checkout recovery definition
+        uses: actions/checkout@v5
+
+      - name: Validate protected SSH inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          case "$user" in *@*) user="${user%%@*}" ;; esac
+          case "$host" in *@*) host="${host##*@}" ;; esac
+          [[ "$user" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]]
+          printf 'LOANHUB_VPS_HOST=%s\n' "$host" >> "$GITHUB_ENV"
+          printf 'LOANHUB_VPS_USER=%s\n' "$user" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_recovery"
+          chmod 600 "$HOME/.ssh/loanhub_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\nSSH_AGENT_PID=%s\n' "$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/askpass.sh
+            SSH_ASKPASS=/tmp/askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+            rm -f /tmp/askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$LOANHUB_VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Preflight recovery source and empty target
+        run: |
+          set -euo pipefail
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" "LEGACY_DIR='$LEGACY_DIR' TARGET_DIR='$TARGET_DIR' RECOVERY_DUMP='$RECOVERY_DUMP' RECOVERY_ID='$RECOVERY_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          marker="$TARGET_DIR/.recovered-$RECOVERY_ID"
+          if [ -f "$marker" ]; then
+            echo "LoanHub recovery $RECOVERY_ID is already complete; this workflow is idempotent."
+            exit 0
+          fi
+
+          test -d "$LEGACY_DIR" || { echo "Missing recovery source $LEGACY_DIR" >&2; exit 1; }
+          test -f "$LEGACY_DIR/.env.production" || { echo 'Recovery source has no .env.production.' >&2; exit 1; }
+          test -f "$LEGACY_DIR/secrets/jwt_private.pem" || { echo 'Recovery source has no JWT private key.' >&2; exit 1; }
+          test -f "$LEGACY_DIR/secrets/jwt_public.pem" || { echo 'Recovery source has no JWT public key.' >&2; exit 1; }
+          test -s "$LEGACY_DIR/backups/$RECOVERY_DUMP" || { echo 'Recovery database dump is missing or empty.' >&2; exit 1; }
+
+          if [ -e "$TARGET_DIR" ] && [ -n "$(find "$TARGET_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+            echo "$TARGET_DIR already contains files but has no completed recovery marker; refusing to overwrite it." >&2
+            exit 1
+          fi
+          if docker volume inspect loanhub_postgres_data >/dev/null 2>&1; then
+            echo 'loanhub_postgres_data already exists before recovery; refusing to overwrite an unidentified database volume.' >&2
+            exit 1
+          fi
+          echo 'Recovery source is intact and the canonical target is empty.'
+          REMOTE
+
+      - name: Transfer current standalone Compose definition
+        run: |
+          set -euo pipefail
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          scp compose.yaml "$remote:/tmp/loanhub-recovery-compose.yaml"
+
+      - name: Restore database into isolated LoanHub volume
+        run: |
+          set -euo pipefail
+          remote="${LOANHUB_VPS_USER}@${LOANHUB_VPS_HOST}"
+          ssh "$remote" "LEGACY_DIR='$LEGACY_DIR' TARGET_DIR='$TARGET_DIR' RECOVERY_DUMP='$RECOVERY_DUMP' RECOVERY_ID='$RECOVERY_ID' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          marker="$TARGET_DIR/.recovered-$RECOVERY_ID"
+          if [ -f "$marker" ]; then
+            echo "LoanHub recovery $RECOVERY_ID is already complete."
+            rm -f /tmp/loanhub-recovery-compose.yaml
+            exit 0
+          fi
+
+          umask 077
+          mkdir -p "$TARGET_DIR/secrets" "$TARGET_DIR/backups"
+          cp "$LEGACY_DIR/.env.production" "$TARGET_DIR/.env.production"
+          cp -a "$LEGACY_DIR/secrets/." "$TARGET_DIR/secrets/"
+          cp -a "$LEGACY_DIR/backups/." "$TARGET_DIR/backups/"
+          cp /tmp/loanhub-recovery-compose.yaml "$TARGET_DIR/compose.yaml"
+          rm -f /tmp/loanhub-recovery-compose.yaml
+          chmod 600 "$TARGET_DIR/.env.production"
+
+          cd "$TARGET_DIR"
+          set -a
+          source .env.production
+          set +a
+          : "${DB_USER:?DB_USER is required in the recovered environment}"
+          : "${DB_NAME:?DB_NAME is required in the recovered environment}"
+          : "${DB_PASSWORD:?DB_PASSWORD is required in the recovered environment}"
+          export LOANHUB_ENV_FILE=.env.production
+
+          compose=(docker compose --env-file .env.production -p loanhub -f compose.yaml)
+
+          echo '[Recovery] Creating only the standalone LoanHub PostgreSQL and Redis volumes.'
+          "${compose[@]}" up -d --no-build db redis
+
+          db_id="$("${compose[@]}" ps -q db)"
+          test -n "$db_id"
+          health=''
+          for _ in $(seq 1 60); do
+            health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$db_id" 2>/dev/null || true)"
+            [ "$health" = healthy ] && break
+            sleep 2
+          done
+          test "$health" = healthy || {
+            echo "Recovery PostgreSQL failed health check: ${health:-unknown}" >&2
+            "${compose[@]}" logs --tail=200 db >&2 || true
+            exit 1
+          }
+
+          backup="$TARGET_DIR/backups/$RECOVERY_DUMP"
+          echo "[Recovery] Restoring $RECOVERY_DUMP into the new LoanHub PostgreSQL volume."
+          cat "$backup" | "${compose[@]}" exec -T db \
+            pg_restore \
+              --clean \
+              --if-exists \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              -U "$DB_USER" \
+              -d "$DB_NAME"
+
+          table_count="$("${compose[@]}" exec -T db psql -At -U "$DB_USER" -d "$DB_NAME" -c "select count(*) from pg_catalog.pg_tables where schemaname='public';" | tr -d '\r')"
+          case "$table_count" in
+            ''|*[!0-9]*) echo 'Unable to verify restored public table count.' >&2; exit 1 ;;
+          esac
+          test "$table_count" -gt 0 || { echo 'Restored database has no public tables.' >&2; exit 1; }
+
+          restored_backup="$TARGET_DIR/backups/loanhub-recovered-${RECOVERY_ID}.dump"
+          "${compose[@]}" exec -T db pg_dump \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            -U "$DB_USER" "$DB_NAME" > "$restored_backup"
+          test -s "$restored_backup"
+
+          printf 'source=%s\nrestored_utc=%s\npublic_tables=%s\n' \
+            "$RECOVERY_DUMP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$table_count" > "$marker"
+          chmod 600 "$marker"
+
+          echo "[Recovery] Database restored successfully with $table_count public tables."
+          echo '[Recovery] Legacy source remains untouched at /opt/loanhub.legacy-test.'
+          "${compose[@]}" ps db redis
+          REMOTE
+
+      - name: Recovery summary
+        run: |
+          echo "LoanHub database recovery point: $RECOVERY_DUMP"
+          echo "Canonical runtime: $TARGET_DIR"
+          echo "The legacy recovery source was copied, not moved or deleted."
+          echo "Normal LoanHub deployment can now apply current migrations and start the application."
