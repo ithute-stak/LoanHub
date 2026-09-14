@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import defaultdict
 from typing import Any, Iterable
 
 from database.models.cdas_booking import CdasAnalysisRecord, CdasBookingOpportunity
@@ -38,7 +37,7 @@ def _identity_aliases(
 
     normalized_name = _norm(client_name)
     normalized_employer = _norm(employer)
-    if normalized_name:
+    if normalized_name and normalized_employer:
         aliases.append(f"name:{normalized_name}|employer:{normalized_employer}")
     return aliases
 
@@ -157,9 +156,18 @@ def _profile_payload(group: dict[str, Any], *, include_detail: bool) -> dict[str
     profile = _snapshot_profile(latest_snapshot)
 
     aliases = sorted(group["aliases"])
+    fallback_alias = (
+        aliases[0]
+        if aliases
+        else f"analysis:{latest.id}"
+        if latest
+        else f"opportunity:{latest_opportunity.id}"
+        if latest_opportunity
+        else "empty"
+    )
     primary_alias = next(
         (alias for prefix in ("reference:", "employee:", "nid:") for alias in aliases if alias.startswith(prefix)),
-        aliases[0] if aliases else "anonymous",
+        fallback_alias,
     )
 
     decision = _first_nonempty(
