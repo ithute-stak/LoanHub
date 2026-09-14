@@ -13,7 +13,7 @@ from core.access_control import TenantContext, get_tenant_context
 from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.session import get_db
-from services.cdas_booking_analyzer import analyse_cdas_booking
+from services.cdas_booking_analyzer import analyse_cdas_booking, parse_cdas_screen_context
 from services.cdas_booking_monitor import create_opportunity_from_analysis, local_today, serialize_opportunity
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Analyzer"])
@@ -41,13 +41,28 @@ def _require_company_member(context: TenantContext) -> None:
 def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
     as_of = payload.as_of or datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date()
     try:
-        return analyse_cdas_booking(
+        screen_context = parse_cdas_screen_context(payload.raw_text, as_of=as_of)
+        application_context = screen_context.get("application_context") or {}
+        detected_agency_code = application_context.get("new_deduction_agency_code")
+        detected_agency_name = application_context.get("new_deduction_agency_name")
+
+        own_agency_names = list(payload.own_agency_names)
+        if detected_agency_name and detected_agency_name not in own_agency_names:
+            own_agency_names.append(detected_agency_name)
+
+        analysis = analyse_cdas_booking(
             payload.raw_text,
             as_of=as_of,
             booking_lead_months=payload.booking_lead_months,
             own_item_codes=payload.own_item_codes,
-            own_agency_names=payload.own_agency_names,
+            own_agency_names=own_agency_names,
         )
+
+        analysis_application_context = analysis.setdefault("application_context", {})
+        analysis_application_context["current_cdas_agency_code"] = detected_agency_code
+        analysis_application_context["current_cdas_agency_name"] = detected_agency_name
+        analysis_application_context["agency_auto_detected"] = bool(detected_agency_name)
+        return analysis
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -69,7 +84,7 @@ def save_cdas_booking_opportunity(
     if analysis.get("decision") == "REVIEW_REQUIRED":
         raise HTTPException(
             status_code=422,
-            detail="This CDAS analysis contains contradictory Active deduction dates. Correct or verify the flagged row before saving a booking monitor.",
+            detail="This CDAS analysis contains Active deduction data that cannot be used safely for booking timing. Correct or verify the flagged row before saving a booking monitor.",
         )
     item = create_opportunity_from_analysis(
         db,
