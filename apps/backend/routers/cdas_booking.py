@@ -14,6 +14,7 @@ from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.session import get_db
 from services.cdas_booking_analyzer import analyse_cdas_booking, parse_cdas_screen_context
+from services.cdas_booking_autofill import parse_cdas_autofill_context
 from services.cdas_booking_monitor import create_opportunity_from_analysis, local_today, serialize_opportunity
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Analyzer"])
@@ -42,9 +43,18 @@ def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
     as_of = payload.as_of or datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date()
     try:
         screen_context = parse_cdas_screen_context(payload.raw_text, as_of=as_of)
-        application_context = screen_context.get("application_context") or {}
-        detected_agency_code = application_context.get("new_deduction_agency_code")
-        detected_agency_name = application_context.get("new_deduction_agency_name")
+        autofill_context = parse_cdas_autofill_context(payload.raw_text)
+
+        screen_application = screen_context.get("application_context") or {}
+        autofill_application = autofill_context.get("application_context") or {}
+        detected_agency_code = (
+            autofill_application.get("new_deduction_agency_code")
+            or screen_application.get("new_deduction_agency_code")
+        )
+        detected_agency_name = (
+            autofill_application.get("new_deduction_agency_name")
+            or screen_application.get("new_deduction_agency_name")
+        )
 
         own_agency_names = list(payload.own_agency_names)
         if detected_agency_name and detected_agency_name not in own_agency_names:
@@ -58,7 +68,21 @@ def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
             own_agency_names=own_agency_names,
         )
 
+        robust_profile = autofill_context.get("profile") or {}
+        analysis_profile = analysis.setdefault("profile", {})
+        for key, value in robust_profile.items():
+            if value:
+                analysis_profile[key] = value
+
         analysis_application_context = analysis.setdefault("application_context", {})
+        if autofill_application.get("new_deduction_agency_code"):
+            analysis_application_context["new_deduction_agency_code"] = autofill_application[
+                "new_deduction_agency_code"
+            ]
+        if autofill_application.get("new_deduction_agency_name"):
+            analysis_application_context["new_deduction_agency_name"] = autofill_application[
+                "new_deduction_agency_name"
+            ]
         analysis_application_context["current_cdas_agency_code"] = detected_agency_code
         analysis_application_context["current_cdas_agency_name"] = detected_agency_name
         analysis_application_context["agency_auto_detected"] = bool(detected_agency_name)
