@@ -4,7 +4,7 @@ from datetime import date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -13,6 +13,10 @@ from core.access_control import TenantContext, get_tenant_context
 from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.session import get_db
+from services.cdas_analysis_report_service import (
+    build_cdas_analysis_pdf,
+    cdas_report_filename,
+)
 from services.cdas_booking_analyzer import analyse_cdas_booking, parse_cdas_screen_context
 from services.cdas_booking_autofill import parse_cdas_autofill_context
 from services.cdas_booking_monitor import local_today, serialize_opportunity
@@ -43,6 +47,27 @@ class CdasBookingMonitorRequest(CdasBookingAnalyseRequest):
 def _require_company_member(context: TenantContext) -> None:
     if context.is_platform_admin or not context.company_id or not context.staff:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+
+
+def _report_preparer(context: TenantContext) -> tuple[str, str]:
+    person = getattr(context.user, "person", None)
+    prepared_by = (
+        str(getattr(person, "full_name", "") or "").strip()
+        or str(context.user.email or "").strip()
+        or str(context.user.phone or "").strip()
+        or "Authorized company user"
+    )
+    role = getattr(context.role, "value", None) or str(context.role)
+    return prepared_by, str(role)
+
+
+def _pdf_response(content: bytes, filename: str) -> Response:
+    safe_filename = filename.replace('"', "").replace("\r", "").replace("\n", "")
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+    )
 
 
 def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
@@ -108,6 +133,32 @@ def analyze_cdas_booking(payload: CdasBookingAnalyseRequest, context: TenantCont
     return _analyze(payload)
 
 
+@router.post("/report/pdf")
+def download_cdas_analysis_report(
+    payload: CdasBookingMonitorRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Generate a tenant-branded CDAS report without persisting pasted raw CDAS text."""
+    _require_company_member(context)
+    if not context.company:
+        raise HTTPException(status_code=409, detail="The active membership is not linked to a company")
+
+    analysis = jsonable_encoder(_analyze(payload))
+    prepared_by, prepared_by_role = _report_preparer(context)
+    content, reference = build_cdas_analysis_pdf(
+        db=db,
+        company=context.company,
+        analysis=analysis,
+        prepared_by_name=prepared_by,
+        prepared_by_role=prepared_by_role,
+        client_name=payload.client_name,
+        client_reference=payload.client_reference,
+    )
+    report_name = payload.client_name or (analysis.get("profile") or {}).get("full_name")
+    return _pdf_response(content, cdas_report_filename(report_name, reference))
+
+
 @router.post("/opportunities")
 def save_cdas_booking_opportunity(
     payload: CdasBookingMonitorRequest,
@@ -151,6 +202,43 @@ def list_cdas_booking_opportunities(
         wanted = state.upper()
         values = [item for item in values if item["state"] == wanted]
     return {"items": values, "total": len(values)}
+
+
+@router.get("/opportunities/{opportunity_id}/report/pdf")
+def download_saved_cdas_analysis_report(
+    opportunity_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Generate a tenant-branded report from an already stored structured snapshot."""
+    _require_company_member(context)
+    if not context.company:
+        raise HTTPException(status_code=409, detail="The active membership is not linked to a company")
+
+    item = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.id == opportunity_id,
+        CdasBookingOpportunity.company_id == context.company_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="CDAS booking opportunity not found")
+
+    analysis = item.analysis_snapshot or {}
+    if not analysis:
+        raise HTTPException(status_code=409, detail="This opportunity has no structured CDAS analysis snapshot")
+
+    prepared_by, prepared_by_role = _report_preparer(context)
+    content, reference = build_cdas_analysis_pdf(
+        db=db,
+        company=context.company,
+        analysis=analysis,
+        prepared_by_name=prepared_by,
+        prepared_by_role=prepared_by_role,
+        client_name=item.client_name,
+        client_reference=item.client_reference,
+        opportunity_id=item.id,
+    )
+    report_name = item.client_name or (analysis.get("profile") or {}).get("full_name")
+    return _pdf_response(content, cdas_report_filename(report_name, reference))
 
 
 @router.patch("/opportunities/{opportunity_id}/booked")
