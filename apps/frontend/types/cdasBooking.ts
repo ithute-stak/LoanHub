@@ -169,3 +169,40 @@ export interface CdasBookingOpportunityList {
   items: CdasBookingOpportunity[];
   total: number;
 }
+
+export interface CdasClientProfileSummary {
+  client_key: string;
+  client_name: string | null;
+  client_reference: string | null;
+  employee_no: string | null;
+  nid: string | null;
+  employer: string | null;
+  latest_analysis_id: string | null;
+  latest_analyzed_at: string | null;
+  current_agency_code: string | null;
+  current_agency_name: string | null;
+  decision: CdasBookingDecision | null;
+  assessed_available_amount: number | null;
+  amount_owing: number | null;
+  booking_months: number | null;
+  next_possible_booking_date: string | null;
+  data_quality_issue_count: number;
+  analysis_count: number;
+  opportunity_count: number;
+  booked_count: number;
+  book_now_count: number;
+  upcoming_count: number;
+}
+
+export interface CdasClientProfileList {
+  items: CdasClientProfileSummary[];
+  total: number;
+}
+
+export interface CdasClientProfileDetail extends CdasClientProfileSummary {
+  profile: CdasClientProfile;
+  current_deductions: CdasDeductionAnalysis[];
+  latest_analysis: CdasAnalysisRecord | null;
+  analyses: CdasAnalysisRecord[];
+  opportunities: CdasBookingOpportunity[];
+}

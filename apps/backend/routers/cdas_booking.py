@@ -29,6 +29,7 @@ from services.cdas_booking_storage import (
     dedupe_serialized_opportunities,
     save_or_update_opportunity_from_analysis,
 )
+from services.cdas_client_profiles import build_client_profiles
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Analyzer"])
 
@@ -152,6 +153,20 @@ def _archive_analysis(
     return record
 
 
+def _client_profile_sources(
+    db: Session,
+    *,
+    company_id: UUID,
+) -> tuple[list[CdasAnalysisRecord], list[CdasBookingOpportunity]]:
+    analyses = db.query(CdasAnalysisRecord).filter(
+        CdasAnalysisRecord.company_id == company_id
+    ).order_by(CdasAnalysisRecord.created_at.desc(), CdasAnalysisRecord.id.desc()).all()
+    opportunities = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.company_id == company_id
+    ).order_by(CdasBookingOpportunity.created_at.desc(), CdasBookingOpportunity.id.desc()).all()
+    return analyses, opportunities
+
+
 @router.post("/analyze")
 def analyze_cdas_booking(
     payload: CdasBookingAnalyseRequest,
@@ -177,6 +192,42 @@ def list_cdas_analyses(
     ).order_by(CdasAnalysisRecord.created_at.desc(), CdasAnalysisRecord.id.desc()).all()
     values = [serialize_analysis_record(record) for record in records]
     return {"items": values, "total": len(values)}
+
+
+@router.get("/clients")
+def list_cdas_client_profiles(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return one permanent CDAS profile summary per exact client identity."""
+    _require_company_member(context)
+    analyses, opportunities = _client_profile_sources(
+        db, company_id=context.company_id
+    )
+    values = build_client_profiles(analyses, opportunities)
+    return {"items": values, "total": len(values)}
+
+
+@router.get("/clients/{client_key}")
+def get_cdas_client_profile(
+    client_key: str,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return identity, current deductions, analyses and booking history for one client."""
+    _require_company_member(context)
+    analyses, opportunities = _client_profile_sources(
+        db, company_id=context.company_id
+    )
+    profiles = build_client_profiles(
+        analyses, opportunities, include_detail=True
+    )
+    profile = next(
+        (item for item in profiles if item["client_key"] == client_key), None
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="CDAS client profile not found")
+    return profile
 
 
 @router.get("/analyses/{analysis_id}/report/pdf")
