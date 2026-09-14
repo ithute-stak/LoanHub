@@ -50,6 +50,9 @@ export interface CdasRetirementAnalysis {
 export interface CdasApplicationContext {
   new_deduction_agency_code: string | null;
   new_deduction_agency_name: string | null;
+  current_cdas_agency_code: string | null;
+  current_cdas_agency_name: string | null;
+  agency_auto_detected: boolean;
 }
 
 export interface CdasDeductionAnalysis {
