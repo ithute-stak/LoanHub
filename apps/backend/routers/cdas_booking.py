@@ -66,6 +66,11 @@ def save_cdas_booking_opportunity(
 ):
     _require_company_member(context)
     analysis = jsonable_encoder(_analyze(payload))
+    if analysis.get("decision") == "REVIEW_REQUIRED":
+        raise HTTPException(
+            status_code=422,
+            detail="This CDAS analysis contains contradictory Active deduction dates. Correct or verify the flagged row before saving a booking monitor.",
+        )
     item = create_opportunity_from_analysis(
         db,
         company_id=context.company_id,
