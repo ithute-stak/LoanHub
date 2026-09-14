@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from database.base import Base
@@ -27,3 +27,48 @@ class CdasBookingOpportunity(Base):
     analysis_snapshot = Column(JSONB, nullable=False, default=dict)
     booked_at = Column(DateTime, nullable=True)
     booked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+
+class CdasAnalysisRecord(Base):
+    """Immutable tenant-scoped archive of structured CDAS analyses.
+
+    Raw pasted CDAS screen text is never stored. An exact duplicate analysis is
+    represented once per company; materially changed analysis data gets a new
+    history record and therefore a new reportable version.
+    """
+
+    __tablename__ = "cdas_analysis_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "analysis_fingerprint",
+            name="uq_cdas_analysis_records_company_fingerprint",
+        ),
+    )
+
+    company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    analyzed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    analyzed_by_name = Column(String(255), nullable=True)
+    analyzed_by_role = Column(String(100), nullable=True)
+
+    client_name = Column(String(200), nullable=True, index=True)
+    client_reference = Column(String(200), nullable=True, index=True)
+    employee_no = Column(String(200), nullable=True)
+    nid = Column(String(200), nullable=True)
+    employer = Column(String(255), nullable=True)
+
+    current_agency_code = Column(String(100), nullable=True)
+    current_agency_name = Column(String(255), nullable=True)
+    decision = Column(String(30), nullable=False, index=True)
+
+    assessed_available_amount = Column(Numeric(18, 2), nullable=True)
+    amount_owing = Column(Numeric(18, 2), nullable=True)
+    booking_months = Column(Integer, nullable=True)
+    next_possible_booking_date = Column(Date, nullable=True, index=True)
+
+    reported_active_monthly_deductions = Column(Numeric(18, 2), nullable=False, default=0)
+    total_monthly_deductions = Column(Numeric(18, 2), nullable=False, default=0)
+    data_quality_issue_count = Column(Integer, nullable=False, default=0)
+
+    analysis_fingerprint = Column(String(64), nullable=False, index=True)
+    analysis_snapshot = Column(JSONB, nullable=False, default=dict)
