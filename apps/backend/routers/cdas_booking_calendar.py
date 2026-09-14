@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext, get_tenant_context
@@ -10,8 +13,17 @@ from services.cdas_booking_calendar import build_booking_calendar
 from services.cdas_booking_monitor import local_today, serialize_opportunity
 from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
+from services.cdas_what_if_simulator import simulate_what_if
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Calendar"])
+
+
+class CdasWhatIfRequest(BaseModel):
+    opportunity_id: UUID
+    proposed_installment: float | None = Field(default=None, gt=0, le=999_999_999)
+    proposed_amount: float | None = Field(default=None, gt=0, le=999_999_999)
+    term_months: int | None = Field(default=None, ge=1, le=240)
+    annual_interest_rate: float | None = Field(default=None, ge=0, le=500)
 
 
 def _require_company_member(context: TenantContext) -> None:
@@ -51,3 +63,31 @@ def get_cdas_booking_priorities(
     _require_company_member(context)
     opportunities = _company_opportunities(context, db)
     return build_booking_priority_queue(opportunities, today=local_today())
+
+
+@router.post("/simulator")
+def simulate_cdas_what_if(
+    payload: CdasWhatIfRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Simulate a proposed installment against one saved tenant CDAS opportunity."""
+    _require_company_member(context)
+    row = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.id == payload.opportunity_id,
+        CdasBookingOpportunity.company_id == context.company_id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="CDAS booking opportunity not found")
+
+    try:
+        return simulate_what_if(
+            opportunity=serialize_opportunity(row),
+            today=local_today(),
+            proposed_installment=payload.proposed_installment,
+            proposed_amount=payload.proposed_amount,
+            term_months=payload.term_months,
+            annual_interest_rate=payload.annual_interest_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
