@@ -1,5 +1,6 @@
-export type CdasBookingDecision = "ALREADY_BOOKED" | "BOOK_NOW" | "WAIT_UNTIL";
-export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE";
+export type CdasBookingDecision = "ALREADY_BOOKED" | "BOOK_NOW" | "WAIT_UNTIL" | "REVIEW_REQUIRED";
+export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE" | "DATA_CONFLICT";
+export type CdasDataQualityStatus = "OK" | "DATE_CONFLICT";
 export type CdasOpportunityState = "UPCOMING" | "BOOK_NOW" | "BOOKED";
 
 export interface CdasBookingAnalyzeRequest {
@@ -24,13 +25,17 @@ export interface CdasDeductionAnalysis {
   expiry_date: string;
   reference_no: string;
   status: string;
+  reported_active: boolean;
   is_own_booking: boolean;
   is_active: boolean;
-  elapsed_months: number;
-  months_to_expiry: number;
-  scheduled_deduction_months: number;
-  booking_open_date: string;
-  months_until_booking: number;
+  excluded_from_booking: boolean;
+  data_quality_status: CdasDataQualityStatus;
+  data_quality_message: string | null;
+  elapsed_months: number | null;
+  months_to_expiry: number | null;
+  scheduled_deduction_months: number | null;
+  booking_open_date: string | null;
+  months_until_booking: number | null;
   booking_status: CdasRowBookingStatus;
 }
 
@@ -43,6 +48,9 @@ export interface CdasBookingAnalysis {
   total_monthly_deductions: number;
   own_monthly_deductions: number;
   competitor_monthly_deductions: number;
+  excluded_monthly_deductions: number;
+  data_quality_issue_count: number;
+  data_quality_issues: CdasDeductionAnalysis[];
   own_bookings: CdasDeductionAnalysis[];
   opportunity: CdasDeductionAnalysis | null;
   deductions: CdasDeductionAnalysis[];
