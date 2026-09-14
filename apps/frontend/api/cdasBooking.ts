@@ -11,6 +11,7 @@ import type {
 } from "@/types/cdasBooking";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
+import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
 import type { CdasWhatIfRequest, CdasWhatIfResult } from "@/types/cdasWhatIf";
 
 export interface CdasPdfDownload {
@@ -42,6 +43,8 @@ export const cdasBookingApi = {
     (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
   simulateWhatIf: async (payload: CdasWhatIfRequest): Promise<CdasWhatIfResult> =>
     (await api.post<CdasWhatIfResult>("/cdas-booking/simulator", payload)).data,
+  calculateMaxLoan: async (payload: CdasMaxLoanRequest): Promise<CdasMaxLoanResult> =>
+    (await api.post<CdasMaxLoanResult>("/cdas-booking/loan-capacity", payload)).data,
   downloadArchivedAnalysisReport: async (id: string): Promise<CdasPdfDownload> => {
     const response = await api.get<Blob>(`/cdas-booking/analyses/${id}/report/pdf`, { responseType: "blob" });
     return {
