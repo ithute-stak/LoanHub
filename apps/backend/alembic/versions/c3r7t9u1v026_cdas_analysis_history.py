@@ -127,40 +127,45 @@ def upgrade() -> None:
         )
 
     # Backfill all recoverable historical analyses from the existing structured
-    # opportunity snapshots. Existing opportunity rows remain untouched.
+    # opportunity snapshots. Existing opportunity rows remain untouched. Explicit
+    # SQLAlchemy types are used here so PostgreSQL receives UUID/JSONB/date values
+    # through the correct bind processors during a live migration.
     connection = op.get_bind()
+    uuid_type = postgresql.UUID(as_uuid=True)
+    json_type = postgresql.JSONB(astext_type=sa.Text())
+    money_type = sa.Numeric(18, 2)
     source = sa.table(
         "cdas_booking_opportunities",
-        sa.column("company_id"),
-        sa.column("client_name"),
-        sa.column("client_reference"),
-        sa.column("analysis_snapshot"),
-        sa.column("created_at"),
-        sa.column("updated_at"),
+        sa.column("company_id", uuid_type),
+        sa.column("client_name", sa.String(length=200)),
+        sa.column("client_reference", sa.String(length=200)),
+        sa.column("analysis_snapshot", json_type),
+        sa.column("created_at", sa.DateTime()),
+        sa.column("updated_at", sa.DateTime()),
     )
     target = sa.table(
         "cdas_analysis_records",
-        sa.column("company_id"),
-        sa.column("client_name"),
-        sa.column("client_reference"),
-        sa.column("employee_no"),
-        sa.column("nid"),
-        sa.column("employer"),
-        sa.column("current_agency_code"),
-        sa.column("current_agency_name"),
-        sa.column("decision"),
-        sa.column("assessed_available_amount"),
-        sa.column("amount_owing"),
-        sa.column("booking_months"),
-        sa.column("next_possible_booking_date"),
-        sa.column("reported_active_monthly_deductions"),
-        sa.column("total_monthly_deductions"),
-        sa.column("data_quality_issue_count"),
-        sa.column("analysis_fingerprint"),
-        sa.column("analysis_snapshot"),
-        sa.column("id"),
-        sa.column("created_at"),
-        sa.column("updated_at"),
+        sa.column("company_id", uuid_type),
+        sa.column("client_name", sa.String(length=200)),
+        sa.column("client_reference", sa.String(length=200)),
+        sa.column("employee_no", sa.String(length=200)),
+        sa.column("nid", sa.String(length=200)),
+        sa.column("employer", sa.String(length=255)),
+        sa.column("current_agency_code", sa.String(length=100)),
+        sa.column("current_agency_name", sa.String(length=255)),
+        sa.column("decision", sa.String(length=30)),
+        sa.column("assessed_available_amount", money_type),
+        sa.column("amount_owing", money_type),
+        sa.column("booking_months", sa.Integer()),
+        sa.column("next_possible_booking_date", sa.Date()),
+        sa.column("reported_active_monthly_deductions", money_type),
+        sa.column("total_monthly_deductions", money_type),
+        sa.column("data_quality_issue_count", sa.Integer()),
+        sa.column("analysis_fingerprint", sa.String(length=64)),
+        sa.column("analysis_snapshot", json_type),
+        sa.column("id", uuid_type),
+        sa.column("created_at", sa.DateTime()),
+        sa.column("updated_at", sa.DateTime()),
     )
 
     seen: set[tuple[Any, str]] = set()
