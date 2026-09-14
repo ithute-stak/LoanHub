@@ -1,3 +1,6 @@
+from datetime import date
+
+from routers.cdas_booking import CdasBookingAnalyseRequest, _analyze
 from services.cdas_booking_autofill import parse_cdas_autofill_context
 
 
@@ -80,3 +83,38 @@ Agency * 61433 (Lelefa Holdings)
     assert context["profile"]["nid"] == "999999999999"
     assert context["application_context"]["new_deduction_agency_code"] == "61433"
     assert context["application_context"]["new_deduction_agency_name"] == "Lelefa Holdings"
+
+
+def test_analyze_response_contains_values_used_by_frontend_autofill():
+    raw = """
+Employee NoSearch
+EMP-4401
+Name
+Matekane
+Surname
+Molefe
+NID
+111222333444
+Agency *
+2966
+(Lelefa Debt Collection)
+
+| | 2907 | EXPRESS CREDIT | | M 1,463.00 | 2024-Nov | 2028-Oct | AP3027765 | Active |
+"""
+
+    analysis = _analyze(
+        CdasBookingAnalyseRequest(
+            raw_text=raw,
+            booking_lead_months=6,
+            own_item_codes=[],
+            own_agency_names=[],
+            as_of=date(2026, 9, 14),
+        )
+    )
+
+    assert analysis["profile"]["full_name"] == "Matekane Molefe"
+    assert analysis["profile"]["employee_no"] == "EMP-4401"
+    assert analysis["profile"]["nid"] == "111222333444"
+    assert analysis["application_context"]["current_cdas_agency_code"] == "2966"
+    assert analysis["application_context"]["current_cdas_agency_name"] == "Lelefa Debt Collection"
+    assert analysis["application_context"]["agency_auto_detected"] is True
