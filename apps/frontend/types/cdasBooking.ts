@@ -1,7 +1,8 @@
 export type CdasBookingDecision = "ALREADY_BOOKED" | "BOOK_NOW" | "WAIT_UNTIL" | "REVIEW_REQUIRED";
-export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE" | "DATA_CONFLICT";
-export type CdasDataQualityStatus = "OK" | "DATE_CONFLICT";
+export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE" | "DATA_CONFLICT" | "DATA_INCOMPLETE";
+export type CdasDataQualityStatus = "OK" | "DATE_CONFLICT" | "MISSING_EXPIRY";
 export type CdasOpportunityState = "UPCOMING" | "BOOK_NOW" | "BOOKED";
+export type CdasCapacityStatus = "UNKNOWN" | "NEGATIVE_AVAILABLE" | "NO_HEADROOM" | "AVAILABLE";
 
 export interface CdasBookingAnalyzeRequest {
   raw_text: string;
@@ -17,12 +18,46 @@ export interface CdasBookingMonitorRequest extends CdasBookingAnalyzeRequest {
   alert_lead_days: number;
 }
 
+export interface CdasClientProfile {
+  employee_no: string | null;
+  name: string | null;
+  surname: string | null;
+  full_name: string | null;
+  gender: string | null;
+  date_of_birth: string | null;
+  nid: string | null;
+  employer: string | null;
+  joining_date: string | null;
+  end_date: string | null;
+  early_retirement_date: string | null;
+  compulsory_retirement_date: string | null;
+}
+
+export interface CdasCapacitySnapshot {
+  max_available_deduction_amount: number | null;
+  max_available_after_selected_deductions: number | null;
+  status: CdasCapacityStatus;
+  shortfall_amount: number;
+}
+
+export interface CdasRetirementAnalysis {
+  early_retirement_date: string | null;
+  compulsory_retirement_date: string | null;
+  days_until_early_retirement: number | null;
+  days_until_compulsory_retirement: number | null;
+}
+
+export interface CdasApplicationContext {
+  new_deduction_agency_code: string | null;
+  new_deduction_agency_name: string | null;
+}
+
 export interface CdasDeductionAnalysis {
   item_code: string;
   agency_name: string;
   deduction_amount: number;
   effective_date: string;
-  expiry_date: string;
+  expiry_date: string | null;
   reference_no: string;
   status: string;
   reported_active: boolean;
@@ -42,9 +77,14 @@ export interface CdasDeductionAnalysis {
 export interface CdasBookingAnalysis {
   as_of: string;
   booking_lead_months: number;
+  profile: CdasClientProfile;
+  capacity: CdasCapacitySnapshot;
+  retirement_analysis: CdasRetirementAnalysis;
+  application_context: CdasApplicationContext;
   decision: CdasBookingDecision;
   decision_message: string;
   next_possible_booking_date: string | null;
+  reported_active_monthly_deductions: number;
   total_monthly_deductions: number;
   own_monthly_deductions: number;
   competitor_monthly_deductions: number;
