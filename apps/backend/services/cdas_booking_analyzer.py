@@ -197,17 +197,29 @@ def _serialise_row(
     effective = row["effective_date"]
     expiry = row["expiry_date"]
     as_of_month = date(as_of.year, as_of.month, 1)
-    booking_open = _shift_month(expiry, -booking_lead_months)
-    active = row["status"].lower() == "active"
+    reported_active = row["status"].lower() == "active"
     is_own = _is_own_booking(row, own_item_codes, own_agencies)
 
-    elapsed = max(0, _month_diff(effective, as_of_month))
-    months_to_expiry = max(0, _month_diff(as_of_month, expiry))
-    scheduled_deduction_months = max(1, _month_diff(effective, expiry) + 1)
+    date_conflict = expiry < effective
+    data_quality_status = "DATE_CONFLICT" if date_conflict else "OK"
+    data_quality_message = None
+    if date_conflict:
+        data_quality_message = (
+            f"Effective month {effective:%Y-%m} is later than expiry month {expiry:%Y-%m}. "
+            "This CDAS row is excluded from booking calculations until it is corrected."
+        )
 
-    if is_own and active:
+    active = reported_active and not date_conflict
+    booking_open = _shift_month(expiry, -booking_lead_months) if not date_conflict else None
+    elapsed = max(0, _month_diff(effective, as_of_month)) if not date_conflict else None
+    months_to_expiry = max(0, _month_diff(as_of_month, expiry)) if not date_conflict else None
+    scheduled_deduction_months = max(1, _month_diff(effective, expiry) + 1) if not date_conflict else None
+
+    if date_conflict:
+        booking_status = "DATA_CONFLICT"
+    elif is_own and active:
         booking_status = "BOOKED_BY_US"
-    elif active and booking_open <= as_of_month:
+    elif active and booking_open and booking_open <= as_of_month:
         booking_status = "BOOK_NOW"
     elif active:
         booking_status = "WAIT"
@@ -222,13 +234,17 @@ def _serialise_row(
         "expiry_date": expiry.isoformat(),
         "reference_no": row["reference_no"],
         "status": row["status"],
+        "reported_active": reported_active,
         "is_own_booking": is_own,
         "is_active": active,
+        "excluded_from_booking": date_conflict,
+        "data_quality_status": data_quality_status,
+        "data_quality_message": data_quality_message,
         "elapsed_months": elapsed,
         "months_to_expiry": months_to_expiry,
         "scheduled_deduction_months": scheduled_deduction_months,
-        "booking_open_date": booking_open.isoformat(),
-        "months_until_booking": max(0, _month_diff(as_of_month, booking_open)),
+        "booking_open_date": booking_open.isoformat() if booking_open else None,
+        "months_until_booking": max(0, _month_diff(as_of_month, booking_open)) if booking_open else None,
         "booking_status": booking_status,
     }
 
@@ -260,6 +276,7 @@ def analyse_cdas_booking(
         for row in parsed_rows
     ]
 
+    data_quality_issues = [row for row in deductions if row["excluded_from_booking"]]
     active_rows = [row for row in deductions if row["is_active"]]
     own_active = [row for row in active_rows if row["is_own_booking"]]
     competitor_active = [row for row in active_rows if not row["is_own_booking"]]
@@ -294,10 +311,16 @@ def analyse_cdas_booking(
             f"{opportunity['agency_name']} expiring {opportunity['expiry_date'][:7]} and a "
             f"{booking_lead_months}-month booking window."
         )
+    elif any(row["reported_active"] for row in data_quality_issues):
+        decision = "REVIEW_REQUIRED"
+        decision_message = (
+            "CDAS contains an Active deduction with an invalid date range. LoanHub will not make a "
+            "booking recommendation from contradictory dates. Review or correct the flagged CDAS row first."
+        )
     else:
         decision = "BOOK_NOW"
         next_possible_booking_date = date(as_of.year, as_of.month, 1).isoformat()
-        decision_message = "No active deduction was found. The client can be considered for booking now."
+        decision_message = "No valid active deduction was found. The client can be considered for booking now."
 
     return {
         "as_of": as_of.isoformat(),
@@ -310,6 +333,11 @@ def analyse_cdas_booking(
         "competitor_monthly_deductions": round(
             sum(row["deduction_amount"] for row in competitor_active), 2
         ),
+        "excluded_monthly_deductions": round(
+            sum(row["deduction_amount"] for row in data_quality_issues if row["reported_active"]), 2
+        ),
+        "data_quality_issue_count": len(data_quality_issues),
+        "data_quality_issues": data_quality_issues,
         "own_bookings": own_active,
         "opportunity": opportunity,
         "deductions": deductions,
