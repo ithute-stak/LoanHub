@@ -13,7 +13,7 @@ from services.cdas_booking_calendar import build_booking_calendar
 from services.cdas_booking_monitor import local_today, serialize_opportunity
 from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
-from services.cdas_max_loan_calculator import calculate_max_loan_amount
+from services.cdas_max_loan_calculator import calculate_reference_max_principal
 from services.cdas_what_if_simulator import simulate_what_if
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Calendar"])
@@ -28,7 +28,7 @@ class CdasWhatIfRequest(BaseModel):
 
 
 class CdasMaxLoanRequest(BaseModel):
-    opportunity_id: UUID
+    monthly_capacity: float = Field(ge=0, le=999_999_999)
     term_months: int = Field(ge=1, le=240)
     annual_interest_rate: float = Field(ge=0, le=500)
     monthly_service_fee: float = Field(default=0, ge=0, le=999_999_999)
@@ -117,22 +117,15 @@ def simulate_cdas_what_if(
 
 
 @router.post("/loan-capacity")
-def calculate_cdas_max_loan(
+def calculate_cdas_max_loan_reference(
     payload: CdasMaxLoanRequest,
     context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
 ):
-    """Calculate the maximum principal that fits one saved tenant CDAS capacity."""
+    """Return reference-only loan arithmetic from staff-entered values."""
     _require_company_member(context)
-    row = _company_opportunity_or_404(
-        opportunity_id=payload.opportunity_id,
-        context=context,
-        db=db,
-    )
-
     try:
-        return calculate_max_loan_amount(
-            opportunity=serialize_opportunity(row),
+        return calculate_reference_max_principal(
+            monthly_capacity=payload.monthly_capacity,
             term_months=payload.term_months,
             annual_interest_rate=payload.annual_interest_rate,
             monthly_service_fee=payload.monthly_service_fee,
