@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0])}/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 TEMP_ENV_CREATED=0
 
@@ -24,7 +24,8 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_hrms_native_module.py \
   tests/test_hrms_hybrid_navigation_frontend.py \
   tests/test_cdas_analysis_report.py \
-  tests/test_cdas_analysis_history.py
+  tests/test_cdas_analysis_history.py \
+  tests/test_cdas_analysis_history_frontend.py
 "$PYTHON_BIN" -m alembic heads
 
 if [[ "${LOANHUB_VALIDATE_LIVE_MIGRATIONS:-false}" == "true" ]]; then
