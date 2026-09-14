@@ -10,6 +10,7 @@ import type {
   CdasClientProfileList,
 } from "@/types/cdasBooking";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
+import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 
 export interface CdasPdfDownload {
   blob: Blob;
@@ -36,6 +37,8 @@ export const cdasBookingApi = {
     (await api.get<CdasClientProfileDetail>(`/cdas-booking/clients/${encodeURIComponent(clientKey)}`)).data,
   getBookingCalendar: async (): Promise<CdasBookingCalendar> =>
     (await api.get<CdasBookingCalendar>("/cdas-booking/calendar")).data,
+  getBookingPriorities: async (): Promise<CdasBookingPriorityQueue> =>
+    (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
   downloadArchivedAnalysisReport: async (id: string): Promise<CdasPdfDownload> => {
     const response = await api.get<Blob>(`/cdas-booking/analyses/${id}/report/pdf`, { responseType: "blob" });
     return {
