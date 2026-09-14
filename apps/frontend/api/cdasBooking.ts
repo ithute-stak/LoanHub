@@ -9,6 +9,7 @@ import type {
   CdasClientProfileDetail,
   CdasClientProfileList,
 } from "@/types/cdasBooking";
+import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 
 export interface CdasPdfDownload {
   blob: Blob;
@@ -33,6 +34,8 @@ export const cdasBookingApi = {
     (await api.get<CdasClientProfileList>("/cdas-booking/clients")).data,
   getClientProfile: async (clientKey: string): Promise<CdasClientProfileDetail> =>
     (await api.get<CdasClientProfileDetail>(`/cdas-booking/clients/${encodeURIComponent(clientKey)}`)).data,
+  getBookingCalendar: async (): Promise<CdasBookingCalendar> =>
+    (await api.get<CdasBookingCalendar>("/cdas-booking/calendar")).data,
   downloadArchivedAnalysisReport: async (id: string): Promise<CdasPdfDownload> => {
     const response = await api.get<Blob>(`/cdas-booking/analyses/${id}/report/pdf`, { responseType: "blob" });
     return {
