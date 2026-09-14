@@ -15,7 +15,12 @@ from database.models.cdas_booking import CdasBookingOpportunity
 from database.session import get_db
 from services.cdas_booking_analyzer import analyse_cdas_booking, parse_cdas_screen_context
 from services.cdas_booking_autofill import parse_cdas_autofill_context
-from services.cdas_booking_monitor import create_opportunity_from_analysis, local_today, serialize_opportunity
+from services.cdas_booking_monitor import local_today, serialize_opportunity
+from services.cdas_booking_policy import apply_capacity_booking_policy
+from services.cdas_booking_storage import (
+    dedupe_serialized_opportunities,
+    save_or_update_opportunity_from_analysis,
+)
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Analyzer"])
 
@@ -25,6 +30,7 @@ class CdasBookingAnalyseRequest(BaseModel):
     booking_lead_months: int = Field(default=6, ge=0, le=60)
     own_item_codes: list[str] = Field(default_factory=list)
     own_agency_names: list[str] = Field(default_factory=list)
+    amount_owing: float | None = Field(default=None, gt=0, le=999_999_999)
     as_of: date | None = None
 
 
@@ -86,7 +92,12 @@ def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
         analysis_application_context["current_cdas_agency_code"] = detected_agency_code
         analysis_application_context["current_cdas_agency_name"] = detected_agency_name
         analysis_application_context["agency_auto_detected"] = bool(detected_agency_name)
-        return analysis
+
+        return apply_capacity_booking_policy(
+            analysis,
+            as_of=as_of,
+            amount_owing=payload.amount_owing,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -110,7 +121,7 @@ def save_cdas_booking_opportunity(
             status_code=422,
             detail="This CDAS analysis contains Active deduction data that cannot be used safely for booking timing. Correct or verify the flagged row before saving a booking monitor.",
         )
-    item = create_opportunity_from_analysis(
+    item = save_or_update_opportunity_from_analysis(
         db,
         company_id=context.company_id,
         client_name=payload.client_name,
@@ -135,7 +146,7 @@ def list_cdas_booking_opportunities(
     items = db.query(CdasBookingOpportunity).filter(
         CdasBookingOpportunity.company_id == context.company_id
     ).order_by(CdasBookingOpportunity.booking_open_date.asc().nullslast(), CdasBookingOpportunity.created_at.desc()).all()
-    values = [serialize_opportunity(item) for item in items]
+    values = dedupe_serialized_opportunities([serialize_opportunity(item) for item in items])
     if state:
         wanted = state.upper()
         values = [item for item in values if item["state"] == wanted]

@@ -71,42 +71,67 @@ function extractClipboardFormText(html: string) {
 }
 function money(value: number) { return `M ${Number(value || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function dateLabel(value?: string | null) { if (!value) return "—"; const d = new Date(`${value.slice(0,10)}T00:00:00`); return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }); }
+function parsePositiveAmount(value: string) { const parsed = Number(value.replace(/,/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
 
 function CapacitySummary({ result }: { result: CdasBookingAnalysis }) {
   const capacity = result.capacity;
-  const assessedAmount = capacity.max_available_after_selected_deductions ?? capacity.max_available_deduction_amount;
+  const assessedAmount = capacity.assessed_available_amount ?? capacity.max_available_after_selected_deductions ?? capacity.max_available_deduction_amount;
   if (capacity.status === "UNKNOWN" || assessedAmount === null) return null;
 
   const current = capacity.max_available_deduction_amount;
   const afterSelected = capacity.max_available_after_selected_deductions;
   const isNegative = capacity.status === "NEGATIVE_AVAILABLE";
   const isZero = capacity.status === "NO_HEADROOM";
+  const bookingAllowed = capacity.booking_allowed;
+  const threshold = capacity.booking_threshold_amount ?? 1;
 
   const title = isNegative
     ? `No deduction headroom — over limit by ${money(capacity.shortfall_amount)}`
     : isZero
       ? "No deduction headroom available"
-      : `${money(assessedAmount)} monthly deduction headroom available`;
+      : bookingAllowed
+        ? `${money(assessedAmount)} monthly capacity — booking allowed now`
+        : `${money(assessedAmount)} available — below booking threshold`;
 
   const message = isNegative
-    ? `CDAS reports ${money(assessedAmount)} as the available deduction amount. Because it is negative, this does not mean money is available — it means the payroll deduction limit is exceeded by ${money(capacity.shortfall_amount)}. Do not treat the client as having room for another deduction unless a consolidation calculation becomes positive.`
+    ? `CDAS reports ${money(assessedAmount)} as the available deduction amount. Because it is negative, this means the payroll deduction limit is exceeded by ${money(capacity.shortfall_amount)}.`
     : isZero
       ? "CDAS reports exactly M 0.00 available. LoanHub treats this as no additional payroll deduction headroom."
-      : `CDAS reports a positive available amount of ${money(assessedAmount)}. LoanHub treats this as payroll deduction headroom only; it is not automatic loan approval and other lending rules still apply.`;
+      : bookingAllowed
+        ? `The assessed Max Available Deduction Amount is greater than ${money(threshold)}. LoanHub therefore allows booking now, even when an existing deduction has not yet reached its normal expiry booking window.`
+        : `The available amount is positive but is not greater than ${money(threshold)}. LoanHub keeps using the normal expiry/booking-window rules.`;
 
   return <div className="space-y-3">
-    <Alert variant={isNegative ? "destructive" : "default"} className={!isNegative && isZero ? "border-amber-500/50 bg-amber-50/60 dark:bg-amber-950/20" : !isNegative ? "border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20" : ""}>
-      {isNegative || isZero ? <AlertTriangle className="h-4 w-4"/> : <CheckCircle2 className="h-4 w-4"/>}
+    <Alert variant={isNegative ? "destructive" : "default"} className={!isNegative && isZero ? "border-amber-500/50 bg-amber-50/60 dark:bg-amber-950/20" : bookingAllowed ? "border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-amber-500/50 bg-amber-50/60 dark:bg-amber-950/20"}>
+      {isNegative || isZero || !bookingAllowed ? <AlertTriangle className="h-4 w-4"/> : <CheckCircle2 className="h-4 w-4"/>}
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>{message}</AlertDescription>
     </Alert>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Current CDAS max available</div><div className="font-semibold">{current === null ? "—" : money(current)}</div></div>
       <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">After selected deductions</div><div className="font-semibold">{afterSelected === null ? "Not supplied" : money(afterSelected)}</div></div>
-      <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">LoanHub interpretation</div><div className="font-semibold">{isNegative ? `Over limit by ${money(capacity.shortfall_amount)}` : isZero ? "No headroom" : `${money(assessedAmount)} headroom`}</div></div>
+      <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">LoanHub booking rule</div><div className="font-semibold">{bookingAllowed ? "BOOK NOW" : isNegative ? `Over limit by ${money(capacity.shortfall_amount)}` : isZero ? "No headroom" : "Use expiry window"}</div></div>
     </div>
-    {afterSelected !== null && current !== null && afterSelected !== current && <p className="text-xs text-muted-foreground">For consolidation, LoanHub uses the “after selected deductions” amount as the capacity assessment because it reflects the deductions being removed.</p>}
+    {afterSelected !== null && current !== null && afterSelected !== current && <p className="text-xs text-muted-foreground">For consolidation, LoanHub uses the “after selected deductions” amount as the assessed monthly capacity.</p>}
   </div>;
+}
+
+function BookingTermSummary({ result, amountOwing }: { result: CdasBookingAnalysis; amountOwing: string }) {
+  if (!result.capacity.booking_allowed) return null;
+  const monthly = result.capacity.assessed_available_amount;
+  const owing = parsePositiveAmount(amountOwing);
+  if (!monthly || monthly <= 0) return null;
+  const months = owing ? Math.max(1, Math.ceil(owing / monthly)) : null;
+
+  return <Alert className="border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20">
+    <CheckCircle2 className="h-4 w-4"/>
+    <AlertTitle>{months ? `Suggested booking term: ${months} month(s)` : "Enter the client amount owing"}</AlertTitle>
+    <AlertDescription>
+      {months && owing
+        ? `${money(owing)} owing ÷ ${money(monthly)} maximum monthly deduction = ${months} month(s), rounded up to the next whole month.`
+        : `Booking is allowed because monthly capacity is ${money(monthly)}. Enter how much the client is owing above so LoanHub can calculate the minimum number of months to book.`}
+    </AlertDescription>
+  </Alert>;
 }
 
 export default function CdasBookingPage() {
@@ -114,6 +139,7 @@ export default function CdasBookingPage() {
   const [rawText, setRawText] = useState("");
   const [clientName, setClientName] = useState("");
   const [clientReference, setClientReference] = useState("");
+  const [amountOwing, setAmountOwing] = useState("");
   const [ownItemCodes, setOwnItemCodes] = useState("");
   const [ownAgencyNames, setOwnAgencyNames] = useState("");
   const [bookingLeadMonths, setBookingLeadMonths] = useState(6);
@@ -136,7 +162,16 @@ export default function CdasBookingPage() {
   const bookNow = useMemo(() => items.filter((i) => i.state === "BOOK_NOW"), [items]);
   const booked = useMemo(() => items.filter((i) => i.state === "BOOKED"), [items]);
 
-  const payload = () => ({ raw_text: rawText, booking_lead_months: Math.max(0, Math.min(60, Number(bookingLeadMonths) || 0)), own_item_codes: splitList(ownItemCodes), own_agency_names: splitList(ownAgencyNames) });
+  const payload = () => {
+    const owing = parsePositiveAmount(amountOwing);
+    return {
+      raw_text: rawText,
+      booking_lead_months: Math.max(0, Math.min(60, Number(bookingLeadMonths) || 0)),
+      own_item_codes: splitList(ownItemCodes),
+      own_agency_names: splitList(ownAgencyNames),
+      amount_owing: owing ?? undefined,
+    };
+  };
 
   function handleCdasPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const html = event.clipboardData.getData("text/html");
@@ -185,8 +220,9 @@ export default function CdasBookingPage() {
     if (!rawText.trim()) return;
     setSaving(true); setError("");
     try {
-      await cdasBookingApi.saveOpportunity({ ...payload(), client_name: clientName.trim() || undefined, client_reference: clientReference.trim() || undefined, alert_lead_days: alertLeadDays });
-      await refresh(); setTab("upcoming");
+      const saved = await cdasBookingApi.saveOpportunity({ ...payload(), client_name: clientName.trim() || undefined, client_reference: clientReference.trim() || undefined, alert_lead_days: alertLeadDays });
+      await refresh();
+      setTab(saved.state === "BOOK_NOW" ? "book-now" : saved.state === "BOOKED" ? "booked" : "upcoming");
     } catch (e: any) { setError(e?.response?.data?.detail || "Could not save this CDAS analysis."); }
     finally { setSaving(false); }
   }
@@ -202,12 +238,16 @@ export default function CdasBookingPage() {
 
   function Queue({ data, allowBook }: { data: CdasBookingOpportunity[]; allowBook?: boolean }) {
     if (!data.length) return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">No records in this queue.</CardContent></Card>;
-    return <div className="grid gap-4 lg:grid-cols-2">{data.map((item) => <Card key={item.id} className={item.state === "BOOK_NOW" ? "border-primary/40" : ""}>
-      <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-lg">{item.client_name || item.client_reference || "CDAS client"}</CardTitle><CardDescription>{item.opportunity_agency_name || "No competing agency"} {item.opportunity_reference_no ? `• ${item.opportunity_reference_no}` : ""}</CardDescription></div><Badge variant={item.state === "BOOK_NOW" ? "default" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge></div></CardHeader>
-      <CardContent className="space-y-4"><div className="grid grid-cols-2 gap-3 text-sm"><div><div className="text-muted-foreground">Deduction</div><div className="font-semibold">{money(item.opportunity_deduction_amount)}</div></div><div><div className="text-muted-foreground">Booking opens</div><div className="font-semibold">{dateLabel(item.booking_open_date)}</div></div><div><div className="text-muted-foreground">Alerts start</div><div>{dateLabel(item.alert_start_date)}</div></div><div><div className="text-muted-foreground">Expiry</div><div>{dateLabel(item.opportunity_expiry_date)}</div></div></div>
-      {item.state === "UPCOMING" && <Alert><BellRing className="h-4 w-4"/><AlertTitle>{item.days_until_booking} day(s) until booking</AlertTitle><AlertDescription>Daily alerts begin {item.alert_lead_days} day(s) before the booking window opens.</AlertDescription></Alert>}
-      {allowBook && <Button className="w-full" onClick={() => void markBooked(item.id)}><CheckCircle2 className="mr-2 h-4 w-4"/>Mark booking complete</Button>}
-      </CardContent></Card>)}</div>;
+    return <div className="grid gap-4 lg:grid-cols-2">{data.map((item) => {
+      const term = item.analysis_snapshot?.booking_term;
+      return <Card key={item.id} className={item.state === "BOOK_NOW" ? "border-primary/40" : ""}>
+        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-lg">{item.client_name || item.client_reference || "CDAS client"}</CardTitle><CardDescription>{item.opportunity_agency_name || "No competing agency"} {item.opportunity_reference_no ? `• ${item.opportunity_reference_no}` : ""}</CardDescription></div><Badge variant={item.state === "BOOK_NOW" ? "default" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge></div></CardHeader>
+        <CardContent className="space-y-4"><div className="grid grid-cols-2 gap-3 text-sm"><div><div className="text-muted-foreground">Deduction</div><div className="font-semibold">{money(item.opportunity_deduction_amount)}</div></div><div><div className="text-muted-foreground">Booking opens</div><div className="font-semibold">{dateLabel(item.booking_open_date)}</div></div><div><div className="text-muted-foreground">Alerts start</div><div>{dateLabel(item.alert_start_date)}</div></div><div><div className="text-muted-foreground">Expiry</div><div>{dateLabel(item.opportunity_expiry_date)}</div></div>{term?.amount_owing ? <div><div className="text-muted-foreground">Amount owing</div><div className="font-semibold">{money(term.amount_owing)}</div></div> : null}{term?.months_required ? <div><div className="text-muted-foreground">Booking term</div><div className="font-semibold">{term.months_required} month(s)</div></div> : null}</div>
+        {item.state === "UPCOMING" && <Alert><BellRing className="h-4 w-4"/><AlertTitle>{item.days_until_booking} day(s) until booking</AlertTitle><AlertDescription>Daily alerts begin {item.alert_lead_days} day(s) before the booking window opens.</AlertDescription></Alert>}
+        {allowBook && <Button className="w-full" onClick={() => void markBooked(item.id)}><CheckCircle2 className="mr-2 h-4 w-4"/>Mark booking complete</Button>}
+        </CardContent>
+      </Card>;
+    })}</div>;
   }
 
   return <div className="space-y-6 pb-10">
@@ -216,15 +256,16 @@ export default function CdasBookingPage() {
     <div className="flex flex-wrap gap-2 rounded-xl border bg-muted/30 p-2">{tabs.map((t) => <Button key={t.id} variant={tab === t.id ? "default" : "ghost"} onClick={() => setTab(t.id)}>{t.label}{t.count !== undefined && <Badge variant="secondary" className="ml-2">{t.count}</Badge>}</Button>)}</div>
 
     {tab === "analyze" && <div className="space-y-5">
-      <Alert><BellRing className="h-4 w-4"/><AlertTitle>Automatic booking reminder</AlertTitle><AlertDescription>When you save an analysis, LoanHub starts monitoring it. By default the company is warned 3 days before the calculated booking-open date and reminded every day until the booking is marked complete.</AlertDescription></Alert>
-      <Card><CardHeader><CardTitle>Client & booking rules</CardTitle><CardDescription>LoanHub auto-fills these fields from copied CDAS text and, when available, the copied CDAS form controls. Staff can still edit or correct them before saving.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><div className="space-y-2"><Label>Client name</Label><Input value={clientName} onChange={(e)=>setClientName(e.target.value)} placeholder="Employee/client name"/></div><div className="space-y-2"><Label>Client reference</Label><Input value={clientReference} onChange={(e)=>setClientReference(e.target.value)} placeholder="Employee / payroll / internal ref"/></div><div className="space-y-2"><Label>Alert before booking (days)</Label><Input type="number" min={0} max={31} value={alertLeadDays} onChange={(e)=>setAlertLeadDays(Number(e.target.value))}/></div><div className="space-y-2"><Label>Our CDAS item code(s)</Label><Input value={ownItemCodes} onChange={(e)=>setOwnItemCodes(e.target.value)} placeholder="e.g. 3120, 3121"/></div><div className="space-y-2"><Label>Our agency name(s)</Label><Input value={ownAgencyNames} onChange={(e)=>setOwnAgencyNames(e.target.value)} placeholder="e.g. Batlokoa Financial Service"/></div><div className="space-y-2"><Label>Booking opens before expiry (months)</Label><Input type="number" min={0} max={60} value={bookingLeadMonths} onChange={(e)=>setBookingLeadMonths(Number(e.target.value))}/></div></CardContent></Card>
+      <Alert><BellRing className="h-4 w-4"/><AlertTitle>Automatic booking reminder</AlertTitle><AlertDescription>When you save an analysis, LoanHub starts monitoring it. The same CDAS opportunity is updated instead of being stored again when it is saved more than once.</AlertDescription></Alert>
+      <Card><CardHeader><CardTitle>Client & booking rules</CardTitle><CardDescription>LoanHub auto-fills these fields from copied CDAS text and, when available, the copied CDAS form controls. Enter the amount owing when capacity allows booking so LoanHub can calculate the term.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><div className="space-y-2"><Label>Client name</Label><Input value={clientName} onChange={(e)=>setClientName(e.target.value)} placeholder="Employee/client name"/></div><div className="space-y-2"><Label>Client reference</Label><Input value={clientReference} onChange={(e)=>setClientReference(e.target.value)} placeholder="Employee / payroll / internal ref"/></div><div className="space-y-2"><Label>Client amount owing</Label><Input type="number" min={0} step="0.01" value={amountOwing} onChange={(e)=>setAmountOwing(e.target.value)} placeholder="e.g. 12500.00"/></div><div className="space-y-2"><Label>Alert before booking (days)</Label><Input type="number" min={0} max={31} value={alertLeadDays} onChange={(e)=>setAlertLeadDays(Number(e.target.value))}/></div><div className="space-y-2"><Label>Our CDAS item code(s)</Label><Input value={ownItemCodes} onChange={(e)=>setOwnItemCodes(e.target.value)} placeholder="e.g. 3120, 3121"/></div><div className="space-y-2"><Label>Our agency name(s)</Label><Input value={ownAgencyNames} onChange={(e)=>setOwnAgencyNames(e.target.value)} placeholder="e.g. Batlokoa Financial Service"/></div><div className="space-y-2"><Label>Booking opens before expiry (months)</Label><Input type="number" min={0} max={60} value={bookingLeadMonths} onChange={(e)=>setBookingLeadMonths(Number(e.target.value))}/></div></CardContent></Card>
       <Card><CardHeader><CardTitle>Paste CDAS deductions</CardTitle></CardHeader><CardContent className="space-y-4"><Textarea className="min-h-48 font-mono text-sm" value={rawText} onChange={(e)=>setRawText(e.target.value)} onPaste={handleCdasPaste} placeholder="Paste copied CDAS deduction rows here..."/>{error && <Alert variant="destructive"><AlertTitle>Action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="flex flex-wrap gap-2"><LoadingButton loading={loading} loadingText="Analyzing..." onClick={analyze}><Search className="h-4 w-4"/>Analyze</LoadingButton><Button variant="outline" onClick={()=>setRawText(SAMPLE_TEXT)}><ClipboardPaste className="mr-2 h-4 w-4"/>Load sample</Button></div></CardContent></Card>
       {result && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardDescription>Recommendation</CardDescription><CardTitle className="mt-1 text-2xl">{result.decision === "REVIEW_REQUIRED" ? "Review CDAS data" : result.decision === "ALREADY_BOOKED" ? "Already booked by us" : result.decision === "BOOK_NOW" ? "Book now" : `Next booking: ${dateLabel(result.next_possible_booking_date)}`}</CardTitle></div><Badge variant={result.decision === "REVIEW_REQUIRED" ? "outline" : "default"} className={result.decision === "REVIEW_REQUIRED" ? "border-amber-500 text-amber-700 dark:text-amber-300" : ""}>{result.decision.replaceAll("_", " ")}</Badge></div></CardHeader><CardContent className="space-y-5"><p className="text-sm text-muted-foreground">{result.decision_message}</p>
       <CapacitySummary result={result}/>
+      <BookingTermSummary result={result} amountOwing={amountOwing}/>
       {result.data_quality_issue_count > 0 && <Alert className="border-amber-500/50 bg-amber-50/60 dark:bg-amber-950/20"><AlertTriangle className="h-4 w-4 text-amber-600"/><AlertTitle>{result.data_quality_issue_count} CDAS data issue{result.data_quality_issue_count === 1 ? "" : "s"} detected</AlertTitle><AlertDescription>LoanHub excluded {money(result.excluded_monthly_deductions)} from booking-window calculations because one or more Active rows have missing or contradictory expiry information. The amounts remain in the reported financial totals.</AlertDescription></Alert>}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Reported active deductions</div><div className="font-semibold">{money(result.reported_active_monthly_deductions)}</div></div><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Booking-valid deductions</div><div className="font-semibold">{money(result.total_monthly_deductions)}</div></div><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Other agencies</div><div className="font-semibold">{money(result.competitor_monthly_deductions)}</div></div>{result.data_quality_issue_count > 0 && <div className="rounded-lg border border-amber-500/40 p-3"><div className="text-xs text-muted-foreground">Excluded / needs review</div><div className="font-semibold text-amber-700 dark:text-amber-300">{money(result.excluded_monthly_deductions)}</div></div>}</div>
       <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Agency</TableHead><TableHead>Reference</TableHead><TableHead>Deduction</TableHead><TableHead>Effective</TableHead><TableHead>Expiry</TableHead><TableHead>Quality</TableHead><TableHead>Booking opens</TableHead></TableRow></TableHeader><TableBody>{result.deductions.map((r)=><TableRow key={`${r.item_code}-${r.reference_no}`} className={r.data_quality_status !== "OK" ? "bg-amber-50/70 dark:bg-amber-950/20" : ""}><TableCell><div>{r.agency_name}</div><div className="text-xs text-muted-foreground">Item {r.item_code}</div></TableCell><TableCell>{r.reference_no}</TableCell><TableCell>{money(r.deduction_amount)}</TableCell><TableCell>{dateLabel(r.effective_date)}</TableCell><TableCell>{dateLabel(r.expiry_date)}</TableCell><TableCell>{r.data_quality_status === "DATE_CONFLICT" ? <div className="max-w-64"><Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Date conflict</Badge><div className="mt-1 text-xs text-muted-foreground">{r.data_quality_message}</div></div> : r.data_quality_status === "MISSING_EXPIRY" ? <div className="max-w-64"><Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Missing expiry</Badge><div className="mt-1 text-xs text-muted-foreground">{r.data_quality_message}</div></div> : <Badge variant="secondary">Valid</Badge>}</TableCell><TableCell>{r.booking_open_date ? dateLabel(r.booking_open_date) : <span className="text-muted-foreground">Excluded</span>}</TableCell></TableRow>)}</TableBody></Table></div>
-      {result.decision === "REVIEW_REQUIRED" ? <Button disabled><AlertTriangle className="mr-2 h-4 w-4"/>Correct CDAS data before monitoring</Button> : <LoadingButton loading={saving} loadingText="Saving..." onClick={saveAndMonitor}><Save className="h-4 w-4"/>Save & monitor until booked</LoadingButton>}
+      {result.decision === "REVIEW_REQUIRED" ? <Button disabled><AlertTriangle className="mr-2 h-4 w-4"/>Correct CDAS data before monitoring</Button> : <LoadingButton loading={saving} loadingText="Saving..." onClick={saveAndMonitor}><Save className="h-4 w-4"/>Save / update opportunity</LoadingButton>}
       </CardContent></Card>}
     </div>}
     {tab === "upcoming" && <Queue data={upcoming}/>} {tab === "book-now" && <Queue data={bookNow} allowBook/>} {tab === "booked" && <Queue data={booked}/>} 
