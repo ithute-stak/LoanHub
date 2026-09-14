@@ -38,8 +38,9 @@ def _normalise_line(value: str) -> str:
 
 def _looks_like_label_or_section(line: str) -> bool:
     compact = _normalise_line(line).strip(":").lower()
-    if compact in _STOP_LABELS:
-        return True
+    for label in _STOP_LABELS:
+        if compact == label or compact.startswith(f"{label}: ") or compact.startswith(f"{label} "):
+            return True
     if compact.startswith("agency *"):
         return True
     if line.lstrip().startswith("|"):
