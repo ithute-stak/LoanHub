@@ -46,16 +46,12 @@ export function CdasClientProfiles() {
     try {
       const data = await cdasBookingApi.listClientProfiles();
       setProfiles(data.items);
-      if (selected) {
-        const refreshed = await cdasBookingApi.getClientProfile(selected.client_key);
-        setSelected(refreshed);
-      }
     } catch {
       setError("Could not load CDAS client profiles.");
     } finally {
       setLoading(false);
     }
-  }, [selected?.client_key]);
+  }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -71,11 +67,25 @@ export function CdasClientProfiles() {
     }
   }
 
+  async function refreshSelected() {
+    if (!selected) return;
+    setDetailLoading(true);
+    setError("");
+    try {
+      setSelected(await cdasBookingApi.getClientProfile(selected.client_key));
+      await refresh();
+    } catch {
+      setError("Could not refresh this CDAS client profile.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   if (selected) {
     return <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button variant="outline" onClick={() => setSelected(null)}><ArrowLeft className="mr-2 h-4 w-4"/>All client profiles</Button>
-        <Button variant="outline" onClick={() => void refresh()} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`}/>Refresh profile</Button>
+        <Button variant="outline" onClick={() => void refreshSelected()} disabled={detailLoading}><RefreshCw className={`mr-2 h-4 w-4 ${detailLoading ? "animate-spin" : ""}`}/>Refresh profile</Button>
       </div>
 
       {error && <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
