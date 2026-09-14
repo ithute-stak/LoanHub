@@ -9,6 +9,7 @@ export interface CdasBookingAnalyzeRequest {
   booking_lead_months: number;
   own_item_codes: string[];
   own_agency_names: string[];
+  amount_owing?: number;
   as_of?: string;
 }
 
@@ -36,8 +37,18 @@ export interface CdasClientProfile {
 export interface CdasCapacitySnapshot {
   max_available_deduction_amount: number | null;
   max_available_after_selected_deductions: number | null;
+  assessed_available_amount: number | null;
+  booking_threshold_amount: number;
+  booking_allowed: boolean;
   status: CdasCapacityStatus;
   shortfall_amount: number;
+}
+
+export interface CdasBookingTerm {
+  amount_owing: number | null;
+  monthly_available_deduction: number | null;
+  months_required: number | null;
+  calculation: string | null;
 }
 
 export interface CdasRetirementAnalysis {
@@ -82,6 +93,7 @@ export interface CdasBookingAnalysis {
   booking_lead_months: number;
   profile: CdasClientProfile;
   capacity: CdasCapacitySnapshot;
+  booking_term: CdasBookingTerm;
   retirement_analysis: CdasRetirementAnalysis;
   application_context: CdasApplicationContext;
   decision: CdasBookingDecision;
