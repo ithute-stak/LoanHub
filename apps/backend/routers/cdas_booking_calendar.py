@@ -7,12 +7,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext, get_tenant_context
-from database.models.cdas_booking import CdasBookingOpportunity
+from database.models.cdas_booking import CdasAnalysisRecord, CdasBookingOpportunity
 from database.session import get_db
+from services.cdas_agency_intelligence import build_agency_intelligence
 from services.cdas_booking_calendar import build_booking_calendar
 from services.cdas_booking_monitor import local_today, serialize_opportunity
 from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
+from services.cdas_client_profiles import build_client_profiles
 from services.cdas_max_loan_calculator import calculate_reference_max_principal
 from services.cdas_what_if_simulator import simulate_what_if
 
@@ -87,6 +89,23 @@ def get_cdas_booking_priorities(
     _require_company_member(context)
     opportunities = _company_opportunities(context, db)
     return build_booking_priority_queue(opportunities, today=local_today())
+
+
+@router.get("/agency-intelligence")
+def get_cdas_agency_intelligence(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return agency-level CDAS intelligence from each client's latest analysis."""
+    _require_company_member(context)
+    analyses = db.query(CdasAnalysisRecord).filter(
+        CdasAnalysisRecord.company_id == context.company_id
+    ).order_by(
+        CdasAnalysisRecord.created_at.desc(),
+        CdasAnalysisRecord.id.desc(),
+    ).all()
+    profiles = build_client_profiles(analyses, [], include_detail=True)
+    return build_agency_intelligence(profiles, today=local_today())
 
 
 @router.post("/simulator")
