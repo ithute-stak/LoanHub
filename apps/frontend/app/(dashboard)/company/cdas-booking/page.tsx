@@ -20,6 +20,13 @@ const SAMPLE_TEXT = `| | 2561 | Lesana Lesotho Limited | | M 3,942.08 | 2026-Mar
 type Tab = "analyze" | "upcoming" | "book-now" | "booked";
 
 function splitList(value: string) { return value.split(/[\n,;]+/).map((v) => v.trim()).filter(Boolean); }
+function normaliseListValue(value: string) { return value.trim().toLowerCase().replace(/\s+/g, " "); }
+function mergeList(existing: string, values: Array<string | null | undefined>) {
+  const merged = [...splitList(existing), ...values.map((value) => value?.trim() || "").filter(Boolean)];
+  const unique = new Map<string, string>();
+  for (const value of merged) unique.set(normaliseListValue(value), value);
+  return Array.from(unique.values()).join(", ");
+}
 function money(value: number) { return `M ${Number(value || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function dateLabel(value?: string | null) { if (!value) return "—"; const d = new Date(`${value.slice(0,10)}T00:00:00`); return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }); }
 
@@ -89,10 +96,32 @@ export default function CdasBookingPage() {
 
   const payload = () => ({ raw_text: rawText, booking_lead_months: Math.max(0, Math.min(60, Number(bookingLeadMonths) || 0)), own_item_codes: splitList(ownItemCodes), own_agency_names: splitList(ownAgencyNames) });
 
+  function autoFillBookingRules(analysis: CdasBookingAnalysis) {
+    const parsedName = analysis.profile.full_name?.trim();
+    const parsedReference = analysis.profile.employee_no?.trim() || analysis.profile.nid?.trim();
+    if (parsedName) setClientName(parsedName);
+    if (parsedReference) setClientReference(parsedReference);
+
+    const detectedAgency = analysis.application_context.new_deduction_agency_name?.trim()
+      || analysis.application_context.current_cdas_agency_name?.trim();
+    const detectedAgencyKey = detectedAgency ? normaliseListValue(detectedAgency) : "";
+    const ownRows = analysis.deductions.filter((row) =>
+      row.is_own_booking || (detectedAgencyKey && normaliseListValue(row.agency_name) === detectedAgencyKey)
+    );
+
+    setOwnItemCodes((current) => mergeList(current, ownRows.map((row) => row.item_code)));
+    setOwnAgencyNames((current) => mergeList(current, [detectedAgency, ...ownRows.map((row) => row.agency_name)]));
+    setBookingLeadMonths(analysis.booking_lead_months);
+  }
+
   async function analyze() {
     if (!rawText.trim()) { setError("Paste the CDAS deduction text first."); return; }
     setLoading(true); setError("");
-    try { setResult(await cdasBookingApi.analyze(payload())); }
+    try {
+      const analysis = await cdasBookingApi.analyze(payload());
+      autoFillBookingRules(analysis);
+      setResult(analysis);
+    }
     catch (e: any) { setError(e?.response?.data?.detail || "CDAS text could not be analyzed."); }
     finally { setLoading(false); }
   }
@@ -133,7 +162,7 @@ export default function CdasBookingPage() {
 
     {tab === "analyze" && <div className="space-y-5">
       <Alert><BellRing className="h-4 w-4"/><AlertTitle>Automatic booking reminder</AlertTitle><AlertDescription>When you save an analysis, LoanHub starts monitoring it. By default the company is warned 3 days before the calculated booking-open date and reminded every day until the booking is marked complete.</AlertDescription></Alert>
-      <Card><CardHeader><CardTitle>Client & booking rules</CardTitle><CardDescription>Client details help staff recognize the opportunity when the alert appears.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><div className="space-y-2"><Label>Client name</Label><Input value={clientName} onChange={(e)=>setClientName(e.target.value)} placeholder="Employee/client name"/></div><div className="space-y-2"><Label>Client reference</Label><Input value={clientReference} onChange={(e)=>setClientReference(e.target.value)} placeholder="Employee / payroll / internal ref"/></div><div className="space-y-2"><Label>Alert before booking (days)</Label><Input type="number" min={0} max={31} value={alertLeadDays} onChange={(e)=>setAlertLeadDays(Number(e.target.value))}/></div><div className="space-y-2"><Label>Our CDAS item code(s)</Label><Input value={ownItemCodes} onChange={(e)=>setOwnItemCodes(e.target.value)} placeholder="e.g. 3120, 3121"/></div><div className="space-y-2"><Label>Our agency name(s)</Label><Input value={ownAgencyNames} onChange={(e)=>setOwnAgencyNames(e.target.value)} placeholder="e.g. Batlokoa Financial Service"/></div><div className="space-y-2"><Label>Booking opens before expiry (months)</Label><Input type="number" min={0} max={60} value={bookingLeadMonths} onChange={(e)=>setBookingLeadMonths(Number(e.target.value))}/></div></CardContent></Card>
+      <Card><CardHeader><CardTitle>Client & booking rules</CardTitle><CardDescription>LoanHub fills these fields from the analyzed CDAS screen when available. Staff can still edit or correct them before saving.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><div className="space-y-2"><Label>Client name</Label><Input value={clientName} onChange={(e)=>setClientName(e.target.value)} placeholder="Employee/client name"/></div><div className="space-y-2"><Label>Client reference</Label><Input value={clientReference} onChange={(e)=>setClientReference(e.target.value)} placeholder="Employee / payroll / internal ref"/></div><div className="space-y-2"><Label>Alert before booking (days)</Label><Input type="number" min={0} max={31} value={alertLeadDays} onChange={(e)=>setAlertLeadDays(Number(e.target.value))}/></div><div className="space-y-2"><Label>Our CDAS item code(s)</Label><Input value={ownItemCodes} onChange={(e)=>setOwnItemCodes(e.target.value)} placeholder="e.g. 3120, 3121"/></div><div className="space-y-2"><Label>Our agency name(s)</Label><Input value={ownAgencyNames} onChange={(e)=>setOwnAgencyNames(e.target.value)} placeholder="e.g. Batlokoa Financial Service"/></div><div className="space-y-2"><Label>Booking opens before expiry (months)</Label><Input type="number" min={0} max={60} value={bookingLeadMonths} onChange={(e)=>setBookingLeadMonths(Number(e.target.value))}/></div></CardContent></Card>
       <Card><CardHeader><CardTitle>Paste CDAS deductions</CardTitle></CardHeader><CardContent className="space-y-4"><Textarea className="min-h-48 font-mono text-sm" value={rawText} onChange={(e)=>setRawText(e.target.value)} placeholder="Paste copied CDAS deduction rows here..."/>{error && <Alert variant="destructive"><AlertTitle>Action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="flex flex-wrap gap-2"><LoadingButton loading={loading} loadingText="Analyzing..." onClick={analyze}><Search className="h-4 w-4"/>Analyze</LoadingButton><Button variant="outline" onClick={()=>setRawText(SAMPLE_TEXT)}><ClipboardPaste className="mr-2 h-4 w-4"/>Load sample</Button></div></CardContent></Card>
       {result && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardDescription>Recommendation</CardDescription><CardTitle className="mt-1 text-2xl">{result.decision === "REVIEW_REQUIRED" ? "Review CDAS data" : result.decision === "ALREADY_BOOKED" ? "Already booked by us" : result.decision === "BOOK_NOW" ? "Book now" : `Next booking: ${dateLabel(result.next_possible_booking_date)}`}</CardTitle></div><Badge variant={result.decision === "REVIEW_REQUIRED" ? "outline" : "default"} className={result.decision === "REVIEW_REQUIRED" ? "border-amber-500 text-amber-700 dark:text-amber-300" : ""}>{result.decision.replaceAll("_", " ")}</Badge></div></CardHeader><CardContent className="space-y-5"><p className="text-sm text-muted-foreground">{result.decision_message}</p>
       <CapacitySummary result={result}/>
