@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ClipboardEvent } from "react";
-import { AlertTriangle, BellRing, CalendarClock, CheckCircle2, ClipboardPaste, FileDown, RefreshCw, Save, Search } from "lucide-react";
+import { AlertTriangle, BellRing, CalendarClock, CheckCircle2, ClipboardPaste, Database, Printer, RefreshCw, Save, Search } from "lucide-react";
 
 import { cdasBookingApi } from "@/api/cdasBooking";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,12 +14,12 @@ import { Label } from "@/components/ui/label";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import type { CdasBookingAnalysis, CdasBookingOpportunity } from "@/types/cdasBooking";
+import type { CdasAnalysisRecord, CdasBookingAnalysis, CdasBookingOpportunity } from "@/types/cdasBooking";
 
 const SETTINGS_KEY = "loanhub.cdasBooking.settings.v1";
 const SAMPLE_TEXT = `| | 2561 | Lesana Lesotho Limited | | M 3,942.08 | 2026-Mar | 2027-Aug | 1000093084 | Active |\n| | 2595 | First National Bank of Lesotho | | M 21,011.86 | 2024-Jan | 2028-Dec | FNB LOAN 62592936979 | Active |`;
 const CDAS_CLIPBOARD_LABELS = ["Compulsory Retirement Date", "Early Retirement Date", "Max Available Deduction Amount", "Date of Birth", "Employee No", "Joining Date", "End Date", "Surname", "Employer", "Gender", "NID", "Name"] as const;
-type Tab = "analyze" | "upcoming" | "book-now" | "booked";
+type Tab = "analyze" | "history" | "upcoming" | "book-now" | "booked";
 
 function splitList(value: string) { return value.split(/[\n,;]+/).map((v) => v.trim()).filter(Boolean); }
 function normaliseListValue(value: string) { return value.trim().toLowerCase().replace(/\s+/g, " "); }
@@ -71,6 +71,7 @@ function extractClipboardFormText(html: string) {
 }
 function money(value: number) { return `M ${Number(value || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function dateLabel(value?: string | null) { if (!value) return "—"; const d = new Date(`${value.slice(0,10)}T00:00:00`); return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }); }
+function dateTimeLabel(value?: string | null) { if (!value) return "—"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString("en-ZA", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
 function parsePositiveAmount(value: string) { const parsed = Number(value.replace(/,/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
 function safeReportFilename(value?: string | null) { const base = (value || "CDAS-client").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, ""); return `CDAS-Analysis-${base || "client"}.pdf`; }
 function savePdf(blob: Blob, filename: string) {
@@ -82,6 +83,17 @@ function savePdf(blob: Blob, filename: string) {
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function openPdfForPrint(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const preview = window.open(url, "_blank");
+  if (!preview) {
+    URL.revokeObjectURL(url);
+    savePdf(blob, filename);
+    return;
+  }
+  preview.opener = null;
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function CapacitySummary({ result }: { result: CdasBookingAnalysis }) {
@@ -157,9 +169,9 @@ export default function CdasBookingPage() {
   const [alertLeadDays, setAlertLeadDays] = useState(3);
   const [result, setResult] = useState<CdasBookingAnalysis | null>(null);
   const [items, setItems] = useState<CdasBookingOpportunity[]>([]);
+  const [analyses, setAnalyses] = useState<CdasAnalysisRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [reporting, setReporting] = useState(false);
   const [reportingId, setReportingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -168,7 +180,16 @@ export default function CdasBookingPage() {
   }, []);
   useEffect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ownItemCodes, ownAgencyNames, bookingLeadMonths })); }, [ownItemCodes, ownAgencyNames, bookingLeadMonths]);
 
-  const refresh = useCallback(async () => { try { setItems((await cdasBookingApi.listOpportunities()).items); } catch {} }, []);
+  const refresh = useCallback(async () => {
+    try {
+      const [opportunities, history] = await Promise.all([
+        cdasBookingApi.listOpportunities(),
+        cdasBookingApi.listAnalyses(),
+      ]);
+      setItems(opportunities.items);
+      setAnalyses(history.items);
+    } catch {}
+  }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const upcoming = useMemo(() => items.filter((i) => i.state === "UPCOMING"), [items]);
@@ -183,6 +204,8 @@ export default function CdasBookingPage() {
       own_item_codes: splitList(ownItemCodes),
       own_agency_names: splitList(ownAgencyNames),
       amount_owing: owing ?? undefined,
+      client_name: clientName.trim() || undefined,
+      client_reference: clientReference.trim() || undefined,
     };
   };
 
@@ -224,47 +247,30 @@ export default function CdasBookingPage() {
       const analysis = await cdasBookingApi.analyze(payload());
       autoFillBookingRules(analysis);
       setResult(analysis);
+      await refresh();
     }
     catch (e: any) { setError(e?.response?.data?.detail || "CDAS text could not be analyzed."); }
     finally { setLoading(false); }
-  }
-
-  async function downloadCurrentReport() {
-    if (!rawText.trim() || !result) return;
-    setReporting(true); setError("");
-    try {
-      const report = await cdasBookingApi.downloadAnalysisReport({
-        ...payload(),
-        client_name: clientName.trim() || undefined,
-        client_reference: clientReference.trim() || undefined,
-        alert_lead_days: alertLeadDays,
-      });
-      savePdf(report.blob, report.filename || safeReportFilename(clientName || result.profile.full_name));
-    } catch {
-      setError("Could not prepare the tenant-company CDAS analysis report.");
-    } finally {
-      setReporting(false);
-    }
   }
 
   async function saveAndMonitor() {
     if (!rawText.trim()) return;
     setSaving(true); setError("");
     try {
-      const saved = await cdasBookingApi.saveOpportunity({ ...payload(), client_name: clientName.trim() || undefined, client_reference: clientReference.trim() || undefined, alert_lead_days: alertLeadDays });
+      const saved = await cdasBookingApi.saveOpportunity({ ...payload(), alert_lead_days: alertLeadDays });
       await refresh();
       setTab(saved.state === "BOOK_NOW" ? "book-now" : saved.state === "BOOKED" ? "booked" : "upcoming");
     } catch (e: any) { setError(e?.response?.data?.detail || "Could not save this CDAS analysis."); }
     finally { setSaving(false); }
   }
 
-  async function downloadSavedReport(item: CdasBookingOpportunity) {
-    setReportingId(item.id); setError("");
+  async function printArchivedReport(record: CdasAnalysisRecord) {
+    setReportingId(record.id); setError("");
     try {
-      const report = await cdasBookingApi.downloadOpportunityReport(item.id);
-      savePdf(report.blob, report.filename || safeReportFilename(item.client_name || item.client_reference));
+      const report = await cdasBookingApi.downloadArchivedAnalysisReport(record.id);
+      openPdfForPrint(report.blob, report.filename || safeReportFilename(record.client_name || record.client_reference));
     } catch {
-      setError("Could not prepare the saved CDAS analysis report.");
+      setError("Could not prepare the archived CDAS full report.");
     } finally {
       setReportingId(null);
     }
@@ -274,10 +280,53 @@ export default function CdasBookingPage() {
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "analyze", label: "Analyze" },
+    { id: "history", label: "Analysis History", count: analyses.length },
     { id: "upcoming", label: "Upcoming", count: upcoming.length },
     { id: "book-now", label: "Book Now", count: bookNow.length },
     { id: "booked", label: "Booked", count: booked.length },
   ];
+
+  function AnalysisHistory() {
+    return <Card>
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg border bg-muted/40 p-2"><Database className="h-5 w-5"/></div>
+          <div>
+            <CardTitle>CDAS Analysis Database</CardTitle>
+            <CardDescription>Every distinct structured CDAS analysis for this company is stored here. Re-analyzing the exact same information does not create another row; changed CDAS information creates a new analysis version. Raw pasted CDAS text is never stored.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!analyses.length ? <div className="py-12 text-center text-sm text-muted-foreground">No CDAS analyses have been archived yet.</div> : <div className="overflow-x-auto rounded-lg border">
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Analyzed</TableHead>
+              <TableHead>Client</TableHead>
+              <TableHead>CDAS agency</TableHead>
+              <TableHead>Decision</TableHead>
+              <TableHead>Capacity</TableHead>
+              <TableHead>Amount owing / term</TableHead>
+              <TableHead>Next booking</TableHead>
+              <TableHead>Quality</TableHead>
+              <TableHead className="text-right">Full report</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>{analyses.map((record) => <TableRow key={record.id}>
+              <TableCell className="whitespace-nowrap"><div>{dateTimeLabel(record.analyzed_at)}</div><div className="text-xs text-muted-foreground">{record.analyzed_by_name || "Company user"}</div></TableCell>
+              <TableCell><div className="font-medium">{record.client_name || "CDAS client"}</div><div className="text-xs text-muted-foreground">{record.client_reference || record.employee_no || record.nid || "No reference"}{record.employer ? ` • ${record.employer}` : ""}</div></TableCell>
+              <TableCell><div>{record.current_agency_name || "—"}</div>{record.current_agency_code && <div className="text-xs text-muted-foreground">Agency {record.current_agency_code}</div>}</TableCell>
+              <TableCell><Badge variant={record.decision === "REVIEW_REQUIRED" ? "outline" : record.decision === "BOOK_NOW" ? "default" : "secondary"} className={record.decision === "REVIEW_REQUIRED" ? "border-amber-500 text-amber-700 dark:text-amber-300" : ""}>{record.decision.replaceAll("_", " ")}</Badge></TableCell>
+              <TableCell className="whitespace-nowrap">{record.assessed_available_amount === null ? "—" : money(record.assessed_available_amount)}</TableCell>
+              <TableCell className="whitespace-nowrap"><div>{record.amount_owing === null ? "Not supplied" : money(record.amount_owing)}</div><div className="text-xs text-muted-foreground">{record.booking_months ? `${record.booking_months} month(s)` : "Term not calculated"}</div></TableCell>
+              <TableCell className="whitespace-nowrap">{dateLabel(record.next_possible_booking_date)}</TableCell>
+              <TableCell>{record.data_quality_issue_count > 0 ? <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">{record.data_quality_issue_count} issue{record.data_quality_issue_count === 1 ? "" : "s"}</Badge> : <Badge variant="secondary">Valid</Badge>}</TableCell>
+              <TableCell className="text-right"><Button size="sm" variant="outline" disabled={reportingId === record.id} onClick={() => void printArchivedReport(record)}><Printer className="mr-2 h-4 w-4"/>{reportingId === record.id ? "Preparing..." : "Print full report"}</Button></TableCell>
+            </TableRow>)}</TableBody>
+          </Table>
+        </div>}
+      </CardContent>
+    </Card>;
+  }
 
   function Queue({ data, allowBook }: { data: CdasBookingOpportunity[]; allowBook?: boolean }) {
     if (!data.length) return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">No records in this queue.</CardContent></Card>;
@@ -287,22 +336,19 @@ export default function CdasBookingPage() {
         <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-lg">{item.client_name || item.client_reference || "CDAS client"}</CardTitle><CardDescription>{item.opportunity_agency_name || "No competing agency"} {item.opportunity_reference_no ? `• ${item.opportunity_reference_no}` : ""}</CardDescription></div><Badge variant={item.state === "BOOK_NOW" ? "default" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge></div></CardHeader>
         <CardContent className="space-y-4"><div className="grid grid-cols-2 gap-3 text-sm"><div><div className="text-muted-foreground">Deduction</div><div className="font-semibold">{money(item.opportunity_deduction_amount)}</div></div><div><div className="text-muted-foreground">Booking opens</div><div className="font-semibold">{dateLabel(item.booking_open_date)}</div></div><div><div className="text-muted-foreground">Alerts start</div><div>{dateLabel(item.alert_start_date)}</div></div><div><div className="text-muted-foreground">Expiry</div><div>{dateLabel(item.opportunity_expiry_date)}</div></div>{term?.amount_owing ? <div><div className="text-muted-foreground">Amount owing</div><div className="font-semibold">{money(term.amount_owing)}</div></div> : null}{term?.months_required ? <div><div className="text-muted-foreground">Booking term</div><div className="font-semibold">{term.months_required} month(s)</div></div> : null}</div>
         {item.state === "UPCOMING" && <Alert><BellRing className="h-4 w-4"/><AlertTitle>{item.days_until_booking} day(s) until booking</AlertTitle><AlertDescription>Daily alerts begin {item.alert_lead_days} day(s) before the booking window opens.</AlertDescription></Alert>}
-        <div className={allowBook ? "grid gap-2 sm:grid-cols-2" : ""}>
-          <Button variant="outline" disabled={reportingId === item.id} onClick={() => void downloadSavedReport(item)}><FileDown className="mr-2 h-4 w-4"/>{reportingId === item.id ? "Preparing report..." : "PDF report"}</Button>
-          {allowBook && <Button onClick={() => void markBooked(item.id)}><CheckCircle2 className="mr-2 h-4 w-4"/>Mark booking complete</Button>}
-        </div>
+        {allowBook && <Button className="w-full" onClick={() => void markBooked(item.id)}><CheckCircle2 className="mr-2 h-4 w-4"/>Mark booking complete</Button>}
         </CardContent>
       </Card>;
     })}</div>;
   }
 
   return <div className="space-y-6 pb-10">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2"><CalendarClock className="h-6 w-6"/><h1 className="text-2xl font-semibold tracking-tight">CDAS Booking Centre</h1></div><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Analyze CDAS deductions, save opportunities, issue tenant-company analysis reports, and keep reminding the company until each client is booked.</p></div><Button variant="outline" onClick={() => void refresh()}><RefreshCw className="mr-2 h-4 w-4"/>Refresh</Button></div>
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><div className="flex items-center gap-2"><CalendarClock className="h-6 w-6"/><h1 className="text-2xl font-semibold tracking-tight">CDAS Booking Centre</h1></div><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Analyze CDAS deductions, maintain a company analysis database, print complete reports, and keep reminding the company until each client is booked.</p></div><Button variant="outline" onClick={() => void refresh()}><RefreshCw className="mr-2 h-4 w-4"/>Refresh</Button></div>
 
     <div className="flex flex-wrap gap-2 rounded-xl border bg-muted/30 p-2">{tabs.map((t) => <Button key={t.id} variant={tab === t.id ? "default" : "ghost"} onClick={() => setTab(t.id)}>{t.label}{t.count !== undefined && <Badge variant="secondary" className="ml-2">{t.count}</Badge>}</Button>)}</div>
 
     {tab === "analyze" && <div className="space-y-5">
-      <Alert><BellRing className="h-4 w-4"/><AlertTitle>Automatic booking reminder</AlertTitle><AlertDescription>When you save an analysis, LoanHub starts monitoring it. The same CDAS opportunity is updated instead of being stored again when it is saved more than once. Analyzed and saved records can also be issued as formal tenant-company PDF reports.</AlertDescription></Alert>
+      <Alert><BellRing className="h-4 w-4"/><AlertTitle>Automatic analysis archive and booking reminder</AlertTitle><AlertDescription>Every distinct CDAS analysis is saved to the company Analysis History database automatically. Exact duplicate analysis snapshots are reused instead of stored again. Booking monitoring remains separate and starts only when you save/update an opportunity.</AlertDescription></Alert>
       <Card><CardHeader><CardTitle>Client & booking rules</CardTitle><CardDescription>LoanHub auto-fills these fields from copied CDAS text and, when available, the copied CDAS form controls. Enter the amount owing when capacity allows booking so LoanHub can calculate the term.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><div className="space-y-2"><Label>Client name</Label><Input value={clientName} onChange={(e)=>setClientName(e.target.value)} placeholder="Employee/client name"/></div><div className="space-y-2"><Label>Client reference</Label><Input value={clientReference} onChange={(e)=>setClientReference(e.target.value)} placeholder="Employee / payroll / internal ref"/></div><div className="space-y-2"><Label>Client amount owing</Label><Input type="number" min={0} step="0.01" value={amountOwing} onChange={(e)=>setAmountOwing(e.target.value)} placeholder="e.g. 12500.00"/></div><div className="space-y-2"><Label>Alert before booking (days)</Label><Input type="number" min={0} max={31} value={alertLeadDays} onChange={(e)=>setAlertLeadDays(Number(e.target.value))}/></div><div className="space-y-2"><Label>Our CDAS item code(s)</Label><Input value={ownItemCodes} onChange={(e)=>setOwnItemCodes(e.target.value)} placeholder="e.g. 3120, 3121"/></div><div className="space-y-2"><Label>Our agency name(s)</Label><Input value={ownAgencyNames} onChange={(e)=>setOwnAgencyNames(e.target.value)} placeholder="e.g. Batlokoa Financial Service"/></div><div className="space-y-2"><Label>Booking opens before expiry (months)</Label><Input type="number" min={0} max={60} value={bookingLeadMonths} onChange={(e)=>setBookingLeadMonths(Number(e.target.value))}/></div></CardContent></Card>
       <Card><CardHeader><CardTitle>Paste CDAS deductions</CardTitle></CardHeader><CardContent className="space-y-4"><Textarea className="min-h-48 font-mono text-sm" value={rawText} onChange={(e)=>setRawText(e.target.value)} onPaste={handleCdasPaste} placeholder="Paste copied CDAS deduction rows here..."/>{error && <Alert variant="destructive"><AlertTitle>Action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="flex flex-wrap gap-2"><LoadingButton loading={loading} loadingText="Analyzing..." onClick={analyze}><Search className="h-4 w-4"/>Analyze</LoadingButton><Button variant="outline" onClick={()=>setRawText(SAMPLE_TEXT)}><ClipboardPaste className="mr-2 h-4 w-4"/>Load sample</Button></div></CardContent></Card>
       {result && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardDescription>Recommendation</CardDescription><CardTitle className="mt-1 text-2xl">{result.decision === "REVIEW_REQUIRED" ? "Review CDAS data" : result.decision === "ALREADY_BOOKED" ? "Already booked by us" : result.decision === "BOOK_NOW" ? "Book now" : `Next booking: ${dateLabel(result.next_possible_booking_date)}`}</CardTitle></div><Badge variant={result.decision === "REVIEW_REQUIRED" ? "outline" : "default"} className={result.decision === "REVIEW_REQUIRED" ? "border-amber-500 text-amber-700 dark:text-amber-300" : ""}>{result.decision.replaceAll("_", " ")}</Badge></div></CardHeader><CardContent className="space-y-5"><p className="text-sm text-muted-foreground">{result.decision_message}</p>
@@ -312,11 +358,12 @@ export default function CdasBookingPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Reported active deductions</div><div className="font-semibold">{money(result.reported_active_monthly_deductions)}</div></div><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Booking-valid deductions</div><div className="font-semibold">{money(result.total_monthly_deductions)}</div></div><div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Other agencies</div><div className="font-semibold">{money(result.competitor_monthly_deductions)}</div></div>{result.data_quality_issue_count > 0 && <div className="rounded-lg border border-amber-500/40 p-3"><div className="text-xs text-muted-foreground">Excluded / needs review</div><div className="font-semibold text-amber-700 dark:text-amber-300">{money(result.excluded_monthly_deductions)}</div></div>}</div>
       <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Agency</TableHead><TableHead>Reference</TableHead><TableHead>Deduction</TableHead><TableHead>Effective</TableHead><TableHead>Expiry</TableHead><TableHead>Quality</TableHead><TableHead>Booking opens</TableHead></TableRow></TableHeader><TableBody>{result.deductions.map((r)=><TableRow key={`${r.item_code}-${r.reference_no}`} className={r.data_quality_status !== "OK" ? "bg-amber-50/70 dark:bg-amber-950/20" : ""}><TableCell><div>{r.agency_name}</div><div className="text-xs text-muted-foreground">Item {r.item_code}</div></TableCell><TableCell>{r.reference_no}</TableCell><TableCell>{money(r.deduction_amount)}</TableCell><TableCell>{dateLabel(r.effective_date)}</TableCell><TableCell>{dateLabel(r.expiry_date)}</TableCell><TableCell>{r.data_quality_status === "DATE_CONFLICT" ? <div className="max-w-64"><Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Date conflict</Badge><div className="mt-1 text-xs text-muted-foreground">{r.data_quality_message}</div></div> : r.data_quality_status === "MISSING_EXPIRY" ? <div className="max-w-64"><Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Missing expiry</Badge><div className="mt-1 text-xs text-muted-foreground">{r.data_quality_message}</div></div> : <Badge variant="secondary">Valid</Badge>}</TableCell><TableCell>{r.booking_open_date ? dateLabel(r.booking_open_date) : <span className="text-muted-foreground">Excluded</span>}</TableCell></TableRow>)}</TableBody></Table></div>
       <div className="flex flex-wrap gap-2">
-        <LoadingButton variant="outline" loading={reporting} loadingText="Preparing report..." onClick={downloadCurrentReport}><FileDown className="h-4 w-4"/>Download analyzed report</LoadingButton>
+        <Button variant="outline" onClick={() => setTab("history")}><Database className="mr-2 h-4 w-4"/>View analysis database</Button>
         {result.decision === "REVIEW_REQUIRED" ? <Button disabled><AlertTriangle className="mr-2 h-4 w-4"/>Correct CDAS data before monitoring</Button> : <LoadingButton loading={saving} loadingText="Saving..." onClick={saveAndMonitor}><Save className="h-4 w-4"/>Save / update opportunity</LoadingButton>}
       </div>
       </CardContent></Card>}
     </div>}
+    {tab === "history" && <AnalysisHistory/>}
     {tab === "upcoming" && <Queue data={upcoming}/>} {tab === "book-now" && <Queue data={bookNow} allowBook/>} {tab === "booked" && <Queue data={booked}/>} 
   </div>;
 }

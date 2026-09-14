@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import type {
+  CdasAnalysisRecordList,
   CdasBookingAnalysis,
   CdasBookingAnalyzeRequest,
   CdasBookingMonitorRequest,
@@ -24,6 +25,15 @@ function filenameFromDisposition(value?: string): string | null {
 export const cdasBookingApi = {
   analyze: async (payload: CdasBookingAnalyzeRequest): Promise<CdasBookingAnalysis> =>
     (await api.post<CdasBookingAnalysis>("/cdas-booking/analyze", payload)).data,
+  listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
+    (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
+  downloadArchivedAnalysisReport: async (id: string): Promise<CdasPdfDownload> => {
+    const response = await api.get<Blob>(`/cdas-booking/analyses/${id}/report/pdf`, { responseType: "blob" });
+    return {
+      blob: response.data,
+      filename: filenameFromDisposition(response.headers["content-disposition"]),
+    };
+  },
   downloadAnalysisReport: async (payload: CdasBookingMonitorRequest): Promise<CdasPdfDownload> => {
     const response = await api.post<Blob>("/cdas-booking/report/pdf", payload, { responseType: "blob" });
     return {
