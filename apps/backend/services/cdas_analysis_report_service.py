@@ -35,6 +35,14 @@ def _text(value: Any, fallback: str = "Not recorded") -> str:
     return escape(raw or fallback)
 
 
+def _bool_text(value: Any) -> str:
+    if value is True:
+        return "Yes"
+    if value is False:
+        return "No"
+    return "Not recorded"
+
+
 def _date_text(value: Any, fallback: str = "Not recorded") -> str:
     if not value:
         return fallback
@@ -145,6 +153,71 @@ def _deduction_table(analysis: dict[str, Any], styles: dict[str, ParagraphStyle]
     return table
 
 
+def _flatten_structured_analysis(value: Any, path: str = "analysis") -> list[tuple[str, str]]:
+    """Flatten every structured analysis value for the complete audit appendix."""
+    flattened: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        if not value:
+            flattened.append((path, "{}"))
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            flattened.extend(_flatten_structured_analysis(child, child_path))
+        return flattened
+    if isinstance(value, list):
+        if not value:
+            flattened.append((path, "[]"))
+        for index, child in enumerate(value):
+            flattened.extend(_flatten_structured_analysis(child, f"{path}[{index}]"))
+        return flattened
+    if value is None:
+        rendered = "Not recorded"
+    elif isinstance(value, bool):
+        rendered = "Yes" if value else "No"
+    else:
+        rendered = str(value)
+    flattened.append((path, rendered))
+    return flattened
+
+
+def _structured_analysis_table(analysis: dict[str, Any], styles: dict[str, ParagraphStyle]) -> Table:
+    small = ParagraphStyle(
+        "CdasStructuredRegisterSmall",
+        parent=styles["body_small"],
+        fontSize=6.0,
+        leading=7.6,
+        textColor=colors.HexColor("#172033"),
+    )
+    header = ParagraphStyle(
+        "CdasStructuredRegisterHeader",
+        parent=small,
+        fontName="Helvetica-Bold",
+        textColor=colors.white,
+        fontSize=6.1,
+        leading=7.6,
+    )
+    rows: list[list[Any]] = [[
+        Paragraph("Analyzed field", header),
+        Paragraph("Analyzed value", header),
+    ]]
+    for field_path, value in _flatten_structured_analysis(analysis):
+        rows.append([
+            Paragraph(_text(field_path), small),
+            Paragraph(_text(value, "Not recorded"), small),
+        ])
+    table = Table(rows, colWidths=[74 * mm, 100 * mm], repeatRows=1, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F2742")),
+        ("GRID", (0, 0), (-1, -1), 0.3, BORDER),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    return table
+
+
 def _company_contact(company: LoanCompany) -> str:
     parts = [
         str(value).strip()
@@ -197,11 +270,12 @@ def build_cdas_analysis_pdf(
     client_reference: str | None = None,
     opportunity_id: UUID | None = None,
 ) -> tuple[bytes, str]:
-    """Build a formal tenant-company CDAS analysis report using LoanHub's PDF system.
+    """Build one complete tenant-company CDAS analysis report.
 
     The tenant company is the issuer. LoanHub is identified as the generating
-    platform. The report consumes only structured analysis data; raw pasted CDAS
-    screen text is deliberately not embedded in the document.
+    platform. Every structured value produced by the analyzer is included in the
+    same PDF through the human-readable sections and the complete audit appendix.
+    Raw pasted CDAS screen text is deliberately not embedded in the document.
     """
 
     styles = document_styles()
@@ -236,9 +310,9 @@ def build_cdas_analysis_pdf(
 
     story: list[Any] = []
     story.extend(hero_block(
-        "CDAS Analysis Report",
+        "Complete CDAS Analysis Report",
         (
-            f"Formal payroll-deduction capacity and booking analysis issued by "
+            f"One consolidated payroll-deduction, capacity, booking, retirement and data-quality analysis issued by "
             f"{_text(company.name)} from the structured CDAS information supplied for this client."
         ),
         reference,
@@ -263,10 +337,10 @@ def build_cdas_analysis_pdf(
         [
             ("Client", _text(effective_client_name)),
             ("Client reference", _text(effective_client_reference)),
+            ("Employee no.", _text(profile.get("employee_no"))),
             ("National ID", _text(profile.get("nid"))),
             ("Employer", _text(profile.get("employer"))),
             ("CDAS agency", _text(current_agency_name)),
-            ("Agency code", _text(current_agency_code)),
         ],
         tone="slate",
     )
@@ -285,6 +359,12 @@ def build_cdas_analysis_pdf(
         styles=styles,
     ))
     story.append(Spacer(1, 3 * mm))
+    story.append(metric_grid([
+        ("Decision", humanize(decision), "Overall LoanHub CDAS recommendation", decision_tone),
+        ("Next booking date", _date_text(analysis.get("next_possible_booking_date"), "Not applicable"), "Earliest analyzed booking date", "blue"),
+        ("Booking lead", f"{analysis.get('booking_lead_months', 0)} month(s)", "Configured period before expiry", "slate"),
+        ("Data-quality issues", str(analysis.get("data_quality_issue_count", 0)), "Rows requiring review", "amber" if analysis.get("data_quality_issue_count") else "green"),
+    ], columns=2, styles=styles))
 
     assessed = capacity.get("assessed_available_amount")
     if assessed is None:
@@ -295,13 +375,19 @@ def build_cdas_analysis_pdf(
     shortfall = capacity.get("shortfall_amount") or 0
     story.extend(section(
         "Deduction capacity",
-        "Capacity values come from CDAS. Where a consolidation-after-selected figure is supplied, LoanHub uses it as the assessed amount.",
+        "All capacity values produced by the analyzer are shown here. Where a consolidation-after-selected figure is supplied, LoanHub uses it as the assessed amount.",
         styles=styles,
     ))
     story.append(metric_grid([
         (
+            "Capacity status",
+            humanize(capacity.get("status")),
+            "Analyzer classification",
+            "red" if capacity.get("status") == "NEGATIVE_AVAILABLE" else "green" if capacity.get("status") == "AVAILABLE" else "amber",
+        ),
+        (
             "Current max available",
-            money_text(capacity.get("max_available_deduction_amount")),
+            money_text(capacity.get("max_available_deduction_amount")) if capacity.get("max_available_deduction_amount") is not None else "Not recorded",
             "Current CDAS payroll capacity",
             "red" if (capacity.get("max_available_deduction_amount") or 0) < 0 else "blue",
         ),
@@ -318,9 +404,15 @@ def build_cdas_analysis_pdf(
             "green" if booking_allowed else "amber",
         ),
         (
-            "Capacity decision",
-            "BOOK NOW" if booking_allowed else "USE BOOKING RULES",
-            f"Threshold: greater than {money_text(capacity.get('booking_threshold_amount') or 1)}",
+            "Booking threshold",
+            money_text(capacity.get("booking_threshold_amount") if capacity.get("booking_threshold_amount") is not None else 1),
+            "Booking requires assessed capacity strictly above this value",
+            "slate",
+        ),
+        (
+            "Capacity booking allowed",
+            _bool_text(capacity.get("booking_allowed")),
+            "Capacity override result",
             "green" if booking_allowed else "amber",
         ),
         (
@@ -329,48 +421,44 @@ def build_cdas_analysis_pdf(
             "Excess over the allowed payroll deduction limit",
             "red" if shortfall else "slate",
         ),
-        (
-            "Next booking date",
-            _date_text(analysis.get("next_possible_booking_date"), "Not applicable"),
-            f"Configured lead: {analysis.get('booking_lead_months', 0)} month(s)",
-            "blue",
-        ),
     ], columns=2, styles=styles))
 
+    story.extend(section(
+        "Booking-term calculation",
+        "This section records every structured term-calculation value, whether or not a term could be calculated.",
+        styles=styles,
+    ))
     amount_owing = booking_term.get("amount_owing")
     months_required = booking_term.get("months_required")
     monthly_capacity = booking_term.get("monthly_available_deduction")
-    if amount_owing is not None or months_required is not None:
-        story.extend(section(
-            "Booking-term calculation",
-            "When booking is allowed by positive capacity, the amount owing is divided by the assessed monthly deduction and rounded up to a whole month.",
-            styles=styles,
-        ))
-        story.append(metric_grid([
-            ("Amount owing", money_text(amount_owing), "Client amount supplied for term calculation", "slate"),
-            ("Monthly available", money_text(monthly_capacity), "Maximum monthly capacity used", "green"),
-            ("Minimum booking term", f"{months_required} month(s)" if months_required else "Not calculated", "Rounded up to a whole month", "teal"),
-        ], columns=3, styles=styles))
-        if months_required and monthly_capacity:
-            story.append(callout(
-                "Term formula",
-                f"{_text(money_text(amount_owing))} owing ÷ {_text(money_text(monthly_capacity))} monthly capacity = <b>{months_required} month(s)</b> after rounding up.",
-                tone="green",
-                styles=styles,
-            ))
+    story.append(metric_grid([
+        ("Amount owing", money_text(amount_owing) if amount_owing is not None else "Not supplied", "Client amount supplied for term calculation", "slate"),
+        ("Monthly available", money_text(monthly_capacity) if monthly_capacity is not None else "Not calculated", "Monthly amount used in the term calculation", "green" if monthly_capacity else "slate"),
+        ("Minimum booking term", f"{months_required} month(s)" if months_required is not None else "Not calculated", "Rounded up to a whole month", "teal" if months_required else "slate"),
+    ], columns=3, styles=styles))
+    story.append(callout(
+        "Analyzer calculation",
+        _text(booking_term.get("calculation"), "No booking-term formula was produced for this analysis."),
+        tone="green" if months_required else "slate",
+        styles=styles,
+    ))
 
     story.extend(section(
-        "Client employment and retirement context",
-        "These fields are reproduced only when they were present in the copied CDAS information.",
+        "Client profile, employment and retirement",
+        "Every structured client, employment and retirement value recovered by LoanHub is included below.",
         styles=styles,
     ))
     personal_card = detail_card(
         "Personal profile",
         [
+            ("Name", _text(profile.get("name"))),
+            ("Surname", _text(profile.get("surname"))),
+            ("Full name", _text(profile.get("full_name"))),
             ("Employee no.", _text(profile.get("employee_no"))),
             ("Gender", _text(profile.get("gender"))),
             ("Date of birth", _text(_date_text(profile.get("date_of_birth")))),
             ("National ID", _text(profile.get("nid"))),
+            ("Employer", _text(profile.get("employer"))),
         ],
         tone="slate",
     )
@@ -380,11 +468,39 @@ def build_cdas_analysis_pdf(
             ("Joining date", _text(_date_text(profile.get("joining_date")))),
             ("End date", _text(_date_text(profile.get("end_date")))),
             ("Early retirement", _text(_date_text(retirement.get("early_retirement_date") or profile.get("early_retirement_date")))),
+            ("Days to early retirement", _text(retirement.get("days_until_early_retirement"))),
             ("Compulsory retirement", _text(_date_text(retirement.get("compulsory_retirement_date") or profile.get("compulsory_retirement_date")))),
+            ("Days to compulsory retirement", _text(retirement.get("days_until_compulsory_retirement"))),
         ],
         tone="slate",
     )
     story.append(two_card_row(personal_card, employment_card))
+    story.append(Spacer(1, 4 * mm))
+
+    story.extend(section(
+        "CDAS agency and application context",
+        "This records how LoanHub identified the tenant's current/new deduction agency while analyzing the copied CDAS information.",
+        styles=styles,
+    ))
+    agency_left = detail_card(
+        "Detected application agency",
+        [
+            ("New agency code", _text(application.get("new_deduction_agency_code"))),
+            ("New agency name", _text(application.get("new_deduction_agency_name"))),
+            ("Auto-detected", _bool_text(application.get("agency_auto_detected"))),
+        ],
+        tone="blue",
+    )
+    agency_right = detail_card(
+        "Current CDAS agency",
+        [
+            ("Current agency code", _text(application.get("current_cdas_agency_code"))),
+            ("Current agency name", _text(application.get("current_cdas_agency_name"))),
+            ("Agency used", _text(current_agency_name)),
+        ],
+        tone="slate",
+    )
+    story.append(two_card_row(agency_left, agency_right))
     story.append(Spacer(1, 4 * mm))
 
     story.extend(section(
@@ -403,24 +519,79 @@ def build_cdas_analysis_pdf(
     ], columns=2, styles=styles))
     story.append(_deduction_table(analysis, styles))
 
-    issues = analysis.get("data_quality_issues") or []
-    if issues:
-        story.extend(section(
-            "CDAS data-quality findings",
-            "Flagged rows remain visible in this report but are not used to create unsafe booking dates.",
+    opportunity = analysis.get("opportunity") or None
+    own_bookings = analysis.get("own_bookings") or []
+    story.extend(section(
+        "Booking evidence and selected opportunity",
+        "LoanHub records both any own-agency booking evidence and the competitor row selected as the next booking opportunity.",
+        styles=styles,
+    ))
+    if opportunity:
+        story.append(callout(
+            "Selected opportunity",
+            (
+                f"Item <b>{_text(opportunity.get('item_code'))}</b> · {_text(opportunity.get('agency_name'))} · "
+                f"deduction <b>{_text(money_text(opportunity.get('deduction_amount')))}</b> · "
+                f"reference {_text(opportunity.get('reference_no'))} · booking status {_text(humanize(opportunity.get('booking_status')))} · "
+                f"booking opens {_text(_date_text(opportunity.get('booking_open_date'), 'Not applicable'))}."
+            ),
+            tone="green" if opportunity.get("booking_status") == "BOOK_NOW" else "blue",
             styles=styles,
         ))
+    else:
+        story.append(callout("Selected opportunity", "No competitor booking opportunity was selected in this analysis.", tone="slate", styles=styles))
+    story.append(Spacer(1, 2 * mm))
+    if own_bookings:
+        for index, own in enumerate(own_bookings, start=1):
+            story.append(callout(
+                f"Own booking {index}",
+                (
+                    f"Item <b>{_text(own.get('item_code'))}</b> · {_text(own.get('agency_name'))} · "
+                    f"deduction <b>{_text(money_text(own.get('deduction_amount')))}</b> · "
+                    f"reference {_text(own.get('reference_no'))} · status {_text(humanize(own.get('booking_status')))}."
+                ),
+                tone="teal",
+                styles=styles,
+            ))
+            story.append(Spacer(1, 2 * mm))
+    else:
+        story.append(callout("Own-agency booking evidence", "No active own-agency booking row was detected.", tone="slate", styles=styles))
+
+    issues = analysis.get("data_quality_issues") or []
+    story.extend(section(
+        "CDAS data-quality findings",
+        "Every flagged row remains visible in this report but is excluded from unsafe booking-date calculations.",
+        styles=styles,
+    ))
+    if issues:
         for issue in issues:
             title = f"Item {_text(issue.get('item_code'))} — {_text(issue.get('agency_name'))}"
             message = _text(issue.get("data_quality_message"), _quality_label(issue))
             story.append(callout(title, message, tone="amber", styles=styles))
             story.append(Spacer(1, 2 * mm))
+    else:
+        story.append(callout("No flagged CDAS rows", "The analyzer did not identify a date conflict or missing expiry in this analysis.", tone="green", styles=styles))
+
+    story.extend(section(
+        "Complete analyzed-information register",
+        "This appendix contains every scalar value in the structured CDAS analysis snapshot, including every deduction row and every calculated timing/status field. It is included so the single PDF is a complete record of what LoanHub analyzed at that moment.",
+        styles=styles,
+    ))
+    story.append(_structured_analysis_table(analysis, styles))
+    story.append(Spacer(1, 4 * mm))
 
     story.extend(section("Methodology and document control", styles=styles))
     story.append(callout(
         "Capacity rule",
         "An assessed Max Available Deduction Amount strictly greater than LSL 1.00 permits a BOOK NOW capacity decision, except where the client is already booked by the tenant's own agency. At LSL 1.00 or below, normal expiry and booking-window rules remain in force.",
         tone="blue",
+        styles=styles,
+    ))
+    story.append(Spacer(1, 2 * mm))
+    story.append(callout(
+        "Single-report completeness",
+        "This PDF is the consolidated report for this analysis. The readable sections summarize the result, while the analyzed-information register preserves every structured field produced by LoanHub so separate capacity, retirement, booking or deduction reports are not required.",
+        tone="teal",
         styles=styles,
     ))
     story.append(Spacer(1, 2 * mm))
@@ -448,7 +619,7 @@ def build_cdas_analysis_pdf(
             ("Company contact", _text(_company_contact(company))),
             ("Company address", _text(_company_address(company))),
             ("Generated", generated_at.strftime("%d %B %Y %H:%M UTC")),
-            ("Document status", "System-generated tenant report"),
+            ("Document status", "Complete system-generated tenant report"),
         ],
         tone="blue",
         width=CONTENT_WIDTH,
@@ -459,7 +630,7 @@ def build_cdas_analysis_pdf(
     context = DocumentContext(
         db=db,
         company=company,
-        title="CDAS Analysis Report",
+        title="Complete CDAS Analysis Report",
         reference=reference,
         footer_note=generated_timestamp(),
         confidential=True,
@@ -467,8 +638,8 @@ def build_cdas_analysis_pdf(
     pdf = build_document(
         story=story,
         context=context,
-        title=f"CDAS analysis - {effective_client_name}",
+        title=f"Complete CDAS analysis - {effective_client_name}",
         author=f"{company.name} via LoanHub",
-        subject="CDAS payroll deduction capacity and booking analysis",
+        subject="Complete CDAS payroll deduction, capacity, booking and retirement analysis",
     )
     return pdf, reference
