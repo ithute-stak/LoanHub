@@ -13,6 +13,7 @@ from services.cdas_booking_calendar import build_booking_calendar
 from services.cdas_booking_monitor import local_today, serialize_opportunity
 from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
+from services.cdas_max_loan_calculator import calculate_max_loan_amount
 from services.cdas_what_if_simulator import simulate_what_if
 
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Booking Calendar"])
@@ -24,6 +25,14 @@ class CdasWhatIfRequest(BaseModel):
     proposed_amount: float | None = Field(default=None, gt=0, le=999_999_999)
     term_months: int | None = Field(default=None, ge=1, le=240)
     annual_interest_rate: float | None = Field(default=None, ge=0, le=500)
+
+
+class CdasMaxLoanRequest(BaseModel):
+    opportunity_id: UUID
+    term_months: int = Field(ge=1, le=240)
+    annual_interest_rate: float = Field(ge=0, le=500)
+    monthly_service_fee: float = Field(default=0, ge=0, le=999_999_999)
+    insurance_percent: float = Field(default=0, ge=0, le=500)
 
 
 def _require_company_member(context: TenantContext) -> None:
@@ -41,6 +50,21 @@ def _company_opportunities(context: TenantContext, db: Session) -> list[dict]:
     return dedupe_serialized_opportunities(
         [serialize_opportunity(row) for row in rows]
     )
+
+
+def _company_opportunity_or_404(
+    *,
+    opportunity_id: UUID,
+    context: TenantContext,
+    db: Session,
+) -> CdasBookingOpportunity:
+    row = db.query(CdasBookingOpportunity).filter(
+        CdasBookingOpportunity.id == opportunity_id,
+        CdasBookingOpportunity.company_id == context.company_id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="CDAS booking opportunity not found")
+    return row
 
 
 @router.get("/calendar")
@@ -73,12 +97,11 @@ def simulate_cdas_what_if(
 ):
     """Simulate a proposed installment against one saved tenant CDAS opportunity."""
     _require_company_member(context)
-    row = db.query(CdasBookingOpportunity).filter(
-        CdasBookingOpportunity.id == payload.opportunity_id,
-        CdasBookingOpportunity.company_id == context.company_id,
-    ).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="CDAS booking opportunity not found")
+    row = _company_opportunity_or_404(
+        opportunity_id=payload.opportunity_id,
+        context=context,
+        db=db,
+    )
 
     try:
         return simulate_what_if(
@@ -88,6 +111,32 @@ def simulate_cdas_what_if(
             proposed_amount=payload.proposed_amount,
             term_months=payload.term_months,
             annual_interest_rate=payload.annual_interest_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/loan-capacity")
+def calculate_cdas_max_loan(
+    payload: CdasMaxLoanRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Calculate the maximum principal that fits one saved tenant CDAS capacity."""
+    _require_company_member(context)
+    row = _company_opportunity_or_404(
+        opportunity_id=payload.opportunity_id,
+        context=context,
+        db=db,
+    )
+
+    try:
+        return calculate_max_loan_amount(
+            opportunity=serialize_opportunity(row),
+            term_months=payload.term_months,
+            annual_interest_rate=payload.annual_interest_rate,
+            monthly_service_fee=payload.monthly_service_fee,
+            insurance_percent=payload.insurance_percent,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
