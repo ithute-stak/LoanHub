@@ -9,6 +9,7 @@ import type {
   CdasClientProfileDetail,
   CdasClientProfileList,
 } from "@/types/cdasBooking";
+import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
@@ -41,6 +42,8 @@ export const cdasBookingApi = {
     (await api.get<CdasBookingCalendar>("/cdas-booking/calendar")).data,
   getBookingPriorities: async (): Promise<CdasBookingPriorityQueue> =>
     (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
+  getAgencyIntelligence: async (): Promise<CdasAgencyIntelligence> =>
+    (await api.get<CdasAgencyIntelligence>("/cdas-booking/agency-intelligence")).data,
   simulateWhatIf: async (payload: CdasWhatIfRequest): Promise<CdasWhatIfResult> =>
     (await api.post<CdasWhatIfResult>("/cdas-booking/simulator", payload)).data,
   calculateMaxLoan: async (payload: CdasMaxLoanRequest): Promise<CdasMaxLoanResult> =>
