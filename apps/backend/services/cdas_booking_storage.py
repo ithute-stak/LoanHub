@@ -35,11 +35,11 @@ def _preferred_serialized_record(current: dict, candidate: dict) -> dict:
 
 def serialized_opportunity_identity(item: dict) -> str:
     reference = _normalise_text(item.get("opportunity_reference_no"))
+    item_code = _normalise_text(item.get("opportunity_item_code"))
     if reference:
-        return f"reference:{reference}"
+        return f"reference:{item_code}:{reference}" if item_code else f"reference:{reference}"
 
     client_reference = _normalise_text(item.get("client_reference"))
-    item_code = _normalise_text(item.get("opportunity_item_code"))
     expiry = str(item.get("opportunity_expiry_date") or "")[:10]
     if client_reference and item_code:
         return f"client-item:{client_reference}:{item_code}:{expiry}"
@@ -75,9 +75,16 @@ def _find_existing(
     )
 
     if reference_no:
-        candidates = query.filter(
+        reference_query = query.filter(
             CdasBookingOpportunity.opportunity_reference_no == reference_no
-        ).order_by(CdasBookingOpportunity.created_at.asc()).all()
+        )
+        if item_code:
+            reference_query = reference_query.filter(
+                CdasBookingOpportunity.opportunity_item_code == item_code
+            )
+        candidates = reference_query.order_by(
+            CdasBookingOpportunity.created_at.asc()
+        ).all()
     elif client_reference and item_code:
         candidates = query.filter(
             CdasBookingOpportunity.client_reference == client_reference,
