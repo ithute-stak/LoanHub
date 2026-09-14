@@ -6,6 +6,8 @@ import type {
   CdasBookingMonitorRequest,
   CdasBookingOpportunity,
   CdasBookingOpportunityList,
+  CdasClientProfileDetail,
+  CdasClientProfileList,
 } from "@/types/cdasBooking";
 
 export interface CdasPdfDownload {
@@ -27,6 +29,10 @@ export const cdasBookingApi = {
     (await api.post<CdasBookingAnalysis>("/cdas-booking/analyze", payload)).data,
   listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
     (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
+  listClientProfiles: async (): Promise<CdasClientProfileList> =>
+    (await api.get<CdasClientProfileList>("/cdas-booking/clients")).data,
+  getClientProfile: async (clientKey: string): Promise<CdasClientProfileDetail> =>
+    (await api.get<CdasClientProfileDetail>(`/cdas-booking/clients/${encodeURIComponent(clientKey)}`)).data,
   downloadArchivedAnalysisReport: async (id: string): Promise<CdasPdfDownload> => {
     const response = await api.get<Blob>(`/cdas-booking/analyses/${id}/report/pdf`, { responseType: "blob" });
     return {
