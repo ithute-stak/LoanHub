@@ -71,6 +71,12 @@ def create_opportunity_from_analysis(
     analysis: dict,
 ) -> CdasBookingOpportunity:
     row = analysis.get("opportunity") or (analysis.get("own_bookings") or [None])[0]
+    profile = analysis.get("profile") or {}
+    derived_name = (profile.get("full_name") or "").strip() or None
+    derived_reference = (
+        str(profile.get("employee_no") or profile.get("nid") or "").strip() or None
+    )
+
     booking_open = None
     if analysis.get("next_possible_booking_date"):
         booking_open = date.fromisoformat(str(analysis["next_possible_booking_date"])[:10])
@@ -83,8 +89,8 @@ def create_opportunity_from_analysis(
     booked = analysis.get("decision") == "ALREADY_BOOKED"
     item = CdasBookingOpportunity(
         company_id=company_id,
-        client_name=(client_name or "").strip() or None,
-        client_reference=(client_reference or "").strip() or None,
+        client_name=(client_name or derived_name or "").strip() or None,
+        client_reference=(client_reference or derived_reference or "").strip() or None,
         status="booked" if booked else "monitoring",
         booking_lead_months=int(analysis.get("booking_lead_months") or 0),
         alert_lead_days=alert_lead_days,
