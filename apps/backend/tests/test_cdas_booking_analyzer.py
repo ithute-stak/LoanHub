@@ -205,6 +205,43 @@ def test_full_cdas_screen_extracts_profile_capacity_retirement_and_agency():
     assert context["retirement_analysis"]["days_until_early_retirement"] > 0
 
 
+def test_positive_max_available_deduction_is_available_headroom():
+    context = parse_cdas_screen_context(
+        "Max Available Deduction Amount: M 725.50",
+        as_of=date(2026, 9, 14),
+    )
+
+    assert context["capacity"]["max_available_deduction_amount"] == 725.50
+    assert context["capacity"]["status"] == "AVAILABLE"
+    assert context["capacity"]["shortfall_amount"] == 0
+
+
+def test_zero_max_available_deduction_has_no_headroom():
+    context = parse_cdas_screen_context(
+        "Max Available Deduction Amount: 0.00",
+        as_of=date(2026, 9, 14),
+    )
+
+    assert context["capacity"]["max_available_deduction_amount"] == 0
+    assert context["capacity"]["status"] == "NO_HEADROOM"
+    assert context["capacity"]["shortfall_amount"] == 0
+
+
+def test_consolidation_capacity_uses_after_selected_deductions_when_present():
+    context = parse_cdas_screen_context(
+        """
+Max Available Deduction Amount: -352.79
+Max available after deleting the selected deductions: M 480.25
+""",
+        as_of=date(2026, 9, 14),
+    )
+
+    assert context["capacity"]["max_available_deduction_amount"] == -352.79
+    assert context["capacity"]["max_available_after_selected_deductions"] == 480.25
+    assert context["capacity"]["status"] == "AVAILABLE"
+    assert context["capacity"]["shortfall_amount"] == 0
+
+
 def test_full_cdas_screen_keeps_incomplete_and_conflicting_rows_for_financial_analysis():
     result = analyse_cdas_booking(
         FULL_CDAS_SCREEN,
