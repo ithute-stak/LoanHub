@@ -11,8 +11,12 @@ from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext, get_tenant_context
 from database.config.config import settings
-from database.models.cdas_booking import CdasBookingOpportunity
+from database.models.cdas_booking import CdasAnalysisRecord, CdasBookingOpportunity
 from database.session import get_db
+from services.cdas_analysis_history import (
+    save_or_get_analysis_record,
+    serialize_analysis_record,
+)
 from services.cdas_analysis_report_service import (
     build_cdas_analysis_pdf,
     cdas_report_filename,
@@ -35,12 +39,12 @@ class CdasBookingAnalyseRequest(BaseModel):
     own_item_codes: list[str] = Field(default_factory=list)
     own_agency_names: list[str] = Field(default_factory=list)
     amount_owing: float | None = Field(default=None, gt=0, le=999_999_999)
+    client_name: str | None = Field(default=None, max_length=200)
+    client_reference: str | None = Field(default=None, max_length=200)
     as_of: date | None = None
 
 
 class CdasBookingMonitorRequest(CdasBookingAnalyseRequest):
-    client_name: str | None = Field(default=None, max_length=200)
-    client_reference: str | None = Field(default=None, max_length=200)
     alert_lead_days: int = Field(default=3, ge=0, le=31)
 
 
@@ -127,10 +131,87 @@ def _analyze(payload: CdasBookingAnalyseRequest) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _archive_analysis(
+    db: Session,
+    *,
+    context: TenantContext,
+    payload: CdasBookingAnalyseRequest,
+    analysis: dict,
+) -> CdasAnalysisRecord:
+    prepared_by, prepared_by_role = _report_preparer(context)
+    record, _ = save_or_get_analysis_record(
+        db,
+        company_id=context.company_id,
+        analyzed_by_user_id=context.user.id,
+        analyzed_by_name=prepared_by,
+        analyzed_by_role=prepared_by_role,
+        client_name=payload.client_name,
+        client_reference=payload.client_reference,
+        analysis=analysis,
+    )
+    return record
+
+
 @router.post("/analyze")
-def analyze_cdas_booking(payload: CdasBookingAnalyseRequest, context: TenantContext = Depends(get_tenant_context)):
+def analyze_cdas_booking(
+    payload: CdasBookingAnalyseRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Analyze CDAS data and archive one distinct structured analysis snapshot."""
     _require_company_member(context)
-    return _analyze(payload)
+    analysis = jsonable_encoder(_analyze(payload))
+    _archive_analysis(db, context=context, payload=payload, analysis=analysis)
+    return analysis
+
+
+@router.get("/analyses")
+def list_cdas_analyses(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return the tenant's complete CDAS analysis database, newest first."""
+    _require_company_member(context)
+    records = db.query(CdasAnalysisRecord).filter(
+        CdasAnalysisRecord.company_id == context.company_id
+    ).order_by(CdasAnalysisRecord.created_at.desc(), CdasAnalysisRecord.id.desc()).all()
+    values = [serialize_analysis_record(record) for record in records]
+    return {"items": values, "total": len(values)}
+
+
+@router.get("/analyses/{analysis_id}/report/pdf")
+def download_archived_cdas_analysis_report(
+    analysis_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Print the full consolidated PDF for one archived analysis."""
+    _require_company_member(context)
+    if not context.company:
+        raise HTTPException(status_code=409, detail="The active membership is not linked to a company")
+
+    record = db.query(CdasAnalysisRecord).filter(
+        CdasAnalysisRecord.id == analysis_id,
+        CdasAnalysisRecord.company_id == context.company_id,
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="CDAS analysis record not found")
+    if not record.analysis_snapshot:
+        raise HTTPException(status_code=409, detail="This analysis has no structured snapshot")
+
+    fallback_name, fallback_role = _report_preparer(context)
+    content, reference = build_cdas_analysis_pdf(
+        db=db,
+        company=context.company,
+        analysis=record.analysis_snapshot,
+        prepared_by_name=record.analyzed_by_name or fallback_name,
+        prepared_by_role=record.analyzed_by_role or fallback_role,
+        client_name=record.client_name,
+        client_reference=record.client_reference,
+        opportunity_id=record.id,
+    )
+    report_name = record.client_name or (record.analysis_snapshot.get("profile") or {}).get("full_name")
+    return _pdf_response(content, cdas_report_filename(report_name, reference))
 
 
 @router.post("/report/pdf")
@@ -139,12 +220,13 @@ def download_cdas_analysis_report(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Generate a tenant-branded CDAS report without persisting pasted raw CDAS text."""
+    """Generate a tenant-branded CDAS report and archive the structured analysis."""
     _require_company_member(context)
     if not context.company:
         raise HTTPException(status_code=409, detail="The active membership is not linked to a company")
 
     analysis = jsonable_encoder(_analyze(payload))
+    record = _archive_analysis(db, context=context, payload=payload, analysis=analysis)
     prepared_by, prepared_by_role = _report_preparer(context)
     content, reference = build_cdas_analysis_pdf(
         db=db,
@@ -154,6 +236,7 @@ def download_cdas_analysis_report(
         prepared_by_role=prepared_by_role,
         client_name=payload.client_name,
         client_reference=payload.client_reference,
+        opportunity_id=record.id,
     )
     report_name = payload.client_name or (analysis.get("profile") or {}).get("full_name")
     return _pdf_response(content, cdas_report_filename(report_name, reference))
@@ -167,6 +250,7 @@ def save_cdas_booking_opportunity(
 ):
     _require_company_member(context)
     analysis = jsonable_encoder(_analyze(payload))
+    _archive_analysis(db, context=context, payload=payload, analysis=analysis)
     if analysis.get("decision") == "REVIEW_REQUIRED":
         raise HTTPException(
             status_code=422,
