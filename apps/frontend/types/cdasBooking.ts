@@ -10,12 +10,12 @@ export interface CdasBookingAnalyzeRequest {
   own_item_codes: string[];
   own_agency_names: string[];
   amount_owing?: number;
+  client_name?: string;
+  client_reference?: string;
   as_of?: string;
 }
 
 export interface CdasBookingMonitorRequest extends CdasBookingAnalyzeRequest {
-  client_name?: string;
-  client_reference?: string;
   alert_lead_days: number;
 }
 
@@ -109,6 +109,33 @@ export interface CdasBookingAnalysis {
   own_bookings: CdasDeductionAnalysis[];
   opportunity: CdasDeductionAnalysis | null;
   deductions: CdasDeductionAnalysis[];
+}
+
+export interface CdasAnalysisRecord {
+  id: string;
+  client_name: string | null;
+  client_reference: string | null;
+  employee_no: string | null;
+  nid: string | null;
+  employer: string | null;
+  current_agency_code: string | null;
+  current_agency_name: string | null;
+  decision: CdasBookingDecision;
+  assessed_available_amount: number | null;
+  amount_owing: number | null;
+  booking_months: number | null;
+  next_possible_booking_date: string | null;
+  reported_active_monthly_deductions: number;
+  total_monthly_deductions: number;
+  data_quality_issue_count: number;
+  analyzed_by_name: string | null;
+  analyzed_by_role: string | null;
+  analyzed_at: string | null;
+}
+
+export interface CdasAnalysisRecordList {
+  items: CdasAnalysisRecord[];
+  total: number;
 }
 
 export interface CdasBookingOpportunity {
