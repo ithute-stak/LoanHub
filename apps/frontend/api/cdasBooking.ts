@@ -17,6 +17,7 @@ import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 import type { CdasChangeDetection } from "@/types/cdasChanges";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasDataQualityCentre } from "@/types/cdasDataQuality";
+import type { CdasDuplicateDetection } from "@/types/cdasDuplicateDetection";
 import type { CdasEmployerIntelligence } from "@/types/cdasEmployerIntelligence";
 import type { CdasForecast } from "@/types/cdasForecast";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
@@ -46,6 +47,8 @@ export const cdasBookingApi = {
     (await api.get<CdasClientProfileList>("/cdas-booking/clients")).data,
   getClientProfile: async (clientKey: string): Promise<CdasClientProfileDetail> =>
     (await api.get<CdasClientProfileDetail>(`/cdas-booking/clients/${encodeURIComponent(clientKey)}`)).data,
+  getDuplicateDetection: async (): Promise<CdasDuplicateDetection> =>
+    (await api.get<CdasDuplicateDetection>("/cdas-booking/duplicates")).data,
   getBookingCalendar: async (): Promise<CdasBookingCalendar> =>
     (await api.get<CdasBookingCalendar>("/cdas-booking/calendar")).data,
   getBookingPriorities: async (): Promise<CdasBookingPriorityQueue> =>
