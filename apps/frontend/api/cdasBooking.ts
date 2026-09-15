@@ -21,6 +21,7 @@ import type { CdasDuplicateDetection } from "@/types/cdasDuplicateDetection";
 import type { CdasEmployerIntelligence } from "@/types/cdasEmployerIntelligence";
 import type { CdasForecast } from "@/types/cdasForecast";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
+import type { CdasOfficerPerformanceWorkspace } from "@/types/cdasOfficerPerformance";
 import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
 import type { CdasWhatIfRequest, CdasWhatIfResult } from "@/types/cdasWhatIf";
 
@@ -63,6 +64,8 @@ export const cdasBookingApi = {
     (await api.get<CdasChangeDetection>("/cdas-booking/changes")).data,
   getDataQuality: async (): Promise<CdasDataQualityCentre> =>
     (await api.get<CdasDataQualityCentre>("/cdas-booking/data-quality")).data,
+  getOfficerPerformance: async (): Promise<CdasOfficerPerformanceWorkspace> =>
+    (await api.get<CdasOfficerPerformanceWorkspace>("/cdas-booking/officer-performance")).data,
   getOpportunityPipeline: async (): Promise<CdasOpportunityPipeline> =>
     (await api.get<CdasOpportunityPipeline>("/cdas-booking/pipeline")).data,
   updatePipelineStage: async (id: string, stage: CdasPipelineStage): Promise<CdasBookingOpportunity> =>
