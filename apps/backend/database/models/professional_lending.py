@@ -47,6 +47,29 @@ class DirectLoanApplication(Base):
     top_up_exception_approved = Column(Boolean, nullable=False, default=False)
     top_up_exception_approved_at = Column(DateTime, nullable=True)
     top_up_exception_approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Optional provenance for drafts deliberately initiated from the CDAS
+    # operations workspace. These fields are traceability only: they are not
+    # affordability, pricing, approval or eligibility inputs.
+    cdas_source_opportunity_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cdas_booking_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    cdas_source_analysis_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cdas_analysis_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    cdas_handoff_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    cdas_handoff_at = Column(DateTime, nullable=True, index=True)
 
 class CreditBlacklist(Base):
     __tablename__ = "credit_blacklist"

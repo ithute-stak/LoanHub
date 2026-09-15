@@ -12,6 +12,7 @@ import type {
 } from "@/types/cdasBooking";
 import type { CdasAdvancedSearchParams, CdasAdvancedSearchResponse } from "@/types/cdasAdvancedSearch";
 import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
+import type { CdasApplicationHandoffCreate, CdasApplicationHandoffWorkspace, CdasCreatedApplicationHandoff } from "@/types/cdasApplicationHandoff";
 import type { CdasAuditTrailParams, CdasAuditTrailResponse } from "@/types/cdasAuditTrail";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
@@ -50,6 +51,10 @@ export const cdasBookingApi = {
     (await api.post<CdasBulkAnalyzeResponse>("/cdas-booking/bulk-analyze", payload)).data,
   advancedSearch: async (params: CdasAdvancedSearchParams): Promise<CdasAdvancedSearchResponse> =>
     (await api.get<CdasAdvancedSearchResponse>("/cdas-booking/advanced-search", { params })).data,
+  getApplicationHandoffs: async (): Promise<CdasApplicationHandoffWorkspace> =>
+    (await api.get<CdasApplicationHandoffWorkspace>("/cdas-booking/application-handoffs")).data,
+  createApplicationHandoff: async (opportunityId: string, payload: CdasApplicationHandoffCreate): Promise<CdasCreatedApplicationHandoff> =>
+    (await api.post<CdasCreatedApplicationHandoff>(`/cdas-booking/opportunities/${opportunityId}/application-handoff`, payload)).data,
   getAuditTrail: async (params: CdasAuditTrailParams = {}): Promise<CdasAuditTrailResponse> =>
     (await api.get<CdasAuditTrailResponse>("/cdas-booking/audit-trail", { params })).data,
   getManagementDashboard: async (): Promise<CdasManagementDashboard> =>
