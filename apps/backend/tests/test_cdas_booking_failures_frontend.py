@@ -39,7 +39,7 @@ def test_failure_api_is_company_scoped_and_retry_uses_latest_failure():
     assert '@router.post("/opportunities/{opportunity_id}/retry-failed")' in source
     assert "CdasBookingOpportunity.company_id == context.company_id" in source
     assert "CdasBookingFailure.company_id == context.company_id" in source
-    assert "created_by_user_id=context.user.id" in source
+    assert "user_id=context.user.id" in source
     assert "reopen_failed_opportunity" in source
     assert "cdas_booking_failures.router" in registry
 
