@@ -112,11 +112,12 @@ def _deduction_key(row: dict[str, Any], index: int) -> str:
     reference = _norm(row.get("reference_no"))
     item = _norm(row.get("item_code"))
     agency = _norm(row.get("agency_name"))
+    effective = _norm(row.get("effective_date"))
     if reference:
         return f"reference:{item}:{reference}" if item else f"reference:{reference}"
     if item or agency:
-        return f"item-agency:{item}:{agency}"
-    return f"row:{index}:{_norm(row.get('effective_date'))}:{_norm(row.get('deduction_amount'))}"
+        return f"item-agency:{item}:{agency}:{effective}"
+    return f"row:{index}:{effective}:{_norm(row.get('deduction_amount'))}"
 
 
 def _deduction_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -141,33 +142,14 @@ def _deduction_changes(previous: CdasAnalysisRecord, latest: CdasAnalysisRecord)
     changes: list[dict[str, Any]] = []
 
     for key in sorted(after.keys() - before.keys()):
-        changes.append(
-            {
-                "kind": "DEDUCTION_ADDED",
-                "field": "deductions",
-                "label": "Deduction added",
-                "before": None,
-                "after": _deduction_payload(after[key]),
-                "impact": "MATERIAL",
-            }
-        )
+        changes.append({"kind": "DEDUCTION_ADDED", "field": "deductions", "label": "Deduction added", "before": None, "after": _deduction_payload(after[key]), "impact": "MATERIAL"})
     for key in sorted(before.keys() - after.keys()):
-        changes.append(
-            {
-                "kind": "DEDUCTION_REMOVED",
-                "field": "deductions",
-                "label": "Deduction removed",
-                "before": _deduction_payload(before[key]),
-                "after": None,
-                "impact": "MATERIAL",
-            }
-        )
+        changes.append({"kind": "DEDUCTION_REMOVED", "field": "deductions", "label": "Deduction removed", "before": _deduction_payload(before[key]), "after": None, "impact": "MATERIAL"})
     for key in sorted(before.keys() & after.keys()):
         old = _deduction_payload(before[key])
         new = _deduction_payload(after[key])
         if old == new:
             continue
-        changed_fields = [field for field in old if old.get(field) != new.get(field)]
         changes.append(
             {
                 "kind": "DEDUCTION_MODIFIED",
@@ -175,33 +157,24 @@ def _deduction_changes(previous: CdasAnalysisRecord, latest: CdasAnalysisRecord)
                 "label": "Deduction changed",
                 "before": old,
                 "after": new,
-                "changed_fields": changed_fields,
+                "changed_fields": [field for field in old if old.get(field) != new.get(field)],
                 "impact": "MATERIAL",
             }
         )
     return changes
 
 
-def detect_analysis_changes(
-    previous: CdasAnalysisRecord,
-    latest: CdasAnalysisRecord,
-) -> list[dict[str, Any]]:
+def detect_analysis_changes(previous: CdasAnalysisRecord, latest: CdasAnalysisRecord) -> list[dict[str, Any]]:
     return _field_changes(previous, latest) + _deduction_changes(previous, latest)
 
 
-def build_change_detection(
-    analyses: Iterable[CdasAnalysisRecord],
-) -> dict[str, Any]:
+def build_change_detection(analyses: Iterable[CdasAnalysisRecord]) -> dict[str, Any]:
     source = list(analyses)
     groups = _build_groups(source, [])
     items: list[dict[str, Any]] = []
 
     for group in groups:
-        records = sorted(
-            group["analyses"],
-            key=lambda record: (record.created_at, str(record.id)),
-            reverse=True,
-        )
+        records = sorted(group["analyses"], key=lambda record: (record.created_at, str(record.id)), reverse=True)
         if len(records) < 2:
             continue
         latest, previous = records[0], records[1]
