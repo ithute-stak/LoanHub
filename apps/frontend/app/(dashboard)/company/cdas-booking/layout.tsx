@@ -6,6 +6,7 @@ export default function CdasBookingLayout({ children }: { children: ReactNode })
     <nav className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/20 p-2" aria-label="CDAS workspace">
       <Link href="/company/cdas-booking/management-dashboard" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Management Dashboard</Link>
       <Link href="/company/cdas-booking" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Booking Centre</Link>
+      <Link href="/company/cdas-booking/applications" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">LoanHub Applications</Link>
       <Link href="/company/cdas-booking/bulk-processing" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Bulk Processing</Link>
       <Link href="/company/cdas-booking/advanced-search" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Advanced Search</Link>
       <Link href="/company/cdas-booking/audit-trail" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Audit Trail</Link>
