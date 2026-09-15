@@ -12,6 +12,7 @@ import type {
 } from "@/types/cdasBooking";
 import type { CdasAdvancedSearchParams, CdasAdvancedSearchResponse } from "@/types/cdasAdvancedSearch";
 import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
+import type { CdasAuditTrailParams, CdasAuditTrailResponse } from "@/types/cdasAuditTrail";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
@@ -48,6 +49,8 @@ export const cdasBookingApi = {
     (await api.post<CdasBulkAnalyzeResponse>("/cdas-booking/bulk-analyze", payload)).data,
   advancedSearch: async (params: CdasAdvancedSearchParams): Promise<CdasAdvancedSearchResponse> =>
     (await api.get<CdasAdvancedSearchResponse>("/cdas-booking/advanced-search", { params })).data,
+  getAuditTrail: async (params: CdasAuditTrailParams = {}): Promise<CdasAuditTrailResponse> =>
+    (await api.get<CdasAuditTrailResponse>("/cdas-booking/audit-trail", { params })).data,
   listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
     (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
   listClientProfiles: async (): Promise<CdasClientProfileList> =>

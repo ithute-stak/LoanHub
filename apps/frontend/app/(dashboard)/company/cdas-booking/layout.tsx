@@ -7,6 +7,7 @@ export default function CdasBookingLayout({ children }: { children: ReactNode })
       <Link href="/company/cdas-booking" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Booking Centre</Link>
       <Link href="/company/cdas-booking/bulk-processing" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Bulk Processing</Link>
       <Link href="/company/cdas-booking/advanced-search" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Advanced Search</Link>
+      <Link href="/company/cdas-booking/audit-trail" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Audit Trail</Link>
       <Link href="/company/cdas-booking/clients" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Client Profiles</Link>
       <Link href="/company/cdas-booking/duplicates" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Duplicate Detection</Link>
       <Link href="/company/cdas-booking/changes" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Change Detection</Link>
