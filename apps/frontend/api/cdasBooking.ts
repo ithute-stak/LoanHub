@@ -14,6 +14,7 @@ import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
+import type { CdasBulkAnalyzeRequest, CdasBulkAnalyzeResponse } from "@/types/cdasBulkProcessing";
 import type { CdasChangeDetection } from "@/types/cdasChanges";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasDataQualityCentre } from "@/types/cdasDataQuality";
@@ -42,6 +43,8 @@ function filenameFromDisposition(value?: string): string | null {
 export const cdasBookingApi = {
   analyze: async (payload: CdasBookingAnalyzeRequest): Promise<CdasBookingAnalysis> =>
     (await api.post<CdasBookingAnalysis>("/cdas-booking/analyze", payload)).data,
+  bulkAnalyze: async (payload: CdasBulkAnalyzeRequest): Promise<CdasBulkAnalyzeResponse> =>
+    (await api.post<CdasBulkAnalyzeResponse>("/cdas-booking/bulk-analyze", payload)).data,
   listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
     (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
   listClientProfiles: async (): Promise<CdasClientProfileList> =>
