@@ -9,6 +9,7 @@ export default function CdasBookingLayout({ children }: { children: ReactNode })
       <Link href="/company/cdas-booking/calendar" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Booking Calendar</Link>
       <Link href="/company/cdas-booking/priorities" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Priority Queue</Link>
       <Link href="/company/cdas-booking/pipeline" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Opportunity Pipeline</Link>
+      <Link href="/company/cdas-booking/follow-ups" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Contact & Follow-Ups</Link>
       <Link href="/company/cdas-booking/simulator" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">What-If Simulator</Link>
       <Link href="/company/cdas-booking/max-loan" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Loan Reference Calculator</Link>
       <Link href="/company/cdas-booking/agency-intelligence" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Agency Intelligence</Link>

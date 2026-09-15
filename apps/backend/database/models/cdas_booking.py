@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from database.base import Base
@@ -14,6 +14,7 @@ class CdasBookingOpportunity(Base):
     pipeline_stage = Column(String(40), nullable=False, default="identified", index=True)
     pipeline_updated_at = Column(DateTime, nullable=True)
     pipeline_updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    assigned_to_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     booking_lead_months = Column(Integer, nullable=False, default=6)
     alert_lead_days = Column(Integer, nullable=False, default=3)
     booking_open_date = Column(Date, nullable=True, index=True)
@@ -30,6 +31,19 @@ class CdasBookingOpportunity(Base):
     analysis_snapshot = Column(JSONB, nullable=False, default=dict)
     booked_at = Column(DateTime, nullable=True)
     booked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+
+class CdasOpportunityContact(Base):
+    __tablename__ = "cdas_opportunity_contacts"
+
+    company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    opportunity_id = Column(UUID(as_uuid=True), ForeignKey("cdas_booking_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel = Column(String(30), nullable=False, index=True)
+    outcome = Column(String(40), nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    contacted_at = Column(DateTime, nullable=False, index=True)
+    next_follow_up_at = Column(DateTime, nullable=True, index=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class CdasAnalysisRecord(Base):
