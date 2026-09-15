@@ -152,14 +152,14 @@ def build_cdas_forecast(
 
             booking_date = _as_date(row.get("booking_open_date"))
             booking_status = str(row.get("booking_status") or "").upper()
-            employer_entry = _concentration_item(employers, employer)
-            agency_entry = _concentration_item(agencies, agency)
 
             if booking_status == "BOOK_NOW" or (booking_date and booking_date <= today):
                 book_now_count += 1
                 book_now_value += amount
                 if client_key:
                     book_now_clients.add(client_key)
+                employer_entry = _concentration_item(employers, employer)
+                agency_entry = _concentration_item(agencies, agency)
                 for entry in (employer_entry, agency_entry):
                     entry["book_now_count"] += 1
                     entry["book_now_value"] += amount
@@ -188,6 +188,8 @@ def build_cdas_forecast(
             if client_key:
                 bucket["client_keys"].add(client_key)
                 future_clients.add(client_key)
+            employer_entry = _concentration_item(employers, employer)
+            agency_entry = _concentration_item(agencies, agency)
             for entry in (employer_entry, agency_entry):
                 entry["scheduled_count"] += 1
                 entry["scheduled_value"] += amount
