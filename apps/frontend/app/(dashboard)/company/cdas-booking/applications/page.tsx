@@ -59,7 +59,7 @@ export default function CdasApplicationsPage() {
         setClients(companyClients);
         setProducts(loanProducts.filter((item) => item.is_active));
       })
-      .catch((error) => toast.error(getErrorMessage(error)))
+      .catch((error) => toast.error(getErrorMessage(error, "Unable to load CDAS application handoffs.")))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
@@ -108,7 +108,7 @@ export default function CdasApplicationsPage() {
       toast.success(`Draft ${result.application_reference} created.`);
       router.push(result.origination_workspace_url);
     } catch (error) {
-      toast.error(getErrorMessage(error));
+      toast.error(getErrorMessage(error, "Unable to create the LoanHub origination draft."));
     } finally {
       setSaving(false);
     }
