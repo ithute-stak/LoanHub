@@ -46,6 +46,14 @@ def _now() -> datetime:
     return datetime.now(ZoneInfo(settings.APP_TIMEZONE)).replace(tzinfo=None)
 
 
+def _local_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(ZoneInfo(settings.APP_TIMEZONE)).replace(tzinfo=None)
+
+
 def _company_opportunity(db: Session, *, opportunity_id: UUID, company_id: UUID) -> CdasBookingOpportunity:
     item = db.query(CdasBookingOpportunity).filter(
         CdasBookingOpportunity.id == opportunity_id,
@@ -115,8 +123,9 @@ def add_cdas_opportunity_contact(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    contacted_at = payload.contacted_at or _now()
-    if payload.next_follow_up_at and payload.next_follow_up_at < contacted_at:
+    contacted_at = _local_naive(payload.contacted_at) or _now()
+    next_follow_up_at = _local_naive(payload.next_follow_up_at)
+    if next_follow_up_at and next_follow_up_at < contacted_at:
         raise HTTPException(status_code=422, detail="Next follow-up cannot be before the contact time")
 
     row = CdasOpportunityContact(
@@ -126,7 +135,7 @@ def add_cdas_opportunity_contact(
         outcome=outcome,
         notes=(payload.notes or "").strip() or None,
         contacted_at=contacted_at,
-        next_follow_up_at=payload.next_follow_up_at,
+        next_follow_up_at=next_follow_up_at,
         created_by_user_id=context.user.id,
     )
     db.add(row)
