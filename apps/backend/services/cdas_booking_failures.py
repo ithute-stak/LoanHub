@@ -69,8 +69,11 @@ def record_booking_failure(
     retry_eligible: bool,
     retry_after: datetime | None,
 ) -> CdasBookingFailure:
-    if pipeline_stage_for_item(item) == "booked" or item.status == "booked":
+    current_stage = pipeline_stage_for_item(item)
+    if current_stage == "booked" or item.status == "booked":
         raise ValueError("Booked CDAS opportunities are terminal and cannot be failed")
+    if current_stage == "failed":
+        raise ValueError("This opportunity is already failed; reopen it before recording another failure")
     reason = normalize_failure_reason(reason_code)
     if retry_after is not None and retry_after < failed_at:
         raise ValueError("Retry time cannot be before the failure time")
@@ -130,6 +133,7 @@ def build_failure_workspace(
     *,
     now: datetime,
 ) -> dict[str, Any]:
+    source_opportunities = [dict(value) for value in opportunities]
     histories: dict[str, list[dict[str, Any]]] = defaultdict(list)
     all_failures: list[dict[str, Any]] = []
     for row in failures:
@@ -141,7 +145,7 @@ def build_failure_workspace(
         values.sort(key=lambda value: str(value.get("failed_at") or ""), reverse=True)
 
     items: list[dict[str, Any]] = []
-    for source in opportunities:
+    for source in source_opportunities:
         item = dict(source)
         history = histories.get(str(item.get("id") or ""), [])
         latest = history[0] if history else None
@@ -165,6 +169,12 @@ def build_failure_workspace(
     )
     reason_counts = Counter(str(value.get("reason_code") or "other") for value in all_failures)
     current_failed = [item for item in items if str(item.get("pipeline_stage") or "").lower() == "failed"]
+    recordable = [
+        item
+        for item in source_opportunities
+        if str(item.get("pipeline_stage") or "").lower() not in {"failed", "booked"}
+        and str(item.get("state") or "").upper() != "BOOKED"
+    ]
 
     return {
         "as_of": now,
@@ -184,6 +194,7 @@ def build_failure_workspace(
             {"value": code, "label": label}
             for code, label in FAILURE_REASONS
         ],
+        "recordable_opportunities": recordable,
         "items": items,
         "total": len(items),
     }
