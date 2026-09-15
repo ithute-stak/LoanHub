@@ -12,6 +12,7 @@ from database.models.company_staff import CompanyStaff
 from database.models.enums import NotificationType
 from database.models.notification import Notification
 from database.models.user import User
+from services.cdas_opportunity_pipeline import pipeline_stage_for_item
 
 
 def local_today() -> date:
@@ -19,8 +20,11 @@ def local_today() -> date:
 
 
 def opportunity_state(item: CdasBookingOpportunity, today: date | None = None) -> str:
-    if item.status == "booked":
+    stage = pipeline_stage_for_item(item)
+    if stage == "booked" or item.status == "booked":
         return "BOOKED"
+    if stage == "failed":
+        return "FAILED"
     today = today or local_today()
     if item.booking_open_date and today >= item.booking_open_date:
         return "BOOK_NOW"
@@ -39,6 +43,9 @@ def serialize_opportunity(item: CdasBookingOpportunity, today: date | None = Non
         "client_reference": item.client_reference,
         "status": item.status,
         "state": state,
+        "pipeline_stage": pipeline_stage_for_item(item),
+        "pipeline_updated_at": item.pipeline_updated_at,
+        "pipeline_updated_by_user_id": str(item.pipeline_updated_by_user_id) if item.pipeline_updated_by_user_id else None,
         "booking_lead_months": item.booking_lead_months,
         "alert_lead_days": item.alert_lead_days,
         "booking_open_date": item.booking_open_date,
@@ -87,11 +94,14 @@ def create_opportunity_from_analysis(
 
     alert_start = booking_open - timedelta(days=alert_lead_days) if booking_open else None
     booked = analysis.get("decision") == "ALREADY_BOOKED"
+    now = datetime.utcnow()
     item = CdasBookingOpportunity(
         company_id=company_id,
         client_name=(client_name or derived_name or "").strip() or None,
         client_reference=(client_reference or derived_reference or "").strip() or None,
         status="booked" if booked else "monitoring",
+        pipeline_stage="booked" if booked else "identified",
+        pipeline_updated_at=now,
         booking_lead_months=int(analysis.get("booking_lead_months") or 0),
         alert_lead_days=alert_lead_days,
         booking_open_date=booking_open,
@@ -106,7 +116,7 @@ def create_opportunity_from_analysis(
         own_monthly_deductions=Decimal(str(analysis.get("own_monthly_deductions") or 0)),
         competitor_monthly_deductions=Decimal(str(analysis.get("competitor_monthly_deductions") or 0)),
         analysis_snapshot=analysis,
-        booked_at=datetime.utcnow() if booked else None,
+        booked_at=now if booked else None,
     )
     db.add(item)
     db.commit()
@@ -122,6 +132,7 @@ def generate_due_cdas_booking_alerts(db: Session, user: User) -> int:
     due = db.query(CdasBookingOpportunity).filter(
         CdasBookingOpportunity.company_id.in_(company_ids),
         CdasBookingOpportunity.status == "monitoring",
+        CdasBookingOpportunity.pipeline_stage.notin_(["failed", "booked"]),
         CdasBookingOpportunity.alert_start_date.isnot(None),
         CdasBookingOpportunity.alert_start_date <= today,
     ).all()
@@ -135,7 +146,7 @@ def generate_due_cdas_booking_alerts(db: Session, user: User) -> int:
         days = max(0, (item.booking_open_date - today).days) if item.booking_open_date else 0
         client = item.client_name or item.client_reference or item.opportunity_reference_no or "CDAS client"
         title = "CDAS client can be booked now" if ready else f"CDAS booking opens in {days} day(s)"
-        message = f"{client}: booking window {'is open now' if ready else f'opens on {item.booking_open_date:%d %b %Y}'}. This reminder continues daily until the opportunity is marked booked."
+        message = f"{client}: booking window {'is open now' if ready else f'opens on {item.booking_open_date:%d %b %Y}'}. This reminder continues daily until the opportunity is marked booked or failed."
         db.add(Notification(
             user_id=user.id,
             company_id=item.company_id,
@@ -146,7 +157,7 @@ def generate_due_cdas_booking_alerts(db: Session, user: User) -> int:
             action="view",
             entity_type="cdas_booking_opportunity",
             entity_id=str(item.id),
-            action_url="/company/cdas-booking",
+            action_url="/company/cdas-booking/pipeline",
             icon="calendar-clock",
             priority="high",
             data={"opportunity_id": str(item.id), "booking_open_date": item.booking_open_date.isoformat() if item.booking_open_date else None},

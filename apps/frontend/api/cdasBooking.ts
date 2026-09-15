@@ -8,11 +8,13 @@ import type {
   CdasBookingOpportunityList,
   CdasClientProfileDetail,
   CdasClientProfileList,
+  CdasPipelineStage,
 } from "@/types/cdasBooking";
 import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
+import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
 import type { CdasWhatIfRequest, CdasWhatIfResult } from "@/types/cdasWhatIf";
 
 export interface CdasPdfDownload {
@@ -44,6 +46,10 @@ export const cdasBookingApi = {
     (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
   getAgencyIntelligence: async (): Promise<CdasAgencyIntelligence> =>
     (await api.get<CdasAgencyIntelligence>("/cdas-booking/agency-intelligence")).data,
+  getOpportunityPipeline: async (): Promise<CdasOpportunityPipeline> =>
+    (await api.get<CdasOpportunityPipeline>("/cdas-booking/pipeline")).data,
+  updatePipelineStage: async (id: string, stage: CdasPipelineStage): Promise<CdasBookingOpportunity> =>
+    (await api.patch<CdasBookingOpportunity>(`/cdas-booking/opportunities/${id}/pipeline`, { stage })).data,
   simulateWhatIf: async (payload: CdasWhatIfRequest): Promise<CdasWhatIfResult> =>
     (await api.post<CdasWhatIfResult>("/cdas-booking/simulator", payload)).data,
   calculateMaxLoan: async (payload: CdasMaxLoanRequest): Promise<CdasMaxLoanResult> =>
@@ -74,5 +80,5 @@ export const cdasBookingApi = {
     };
   },
   markBooked: async (id: string): Promise<CdasBookingOpportunity> =>
-    (await api.patch<CdasBookingOpportunity>(`/cdas-booking/opportunities/${id}/booked`)).data,
+    (await api.patch<CdasBookingOpportunity>(`/cdas-booking/opportunities/${id}/pipeline`, { stage: "booked" })).data,
 };

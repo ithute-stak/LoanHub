@@ -1,7 +1,8 @@
 export type CdasBookingDecision = "ALREADY_BOOKED" | "BOOK_NOW" | "WAIT_UNTIL" | "REVIEW_REQUIRED";
 export type CdasRowBookingStatus = "BOOKED_BY_US" | "BOOK_NOW" | "WAIT" | "NOT_ACTIVE" | "DATA_CONFLICT" | "DATA_INCOMPLETE";
 export type CdasDataQualityStatus = "OK" | "DATE_CONFLICT" | "MISSING_EXPIRY";
-export type CdasOpportunityState = "UPCOMING" | "BOOK_NOW" | "BOOKED";
+export type CdasOpportunityState = "UPCOMING" | "BOOK_NOW" | "FAILED" | "BOOKED";
+export type CdasPipelineStage = "identified" | "contact_client" | "documents_required" | "ready_to_book" | "booking_submitted" | "approved" | "failed" | "booked";
 export type CdasCapacityStatus = "UNKNOWN" | "NEGATIVE_AVAILABLE" | "NO_HEADROOM" | "AVAILABLE";
 
 export interface CdasBookingAnalyzeRequest {
@@ -144,6 +145,9 @@ export interface CdasBookingOpportunity {
   client_reference: string | null;
   status: string;
   state: CdasOpportunityState;
+  pipeline_stage: CdasPipelineStage;
+  pipeline_updated_at: string | null;
+  pipeline_updated_by_user_id: string | null;
   booking_lead_months: number;
   alert_lead_days: number;
   booking_open_date: string | null;
