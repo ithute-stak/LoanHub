@@ -14,6 +14,7 @@ import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
+import type { CdasChangeDetection } from "@/types/cdasChanges";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
 import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
@@ -48,6 +49,8 @@ export const cdasBookingApi = {
     (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
   getAgencyIntelligence: async (): Promise<CdasAgencyIntelligence> =>
     (await api.get<CdasAgencyIntelligence>("/cdas-booking/agency-intelligence")).data,
+  getChanges: async (): Promise<CdasChangeDetection> =>
+    (await api.get<CdasChangeDetection>("/cdas-booking/changes")).data,
   getOpportunityPipeline: async (): Promise<CdasOpportunityPipeline> =>
     (await api.get<CdasOpportunityPipeline>("/cdas-booking/pipeline")).data,
   updatePipelineStage: async (id: string, stage: CdasPipelineStage): Promise<CdasBookingOpportunity> =>
