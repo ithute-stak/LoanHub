@@ -23,6 +23,7 @@ import type { CdasDataQualityCentre } from "@/types/cdasDataQuality";
 import type { CdasDuplicateDetection } from "@/types/cdasDuplicateDetection";
 import type { CdasEmployerIntelligence } from "@/types/cdasEmployerIntelligence";
 import type { CdasForecast } from "@/types/cdasForecast";
+import type { CdasManagementDashboard } from "@/types/cdasManagementDashboard";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
 import type { CdasOfficerPerformanceWorkspace } from "@/types/cdasOfficerPerformance";
 import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
@@ -51,6 +52,8 @@ export const cdasBookingApi = {
     (await api.get<CdasAdvancedSearchResponse>("/cdas-booking/advanced-search", { params })).data,
   getAuditTrail: async (params: CdasAuditTrailParams = {}): Promise<CdasAuditTrailResponse> =>
     (await api.get<CdasAuditTrailResponse>("/cdas-booking/audit-trail", { params })).data,
+  getManagementDashboard: async (): Promise<CdasManagementDashboard> =>
+    (await api.get<CdasManagementDashboard>("/cdas-booking/management-dashboard")).data,
   listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
     (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
   listClientProfiles: async (): Promise<CdasClientProfileList> =>
