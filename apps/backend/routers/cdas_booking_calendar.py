@@ -16,6 +16,7 @@ from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
 from services.cdas_client_profiles import build_client_profiles
 from services.cdas_employer_intelligence import build_employer_intelligence
+from services.cdas_forecast import build_cdas_forecast
 from services.cdas_max_loan_calculator import calculate_reference_max_principal
 from services.cdas_what_if_simulator import simulate_what_if
 
@@ -123,6 +124,17 @@ def get_cdas_employer_intelligence(
     _require_company_member(context)
     profiles = _latest_company_profiles(context, db)
     return build_employer_intelligence(profiles, today=local_today())
+
+
+@router.get("/forecast")
+def get_cdas_forecast(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return a 12-month aggregate booking-window forecast from latest CDAS profiles."""
+    _require_company_member(context)
+    profiles = _latest_company_profiles(context, db)
+    return build_cdas_forecast(profiles, today=local_today(), horizon_months=12)
 
 
 @router.post("/simulator")
