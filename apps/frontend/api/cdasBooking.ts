@@ -18,6 +18,7 @@ import type { CdasChangeDetection } from "@/types/cdasChanges";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasDataQualityCentre } from "@/types/cdasDataQuality";
 import type { CdasEmployerIntelligence } from "@/types/cdasEmployerIntelligence";
+import type { CdasForecast } from "@/types/cdasForecast";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
 import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
 import type { CdasWhatIfRequest, CdasWhatIfResult } from "@/types/cdasWhatIf";
@@ -53,6 +54,8 @@ export const cdasBookingApi = {
     (await api.get<CdasAgencyIntelligence>("/cdas-booking/agency-intelligence")).data,
   getEmployerIntelligence: async (): Promise<CdasEmployerIntelligence> =>
     (await api.get<CdasEmployerIntelligence>("/cdas-booking/employer-intelligence")).data,
+  getForecast: async (): Promise<CdasForecast> =>
+    (await api.get<CdasForecast>("/cdas-booking/forecast")).data,
   getChanges: async (): Promise<CdasChangeDetection> =>
     (await api.get<CdasChangeDetection>("/cdas-booking/changes")).data,
   getDataQuality: async (): Promise<CdasDataQualityCentre> =>
