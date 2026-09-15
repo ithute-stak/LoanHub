@@ -71,6 +71,11 @@ def update_cdas_opportunity_pipeline_stage(
 ):
     """Move one company opportunity to another valid workflow stage."""
     _require_company_member(context)
+    if str(payload.stage or "").strip().lower() == "failed":
+        raise HTTPException(
+            status_code=422,
+            detail="Record the booking failure reason in Failure Tracking instead of moving directly to Failed",
+        )
     item = _company_opportunity(
         db,
         opportunity_id=opportunity_id,

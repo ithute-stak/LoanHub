@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from database.base import Base
@@ -43,6 +43,19 @@ class CdasOpportunityContact(Base):
     notes = Column(Text, nullable=True)
     contacted_at = Column(DateTime, nullable=False, index=True)
     next_follow_up_at = Column(DateTime, nullable=True, index=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+
+class CdasBookingFailure(Base):
+    __tablename__ = "cdas_booking_failures"
+
+    company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    opportunity_id = Column(UUID(as_uuid=True), ForeignKey("cdas_booking_opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    reason_code = Column(String(60), nullable=False, index=True)
+    reason_details = Column(Text, nullable=True)
+    failed_at = Column(DateTime, nullable=False, index=True)
+    retry_eligible = Column(Boolean, nullable=False, default=False, index=True)
+    retry_after = Column(DateTime, nullable=True, index=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
