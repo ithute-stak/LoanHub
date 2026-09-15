@@ -9,6 +9,7 @@ from core.access_control import TenantContext, get_tenant_context
 from database.session import get_db
 from routers.cdas_booking import CdasBookingAnalyseRequest, _analyze, _report_preparer
 from services.cdas_analysis_history import save_or_get_analysis_record
+from services.cdas_audit_trail import append_cdas_audit_event
 from services.cdas_bulk_processing import (
     build_bulk_error_item,
     build_bulk_result_item,
@@ -83,7 +84,34 @@ def bulk_analyze_cdas(
                 )
             )
 
+    summary = build_bulk_summary(results)
+    analysis_ids = [
+        item["analysis_id"]
+        for item in results
+        if item.get("status") == "SUCCESS" and item.get("analysis_id")
+    ]
+    append_cdas_audit_event(
+        db,
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        actor_role=getattr(context.role, "value", str(context.role)),
+        action="CDAS_BULK_ANALYSIS_COMPLETED",
+        entity_type="cdas_bulk_batch",
+        record_id=None,
+        description=(
+            f"Bulk CDAS analysis completed: {summary['successful']} successful, "
+            f"{summary['errors']} errors"
+        ),
+        after_data=summary,
+        event_data={
+            "analysis_ids": analysis_ids,
+            "input_count": len(payload.items),
+        },
+        severity="warning" if summary["errors"] else "info",
+    )
+
     return {
-        "summary": build_bulk_summary(results),
+        "summary": summary,
         "items": results,
     }
