@@ -101,7 +101,7 @@ export default function CdasAuditTrail() {
           <h1 className="text-2xl font-semibold tracking-tight">Formal CDAS Audit Trail</h1>
         </div>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Append-only business events for CDAS analyses and workflow changes. Events are company-scoped and hash-sealed by LoanHub's audit integrity layer.
+          Append-only business events for CDAS analyses and workflow changes. Events are company-scoped and hash-sealed by LoanHub&apos;s audit integrity layer.
         </p>
       </div>
       <Button variant="outline" onClick={() => void load()} disabled={loading}>
