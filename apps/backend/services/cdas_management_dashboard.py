@@ -49,12 +49,12 @@ def _safe_forecast_months(source: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _safe_concentrations(values: list[dict[str, Any]] | None, *, key: str) -> list[dict[str, Any]]:
+def _safe_concentrations(values: list[dict[str, Any]] | None, *, label_key: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for item in values or []:
         result.append(
             {
-                key: item.get(key),
+                label_key: item.get("name"),
                 "book_now_count": int(item.get("book_now_count") or 0),
                 "book_now_value": round(float(item.get("book_now_value") or 0), 2),
                 "scheduled_count": int(item.get("scheduled_count") or 0),
@@ -146,8 +146,8 @@ def build_management_dashboard(
         "pipeline_stages": _safe_pipeline_stages(pipeline),
         "failure_reasons": _safe_failure_reasons(failures),
         "forecast_months": _safe_forecast_months(forecast),
-        "top_employers": _safe_concentrations(forecast.get("top_employers"), key="employer"),
-        "top_agencies": _safe_concentrations(forecast.get("top_agencies"), key="agency"),
+        "top_employers": _safe_concentrations(forecast.get("top_employers"), label_key="employer"),
+        "top_agencies": _safe_concentrations(forecast.get("top_agencies"), label_key="agency"),
         "policy": {
             "aggregate_only": True,
             "automated_credit_decision": False,
