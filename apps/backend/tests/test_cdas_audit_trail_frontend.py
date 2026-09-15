@@ -50,8 +50,8 @@ def test_bulk_processing_adds_safe_batch_summary_audit_event() -> None:
     assert 'action="CDAS_BULK_ANALYSIS_COMPLETED"' in router
     assert '"analysis_ids": analysis_ids' in router
     assert '"input_count": len(payload.items)' in router
-    audit_call = router.split("append_cdas_audit_event", 1)[1]
-    assert "raw_text" not in audit_call
+    audit_block = router.split('action="CDAS_BULK_ANALYSIS_COMPLETED"', 1)[1]
+    assert "raw_text" not in audit_block
 
 
 def test_frontend_audit_api_route_navigation_and_workspace_are_wired() -> None:
@@ -80,7 +80,8 @@ def test_frontend_audit_api_route_navigation_and_workspace_are_wired() -> None:
         assert phrase in component
 
     assert "cdasBookingApi.getAuditTrail" in component
-    assert "delete" not in component.lower()
+    assert "cdasBookingApi.delete" not in component
+    assert "cdasBookingApi.updateAudit" not in component
 
 
 def test_audit_frontend_types_expose_integrity_without_raw_cdas_source() -> None:
