@@ -12,6 +12,7 @@ import type {
 } from "@/types/cdasBooking";
 import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
+import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
 import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
@@ -57,6 +58,12 @@ export const cdasBookingApi = {
     (await api.post<CdasContactRecord>(`/cdas-booking/opportunities/${id}/contacts`, payload)).data,
   assignOpportunity: async (id: string, userId: string | null): Promise<{ opportunity_id: string; assigned_to_user_id: string | null }> =>
     (await api.patch(`/cdas-booking/opportunities/${id}/assignment`, { user_id: userId })).data,
+  getBookingFailures: async (): Promise<CdasBookingFailureWorkspace> =>
+    (await api.get<CdasBookingFailureWorkspace>("/cdas-booking/failures")).data,
+  recordBookingFailure: async (id: string, payload: CdasBookingFailureRequest): Promise<CdasBookingFailureRecord> =>
+    (await api.post<CdasBookingFailureRecord>(`/cdas-booking/opportunities/${id}/failures`, payload)).data,
+  retryFailedBooking: async (id: string): Promise<CdasBookingOpportunity> =>
+    (await api.post<CdasBookingOpportunity>(`/cdas-booking/opportunities/${id}/retry-failed`)).data,
   simulateWhatIf: async (payload: CdasWhatIfRequest): Promise<CdasWhatIfResult> =>
     (await api.post<CdasWhatIfResult>("/cdas-booking/simulator", payload)).data,
   calculateMaxLoan: async (payload: CdasMaxLoanRequest): Promise<CdasMaxLoanResult> =>
