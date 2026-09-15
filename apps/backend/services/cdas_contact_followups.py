@@ -66,12 +66,10 @@ def build_follow_up_workspace(
             reverse=True,
         )
         latest = history[0] if history else None
-        future = [
-            entry.get("next_follow_up_at")
-            for entry in history
-            if entry.get("next_follow_up_at") is not None
-        ]
-        next_follow_up = min(future) if future else None
+        # A newer contact supersedes the previous follow-up instruction. This
+        # prevents an old missed date from staying overdue after staff make a
+        # newer contact and intentionally set a different next action.
+        next_follow_up = latest.get("next_follow_up_at") if latest else None
         item.update(
             {
                 "contact_count": len(history),
