@@ -16,6 +16,7 @@ export default function CdasBookingLayout({ children }: { children: ReactNode })
       <Link href="/company/cdas-booking/simulator" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">What-If Simulator</Link>
       <Link href="/company/cdas-booking/max-loan" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Loan Reference Calculator</Link>
       <Link href="/company/cdas-booking/agency-intelligence" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Agency Intelligence</Link>
+      <Link href="/company/cdas-booking/employer-intelligence" className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">Employer Intelligence</Link>
     </nav>
     {children}
   </div>;

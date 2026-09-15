@@ -15,6 +15,7 @@ from services.cdas_booking_monitor import local_today, serialize_opportunity
 from services.cdas_booking_priority import build_booking_priority_queue
 from services.cdas_booking_storage import dedupe_serialized_opportunities
 from services.cdas_client_profiles import build_client_profiles
+from services.cdas_employer_intelligence import build_employer_intelligence
 from services.cdas_max_loan_calculator import calculate_reference_max_principal
 from services.cdas_what_if_simulator import simulate_what_if
 
@@ -70,6 +71,16 @@ def _company_opportunity_or_404(
     return row
 
 
+def _latest_company_profiles(context: TenantContext, db: Session) -> list[dict]:
+    analyses = db.query(CdasAnalysisRecord).filter(
+        CdasAnalysisRecord.company_id == context.company_id
+    ).order_by(
+        CdasAnalysisRecord.created_at.desc(),
+        CdasAnalysisRecord.id.desc(),
+    ).all()
+    return build_client_profiles(analyses, [], include_detail=True)
+
+
 @router.get("/calendar")
 def get_cdas_booking_calendar(
     context: TenantContext = Depends(get_tenant_context),
@@ -99,14 +110,19 @@ def get_cdas_agency_intelligence(
 ):
     """Return agency-level CDAS intelligence from each client's latest analysis."""
     _require_company_member(context)
-    analyses = db.query(CdasAnalysisRecord).filter(
-        CdasAnalysisRecord.company_id == context.company_id
-    ).order_by(
-        CdasAnalysisRecord.created_at.desc(),
-        CdasAnalysisRecord.id.desc(),
-    ).all()
-    profiles = build_client_profiles(analyses, [], include_detail=True)
+    profiles = _latest_company_profiles(context, db)
     return build_agency_intelligence(profiles, today=local_today())
+
+
+@router.get("/employer-intelligence")
+def get_cdas_employer_intelligence(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return employer-level CDAS intelligence without exposing client identities."""
+    _require_company_member(context)
+    profiles = _latest_company_profiles(context, db)
+    return build_employer_intelligence(profiles, today=local_today())
 
 
 @router.post("/simulator")

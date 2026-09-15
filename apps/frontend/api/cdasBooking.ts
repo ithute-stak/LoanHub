@@ -17,6 +17,7 @@ import type { CdasBookingPriorityQueue } from "@/types/cdasBookingPriority";
 import type { CdasChangeDetection } from "@/types/cdasChanges";
 import type { CdasContactCreateRequest, CdasContactRecord, CdasFollowUpWorkspace } from "@/types/cdasFollowUps";
 import type { CdasDataQualityCentre } from "@/types/cdasDataQuality";
+import type { CdasEmployerIntelligence } from "@/types/cdasEmployerIntelligence";
 import type { CdasMaxLoanRequest, CdasMaxLoanResult } from "@/types/cdasMaxLoan";
 import type { CdasOpportunityPipeline } from "@/types/cdasOpportunityPipeline";
 import type { CdasWhatIfRequest, CdasWhatIfResult } from "@/types/cdasWhatIf";
@@ -50,6 +51,8 @@ export const cdasBookingApi = {
     (await api.get<CdasBookingPriorityQueue>("/cdas-booking/priorities")).data,
   getAgencyIntelligence: async (): Promise<CdasAgencyIntelligence> =>
     (await api.get<CdasAgencyIntelligence>("/cdas-booking/agency-intelligence")).data,
+  getEmployerIntelligence: async (): Promise<CdasEmployerIntelligence> =>
+    (await api.get<CdasEmployerIntelligence>("/cdas-booking/employer-intelligence")).data,
   getChanges: async (): Promise<CdasChangeDetection> =>
     (await api.get<CdasChangeDetection>("/cdas-booking/changes")).data,
   getDataQuality: async (): Promise<CdasDataQualityCentre> =>
