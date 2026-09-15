@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from core.access_control import TenantContext, get_tenant_context
+from core.access_control import TRANSPARENCY_ROLES, TenantContext, get_tenant_context
 from database.models.audit_log import AuditLog
 from database.session import get_db
 from services.cdas_audit_trail import (
@@ -19,9 +19,11 @@ from services.cdas_audit_trail import (
 router = APIRouter(prefix="/cdas-booking", tags=["CDAS Formal Audit Trail"])
 
 
-def _require_company_member(context: TenantContext) -> None:
+def _require_audit_access(context: TenantContext) -> None:
     if context.is_platform_admin or not context.company_id or not context.staff:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+    if context.role not in TRANSPARENCY_ROLES:
+        raise HTTPException(status_code=403, detail="Transparency access is not assigned to this role")
 
 
 @router.get("/audit-trail")
@@ -38,7 +40,7 @@ def get_cdas_audit_trail(
     db: Session = Depends(get_db),
 ):
     """Return immutable, hash-sealed CDAS business events for the active company."""
-    _require_company_member(context)
+    _require_audit_access(context)
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="Audit start date cannot be after end date")
 
