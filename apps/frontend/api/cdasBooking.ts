@@ -10,6 +10,7 @@ import type {
   CdasClientProfileList,
   CdasPipelineStage,
 } from "@/types/cdasBooking";
+import type { CdasAdvancedSearchParams, CdasAdvancedSearchResponse } from "@/types/cdasAdvancedSearch";
 import type { CdasAgencyIntelligence } from "@/types/cdasAgencyIntelligence";
 import type { CdasBookingCalendar } from "@/types/cdasBookingCalendar";
 import type { CdasBookingFailureRecord, CdasBookingFailureRequest, CdasBookingFailureWorkspace } from "@/types/cdasBookingFailures";
@@ -45,6 +46,8 @@ export const cdasBookingApi = {
     (await api.post<CdasBookingAnalysis>("/cdas-booking/analyze", payload)).data,
   bulkAnalyze: async (payload: CdasBulkAnalyzeRequest): Promise<CdasBulkAnalyzeResponse> =>
     (await api.post<CdasBulkAnalyzeResponse>("/cdas-booking/bulk-analyze", payload)).data,
+  advancedSearch: async (params: CdasAdvancedSearchParams): Promise<CdasAdvancedSearchResponse> =>
+    (await api.get<CdasAdvancedSearchResponse>("/cdas-booking/advanced-search", { params })).data,
   listAnalyses: async (): Promise<CdasAnalysisRecordList> =>
     (await api.get<CdasAnalysisRecordList>("/cdas-booking/analyses")).data,
   listClientProfiles: async (): Promise<CdasClientProfileList> =>
