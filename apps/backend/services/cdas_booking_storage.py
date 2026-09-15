@@ -144,8 +144,13 @@ def save_or_update_opportunity_from_analysis(
         item_code=row_item_code,
         expiry_date=row_expiry,
     )
+    is_new = item is None
     if item is None:
-        item = CdasBookingOpportunity(company_id=company_id)
+        item = CdasBookingOpportunity(
+            company_id=company_id,
+            pipeline_stage="identified",
+            pipeline_updated_at=datetime.utcnow(),
+        )
         db.add(item)
 
     preserve_booked = item.status == "booked"
@@ -174,8 +179,16 @@ def save_or_update_opportunity_from_analysis(
         str(analysis.get("competitor_monthly_deductions") or 0)
     )
     item.analysis_snapshot = analysis
-    if item.status == "booked" and item.booked_at is None:
-        item.booked_at = datetime.utcnow()
+
+    if item.status == "booked":
+        now = datetime.utcnow()
+        item.booked_at = item.booked_at or now
+        if item.pipeline_stage != "booked":
+            item.pipeline_stage = "booked"
+            item.pipeline_updated_at = now
+    elif is_new and not item.pipeline_stage:
+        item.pipeline_stage = "identified"
+        item.pipeline_updated_at = datetime.utcnow()
 
     db.commit()
     db.refresh(item)
