@@ -44,7 +44,8 @@ def _require_company_member(context: TenantContext) -> None:
 
 def _company_opportunities(context: TenantContext, db: Session) -> list[dict]:
     rows = db.query(CdasBookingOpportunity).filter(
-        CdasBookingOpportunity.company_id == context.company_id
+        CdasBookingOpportunity.company_id == context.company_id,
+        CdasBookingOpportunity.pipeline_stage != "failed",
     ).order_by(
         CdasBookingOpportunity.booking_open_date.asc().nullslast(),
         CdasBookingOpportunity.created_at.desc(),
