@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -113,3 +113,28 @@ class CdasOfficialMandateEvent(Base):
 
     state = relationship("CdasOfficialMandateState", back_populates="events")
     actor = relationship("User", foreign_keys=[actor_user_id])
+
+
+class CdasApiRequestBudget(Base):
+    """Atomic per-company/environment count of outbound CDAS HTTP requests."""
+
+    __tablename__ = "cdas_api_request_budgets"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "environment",
+            "request_date",
+            name="uq_cdas_api_budget_company_env_date",
+        ),
+    )
+
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("loan_companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    environment = Column(String(20), nullable=False, index=True)
+    request_date = Column(Date, nullable=False, index=True)
+    request_count = Column(Integer, nullable=False, default=0)
+    last_request_at = Column(DateTime, nullable=True)
