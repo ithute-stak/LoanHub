@@ -56,6 +56,15 @@ class Settings(BaseSettings):
 
     MARKETPLACE_DEFAULT_UNLOCK_FEE: float = 25.0
 
+    # Official CDAS Third Party API. Credentials are runtime secrets and must
+    # never be committed to source control or exposed to frontend clients.
+    CDAS_ENABLED: bool = False
+    CDAS_BASE_URL: Optional[str] = None
+    CDAS_USERNAME: Optional[str] = None
+    CDAS_PASSWORD: Optional[str] = None
+    CDAS_TIMEOUT_SECONDS: float = 15.0
+    CDAS_DAILY_REQUEST_LIMIT: int = 400
+
     # Compatibility cache only. LelefaPayGate operational configuration is
     # loaded from PostgreSQL for each request and environment values are reset
     # immediately after Settings is constructed.
