@@ -10,13 +10,21 @@ from integrations.cdas import CdasConfigurationError
 from services import cdas_config_service as service
 
 
-def _row(*, username: str, password: str, enabled: bool = True, environment: str = "test"):
+def _row(
+    *,
+    username: str,
+    password: str,
+    enabled: bool = True,
+    environment: str = "test",
+    company_id=None,
+):
     base_url = (
         service.DEFAULT_TEST_BASE_URL
         if environment == "test"
         else "https://live-cdas.example.test"
     )
     return SimpleNamespace(
+        company_id=company_id or uuid4(),
         environment=environment,
         is_enabled=enabled,
         configuration={
@@ -31,11 +39,20 @@ def _row(*, username: str, password: str, enabled: bool = True, environment: str
     )
 
 
+class _EmptyQuery:
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def all(self):
+        return []
+
+
 def _db_stub():
     return SimpleNamespace(
         add=lambda _row: None,
         commit=lambda: None,
         refresh=lambda _row: None,
+        query=lambda *_models: _EmptyQuery(),
     )
 
 
@@ -107,10 +124,38 @@ def test_live_environment_cannot_target_known_test_host_variants(test_target: st
     assert "cannot use the cdas test host" in str(raised.value).lower()
 
 
+def test_same_cdas_username_cannot_be_shared_across_companies_in_same_environment():
+    company_a = uuid4()
+    company_b = uuid4()
+    rows = [
+        _row(username="Shared.Api.User", password="a", company_id=company_a),
+        _row(username="other-user", password="b", company_id=company_b),
+    ]
+
+    assert service._username_conflicts(
+        rows,
+        company_id=company_b,
+        environment="test",
+        username="shared.api.user",
+    ) is True
+    assert service._username_conflicts(
+        rows,
+        company_id=company_a,
+        environment="test",
+        username="Shared.Api.User",
+    ) is False
+    assert service._username_conflicts(
+        rows,
+        company_id=company_b,
+        environment="live",
+        username="Shared.Api.User",
+    ) is False
+
+
 def test_switching_environment_clears_previous_password(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-switch-test-key")
     company_id = uuid4()
-    row = _row(username="test-user", password="test-password", environment="test")
+    row = _row(username="test-user", password="test-password", environment="test", company_id=company_id)
     monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
 
     service.update_configuration(
@@ -134,7 +179,7 @@ def test_switching_environment_clears_previous_password(monkeypatch: pytest.Monk
 def test_switching_environment_cannot_enable_with_previous_password(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-enable-test-key")
     company_id = uuid4()
-    row = _row(username="test-user", password="test-password", environment="test")
+    row = _row(username="test-user", password="test-password", environment="test", company_id=company_id)
     monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
 
     with pytest.raises(ValueError) as raised:
@@ -158,7 +203,7 @@ def test_switching_environment_cannot_enable_with_previous_password(monkeypatch:
 def test_switching_environment_accepts_explicit_new_password(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-new-password-key")
     company_id = uuid4()
-    row = _row(username="test-user", password="test-password", environment="test")
+    row = _row(username="test-user", password="test-password", environment="test", company_id=company_id)
     monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
 
     service.update_configuration(
@@ -184,8 +229,8 @@ def test_company_clients_are_isolated_by_tenant(monkeypatch: pytest.MonkeyPatch)
     company_a = uuid4()
     company_b = uuid4()
     rows = {
-        company_a: _row(username="company-a", password="password-a"),
-        company_b: _row(username="company-b", password="password-b", environment="live"),
+        company_a: _row(username="company-a", password="password-a", company_id=company_a),
+        company_b: _row(username="company-b", password="password-b", environment="live", company_id=company_b),
     }
     monkeypatch.setattr(service, "_configuration_row", lambda _db, company_id: rows.get(company_id))
     service._client_cache.clear()
@@ -203,7 +248,7 @@ def test_company_clients_are_isolated_by_tenant(monkeypatch: pytest.MonkeyPatch)
 def test_mismatched_saved_environment_and_url_fail_closed(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-company-mismatch-test-key")
     company_id = uuid4()
-    row = _row(username="company-a", password="password-a", environment="test")
+    row = _row(username="company-a", password="password-a", environment="test", company_id=company_id)
     row.configuration = {
         **row.configuration,
         "base_url": "https://live-cdas.example.test",
@@ -221,7 +266,7 @@ def test_mismatched_saved_environment_and_url_fail_closed(monkeypatch: pytest.Mo
 def test_disabled_company_configuration_fails_closed(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-company-disabled-test-key")
     company_id = uuid4()
-    row = _row(username="company-a", password="password-a", enabled=False)
+    row = _row(username="company-a", password="password-a", enabled=False, company_id=company_id)
     monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
     service._client_cache.clear()
 
