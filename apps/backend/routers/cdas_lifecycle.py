@@ -22,15 +22,17 @@ from database.models.lending_operations import CDASDeductionMandate
 from database.session import get_db
 from integrations.cdas import CdasError
 from services.cdas_config_service import get_company_cdas_client
+from services.cdas_crash_safe_lifecycle import (
+    modify_linked_active_deduction,
+    perform_linked_action,
+    settle_linked_deduction,
+)
 from services.cdas_deduction_lifecycle import (
     CdasLifecycleError,
     get_official_mandate,
     get_official_mandate_for_loan,
-    modify_linked_active_deduction,
-    perform_linked_action,
     reconcile_linked_deduction,
     serialize_official_mandate,
-    settle_linked_deduction,
 )
 from services.cdas_registration_retry import retry_failed_registration
 from services.cdas_registration_workflow import register_loan_deduction_safely
