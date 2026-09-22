@@ -31,6 +31,7 @@ from services.cdas_deduction_lifecycle import (
     serialize_official_mandate,
     settle_linked_deduction,
 )
+from services.cdas_registration_retry import retry_failed_registration
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official Loan Lifecycle"])
@@ -64,6 +65,16 @@ class CdasLoanDeductionRegistrationRequest(BaseModel):
     total_installment: int = Field(gt=0, le=600)
     effective_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     borrower_consent: bool
+
+
+class CdasRegistrationRetryRequest(BaseModel):
+    item_code: str = Field(min_length=1, max_length=100)
+    reference_no: str = Field(min_length=1, max_length=200)
+    loan_policy: int = Field(default=0, ge=0)
+    deduction_amount: Decimal = Field(gt=0)
+    principal_amount: Decimal = Field(gt=0)
+    total_installment: int = Field(gt=0, le=600)
+    effective_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class CdasLinkedActionRequest(BaseModel):
@@ -167,6 +178,38 @@ async def register_cdas_loan_deduction(
             total_installment=payload.total_installment,
             effective_month=payload.effective_month,
             borrower_consent=payload.borrower_consent,
+        )
+    except CdasLifecycleError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+
+
+@router.post("/loan-deductions/{state_id}/retry-registration")
+async def retry_cdas_loan_deduction_registration(
+    state_id: UUID,
+    payload: CdasRegistrationRetryRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Correct and retry only a previously confirmed, retry-safe CDAS rejection."""
+    company_id = _require_company(context)
+    require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
+    try:
+        client = get_company_cdas_client(db, company_id)
+        return await retry_failed_registration(
+            db,
+            client=client,
+            company_id=company_id,
+            actor_user_id=context.user.id,
+            state_id=state_id,
+            item_code=payload.item_code,
+            reference_no=payload.reference_no,
+            loan_policy=payload.loan_policy,
+            deduction_amount=payload.deduction_amount,
+            principal_amount=payload.principal_amount,
+            total_installment=payload.total_installment,
+            effective_month=payload.effective_month,
         )
     except CdasLifecycleError as exc:
         raise _lifecycle_http_error(exc) from exc
