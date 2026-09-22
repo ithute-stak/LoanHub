@@ -53,6 +53,48 @@ async def test_employee_and_affordability_use_documented_headers_and_reuse_token
 
 
 @pytest.mark.asyncio
+async def test_employee_details_falls_back_to_token_header_only_after_417():
+    login_count = 0
+    employee_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal login_count, employee_count
+        if request.url.path == "/api/security/login":
+            login_count += 1
+            return httpx.Response(200, json={"Authorization": "token-123"})
+        if request.url.path == "/api/employee/getDetails":
+            employee_count += 1
+            if employee_count == 1:
+                assert request.headers.get("Authorization") == "token-123"
+                assert request.headers.get("Token") is None
+                return httpx.Response(417, json={"Message": "Authorization token is missing"})
+            assert request.headers.get("Token") == "token-123"
+            assert request.headers.get("Authorization") is None
+            return httpx.Response(
+                200,
+                json={
+                    "EmployeeNo": "EMP001",
+                    "Name": "Test",
+                    "Surname": "Employee",
+                },
+            )
+        raise AssertionError(f"Unexpected CDAS request: {request.url.path}")
+
+    client = CdasClient(
+        base_url="https://cdas.test",
+        username="test-user",
+        password="test-password",
+        transport=httpx.MockTransport(handler),
+    )
+
+    employee = await client.employee_details("EMP001")
+
+    assert employee["EmployeeNo"] == "EMP001"
+    assert login_count == 1
+    assert employee_count == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("expired_status", [401, 406, 419])
 async def test_expired_or_invalid_token_is_refreshed_once_and_read_request_is_retried(expired_status: int):
     login_count = 0
@@ -85,7 +127,7 @@ async def test_expired_or_invalid_token_is_refreshed_once_and_read_request_is_re
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("auth_status", [401, 406, 419])
+@pytest.mark.parametrize("auth_status", [401, 406, 417, 419])
 @pytest.mark.parametrize(
     ("method_name", "path", "payload"),
     [
