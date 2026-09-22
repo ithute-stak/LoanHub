@@ -7,6 +7,7 @@ import {
     FileSignature,
     ImagePlus,
     Landmark,
+    PlugZap,
     Settings2,
     Share2,
     ShieldCheck,
@@ -16,6 +17,7 @@ import { useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { CompanyBrandingSettings } from "./_components/company-branding-settings";
+import { CompanyCdasSettings } from "./_components/company-cdas-settings";
 import { CompanyLoanSettingsPanel } from "./_components/company-loan-settings";
 import { CompanySettingsForm } from "./_components/company-settings-form";
 import { CompanySettingsHeader } from "./_components/company-settings-header";
@@ -26,7 +28,7 @@ import { CompanySocialSharingSettings } from "./_components/company-social-shari
 import { CompanyTopUpRulesSettings } from "./_components/company-top-up-rules-settings";
 import { useCompanySettings } from "./_hooks/use-company-settings";
 
-const VALID_TABS = new Set(["profile", "governance", "branding", "loan-settings", "top-up-rules", "social-sharing"]);
+const VALID_TABS = new Set(["profile", "governance", "branding", "loan-settings", "top-up-rules", "cdas", "social-sharing"]);
 
 export default function CompanySettingsPage() {
     const settings = useCompanySettings();
@@ -105,7 +107,7 @@ export default function CompanySettingsPage() {
 
             <Tabs value={tab} onValueChange={setTab} className="gap-5">
                 <div className="overflow-x-auto rounded-2xl border bg-card p-2 shadow-sm">
-                    <TabsList className="grid h-12 min-w-[1240px] w-full grid-cols-6 rounded-xl">
+                    <TabsList className="grid h-12 min-w-[1450px] w-full grid-cols-7 rounded-xl">
                         <TabsTrigger value="profile" className="rounded-lg px-4 font-black">
                             <Settings2 className="h-4 w-4" /> Company profile
                         </TabsTrigger>
@@ -120,6 +122,9 @@ export default function CompanySettingsPage() {
                         </TabsTrigger>
                         <TabsTrigger value="top-up-rules" className="rounded-lg px-4 font-black">
                             <ShieldCheck className="h-4 w-4" /> Loan top-up rules
+                        </TabsTrigger>
+                        <TabsTrigger value="cdas" className="rounded-lg px-4 font-black">
+                            <PlugZap className="h-4 w-4" /> CDAS integration
                         </TabsTrigger>
                         <TabsTrigger value="social-sharing" className="rounded-lg px-4 font-black">
                             <Share2 className="h-4 w-4" /> Social sharing
@@ -170,6 +175,10 @@ export default function CompanySettingsPage() {
 
                 <TabsContent value="top-up-rules">
                     <CompanyTopUpRulesSettings canManage={settings.canManage} />
+                </TabsContent>
+
+                <TabsContent value="cdas">
+                    <CompanyCdasSettings canManage={settings.canManage} />
                 </TabsContent>
 
                 <TabsContent value="social-sharing">
