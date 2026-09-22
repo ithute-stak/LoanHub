@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "cdas_api_request_budgets",
-        sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("account_key", sa.String(length=64), nullable=False),
         sa.Column("environment", sa.String(length=20), nullable=False),
         sa.Column("request_date", sa.Date(), nullable=False),
@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("created_by", sa.String(length=36), nullable=True),
         sa.Column("updated_by", sa.String(length=36), nullable=True),
-        sa.ForeignKeyConstraint(["company_id"], ["loan_companies.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["company_id"], ["loan_companies.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "account_key",
