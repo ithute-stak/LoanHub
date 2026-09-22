@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -80,6 +80,56 @@ def _validate_environment_base_url(environment: str, base_url: str) -> None:
     base_host = (urlparse(base_url).hostname or "").lower()
     if environment == "live" and base_host == DEFAULT_TEST_HOST:
         raise ValueError("CDAS Live environment cannot use the CDAS test host")
+
+
+def _configuration_username(row: OriginationIntegrationConfiguration) -> str:
+    configuration = row.configuration if isinstance(row.configuration, dict) else {}
+    return str(configuration.get("username") or "").strip()
+
+
+def _username_conflicts(
+    rows: Iterable[OriginationIntegrationConfiguration],
+    *,
+    company_id: UUID,
+    environment: str,
+    username: str,
+) -> bool:
+    candidate = username.strip().casefold()
+    for row in rows:
+        if row.company_id == company_id:
+            continue
+        if str(row.environment or "").strip().lower() != environment:
+            continue
+        if _configuration_username(row).casefold() == candidate:
+            return True
+    return False
+
+
+def _assert_username_isolated(
+    db: Session,
+    *,
+    company_id: UUID,
+    environment: str,
+    username: str,
+) -> None:
+    rows = (
+        db.query(OriginationIntegrationConfiguration)
+        .filter(
+            OriginationIntegrationConfiguration.provider == CDAS_PROVIDER,
+            OriginationIntegrationConfiguration.environment == environment,
+            OriginationIntegrationConfiguration.company_id != company_id,
+        )
+        .all()
+    )
+    if _username_conflicts(
+        rows,
+        company_id=company_id,
+        environment=environment,
+        username=username,
+    ):
+        raise ValueError(
+            "This CDAS API username is already assigned to another LoanHub company in the selected environment"
+        )
 
 
 def _serialize_password(password: str) -> str:
@@ -180,6 +230,13 @@ def update_configuration(
         raise ValueError("CDAS timeout must be between 1 and 120 seconds")
     if clear_password and password:
         raise ValueError("Provide a new password or clear the existing password, not both")
+
+    _assert_username_isolated(
+        db,
+        company_id=company_id,
+        environment=environment,
+        username=username,
+    )
 
     row = _configuration_row(db, company_id)
     previous_environment = (
