@@ -26,25 +26,18 @@ def _context(role: UserRole):
         UserRole.BRANCH_MANAGER,
         UserRole.LOAN_OFFICER,
         UserRole.CREDIT_ANALYST,
-    ],
-)
-def test_cdas_deduction_writes_allow_lending_roles(role: UserRole):
-    _require_deduction_writer(_context(role))
-
-
-@pytest.mark.parametrize(
-    "role",
-    [
         UserRole.FINANCE_OFFICER,
+        UserRole.TREASURY_OFFICER,
         UserRole.COLLECTIONS_OFFICER,
         UserRole.AUDITOR,
         UserRole.COMPLIANCE_OFFICER,
     ],
 )
-def test_cdas_deduction_writes_reject_non_lending_roles(role: UserRole):
+def test_raw_cdas_deduction_writes_are_disabled_for_company_roles(role: UserRole):
     with pytest.raises(HTTPException) as raised:
         _require_deduction_writer(_context(role))
-    assert raised.value.status_code == 403
+    assert raised.value.status_code == 410
+    assert "loan-linked" in str(raised.value.detail).lower()
 
 
 @pytest.mark.parametrize(
@@ -56,21 +49,13 @@ def test_cdas_deduction_writes_reject_non_lending_roles(role: UserRole):
         UserRole.FINANCE_OFFICER,
         UserRole.TREASURY_OFFICER,
         UserRole.COLLECTIONS_OFFICER,
-    ],
-)
-def test_cdas_settlement_allows_lending_finance_and_collections_roles(role: UserRole):
-    _require_settlement_writer(_context(role))
-
-
-@pytest.mark.parametrize(
-    "role",
-    [
         UserRole.AUDITOR,
         UserRole.COMPLIANCE_OFFICER,
         UserRole.CUSTOMER_SUPPORT,
     ],
 )
-def test_cdas_settlement_rejects_read_only_roles(role: UserRole):
+def test_raw_cdas_settlement_is_disabled_for_company_roles(role: UserRole):
     with pytest.raises(HTTPException) as raised:
         _require_settlement_writer(_context(role))
-    assert raised.value.status_code == 403
+    assert raised.value.status_code == 410
+    assert "loan-linked" in str(raised.value.detail).lower()
