@@ -77,6 +77,25 @@ export function CdasLoanLifecyclePanel() {
     [state?.lifecycle_status],
   );
 
+  const canRetryRegistration = Boolean(
+    state
+      && !state.requires_reconciliation
+      && state.deduction_id === null
+      && state.last_error
+      && ["registration_pending", "registration_failed"].includes(String(state.lifecycle_status || "").toLowerCase()),
+  );
+
+  function hydrateFormFromState(result: CdasOfficialMandateState) {
+    if (result.employee_no || result.employee_number) setEmployeeNo(String(result.employee_no || result.employee_number));
+    if (result.item_code) setItemCode(result.item_code);
+    if (result.reference_no) setReferenceNo(result.reference_no);
+    setLoanPolicy(String(result.loan_policy ?? 0));
+    if (result.deduction_amount !== null && result.deduction_amount !== undefined) setDeductionAmount(String(result.deduction_amount));
+    if (result.principal_amount !== null && result.principal_amount !== undefined) setPrincipalAmount(String(result.principal_amount));
+    if (result.total_installment !== null && result.total_installment !== undefined) setInstallments(String(result.total_installment));
+    if (result.effective_month) setEffectiveMonth(result.effective_month);
+  }
+
   async function refreshAuditTrail(stateId: string, silent = false) {
     if (!silent) setLoading("audit");
     try {
@@ -100,9 +119,7 @@ export function CdasLoanLifecyclePanel() {
     try {
       const result = await cdasOfficialApi.getLoanDeduction(value);
       setState(result);
-      if (result.employee_no || result.employee_number) setEmployeeNo(String(result.employee_no || result.employee_number));
-      if (result.item_code) setItemCode(result.item_code);
-      if (result.reference_no) setReferenceNo(result.reference_no);
+      hydrateFormFromState(result);
       await refreshAuditTrail(result.id, true);
       toast.success("Linked CDAS deduction loaded.");
     } catch (error: unknown) {
@@ -145,6 +162,7 @@ export function CdasLoanLifecyclePanel() {
         borrower_consent: borrowerConsent,
       });
       setState(result);
+      hydrateFormFromState(result);
       await refreshAuditTrail(result.id, true);
       toast.success("CDAS deduction registered and permanently linked to the LoanHub loan.");
     } catch (error: unknown) {
@@ -152,9 +170,52 @@ export function CdasLoanLifecyclePanel() {
       try {
         const existing = await cdasOfficialApi.getLoanDeduction(loanId.trim());
         setState(existing);
+        hydrateFormFromState(existing);
         await refreshAuditTrail(existing.id, true);
       } catch {
         // The backend remains authoritative. Do not retry a failed provider write here.
+      }
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function retryRegistration() {
+    if (!state || !canRetryRegistration) return;
+    if (!itemCode.trim() || !referenceNo.trim()) {
+      toast.error("Item code and reference number are required.");
+      return;
+    }
+    if (!effectiveMonth.match(/^\d{4}-(0[1-9]|1[0-2])$/)) {
+      toast.error("Effective month must use YYYY-MM format.");
+      return;
+    }
+    if (!window.confirm("Retry this rejected CDAS registration with the corrected values? LoanHub will only send it if the previous provider rejection is confirmed retry-safe.")) return;
+
+    setLoading("retry-register");
+    try {
+      const result = await cdasOfficialApi.retryLoanDeductionRegistration(state.id, {
+        item_code: itemCode.trim(),
+        reference_no: referenceNo.trim(),
+        loan_policy: Number(loanPolicy || 0),
+        deduction_amount: Number(deductionAmount),
+        principal_amount: Number(principalAmount),
+        total_installment: Number(installments),
+        effective_month: effectiveMonth,
+      });
+      setState(result);
+      hydrateFormFromState(result);
+      await refreshAuditTrail(result.id, true);
+      toast.success("Corrected CDAS registration completed.");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "CDAS registration retry failed."));
+      try {
+        const refreshed = await cdasOfficialApi.getDeductionState(state.id);
+        setState(refreshed);
+        hydrateFormFromState(refreshed);
+        await refreshAuditTrail(refreshed.id, true);
+      } catch {
+        // Never replay a retry automatically.
       }
     } finally {
       setLoading(null);
@@ -332,6 +393,37 @@ export function CdasLoanLifecyclePanel() {
             </Alert>
           )}
 
+          {canRetryRegistration && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Correct rejected registration</CardTitle>
+                <CardDescription>
+                  CDAS returned a confirmed rejection, so these values can be corrected and explicitly resubmitted. The employee and LoanHub loan remain fixed.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Previous CDAS rejection</AlertTitle>
+                  <AlertDescription>{state.last_error}</AlertDescription>
+                </Alert>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="space-y-2"><Label>Employee number</Label><Input value={employeeNo} disabled /></div>
+                  <div className="space-y-2"><Label>CDAS item code</Label><Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Reference number</Label><Input value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Loan policy</Label><Input type="number" min={0} value={loanPolicy} onChange={(e) => setLoanPolicy(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Monthly deduction</Label><Input type="number" min="0.01" step="0.01" value={deductionAmount} onChange={(e) => setDeductionAmount(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Principal amount</Label><Input type="number" min="0.01" step="0.01" value={principalAmount} onChange={(e) => setPrincipalAmount(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Total installments</Label><Input type="number" min={1} max={600} value={installments} onChange={(e) => setInstallments(e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Effective month</Label><Input type="month" value={effectiveMonth} onChange={(e) => setEffectiveMonth(e.target.value)} /></div>
+                </div>
+                <LoadingButton loading={loading === "retry-register"} loadingText="Retrying registration..." disabled={Boolean(loading)} onClick={retryRegistration}>
+                  <RefreshCw className="h-4 w-4" />Correct and retry registration
+                </LoadingButton>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -357,7 +449,7 @@ export function CdasLoanLifecyclePanel() {
                 <div><div className="text-muted-foreground">CDAS status code</div><div className="font-medium">{state.cdas_status ?? "—"}</div></div>
               </div>
 
-              {state.last_error && <Alert variant="destructive"><AlertTitle>Last provider error</AlertTitle><AlertDescription>{state.last_error}</AlertDescription></Alert>}
+              {state.last_error && !canRetryRegistration && <Alert variant="destructive"><AlertTitle>Last provider error</AlertTitle><AlertDescription>{state.last_error}</AlertDescription></Alert>}
 
               {!state.requires_reconciliation && transitions.length > 0 && (
                 <div className="flex flex-wrap gap-2">
