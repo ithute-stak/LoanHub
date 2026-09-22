@@ -4,6 +4,7 @@ import type {
   CdasLinkedModifyRequest,
   CdasLinkedSettlementRequest,
   CdasLoanDeductionRegistrationRequest,
+  CdasOfficialMandateEvent,
   CdasOfficialMandateState,
   CdasOfficialRefreshRequest,
   CdasOfficialRefreshResponse,
@@ -25,6 +26,17 @@ export const cdasOfficialApi = {
 
   getDeductionState: async (stateId: string): Promise<CdasOfficialMandateState> =>
     (await api.get<CdasOfficialMandateState>(`/cdas/loan-deductions/${stateId}`)).data,
+
+  getDeductionEvents: async (
+    stateId: string,
+    limit = 100,
+  ): Promise<CdasOfficialMandateEvent[]> =>
+    (
+      await api.get<CdasOfficialMandateEvent[]>(
+        `/cdas/loan-deductions/${stateId}/events`,
+        { params: { limit } },
+      )
+    ).data,
 
   runDeductionAction: async (
     stateId: string,
