@@ -15,6 +15,7 @@ from core.access_control import (
     get_tenant_context,
     require_tenant_roles,
 )
+from database.models.enums import UserRole
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
 from services.cdas_analysis_history import (
@@ -32,6 +33,21 @@ from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
+
+# CDAS contains employee identity, affordability and payroll-deduction data.
+# Company membership by itself is not enough to query it. Keep operational
+# access to lending/finance/collections and explicit oversight roles.
+CDAS_READ_ROLES = (
+    set(LENDING_ROLES)
+    | set(FINANCE_ROLES)
+    | set(COLLECTIONS_ROLES)
+    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR, UserRole.RISK_MANAGER}
+)
+CDAS_DOCUMENT_ROLES = (
+    set(FINANCE_ROLES)
+    | set(COLLECTIONS_ROLES)
+    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR}
+)
 
 # These legacy role groups are intentionally retained as documentation of who
 # may perform writes through the loan-linked lifecycle router. Raw provider
@@ -136,6 +152,11 @@ def _require_company_manager(context: TenantContext) -> None:
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
 
 
+def _require_cdas_reader(context: TenantContext) -> None:
+    _require_company_member(context)
+    require_tenant_roles(context, CDAS_READ_ROLES)
+
+
 def _require_deduction_writer(context: TenantContext) -> None:
     _require_company_member(context)
     raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
@@ -147,7 +168,7 @@ def _require_settlement_writer(context: TenantContext) -> None:
 
 
 def _company_client(db: Session, context: TenantContext) -> CdasClient:
-    _require_company_member(context)
+    _require_cdas_reader(context)
     assert context.company_id is not None
     try:
         return get_company_cdas_client(db, context.company_id)
@@ -402,6 +423,8 @@ async def get_cdas_document(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    _require_company_member(context)
+    require_tenant_roles(context, CDAS_DOCUMENT_ROLES)
     client = _company_client(db, context)
     try:
         return await client.get_document(
