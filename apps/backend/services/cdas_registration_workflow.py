@@ -101,10 +101,14 @@ def _validate_employee_identity(loan: ClientCompanyLoan, employee_no: str, paylo
     if provider_employee_no.casefold() != employee_no.strip().casefold():
         raise CdasLifecycleError(409, "CDAS returned a different employee number than the one being registered")
 
-    borrower_first = _normalized_name(getattr(person, "first_name", ""))
+    borrower_given_tokens = set(_normalized_name(getattr(person, "first_name", "")).split())
     borrower_surname = _normalized_name(getattr(person, "last_name", ""))
     provider_given_tokens = set(provider_name.split())
-    if borrower_first not in provider_given_tokens or borrower_surname != provider_surname:
+    if (
+        not borrower_given_tokens
+        or not borrower_given_tokens.issubset(provider_given_tokens)
+        or borrower_surname != provider_surname
+    ):
         raise CdasLifecycleError(409, "CDAS employee name does not match the LoanHub borrower identity")
     if provider_dob != person.date_of_birth:
         raise CdasLifecycleError(409, "CDAS employee date of birth does not match the LoanHub borrower identity")
