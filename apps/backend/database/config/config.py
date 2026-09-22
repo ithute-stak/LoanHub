@@ -56,11 +56,8 @@ class Settings(BaseSettings):
 
     MARKETPLACE_DEFAULT_UNLOCK_FEE: float = 25.0
 
-    # Official CDAS Third Party API. Credentials are runtime secrets and must
-    # never be embedded in Flutter/web builds or committed to the repository.
-    CDAS_BASE_URL: Optional[str] = None
-    CDAS_USERNAME: Optional[str] = None
-    CDAS_PASSWORD: Optional[str] = None
+    # CDAS credentials are company-owned configuration stored encrypted in
+    # PostgreSQL. Only the non-secret default request timeout remains global.
     CDAS_TIMEOUT_SECONDS: float = 20.0
 
     # Compatibility cache only. LelefaPayGate operational configuration is
