@@ -16,6 +16,7 @@ from core.access_control import (
     get_tenant_context,
     require_tenant_roles,
 )
+from database.models.cdas_official import CdasOfficialMandateEvent
 from database.session import get_db
 from integrations.cdas import CdasError
 from services.cdas_config_service import get_company_cdas_client
@@ -37,6 +38,19 @@ router = APIRouter(prefix="/cdas", tags=["CDAS Official Loan Lifecycle"])
 CDAS_LIFECYCLE_ROLES = set(LENDING_ROLES)
 CDAS_RECONCILIATION_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
 CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
+
+# Keep the provider workflow enforceable on the backend. The UI also hides
+# invalid actions, but direct API callers must not be able to skip lifecycle
+# stages or use the generic endpoint to mutate an already-active deduction.
+CDAS_ACTION_ALLOWED_FROM: dict[int, set[str]] = {
+    3: {"registered", "reserved"},
+    4: {"reviewed"},
+    5: {"approved"},
+    6: {"registered", "reserved", "reviewed", "approved"},
+    9: {"registered", "reserved", "reviewed", "approved", "cancelled_or_rejected"},
+    10: {"registered", "reserved", "reviewed", "approved"},
+}
+ACTIVE_LIFECYCLE_STATUSES = {"active", "changed"}
 
 
 class CdasLoanDeductionRegistrationRequest(BaseModel):
@@ -84,6 +98,41 @@ def _cdas_http_error(exc: CdasError) -> HTTPException:
         status_code=status,
         detail={"provider": "CDAS", "code": exc.status_code, "message": exc.message},
     )
+
+
+def _require_lifecycle_transition(lifecycle_status: str | None, request_type: int) -> None:
+    current = str(lifecycle_status or "").strip().lower()
+    allowed = CDAS_ACTION_ALLOWED_FROM.get(request_type, set())
+    if current not in allowed:
+        raise CdasLifecycleError(
+            409,
+            f"CDAS request type {request_type} is not allowed while this mandate is {current or 'unknown'}",
+        )
+
+
+def _require_active_lifecycle(lifecycle_status: str | None, operation: str) -> None:
+    current = str(lifecycle_status or "").strip().lower()
+    if current not in ACTIVE_LIFECYCLE_STATUSES:
+        raise CdasLifecycleError(
+            409,
+            f"Only an active CDAS deduction can be {operation}; current lifecycle is {current or 'unknown'}",
+        )
+
+
+def _serialize_event(event: CdasOfficialMandateEvent) -> dict[str, object]:
+    return {
+        "id": str(event.id),
+        "state_id": str(event.state_id),
+        "actor_user_id": str(event.actor_user_id) if event.actor_user_id else None,
+        "event_type": event.event_type,
+        "request_type": event.request_type,
+        "request_snapshot": event.request_snapshot or {},
+        "response_snapshot": event.response_snapshot or {},
+        "provider_status_code": event.provider_status_code,
+        "success": bool(event.success),
+        "message": event.message,
+        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+    }
 
 
 @router.post("/loan-deductions")
@@ -153,6 +202,33 @@ def get_cdas_loan_deduction(
     return serialize_official_mandate(state, mandate)
 
 
+@router.get("/loan-deductions/{state_id}/events")
+def get_cdas_loan_deduction_events(
+    state_id: UUID,
+    limit: int = Query(default=100, ge=1, le=200),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return the append-only company-scoped audit trail for a linked mandate."""
+    company_id = _require_company(context)
+    try:
+        get_official_mandate(db, company_id=company_id, state_id=state_id)
+    except CdasLifecycleError as exc:
+        raise _lifecycle_http_error(exc) from exc
+
+    events = (
+        db.query(CdasOfficialMandateEvent)
+        .filter(
+            CdasOfficialMandateEvent.company_id == company_id,
+            CdasOfficialMandateEvent.state_id == state_id,
+        )
+        .order_by(CdasOfficialMandateEvent.occurred_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_serialize_event(event) for event in events]
+
+
 @router.post("/loan-deductions/{state_id}/actions")
 async def run_linked_cdas_action(
     state_id: UUID,
@@ -164,6 +240,8 @@ async def run_linked_cdas_action(
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
     try:
+        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_lifecycle_transition(state.lifecycle_status, payload.request_type)
         client = get_company_cdas_client(db, company_id)
         return await perform_linked_action(
             db,
@@ -189,6 +267,8 @@ async def modify_linked_cdas_deduction(
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
     try:
+        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_active_lifecycle(state.lifecycle_status, "modified")
         client = get_company_cdas_client(db, company_id)
         return await modify_linked_active_deduction(
             db,
@@ -217,6 +297,8 @@ async def settle_linked_cdas_loan_deduction(
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_SETTLEMENT_ROLES)
     try:
+        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_active_lifecycle(state.lifecycle_status, "settled")
         client = get_company_cdas_client(db, company_id)
         return await settle_linked_deduction(
             db,
