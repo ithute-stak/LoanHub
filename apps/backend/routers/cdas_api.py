@@ -16,6 +16,7 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.enums import UserRole
+from database.models.lending_operations import CDASPayrollProfile
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
 from services.cdas_analysis_history import (
@@ -35,9 +36,6 @@ from services.cdas_request_budget import get_cdas_request_budget_status
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
 
-# CDAS contains employee identity, affordability and payroll-deduction data.
-# Company membership by itself is not enough to query it. Keep operational
-# access to lending/finance/collections and explicit oversight roles.
 CDAS_READ_ROLES = (
     set(LENDING_ROLES)
     | set(FINANCE_ROLES)
@@ -49,11 +47,6 @@ CDAS_DOCUMENT_ROLES = (
     | set(COLLECTIONS_ROLES)
     | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR}
 )
-
-# These legacy role groups are intentionally retained as documentation of who
-# may perform writes through the loan-linked lifecycle router. Raw provider
-# write routes below are disabled so they cannot bypass the LoanHub loan link,
-# lifecycle ordering, reconciliation rules or append-only audit ledger.
 CDAS_DEDUCTION_WRITE_ROLES = set(LENDING_ROLES)
 CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
 RAW_WRITE_DISABLED_MESSAGE = (
@@ -77,8 +70,6 @@ class CdasRefreshRequest(BaseModel):
 
 
 class CdasDeductionActionRequest(BaseModel):
-    # CDAS v1.5 does not define RequestType 2. Preserve the documented duplicate
-    # values for 6 and 8 instead of inventing a meaning for the missing code.
     request_type: Literal[1, 3, 4, 5, 6, 7, 8, 9, 10]
     deduction_id: int = Field(default=0, ge=0)
     employee_no: str = Field(min_length=1, max_length=100)
@@ -158,6 +149,27 @@ def _require_cdas_reader(context: TenantContext) -> None:
     require_tenant_roles(context, CDAS_READ_ROLES)
 
 
+def _require_employee_scope(db: Session, context: TenantContext, employee_no: str) -> None:
+    """Prevent branch users from probing employee numbers outside their branch."""
+    if not context.branch_id:
+        return
+    assert context.company_id is not None
+    profile = (
+        db.query(CDASPayrollProfile.id)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.branch_id == context.branch_id,
+            CDASPayrollProfile.employee_number == employee_no.strip(),
+        )
+        .first()
+    )
+    if profile is None:
+        raise HTTPException(
+            status_code=403,
+            detail="This employee number is not linked to a borrower in the active branch",
+        )
+
+
 def _require_deduction_writer(context: TenantContext) -> None:
     _require_company_member(context)
     raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
@@ -190,8 +202,6 @@ def _report_preparer(context: TenantContext) -> tuple[str, str]:
 
 
 def _cdas_http_error(exc: CdasError) -> HTTPException:
-    # Never pass the upstream response wholesale to the client because CDAS may
-    # include implementation detail that is inappropriate for LoanHub clients.
     status = exc.status_code if 400 <= exc.status_code <= 599 else 502
     return HTTPException(
         status_code=status,
@@ -204,7 +214,6 @@ def get_cdas_configuration(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Return this company's sanitized CDAS configuration; never return its password."""
     _require_company_manager(context)
     assert context.company_id is not None
     return configuration_summary(get_configuration(db, context.company_id))
@@ -215,7 +224,6 @@ def get_cdas_request_budget(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Return today's local provider-request budget without consuming a CDAS call."""
     _require_company_manager(context)
     assert context.company_id is not None
     row = get_configuration(db, context.company_id)
@@ -233,7 +241,6 @@ def put_cdas_configuration(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Create or update company-owned Test/Live CDAS credentials."""
     _require_company_manager(context)
     assert context.company_id is not None
     try:
@@ -259,7 +266,6 @@ async def test_cdas_configuration(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Authenticate using the stored company credential without exposing a CDAS token."""
     _require_company_manager(context)
     assert context.company_id is not None
     try:
@@ -275,7 +281,8 @@ async def get_cdas_employee(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Read the employee identity using this company's official CDAS account."""
+    _require_cdas_reader(context)
+    _require_employee_scope(db, context, employee_no)
     client = _company_client(db, context)
     try:
         return await client.employee_details(employee_no.strip())
@@ -289,7 +296,8 @@ async def get_cdas_affordability(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Read current CDAS affordability. No value is calculated locally."""
+    _require_cdas_reader(context)
+    _require_employee_scope(db, context, employee_no)
     client = _company_client(db, context)
     try:
         amount = await client.affordability(employee_no.strip())
@@ -306,16 +314,14 @@ async def get_cdas_deductions(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Read all deductions or the connected company's deductions for a status."""
+    _require_cdas_reader(context)
+    _require_employee_scope(db, context, employee_no)
     client = _company_client(db, context)
     employee_no = employee_no.strip()
     try:
         if own_only:
             if deduction_status is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail="deduction_status is required when own_only=true",
-                )
+                raise HTTPException(status_code=422, detail="deduction_status is required when own_only=true")
             items = await client.own_deductions(employee_no, deduction_status)
         else:
             items = await client.all_deductions(employee_no)
@@ -330,13 +336,8 @@ async def refresh_cdas_employee_snapshot(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Refresh one employee from CDAS and archive the material official snapshot.
-
-    This operation is deliberately user-triggered. It does not register, modify,
-    approve, settle or book a deduction. An unchanged official snapshot reuses
-    its existing Analysis History record instead of creating a timestamp-only
-    duplicate.
-    """
+    _require_cdas_reader(context)
+    _require_employee_scope(db, context, payload.employee_no)
     client = _company_client(db, context)
     assert context.company_id is not None
     employee_no = payload.employee_no.strip()
@@ -368,10 +369,7 @@ async def refresh_cdas_employee_snapshot(
         "source": "CDAS_API",
         "checked_at": raw_snapshot.get("checked_at"),
         "snapshot": analysis,
-        "archive": {
-            "created": created,
-            "record": serialize_analysis_record(record),
-        },
+        "archive": {"created": created, "record": serialize_analysis_record(record)},
     }
 
 
@@ -381,7 +379,6 @@ async def run_cdas_deduction_action(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
@@ -396,6 +393,8 @@ async def get_active_and_approved_cdas_deductions(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    _require_cdas_reader(context)
+    _require_employee_scope(db, context, employee_no)
     client = _company_client(db, context)
     try:
         return await client.active_and_approved_deductions(employee_no.strip())
@@ -409,7 +408,6 @@ async def modify_active_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
@@ -424,7 +422,6 @@ async def settle_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_settlement_writer(context)
     client = _company_client(db, context)
     try:
@@ -445,10 +442,6 @@ async def get_cdas_document(
     require_tenant_roles(context, CDAS_DOCUMENT_ROLES)
     client = _company_client(db, context)
     try:
-        return await client.get_document(
-            year=year,
-            month=month,
-            document_type=document_type,
-        )
+        return await client.get_document(year=year, month=month, document_type=document_type)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
