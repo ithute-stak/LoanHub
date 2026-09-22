@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -25,7 +25,9 @@ class CdasRefreshRequest(BaseModel):
 
 
 class CdasDeductionActionRequest(BaseModel):
-    request_type: int = Field(ge=1, le=10)
+    # CDAS v1.5 does not define RequestType 2. Preserve the documented duplicate
+    # values for 6 and 8 instead of inventing a meaning for the missing code.
+    request_type: Literal[1, 3, 4, 5, 6, 7, 8, 9, 10]
     deduction_id: int = Field(default=0, ge=0)
     employee_no: str = Field(min_length=1, max_length=100)
     loan_policy: int = Field(default=0, ge=0)
