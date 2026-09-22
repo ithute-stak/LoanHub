@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasOfficialMandateState
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.enums import LoanStatus, RepaymentType
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
 from database.models.professional_lending import DirectLoanApplication
 from integrations.cdas import CdasClient, CdasError
@@ -18,9 +20,96 @@ from services.cdas_deduction_lifecycle import (
     _mark_uncertain_failure,
     _record_event,
     _utcnow,
+    _value,
     get_official_mandate_for_loan,
     serialize_official_mandate,
 )
+
+
+_MONEY_QUANTUM = Decimal("0.01")
+
+
+def _money(value: Decimal | int | float | str) -> Decimal:
+    return Decimal(str(value)).quantize(_MONEY_QUANTUM)
+
+
+def _normalized_name(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().replace("-", " ").split())
+
+
+def _parse_cdas_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    # ISO timestamps/dates are the preferred representation; retain a few
+    # common date-only fallbacks because provider test/live formatting may differ.
+    iso_candidate = text[:10]
+    try:
+        return date.fromisoformat(iso_candidate)
+    except ValueError:
+        pass
+    for pattern in ("%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _validate_loan_terms(
+    loan: ClientCompanyLoan,
+    *,
+    branch_id: UUID | None,
+    deduction_amount: Decimal,
+    principal_amount: Decimal,
+    total_installment: int,
+    effective_month: str,
+) -> None:
+    if branch_id and loan.branch_id != branch_id:
+        raise CdasLifecycleError(403, "The selected loan is outside the active branch")
+    if loan.status not in {LoanStatus.APPROVED, LoanStatus.ACTIVE}:
+        raise CdasLifecycleError(409, "Only an approved or active LoanHub loan can be registered in CDAS")
+    if loan.repayment_type != RepaymentType.MONTHLY:
+        raise CdasLifecycleError(422, "CDAS payroll registration requires a monthly LoanHub repayment schedule")
+    if _money(deduction_amount) != _money(loan.installment_amount):
+        raise CdasLifecycleError(422, "CDAS deduction amount must match the LoanHub loan installment amount")
+    if _money(principal_amount) != _money(loan.principal_amount):
+        raise CdasLifecycleError(422, "CDAS principal amount must match the LoanHub loan principal")
+    if total_installment != int(loan.repayment_period):
+        raise CdasLifecycleError(422, "CDAS installment count must match the LoanHub repayment period")
+
+    start_date = _effective_month_start(effective_month)
+    current_month = _utcnow().date().replace(day=1)
+    if start_date < current_month:
+        raise CdasLifecycleError(422, "CDAS effective month cannot be in the past")
+
+
+def _validate_employee_identity(loan: ClientCompanyLoan, employee_no: str, payload: dict[str, object]) -> None:
+    borrower = getattr(loan, "borrower", None)
+    user = getattr(borrower, "user", None)
+    person = getattr(user, "person", None)
+    if person is None:
+        raise CdasLifecycleError(422, "The borrower identity profile must be complete before CDAS registration")
+    if not getattr(person, "date_of_birth", None):
+        raise CdasLifecycleError(422, "The borrower's date of birth must be recorded before CDAS registration")
+
+    provider_employee_no = str(_value(payload, "EmployeeNo", "employeeNo", "employee_no") or "").strip()
+    provider_name = _normalized_name(_value(payload, "Name", "name"))
+    provider_surname = _normalized_name(_value(payload, "Surname", "surname"))
+    provider_dob = _parse_cdas_date(_value(payload, "DOB", "DateOfBirth", "dateOfBirth", "date_of_birth"))
+
+    if not provider_employee_no or not provider_name or not provider_surname or provider_dob is None:
+        raise CdasLifecycleError(502, "CDAS employee details are incomplete and cannot be safely linked to this borrower")
+    if provider_employee_no.casefold() != employee_no.strip().casefold():
+        raise CdasLifecycleError(409, "CDAS returned a different employee number than the one being registered")
+
+    borrower_first = _normalized_name(getattr(person, "first_name", ""))
+    borrower_surname = _normalized_name(getattr(person, "last_name", ""))
+    provider_given_tokens = set(provider_name.split())
+    if borrower_first not in provider_given_tokens or borrower_surname != provider_surname:
+        raise CdasLifecycleError(409, "CDAS employee name does not match the LoanHub borrower identity")
+    if provider_dob != person.date_of_birth:
+        raise CdasLifecycleError(409, "CDAS employee date of birth does not match the LoanHub borrower identity")
 
 
 async def register_loan_deduction_safely(
@@ -41,12 +130,13 @@ async def register_loan_deduction_safely(
     effective_month: str,
     borrower_consent: bool,
 ) -> dict[str, object]:
-    """Register a loan deduction with a durable uncertain-before-write marker.
+    """Register a loan deduction with identity, term and crash-safety controls.
 
-    The local loan/mandate link is committed before the external call. Crucially,
-    the state is persisted as reconciliation-required *before* CDAS receives the
-    mutation. If the application process dies after submission but before it can
-    store the response, a later user cannot mistake that state for a safe retry.
+    The borrower/employee identity and LoanHub loan terms are validated before
+    any provider mutation. The local loan/mandate link is then committed as
+    reconciliation-required *before* CDAS receives the mutation. If the process
+    dies after submission but before it can store the response, a later user
+    cannot mistake that state for a safe retry.
     """
     if not borrower_consent:
         raise CdasLifecycleError(422, "Borrower consent must be confirmed before registering a CDAS deduction")
@@ -61,9 +151,29 @@ async def register_loan_deduction_safely(
     if loan is None:
         raise CdasLifecycleError(404, "Loan was not found for this company")
 
+    _validate_loan_terms(
+        loan,
+        branch_id=branch_id,
+        deduction_amount=deduction_amount,
+        principal_amount=principal_amount,
+        total_installment=total_installment,
+        effective_month=effective_month,
+    )
+
     existing = get_official_mandate_for_loan(db, company_id=company_id, loan_id=loan_id)
     if existing is not None:
         raise CdasLifecycleError(409, "This LoanHub loan already has an official CDAS mandate")
+
+    cleaned_employee_no = employee_no.strip()
+    employee_details = await client.employee_details(cleaned_employee_no)
+    _validate_employee_identity(loan, cleaned_employee_no, employee_details)
+
+    live_affordability = Decimal(str(await client.affordability(cleaned_employee_no)))
+    if _money(deduction_amount) > _money(live_affordability):
+        raise CdasLifecycleError(
+            422,
+            "The LoanHub installment exceeds the current CDAS affordability for this employee",
+        )
 
     application: DirectLoanApplication | None = None
     application_id = loan.direct_application_id
@@ -79,7 +189,6 @@ async def register_loan_deduction_safely(
         )
 
     environment = _configuration_environment(db, company_id)
-    cleaned_employee_no = employee_no.strip()
     profile = (
         db.query(CDASPayrollProfile)
         .filter(
@@ -94,7 +203,11 @@ async def register_loan_deduction_safely(
             borrower_id=loan.borrower_id,
             branch_id=branch_id or loan.branch_id,
             employee_number=cleaned_employee_no,
-            verified=False,
+            verified=True,
+            verified_at=_utcnow(),
+            verified_by_user_id=actor_user_id,
+            verification_reference="CDAS_API_V1_5",
+            verification_notes="Employee number, name, surname and date of birth matched against the official CDAS employee endpoint.",
         )
         db.add(profile)
         db.flush()
@@ -103,6 +216,12 @@ async def register_loan_deduction_safely(
             409,
             "The supplied employee number does not match this borrower's existing CDAS payroll profile",
         )
+    else:
+        profile.verified = True
+        profile.verified_at = _utcnow()
+        profile.verified_by_user_id = actor_user_id
+        profile.verification_reference = "CDAS_API_V1_5"
+        profile.verification_notes = "Employee number, name, surname and date of birth matched against the official CDAS employee endpoint."
 
     start_date = _effective_month_start(effective_month)
     cleaned_reference = reference_no.strip()
@@ -126,10 +245,10 @@ async def register_loan_deduction_safely(
         payroll_profile_id=profile.id,
         mandate_number=f"CDAS-{loan.loan_reference}"[:80],
         employee_number=cleaned_employee_no,
-        monthly_deduction=deduction_amount,
+        monthly_deduction=_money(loan.installment_amount),
         start_date=start_date,
-        expected_installments=total_installment,
-        total_expected=deduction_amount * Decimal(total_installment),
+        expected_installments=int(loan.repayment_period),
+        total_expected=_money(loan.installment_amount) * Decimal(int(loan.repayment_period)),
         status="registration_submission_pending",
         borrower_consent=True,
         external_reference=cleaned_reference,
@@ -147,7 +266,7 @@ async def register_loan_deduction_safely(
         item_code=item_code.strip(),
         reference_no=cleaned_reference,
         loan_policy=loan_policy,
-        principal_amount=principal_amount,
+        principal_amount=_money(loan.principal_amount),
         effective_month=effective_month.strip(),
         lifecycle_status="registration_submission_pending",
         last_request_type=1,
