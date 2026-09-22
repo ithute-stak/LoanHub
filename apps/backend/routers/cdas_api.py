@@ -30,6 +30,7 @@ from services.cdas_config_service import (
     update_configuration,
 )
 from services.cdas_official_snapshot import normalize_official_cdas_snapshot
+from services.cdas_request_budget import get_cdas_request_budget_status
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
@@ -207,6 +208,23 @@ def get_cdas_configuration(
     _require_company_manager(context)
     assert context.company_id is not None
     return configuration_summary(get_configuration(db, context.company_id))
+
+
+@router.get("/request-budget")
+def get_cdas_request_budget(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return today's local provider-request budget without consuming a CDAS call."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    row = get_configuration(db, context.company_id)
+    environment = str(row.environment or "test").strip().lower() if row else "test"
+    return get_cdas_request_budget_status(
+        db,
+        company_id=context.company_id,
+        environment=environment,
+    )
 
 
 @router.put("/configuration")
