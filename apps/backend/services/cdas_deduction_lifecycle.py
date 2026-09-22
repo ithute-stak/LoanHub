@@ -10,10 +10,15 @@ from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficialMandateState
 from database.models.client_loan_company import ClientCompanyLoan
-from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
-from database.models.professional_lending import DirectLoanApplication
+from database.models.enums import LoanStatus, RepaymentType
+from database.models.lending_operations import CDASDeductionMandate
 from integrations.cdas import CdasClient, CdasError
 from services.cdas_config_service import get_configuration
+
+
+# Provider responses that indicate token/session problems. State-changing calls
+# are never replayed automatically for these codes; they require reconciliation.
+CDAS_AUTH_UNCERTAIN_STATUSES = {401, 402, 406, 417, 419}
 
 
 @dataclass(slots=True)
@@ -47,6 +52,10 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _money(value: Any) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
 
 def _effective_month_start(value: str) -> date:
@@ -109,9 +118,6 @@ def _set_lifecycle_timestamp(state: CdasOfficialMandateState, lifecycle: str, no
         state.reviewed_at = now
     elif lifecycle == "approved" and state.approved_at is None:
         state.approved_at = now
-    elif lifecycle == "active":
-        # The existing mandate already owns activated_at.
-        pass
     elif lifecycle == "settled" and state.settled_at is None:
         state.settled_at = now
     elif lifecycle == "cancelled_or_rejected" and state.cancelled_at is None:
@@ -139,7 +145,13 @@ def _record_event(
             event_type=event_type,
             request_type=request_type,
             request_snapshot=request_snapshot,
-            response_snapshot=response_snapshot if isinstance(response_snapshot, dict) else {"value": response_snapshot} if response_snapshot is not None else {},
+            response_snapshot=(
+                response_snapshot
+                if isinstance(response_snapshot, dict)
+                else {"value": response_snapshot}
+                if response_snapshot is not None
+                else {}
+            ),
             provider_status_code=provider_status_code,
             success=success,
             message=message,
@@ -150,9 +162,11 @@ def _record_event(
 
 def _mark_uncertain_failure(state: CdasOfficialMandateState, exc: CdasError) -> None:
     state.last_error = exc.message
-    # Auth expiry is deliberately not replayed for writes. Server/network errors
-    # can also leave the caller uncertain whether CDAS applied the mutation.
-    state.requires_reconciliation = exc.status_code in {401, 402} or exc.status_code >= 500
+    # Auth/session failures are deliberately not replayed for writes. Server or
+    # network failures can also leave the caller unsure whether CDAS applied it.
+    state.requires_reconciliation = (
+        exc.status_code in CDAS_AUTH_UNCERTAIN_STATUSES or exc.status_code >= 500
+    )
     if state.requires_reconciliation:
         state.lifecycle_status = "reconciliation_required"
 
@@ -163,15 +177,40 @@ def _apply_provider_response(
     response: Any,
     *,
     requested_lifecycle: str,
-) -> None:
+    require_status: bool = False,
+    require_deduction_id: bool = False,
+) -> bool:
+    """Apply a provider response and return whether it was structurally complete.
+
+    CDAS v1.5 documents DeductionStatus on successful add/update/review/approve/
+    cancel responses. Modify-active and settlement responses do not include that
+    field, so their callers intentionally allow the requested lifecycle fallback.
+    """
     now = _utcnow()
     deduction_id = _to_int(_value(response, "DeductionID", "DeductionId", "deduction_id"))
     status_code = _to_int(_value(response, "DeductionStatus", "Status", "deduction_status"))
+    known_lifecycle = _lifecycle_from_code(status_code)
+
+    if require_status and known_lifecycle is None:
+        state.last_provider_response = response if isinstance(response, dict) else {"value": response}
+        state.last_error = "CDAS returned a success response without a valid DeductionStatus"
+        state.requires_reconciliation = True
+        state.lifecycle_status = "reconciliation_required"
+        state.last_synced_at = now
+        return False
+    if require_deduction_id and (deduction_id is None or deduction_id <= 0):
+        state.last_provider_response = response if isinstance(response, dict) else {"value": response}
+        state.last_error = "CDAS returned a registration response without a valid DeductionID"
+        state.requires_reconciliation = True
+        state.lifecycle_status = "reconciliation_required"
+        state.last_synced_at = now
+        return False
+
     if deduction_id is not None:
         state.deduction_id = deduction_id
     if status_code is not None:
         state.cdas_status = status_code
-    lifecycle = _lifecycle_from_code(status_code) or requested_lifecycle
+    lifecycle = known_lifecycle or requested_lifecycle
     state.lifecycle_status = lifecycle
     state.last_provider_response = response if isinstance(response, dict) else {"value": response}
     state.last_error = None
@@ -187,6 +226,7 @@ def _apply_provider_response(
     provider_reference = _value(response, "ReferenceNo", "ReferenceNumber", "reference_no")
     if provider_reference:
         mandate.external_reference = str(provider_reference)
+    return True
 
 
 def serialize_official_mandate(state: CdasOfficialMandateState, mandate: CDASDeductionMandate) -> dict[str, Any]:
@@ -227,7 +267,7 @@ def get_official_mandate_for_loan(
     company_id: UUID,
     loan_id: UUID,
 ) -> tuple[CdasOfficialMandateState, CDASDeductionMandate] | None:
-    row = (
+    return (
         db.query(CdasOfficialMandateState, CDASDeductionMandate)
         .join(CDASDeductionMandate, CDASDeductionMandate.id == CdasOfficialMandateState.mandate_id)
         .filter(
@@ -237,7 +277,6 @@ def get_official_mandate_for_loan(
         )
         .one_or_none()
     )
-    return row
 
 
 def get_official_mandate(
@@ -261,166 +300,43 @@ def get_official_mandate(
     return row
 
 
-async def register_loan_deduction(
-    db: Session,
-    *,
-    client: CdasClient,
-    company_id: UUID,
-    branch_id: UUID | None,
-    actor_user_id: UUID,
-    loan_id: UUID,
-    employee_no: str,
-    item_code: str,
-    reference_no: str,
-    loan_policy: int,
-    deduction_amount: Decimal,
-    principal_amount: Decimal,
-    total_installment: int,
-    effective_month: str,
-    borrower_consent: bool,
-) -> dict[str, Any]:
-    if not borrower_consent:
-        raise CdasLifecycleError(422, "Borrower consent must be confirmed before registering a CDAS deduction")
-    if total_installment <= 0:
-        raise CdasLifecycleError(422, "A CDAS loan deduction requires at least one installment")
-
+def _linked_loan(db: Session, *, company_id: UUID, mandate: CDASDeductionMandate) -> ClientCompanyLoan:
     loan = (
         db.query(ClientCompanyLoan)
-        .filter(ClientCompanyLoan.id == loan_id, ClientCompanyLoan.company_id == company_id)
+        .filter(
+            ClientCompanyLoan.id == mandate.loan_id,
+            ClientCompanyLoan.company_id == company_id,
+        )
         .one_or_none()
     )
     if loan is None:
-        raise CdasLifecycleError(404, "Loan was not found for this company")
+        raise CdasLifecycleError(404, "The linked LoanHub loan was not found")
+    return loan
 
-    existing = get_official_mandate_for_loan(db, company_id=company_id, loan_id=loan_id)
-    if existing is not None:
-        raise CdasLifecycleError(409, "This LoanHub loan already has an official CDAS mandate")
 
-    application: DirectLoanApplication | None = None
-    application_id = loan.direct_application_id
-    if application_id:
-        application = (
-            db.query(DirectLoanApplication)
-            .filter(
-                DirectLoanApplication.id == application_id,
-                DirectLoanApplication.company_id == company_id,
-                DirectLoanApplication.borrower_id == loan.borrower_id,
-            )
-            .one_or_none()
-        )
-
-    environment = _configuration_environment(db, company_id)
-    profile = (
-        db.query(CDASPayrollProfile)
+def _registration_actor(db: Session, state_id: UUID) -> UUID | None:
+    event = (
+        db.query(CdasOfficialMandateEvent)
         .filter(
-            CDASPayrollProfile.company_id == company_id,
-            CDASPayrollProfile.borrower_id == loan.borrower_id,
+            CdasOfficialMandateEvent.state_id == state_id,
+            CdasOfficialMandateEvent.event_type.in_(["registration", "registration_retry"]),
+            CdasOfficialMandateEvent.success.is_(True),
         )
-        .one_or_none()
+        .order_by(CdasOfficialMandateEvent.occurred_at.desc())
+        .first()
     )
-    if profile is None:
-        profile = CDASPayrollProfile(
-            company_id=company_id,
-            borrower_id=loan.borrower_id,
-            branch_id=branch_id or loan.branch_id,
-            employee_number=employee_no.strip(),
-            verified=False,
-        )
-        db.add(profile)
-        db.flush()
-    elif profile.employee_number != employee_no.strip():
+    return event.actor_user_id if event else None
+
+
+def _require_maker_checker(db: Session, *, state_id: UUID, actor_user_id: UUID, request_type: int) -> None:
+    if request_type not in {3, 4, 5}:
+        return
+    maker = _registration_actor(db, state_id)
+    if maker is not None and maker == actor_user_id:
         raise CdasLifecycleError(
             409,
-            "The supplied employee number does not match this borrower's existing CDAS payroll profile",
+            "The user who registered this CDAS deduction cannot review, approve or activate the same deduction",
         )
-
-    start_date = _effective_month_start(effective_month)
-    mandate_number = f"CDAS-{loan.loan_reference}"[:80]
-    mandate = CDASDeductionMandate(
-        company_id=company_id,
-        branch_id=branch_id or loan.branch_id,
-        borrower_id=loan.borrower_id,
-        loan_id=loan.id,
-        payroll_profile_id=profile.id,
-        mandate_number=mandate_number,
-        employee_number=employee_no.strip(),
-        monthly_deduction=deduction_amount,
-        start_date=start_date,
-        expected_installments=total_installment,
-        total_expected=deduction_amount * Decimal(total_installment),
-        status="registration_pending",
-        borrower_consent=True,
-        external_reference=reference_no.strip(),
-        submitted_at=_utcnow(),
-        created_by_user_id=actor_user_id,
-    )
-    db.add(mandate)
-    db.flush()
-
-    state = CdasOfficialMandateState(
-        company_id=company_id,
-        mandate_id=mandate.id,
-        application_id=application.id if application else application_id,
-        environment=environment,
-        item_code=item_code.strip(),
-        reference_no=reference_no.strip(),
-        loan_policy=loan_policy,
-        principal_amount=principal_amount,
-        effective_month=effective_month.strip(),
-        lifecycle_status="registration_pending",
-        last_request_type=1,
-    )
-    db.add(state)
-    db.commit()
-    db.refresh(state)
-    db.refresh(mandate)
-
-    request_payload = {
-        "RequestType": 1,
-        "DeductionID": 0,
-        "EmployeeNo": mandate.employee_number,
-        "LoanPolicy": state.loan_policy,
-        "ItemCode": state.item_code,
-        "DeductionAmount": float(mandate.monthly_deduction),
-        "TotalInstallment": mandate.expected_installments,
-        "PrincipalAmount": float(state.principal_amount),
-        "EffectiveMonth": state.effective_month,
-        "ReferenceNo": state.reference_no,
-    }
-    try:
-        response = await client.add_update_deduction(request_payload)
-    except CdasError as exc:
-        _mark_uncertain_failure(state, exc)
-        _record_event(
-            db,
-            state=state,
-            actor_user_id=actor_user_id,
-            event_type="registration",
-            request_type=1,
-            request_snapshot=request_payload,
-            provider_status_code=exc.status_code,
-            success=False,
-            message=exc.message,
-        )
-        db.commit()
-        raise
-
-    _apply_provider_response(state, mandate, response, requested_lifecycle="registered")
-    _record_event(
-        db,
-        state=state,
-        actor_user_id=actor_user_id,
-        event_type="registration",
-        request_type=1,
-        request_snapshot=request_payload,
-        response_snapshot=response,
-        provider_status_code=200,
-        success=True,
-    )
-    db.commit()
-    db.refresh(state)
-    db.refresh(mandate)
-    return serialize_official_mandate(state, mandate)
 
 
 async def perform_linked_action(
@@ -440,6 +356,12 @@ async def perform_linked_action(
         raise CdasLifecycleError(409, "Reconcile this CDAS mandate before sending another state-changing request")
     if not state.deduction_id:
         raise CdasLifecycleError(409, "CDAS deduction ID is not known; reconcile the mandate before continuing")
+    _require_maker_checker(
+        db,
+        state_id=state.id,
+        actor_user_id=actor_user_id,
+        request_type=request_type,
+    )
 
     request_payload = {
         "RequestType": request_type,
@@ -473,7 +395,13 @@ async def perform_linked_action(
         raise
 
     requested_lifecycle = _lifecycle_from_request_type(request_type)
-    _apply_provider_response(state, mandate, response, requested_lifecycle=requested_lifecycle)
+    complete = _apply_provider_response(
+        state,
+        mandate,
+        response,
+        requested_lifecycle=requested_lifecycle,
+        require_status=True,
+    )
     _record_event(
         db,
         state=state,
@@ -483,11 +411,14 @@ async def perform_linked_action(
         request_snapshot=request_payload,
         response_snapshot=response,
         provider_status_code=200,
-        success=True,
+        success=complete,
+        message=None if complete else state.last_error,
     )
     db.commit()
     db.refresh(state)
     db.refresh(mandate)
+    if not complete:
+        raise CdasLifecycleError(502, state.last_error or "CDAS returned an incomplete lifecycle response")
     return serialize_official_mandate(state, mandate)
 
 
@@ -510,18 +441,40 @@ async def modify_linked_active_deduction(
     if not state.deduction_id:
         raise CdasLifecycleError(409, "CDAS deduction ID is not known; reconcile the mandate before continuing")
 
-    next_amount = deduction_amount if deduction_amount is not None else Decimal(mandate.monthly_deduction)
-    next_principal = principal_amount if principal_amount is not None else Decimal(state.principal_amount)
-    next_installments = total_installment if total_installment is not None else mandate.expected_installments
-    if next_installments <= 0:
+    loan = _linked_loan(db, company_id=company_id, mandate=mandate)
+    if loan.status != LoanStatus.ACTIVE:
+        raise CdasLifecycleError(409, "The linked LoanHub loan must be active before its active CDAS deduction can be changed")
+    if loan.repayment_type != RepaymentType.MONTHLY:
+        raise CdasLifecycleError(422, "CDAS active-deduction changes require a monthly LoanHub repayment schedule")
+
+    loan_amount = _money(loan.installment_amount)
+    loan_principal = _money(loan.principal_amount)
+    loan_installments = int(loan.repayment_period)
+    if deduction_amount is not None and _money(deduction_amount) != loan_amount:
+        raise CdasLifecycleError(422, "CDAS deduction amount must match the current LoanHub installment amount")
+    if principal_amount is not None and _money(principal_amount) != loan_principal:
+        raise CdasLifecycleError(422, "CDAS principal amount must match the current LoanHub principal")
+    if total_installment is not None and int(total_installment) != loan_installments:
+        raise CdasLifecycleError(422, "CDAS installment count must match the current LoanHub repayment period")
+    if loan_installments <= 0:
         raise CdasLifecycleError(422, "A CDAS loan deduction requires at least one installment")
+
+    current_amount = _money(mandate.monthly_deduction)
+    increase = max(loan_amount - current_amount, Decimal("0.00"))
+    if increase > 0:
+        available = _money(await client.affordability(mandate.employee_number))
+        if increase > available:
+            raise CdasLifecycleError(
+                422,
+                "The increase in the LoanHub installment exceeds the employee's current CDAS affordability",
+            )
 
     request_payload = {
         "EmployeeNo": mandate.employee_number,
         "ItemCode": state.item_code,
-        "TotalInstallment": next_installments,
-        "DeductionAmount": float(next_amount),
-        "PrincipalAmount": float(next_principal),
+        "TotalInstallment": loan_installments,
+        "DeductionAmount": float(loan_amount),
+        "PrincipalAmount": float(loan_principal),
         "DeductionID": state.deduction_id,
         "EffectiveDate": effective_date.strip(),
     }
@@ -543,10 +496,10 @@ async def modify_linked_active_deduction(
         db.commit()
         raise
 
-    mandate.monthly_deduction = next_amount
-    mandate.expected_installments = next_installments
-    mandate.total_expected = next_amount * Decimal(next_installments)
-    state.principal_amount = next_principal
+    mandate.monthly_deduction = loan_amount
+    mandate.expected_installments = loan_installments
+    mandate.total_expected = loan_amount * Decimal(loan_installments)
+    state.principal_amount = loan_principal
     state.last_request_type = 10
     _apply_provider_response(state, mandate, response, requested_lifecycle="changed")
     _record_event(
@@ -566,6 +519,22 @@ async def modify_linked_active_deduction(
     return serialize_official_mandate(state, mandate)
 
 
+def _validate_settlement_against_loan(loan: ClientCompanyLoan, settlement_reason: int) -> None:
+    if settlement_reason not in {1, 2, 3, 4}:
+        raise CdasLifecycleError(422, "Unsupported CDAS settlement reason")
+
+    # Paid-by-employee and consolidation mean the linked LoanHub debt should
+    # already be extinguished/closed before payroll deductions are stopped.
+    if settlement_reason in {2, 3}:
+        balance = _money(loan.balance)
+        if loan.status != LoanStatus.COMPLETED and balance > Decimal("0.00"):
+            reason = "paid by employee" if settlement_reason == 2 else "consolidated"
+            raise CdasLifecycleError(
+                409,
+                f"LoanHub still shows an outstanding balance; the CDAS deduction cannot be marked {reason} yet",
+            )
+
+
 async def settle_linked_deduction(
     db: Session,
     *,
@@ -582,6 +551,9 @@ async def settle_linked_deduction(
         raise CdasLifecycleError(409, "Reconcile this CDAS mandate before settling it")
     if not state.deduction_id:
         raise CdasLifecycleError(409, "CDAS deduction ID is not known; reconcile the mandate before continuing")
+
+    loan = _linked_loan(db, company_id=company_id, mandate=mandate)
+    _validate_settlement_against_loan(loan, settlement_reason)
 
     request_payload = {
         "ItemCode": state.item_code,
@@ -661,7 +633,9 @@ async def reconcile_linked_deduction(
     if provider_id is not None:
         state.deduction_id = provider_id
     state.cdas_status = provider_status
-    lifecycle = _lifecycle_from_code(provider_status) or "reconciled"
+    lifecycle = _lifecycle_from_code(provider_status)
+    if lifecycle is None:
+        raise CdasLifecycleError(502, "CDAS returned an unknown deduction status during reconciliation")
     state.lifecycle_status = lifecycle
     state.requires_reconciliation = False
     state.last_error = None
