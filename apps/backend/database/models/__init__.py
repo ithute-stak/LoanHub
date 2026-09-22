@@ -95,6 +95,7 @@ from database.models.workspace_document import (
     WorkspaceDocumentAsset,
     WorkspaceDocumentSignature,
 )
+from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficialMandateState
 
 __all__ = [
     "Base",
@@ -199,6 +200,8 @@ __all__ = [
     "WorkspaceDocumentSignature",
     "MaturityRenewalPolicy",
     "LoanRenewalCycle",
+    "CdasOfficialMandateState",
+    "CdasOfficialMandateEvent",
 ]
 
 from database.models.professional_lending import DirectLoanApplication, CreditBlacklist, Suggestion, OfferWallPost, OfferWallInterest, PaymentReceipt, PrintAgent, PrintJob
