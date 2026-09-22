@@ -27,6 +27,15 @@ def _row(*, username: str, password: str, enabled: bool = True, environment: str
         encrypted_credentials=service._serialize_password(password),
         last_test_status=None,
         last_tested_at=None,
+        configured_by_user_id=None,
+    )
+
+
+def _db_stub():
+    return SimpleNamespace(
+        add=lambda _row: None,
+        commit=lambda: None,
+        refresh=lambda _row: None,
     )
 
 
@@ -87,6 +96,78 @@ def test_live_environment_cannot_target_known_test_url():
         service._validate_environment_base_url("live", service.DEFAULT_TEST_BASE_URL)
 
     assert "cannot use the cdas test url" in str(raised.value).lower()
+
+
+def test_switching_environment_clears_previous_password(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-switch-test-key")
+    company_id = uuid4()
+    row = _row(username="test-user", password="test-password", environment="test")
+    monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
+
+    service.update_configuration(
+        _db_stub(),
+        company_id=company_id,
+        configured_by_user_id=uuid4(),
+        environment="live",
+        enabled=False,
+        base_url="https://live-cdas.example.test",
+        username="live-user",
+        password=None,
+        clear_password=False,
+        timeout_seconds=20,
+    )
+
+    assert row.environment == "live"
+    assert row.encrypted_credentials is None
+    assert row.is_enabled is False
+
+
+def test_switching_environment_cannot_enable_with_previous_password(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-enable-test-key")
+    company_id = uuid4()
+    row = _row(username="test-user", password="test-password", environment="test")
+    monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
+
+    with pytest.raises(ValueError) as raised:
+        service.update_configuration(
+            _db_stub(),
+            company_id=company_id,
+            configured_by_user_id=uuid4(),
+            environment="live",
+            enabled=True,
+            base_url="https://live-cdas.example.test",
+            username="live-user",
+            password=None,
+            clear_password=False,
+            timeout_seconds=20,
+        )
+
+    assert "selected environment" in str(raised.value).lower()
+    assert row.environment == "test"
+
+
+def test_switching_environment_accepts_explicit_new_password(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-environment-new-password-key")
+    company_id = uuid4()
+    row = _row(username="test-user", password="test-password", environment="test")
+    monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
+
+    service.update_configuration(
+        _db_stub(),
+        company_id=company_id,
+        configured_by_user_id=uuid4(),
+        environment="live",
+        enabled=True,
+        base_url="https://live-cdas.example.test",
+        username="live-user",
+        password="live-password",
+        clear_password=False,
+        timeout_seconds=20,
+    )
+
+    assert row.environment == "live"
+    assert row.is_enabled is True
+    assert service._deserialize_password(row.encrypted_credentials) == "live-password"
 
 
 def test_company_clients_are_isolated_by_tenant(monkeypatch: pytest.MonkeyPatch):
