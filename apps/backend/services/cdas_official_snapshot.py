@@ -75,6 +75,11 @@ def normalize_official_cdas_snapshot(
     No booking approval is inferred here: an official refresh is a read action,
     so ``decision`` remains REVIEW_REQUIRED until LoanHub's booking rules are run
     deliberately by a separate workflow.
+
+    The provider request timestamp is intentionally not included in the archived
+    analysis payload. Analysis History fingerprints represent material CDAS data,
+    so refreshing the same unchanged employee does not manufacture a new version.
+    The database record's own ``created_at`` remains the archive timestamp.
     """
 
     employee = raw_snapshot.get("employee") if isinstance(raw_snapshot.get("employee"), dict) else {}
@@ -117,7 +122,6 @@ def normalize_official_cdas_snapshot(
     return {
         "source": "CDAS_API",
         "source_version": "1.5",
-        "checked_at": raw_snapshot.get("checked_at"),
         "profile": {
             "employee_no": employee_no,
             "name": name,
