@@ -45,6 +45,11 @@ def _company_client_account(
     return row
 
 
+def _require_account_branch_scope(context: TenantContext, account: CompanyBorrowerAccount) -> None:
+    if context.branch_id and account.branch_id != context.branch_id:
+        raise HTTPException(status_code=403, detail="The selected borrower is outside the active branch")
+
+
 @router.post("/borrowers/{borrower_id}/verify-employee")
 async def verify_cdas_employee_for_borrower(
     borrower_id: UUID,
@@ -76,8 +81,7 @@ async def verify_cdas_employee_for_borrower(
         company_id=context.company_id,
         borrower_id=borrower_id,
     )
-    if context.branch_id and account.branch_id != context.branch_id:
-        raise HTTPException(status_code=403, detail="The selected borrower is outside the active branch")
+    _require_account_branch_scope(context, account)
 
     employee_no = payload.employee_no.strip()
     try:
