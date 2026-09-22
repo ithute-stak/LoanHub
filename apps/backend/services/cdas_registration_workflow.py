@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasOfficialMandateState
@@ -184,92 +185,105 @@ async def register_loan_deduction_safely(
         )
 
     environment = _configuration_environment(db, company_id)
-    profile = (
-        db.query(CDASPayrollProfile)
-        .filter(
-            CDASPayrollProfile.company_id == company_id,
-            CDASPayrollProfile.borrower_id == loan.borrower_id,
-        )
-        .one_or_none()
-    )
-    if profile is None:
-        profile = CDASPayrollProfile(
-            company_id=company_id,
-            borrower_id=loan.borrower_id,
-            branch_id=branch_id or loan.branch_id,
-            employee_number=cleaned_employee_no,
-            verified=True,
-            verified_at=_utcnow(),
-            verified_by_user_id=actor_user_id,
-            verification_reference="CDAS_API_V1_5",
-            verification_notes="Employee number, name, surname and date of birth matched against the official CDAS employee endpoint.",
-        )
-        db.add(profile)
-        db.flush()
-    elif profile.employee_number != cleaned_employee_no:
-        raise CdasLifecycleError(
-            409,
-            "The supplied employee number does not match this borrower's existing CDAS payroll profile",
-        )
-    else:
-        profile.verified = True
-        profile.verified_at = _utcnow()
-        profile.verified_by_user_id = actor_user_id
-        profile.verification_reference = "CDAS_API_V1_5"
-        profile.verification_notes = "Employee number, name, surname and date of birth matched against the official CDAS employee endpoint."
-
     start_date = _effective_month_start(effective_month)
     cleaned_reference = reference_no.strip()
-    duplicate_reference = (
-        db.query(CdasOfficialMandateState)
-        .filter(
-            CdasOfficialMandateState.company_id == company_id,
-            CdasOfficialMandateState.environment == environment,
-            CdasOfficialMandateState.reference_no == cleaned_reference,
+
+    # Reserve the local borrower/profile/loan/reference linkage before any CDAS
+    # mutation. Database uniqueness is the final concurrency authority: if two
+    # requests race after the preliminary checks, the losing transaction is
+    # rolled back and reported as a controlled 409 instead of reaching CDAS.
+    try:
+        profile = (
+            db.query(CDASPayrollProfile)
+            .filter(
+                CDASPayrollProfile.company_id == company_id,
+                CDASPayrollProfile.borrower_id == loan.borrower_id,
+            )
+            .one_or_none()
         )
-        .first()
-    )
-    if duplicate_reference is not None:
-        raise CdasLifecycleError(409, "That CDAS reference number is already linked to another mandate")
+        if profile is None:
+            profile = CDASPayrollProfile(
+                company_id=company_id,
+                borrower_id=loan.borrower_id,
+                branch_id=branch_id or loan.branch_id,
+                employee_number=cleaned_employee_no,
+                verified=True,
+                verified_at=_utcnow(),
+                verified_by_user_id=actor_user_id,
+                verification_reference="CDAS_API_V1_5",
+                verification_notes="Employee number, name, surname and date of birth matched against the official CDAS employee endpoint.",
+            )
+            db.add(profile)
+            db.flush()
+        elif profile.employee_number.strip().casefold() != cleaned_employee_no.casefold():
+            raise CdasLifecycleError(
+                409,
+                "The supplied employee number does not match this borrower's existing CDAS payroll profile",
+            )
+        else:
+            profile.verified = True
+            profile.verified_at = _utcnow()
+            profile.verified_by_user_id = actor_user_id
+            profile.verification_reference = "CDAS_API_V1_5"
+            profile.verification_notes = "Employee number, name, surname and date of birth matched against the official CDAS employee endpoint."
 
-    mandate = CDASDeductionMandate(
-        company_id=company_id,
-        branch_id=branch_id or loan.branch_id,
-        borrower_id=loan.borrower_id,
-        loan_id=loan.id,
-        payroll_profile_id=profile.id,
-        mandate_number=f"CDAS-{loan.loan_reference}"[:80],
-        employee_number=cleaned_employee_no,
-        monthly_deduction=_money(loan.installment_amount),
-        start_date=start_date,
-        expected_installments=int(loan.repayment_period),
-        total_expected=_money(loan.installment_amount) * Decimal(int(loan.repayment_period)),
-        status="registration_submission_pending",
-        borrower_consent=True,
-        external_reference=cleaned_reference,
-        submitted_at=_utcnow(),
-        created_by_user_id=actor_user_id,
-    )
-    db.add(mandate)
-    db.flush()
+        duplicate_reference = (
+            db.query(CdasOfficialMandateState)
+            .filter(
+                CdasOfficialMandateState.company_id == company_id,
+                CdasOfficialMandateState.environment == environment,
+                CdasOfficialMandateState.reference_no == cleaned_reference,
+            )
+            .first()
+        )
+        if duplicate_reference is not None:
+            raise CdasLifecycleError(409, "That CDAS reference number is already linked to another mandate")
 
-    state = CdasOfficialMandateState(
-        company_id=company_id,
-        mandate_id=mandate.id,
-        application_id=application.id if application else application_id,
-        environment=environment,
-        item_code=item_code.strip(),
-        reference_no=cleaned_reference,
-        loan_policy=loan_policy,
-        principal_amount=_money(loan.principal_amount),
-        effective_month=effective_month.strip(),
-        lifecycle_status="registration_submission_pending",
-        last_request_type=1,
-        requires_reconciliation=True,
-        last_error="Registration submitted to CDAS; provider result has not yet been confirmed",
-    )
-    db.add(state)
-    db.commit()
+        mandate = CDASDeductionMandate(
+            company_id=company_id,
+            branch_id=branch_id or loan.branch_id,
+            borrower_id=loan.borrower_id,
+            loan_id=loan.id,
+            payroll_profile_id=profile.id,
+            mandate_number=f"CDAS-{loan.loan_reference}"[:80],
+            employee_number=cleaned_employee_no,
+            monthly_deduction=_money(loan.installment_amount),
+            start_date=start_date,
+            expected_installments=int(loan.repayment_period),
+            total_expected=_money(loan.installment_amount) * Decimal(int(loan.repayment_period)),
+            status="registration_submission_pending",
+            borrower_consent=True,
+            external_reference=cleaned_reference,
+            submitted_at=_utcnow(),
+            created_by_user_id=actor_user_id,
+        )
+        db.add(mandate)
+        db.flush()
+
+        state = CdasOfficialMandateState(
+            company_id=company_id,
+            mandate_id=mandate.id,
+            application_id=application.id if application else application_id,
+            environment=environment,
+            item_code=item_code.strip(),
+            reference_no=cleaned_reference,
+            loan_policy=loan_policy,
+            principal_amount=_money(loan.principal_amount),
+            effective_month=effective_month.strip(),
+            lifecycle_status="registration_submission_pending",
+            last_request_type=1,
+            requires_reconciliation=True,
+            last_error="Registration submitted to CDAS; provider result has not yet been confirmed",
+        )
+        db.add(state)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise CdasLifecycleError(
+            409,
+            "This loan, borrower payroll profile, or CDAS reference is already linked or registration is already in progress",
+        ) from exc
+
     db.refresh(state)
     db.refresh(mandate)
 
