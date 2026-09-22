@@ -116,24 +116,27 @@ class CdasOfficialMandateEvent(Base):
 
 
 class CdasApiRequestBudget(Base):
-    """Atomic per-company/environment count of outbound CDAS HTTP requests."""
+    """Atomic per-CDAS-API-account/environment count of outbound HTTP requests."""
 
     __tablename__ = "cdas_api_request_budgets"
     __table_args__ = (
         UniqueConstraint(
-            "company_id",
+            "account_key",
             "environment",
             "request_date",
-            name="uq_cdas_api_budget_company_env_date",
+            name="uq_cdas_api_budget_account_env_date",
         ),
     )
 
+    # Keep the company that first created the daily row for attribution. The
+    # actual quota key is account_key because CDAS limits requests per API user.
     company_id = Column(
         UUID(as_uuid=True),
         ForeignKey("loan_companies.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    account_key = Column(String(64), nullable=False, index=True)
     environment = Column(String(20), nullable=False, index=True)
     request_date = Column(Date, nullable=False, index=True)
     request_count = Column(Integer, nullable=False, default=0)
