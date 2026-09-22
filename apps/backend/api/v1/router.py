@@ -16,6 +16,7 @@ from routers import (
     branches,
     call_management,
     call_media,
+    cdas_api,
     cdas_advanced_search,
     cdas_application_handoff,
     cdas_audit_trail,
@@ -136,6 +137,10 @@ _ROUTE_REGISTRY = (
     account.router,
     analytics.router,
     lending_operations.router,
+    # Canonical CDAS integration backed by the official Third Party API v1.5.
+    # The /cdas-booking family below remains temporarily registered while the
+    # existing frontend is migrated away from pasted-screen-text workflows.
+    cdas_api.router,
     cdas_booking.router,
     cdas_booking_calendar.router,
     cdas_bulk_processing.router,
