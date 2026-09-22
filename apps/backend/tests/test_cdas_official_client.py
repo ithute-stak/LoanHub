@@ -53,7 +53,7 @@ async def test_employee_and_affordability_use_documented_headers_and_reuse_token
 
 
 @pytest.mark.asyncio
-async def test_expired_token_is_refreshed_once_and_request_is_retried():
+async def test_expired_token_is_refreshed_once_and_read_request_is_retried():
     login_count = 0
     deduction_count = 0
 
@@ -81,6 +81,87 @@ async def test_expired_token_is_refreshed_once_and_request_is_retried():
     assert await client.all_deductions("EMP001") == []
     assert login_count == 2
     assert deduction_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "path", "payload"),
+    [
+        (
+            "add_update_deduction",
+            "/api/policy/add-update-deduction",
+            {
+                "RequestType": 1,
+                "DeductionID": 0,
+                "EmployeeNo": "EMP001",
+                "LoanPolicy": 1,
+                "ItemCode": "ITEM",
+                "DeductionAmount": 500.0,
+                "TotalInstallment": 12,
+                "PrincipalAmount": 6000.0,
+                "EffectiveMonth": "2026-10",
+                "ReferenceNo": "REF-001",
+            },
+        ),
+        (
+            "modify_active_deduction",
+            "/api/policy/modify-active-deduction",
+            {
+                "EmployeeNo": "EMP001",
+                "ItemCode": "ITEM",
+                "TotalInstallment": 12,
+                "DeductionAmount": 500.0,
+                "PrincipalAmount": 6000.0,
+                "DeductionID": 123,
+                "EffectiveDate": "2026-10-31",
+            },
+        ),
+        (
+            "settle_deduction",
+            "/api/policy/settled-deduction",
+            {
+                "ItemCode": "ITEM",
+                "DeductionID": 123,
+                "EffectiveDate": "2026-10-31T00:00:00",
+                "EmployeeNo": "EMP001",
+                "SettlementReason": 2,
+            },
+        ),
+    ],
+)
+async def test_state_changing_request_is_not_replayed_after_auth_error(
+    method_name: str,
+    path: str,
+    payload: dict[str, object],
+):
+    login_count = 0
+    write_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal login_count, write_count
+        if request.url.path == "/api/security/login":
+            login_count += 1
+            return httpx.Response(200, json={"Authorization": "token-1"})
+        if request.url.path == path:
+            write_count += 1
+            assert request.headers.get("Token") == "token-1"
+            return httpx.Response(401, json={"Message": "Token expired"})
+        raise AssertionError(f"Unexpected CDAS request: {request.url.path}")
+
+    client = CdasClient(
+        base_url="https://cdas.test",
+        username="test-user",
+        password="test-password",
+        transport=httpx.MockTransport(handler),
+    )
+
+    method = getattr(client, method_name)
+    with pytest.raises(CdasError) as raised:
+        await method(payload)
+
+    assert raised.value.status_code == 401
+    assert login_count == 1
+    assert write_count == 1
 
 
 @pytest.mark.asyncio
