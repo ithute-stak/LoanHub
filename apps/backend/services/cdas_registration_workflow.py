@@ -41,8 +41,6 @@ def _parse_cdas_date(value: object) -> date | None:
     text = str(value or "").strip()
     if not text:
         return None
-    # ISO timestamps/dates are the preferred representation; retain a few
-    # common date-only fallbacks because provider test/live formatting may differ.
     iso_candidate = text[:10]
     try:
         return date.fromisoformat(iso_candidate)
@@ -130,14 +128,7 @@ async def register_loan_deduction_safely(
     effective_month: str,
     borrower_consent: bool,
 ) -> dict[str, object]:
-    """Register a loan deduction with identity, term and crash-safety controls.
-
-    The borrower/employee identity and LoanHub loan terms are validated before
-    any provider mutation. The local loan/mandate link is then committed as
-    reconciliation-required *before* CDAS receives the mutation. If the process
-    dies after submission but before it can store the response, a later user
-    cannot mistake that state for a safe retry.
-    """
+    """Register a loan deduction with identity, term and crash-safety controls."""
     if not borrower_consent:
         raise CdasLifecycleError(422, "Borrower consent must be confirmed before registering a CDAS deduction")
     if total_installment <= 0:
@@ -312,7 +303,14 @@ async def register_loan_deduction_safely(
         db.commit()
         raise
 
-    _apply_provider_response(state, mandate, response, requested_lifecycle="registered")
+    complete = _apply_provider_response(
+        state,
+        mandate,
+        response,
+        requested_lifecycle="registered",
+        require_status=True,
+        require_deduction_id=True,
+    )
     _record_event(
         db,
         state=state,
@@ -322,9 +320,12 @@ async def register_loan_deduction_safely(
         request_snapshot=request_payload,
         response_snapshot=response,
         provider_status_code=200,
-        success=True,
+        success=complete,
+        message=None if complete else state.last_error,
     )
     db.commit()
     db.refresh(state)
     db.refresh(mandate)
+    if not complete:
+        raise CdasLifecycleError(502, state.last_error or "CDAS returned an incomplete registration response")
     return serialize_official_mandate(state, mandate)
