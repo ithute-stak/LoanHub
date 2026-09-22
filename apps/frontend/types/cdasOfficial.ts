@@ -72,3 +72,80 @@ export interface CdasOfficialRefreshRequest {
   employee_no: string;
   own_deduction_status?: number;
 }
+
+export type CdasLoanLifecycleStatus =
+  | "registration_pending"
+  | "registered"
+  | "reviewed"
+  | "approved"
+  | "active"
+  | "changed"
+  | "cancelled"
+  | "settled"
+  | "auto_settled"
+  | "deleted"
+  | string;
+
+export interface CdasLoanDeductionRegistrationRequest {
+  loan_id: string;
+  employee_no: string;
+  item_code: string;
+  reference_no: string;
+  loan_policy?: number;
+  deduction_amount: number;
+  principal_amount: number;
+  total_installment: number;
+  effective_month: string;
+  borrower_consent: boolean;
+}
+
+export type CdasLinkedActionRequestType = 3 | 4 | 5 | 6 | 9 | 10;
+
+export interface CdasLinkedActionRequest {
+  request_type: CdasLinkedActionRequestType;
+}
+
+export interface CdasLinkedModifyRequest {
+  effective_date: string;
+  deduction_amount?: number;
+  principal_amount?: number;
+  total_installment?: number;
+}
+
+export interface CdasLinkedSettlementRequest {
+  effective_date: string;
+  settlement_reason: 1 | 2 | 3 | 4;
+}
+
+export interface CdasOfficialMandateState {
+  id: string;
+  company_id?: string;
+  mandate_id: string;
+  application_id?: string | null;
+  loan_id?: string | null;
+  environment: "test" | "live" | string;
+  employee_no?: string | null;
+  employee_number?: string | null;
+  deduction_id: number | null;
+  item_code: string;
+  reference_no: string;
+  loan_policy: number;
+  principal_amount: number | string;
+  deduction_amount?: number | string | null;
+  effective_month: string;
+  total_installment?: number | null;
+  cdas_status: number | null;
+  lifecycle_status: CdasLoanLifecycleStatus;
+  last_request_type: number | null;
+  requires_reconciliation: boolean;
+  last_error: string | null;
+  last_synced_at: string | null;
+  registered_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  settled_at: string | null;
+  cancelled_at: string | null;
+  mandate?: Record<string, unknown>;
+  events?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
