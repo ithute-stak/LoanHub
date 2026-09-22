@@ -53,10 +53,12 @@ type Props = {
     canManage: boolean;
 };
 
+const CDAS_TEST_BASE_URL = "https://test-cdas-thirdpartyapi.sentraptt.com";
+
 const DEFAULT_FORM: CdasForm = {
     environment: "test",
     enabled: false,
-    base_url: "https://test-cdas-thirdpartyapi.sentraptt.com",
+    base_url: CDAS_TEST_BASE_URL,
     username: "",
     password: "",
     clear_password: false,
@@ -83,6 +85,10 @@ export function CompanyCdasSettings({ canManage }: Props) {
     const [testing, setTesting] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
 
+    const environmentChanged = Boolean(
+        configuration && form.environment !== configuration.environment,
+    );
+
     const load = useCallback(async () => {
         setLoading(true);
         setLoadError(null);
@@ -102,6 +108,21 @@ export function CompanyCdasSettings({ canManage }: Props) {
         return () => window.clearTimeout(timer);
     }, [load]);
 
+    function changeEnvironment(environment: CdasEnvironment) {
+        setForm((current) => {
+            if (environment === current.environment) return current;
+            return {
+                ...current,
+                environment,
+                enabled: false,
+                base_url: environment === "test" ? CDAS_TEST_BASE_URL : "",
+                username: "",
+                password: "",
+                clear_password: false,
+            };
+        });
+    }
+
     async function save(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!canManage || saving) return;
@@ -110,8 +131,12 @@ export function CompanyCdasSettings({ canManage }: Props) {
             toast.error("CDAS base URL and username are required.");
             return;
         }
-        if (form.enabled && !configuration?.password_configured && !form.password.trim()) {
-            toast.error("Enter the CDAS password before enabling the integration.");
+        if (
+            form.enabled &&
+            (!configuration?.password_configured || environmentChanged) &&
+            !form.password.trim()
+        ) {
+            toast.error("Enter the CDAS password for the selected environment before enabling the integration.");
             return;
         }
 
@@ -206,17 +231,14 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     id="cdas-environment"
                                     value={form.environment}
                                     disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({
-                                        ...current,
-                                        environment: event.target.value as CdasEnvironment,
-                                    }))}
+                                    onChange={(event) => changeEnvironment(event.target.value as CdasEnvironment)}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     <option value="test">Test</option>
                                     <option value="live">Live</option>
                                 </select>
                                 <p className="text-xs text-muted-foreground">
-                                    Live uses the live URL and credentials supplied by CDAS when they are issued.
+                                    Changing environment disables CDAS and clears environment-specific credential fields so Test credentials cannot carry into Live.
                                 </p>
                             </div>
 
@@ -244,11 +266,15 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                 type="url"
                                 autoComplete="off"
                                 value={form.base_url}
-                                disabled={!canManage || saving}
+                                disabled={!canManage || saving || form.environment === "test"}
                                 onChange={(event) => setForm((current) => ({ ...current, base_url: event.target.value }))}
-                                placeholder="https://…"
+                                placeholder={form.environment === "live" ? "Enter the Live CDAS HTTPS URL" : CDAS_TEST_BASE_URL}
                             />
-                            <p className="text-xs text-muted-foreground">Only HTTPS URLs without embedded credentials are accepted.</p>
+                            <p className="text-xs text-muted-foreground">
+                                {form.environment === "test"
+                                    ? "The Test environment is locked to the official CDAS Test URL."
+                                    : "Enter only the HTTPS Live URL supplied by CDAS. The known Test URL is rejected for Live."}
+                            </p>
                         </div>
 
                         <div className="grid gap-5 md:grid-cols-2">
@@ -272,12 +298,14 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     value={form.password}
                                     disabled={!canManage || saving || form.clear_password}
                                     onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-                                    placeholder={configuration?.password_configured ? "Stored securely — enter only to replace" : "Enter CDAS password"}
+                                    placeholder={configuration?.password_configured && !environmentChanged ? "Stored securely — enter only to replace" : "Enter CDAS password"}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    {configuration?.password_configured
-                                        ? "A password is stored. LoanHub never sends it back to the browser."
-                                        : "No CDAS password is stored for this company yet."}
+                                    {configuration?.password_configured && !environmentChanged
+                                        ? "A password is stored for the saved environment. LoanHub never sends it back to the browser."
+                                        : environmentChanged
+                                            ? "Enter the password for the newly selected environment; the previous environment's password will not be reused."
+                                            : "No CDAS password is stored for this company yet."}
                                 </p>
                             </div>
                         </div>
@@ -300,7 +328,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                             <label className="flex items-start gap-3 text-sm">
                                 <Checkbox
                                     checked={form.clear_password}
-                                    disabled={!canManage || saving || !configuration?.password_configured}
+                                    disabled={!canManage || saving || !configuration?.password_configured || environmentChanged}
                                     onCheckedChange={(checked) => setForm((current) => ({
                                         ...current,
                                         clear_password: checked === true,
@@ -325,6 +353,16 @@ export function CompanyCdasSettings({ canManage }: Props) {
                             </Alert>
                         )}
 
+                        {environmentChanged && (
+                            <Alert>
+                                <ShieldCheck className="h-4 w-4" />
+                                <AlertTitle>Environment change requires new credentials</AlertTitle>
+                                <AlertDescription>
+                                    Save the URL, username and password for {form.environment === "live" ? "Live" : "Test"}. LoanHub will discard the password stored for the previous environment instead of carrying it across.
+                                </AlertDescription>
+                            </Alert>
+                        )}
+
                         {form.environment === "live" && (
                             <Alert>
                                 <PlugZap className="h-4 w-4" />
@@ -343,7 +381,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                             <Button
                                 type="button"
                                 variant="outline"
-                                disabled={!canManage || testing || !configuration?.configured}
+                                disabled={!canManage || testing || !configuration?.configured || environmentChanged}
                                 onClick={() => void testConnection()}
                             >
                                 {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
