@@ -117,6 +117,20 @@ export interface CdasLinkedSettlementRequest {
   settlement_reason: 1 | 2 | 3 | 4;
 }
 
+export interface CdasOfficialMandateEvent {
+  id: string;
+  state_id: string;
+  actor_user_id: string | null;
+  event_type: string;
+  request_type: number | null;
+  request_snapshot: Record<string, unknown>;
+  response_snapshot: Record<string, unknown>;
+  provider_status_code: number | null;
+  success: boolean;
+  message: string | null;
+  occurred_at: string | null;
+}
+
 export interface CdasOfficialMandateState {
   id: string;
   company_id?: string;
@@ -146,6 +160,6 @@ export interface CdasOfficialMandateState {
   settled_at: string | null;
   cancelled_at: string | null;
   mandate?: Record<string, unknown>;
-  events?: Array<Record<string, unknown>>;
+  events?: CdasOfficialMandateEvent[];
   [key: string]: unknown;
 }
