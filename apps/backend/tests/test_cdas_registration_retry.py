@@ -14,7 +14,7 @@ def test_confirmed_provider_rejections_are_retry_safe(status: int):
     assert _provider_failure_is_safe_to_retry(status) is True
 
 
-@pytest.mark.parametrize("status", [None, 401, 402, 500, 502, 503])
+@pytest.mark.parametrize("status", [None, 401, 402, 406, 417, 419, 500, 502, 503])
 def test_uncertain_provider_failures_are_not_retry_safe(status: int | None):
     assert _provider_failure_is_safe_to_retry(status) is False
 
