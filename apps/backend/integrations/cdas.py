@@ -82,6 +82,12 @@ class _TokenState:
     last_used_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class _AuthMode:
+    header: Literal["Authorization", "Token"]
+    bearer: bool = False
+
+
 class CdasClient:
     """Server-side client for one company's official CDAS Third Party API account."""
 
@@ -102,13 +108,12 @@ class CdasClient:
     _TOKEN_MAX_AGE = timedelta(hours=7, minutes=50)
     _TOKEN_IDLE_AGE = timedelta(minutes=9)
 
-    # 406 (invalid token format) and 419 (session inactive) are documented by
-    # CDAS v1.5. 401/402 remain accepted for defensive compatibility. A missing
-    # token (417) is deliberately not a generic auth retry: the live Test API has
-    # shown that employee-details may reject the documented Authorization header,
-    # so only that read-only operation is permitted an explicit Token-header
-    # compatibility retry.
-    _AUTH_RETRY_STATUSES = {401, 402, 406, 419}
+    # These statuses mean a read may need a fresh login. 406 is documented as an
+    # invalid token format, but older CDAS behavior also used it for unusable
+    # sessions, so reads refresh once before negotiating alternate safe formats.
+    _AUTH_REFRESH_STATUSES = {401, 402, 406, 419}
+    _AUTH_FORMAT_STATUSES = {406, 417}
+    _AUTH_FAILURE_STATUSES = {401, 402, 406, 417, 419}
 
     def __init__(
         self,
@@ -128,6 +133,14 @@ class CdasClient:
         self.request_guard = request_guard
         self._token: _TokenState | None = None
         self._token_lock = asyncio.Lock()
+        # CDAS v1.5 documents token headers but does not document cookies. Keep
+        # the authenticated HTTP session cookies anyway because the Test gateway
+        # may bind the returned token to the login session.
+        self._session_cookies = httpx.Cookies()
+        # Cache the first read-auth mode accepted by each documented header
+        # family so a snapshot does not repeatedly spend provider requests on
+        # compatibility negotiation.
+        self._read_auth_modes: dict[str, _AuthMode] = {}
 
     def _require_configuration(self) -> None:
         if not self.base_url or not self.username or not self.password:
@@ -161,10 +174,14 @@ class CdasClient:
                 assert self._token is not None
                 return self._token.value
 
+            # Login always starts with a clean cookie jar. If CDAS establishes a
+            # gateway/session cookie, preserve the complete resulting jar and use
+            # it for every request made with the returned token.
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout_seconds,
                 transport=self.transport,
+                cookies=httpx.Cookies(),
             ) as client:
                 try:
                     self._reserve_request()
@@ -172,6 +189,8 @@ class CdasClient:
                         self.LOGIN_PATH,
                         json={"Username": self.username, "Password": self.password},
                     )
+                    login_cookies = httpx.Cookies()
+                    login_cookies.update(client.cookies)
                 except httpx.RequestError as exc:
                     raise CdasError(
                         status_code=503,
@@ -187,9 +206,17 @@ class CdasClient:
                     message="CDAS authentication returned an invalid response",
                 )
 
+            token_value = str(payload["Authorization"]).strip()
+            if not token_value:
+                raise CdasError(
+                    status_code=502,
+                    message="CDAS authentication returned an empty authorization token",
+                )
+
             now = self._now()
+            self._session_cookies = login_cookies
             self._token = _TokenState(
-                value=str(payload["Authorization"]),
+                value=token_value,
                 obtained_at=now,
                 last_used_at=now,
             )
@@ -242,72 +269,170 @@ class CdasClient:
         )
         return CdasError(status_code=status, message=message, details=payload)
 
+    @staticmethod
+    def _opposite_header(
+        header: Literal["Authorization", "Token"],
+    ) -> Literal["Authorization", "Token"]:
+        return "Token" if header == "Authorization" else "Authorization"
+
+    @staticmethod
+    def _format_token(token: str, *, bearer: bool) -> str:
+        value = token.strip()
+        if bearer and not value.lower().startswith("bearer "):
+            return f"Bearer {value}"
+        return value
+
+    def _auth_candidates(
+        self,
+        documented_header: Literal["Authorization", "Token"],
+        token: str,
+        *,
+        negotiate: bool,
+    ) -> list[_AuthMode]:
+        if not negotiate:
+            return [_AuthMode(documented_header, False)]
+
+        opposite = self._opposite_header(documented_header)
+        default_modes = [
+            _AuthMode(documented_header, False),
+            _AuthMode(opposite, False),
+            _AuthMode(documented_header, True),
+            _AuthMode(opposite, True),
+        ]
+        cached = self._read_auth_modes.get(documented_header)
+        if cached is not None:
+            default_modes.insert(0, cached)
+
+        # If login already returned a value beginning with "Bearer ", the raw
+        # and bearer renderings are identical. Do not spend duplicate requests.
+        seen: set[tuple[str, str]] = set()
+        result: list[_AuthMode] = []
+        for mode in default_modes:
+            rendered = self._format_token(token, bearer=mode.bearer)
+            identity = (mode.header, rendered)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            result.append(mode)
+        return result
+
+    def _mark_token_used(self) -> None:
+        if self._token is not None:
+            self._token.last_used_at = self._now()
+
     async def _post(
         self,
         path: str,
         *,
         body: dict[str, Any],
         token_header: Literal["Authorization", "Token"] = "Token",
-        fallback_token_header: Literal["Authorization", "Token"] | None = None,
         retry_auth: bool = True,
+        negotiate_read_auth: bool = True,
     ) -> Any:
         token = await self._login()
-        active_token_header = token_header
+        refreshed = False
 
-        async def send(current_token: str, header_name: Literal["Authorization", "Token"]) -> httpx.Response:
+        async def send(current_token: str, mode: _AuthMode) -> httpx.Response:
+            header_value = self._format_token(current_token, bearer=mode.bearer)
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout_seconds,
                 transport=self.transport,
+                cookies=self._session_cookies,
             ) as client:
                 try:
                     self._reserve_request()
-                    return await client.post(
+                    response = await client.post(
                         path,
-                        headers={header_name: current_token},
+                        headers={mode.header: header_value},
                         json=body,
                     )
+                    # Preserve any gateway/session rotation returned by CDAS.
+                    self._session_cookies.update(client.cookies)
+                    return response
                 except httpx.RequestError as exc:
                     raise CdasError(
                         status_code=503,
                         message="CDAS service is unavailable",
                     ) from exc
 
-        response = await send(token, active_token_header)
-        payload = self._decode_response(response)
+        last_format_failure: tuple[httpx.Response, Any] | None = None
 
-        # CDAS v1.5 documents Authorization for Employee Details. The real Test
-        # service has also been observed returning 417 (missing token) when that
-        # documented header is used. For an explicitly opted-in read only, retry
-        # once with Token using the same authenticated session. This is not a
-        # generic 417 retry and is never enabled for state-changing operations.
-        if (
-            response.status_code == 417
-            and fallback_token_header is not None
-            and fallback_token_header != active_token_header
-        ):
-            active_token_header = fallback_token_header
-            response = await send(token, active_token_header)
-            payload = self._decode_response(response)
+        while True:
+            restart_after_login = False
+            candidates = self._auth_candidates(
+                token_header,
+                token,
+                negotiate=negotiate_read_auth,
+            )
 
-        if response.status_code in self._AUTH_RETRY_STATUSES and retry_auth:
-            token = await self._login(force=True)
-            response = await send(token, active_token_header)
-            payload = self._decode_response(response)
+            for mode in candidates:
+                response = await send(token, mode)
+                payload = self._decode_response(response)
+                status = response.status_code
 
-        if response.status_code >= 400:
-            raise self._error_from_response(response, payload)
+                # Reads may safely obtain one fresh login and retry. Writes pass
+                # retry_auth=False, so once a provider write is submitted it is
+                # never replayed automatically under any authentication failure.
+                if status in self._AUTH_REFRESH_STATUSES and retry_auth and not refreshed:
+                    token = await self._login(force=True)
+                    refreshed = True
+                    restart_after_login = True
+                    break
 
-        if self._token is not None:
-            self._token.last_used_at = self._now()
-        return payload
+                if negotiate_read_auth and status in self._AUTH_FORMAT_STATUSES:
+                    last_format_failure = (response, payload)
+                    continue
+
+                # Any non-authentication response proves this header mode reached
+                # the endpoint. Cache it even when the business result is 404,
+                # 429, 49x, or 500 so future reads do not renegotiate needlessly.
+                if negotiate_read_auth and status not in self._AUTH_FAILURE_STATUSES:
+                    self._read_auth_modes[token_header] = mode
+                    self._mark_token_used()
+
+                if status >= 400:
+                    raise self._error_from_response(response, payload)
+
+                if negotiate_read_auth:
+                    self._read_auth_modes[token_header] = mode
+                self._mark_token_used()
+                return payload
+
+            if restart_after_login:
+                last_format_failure = None
+                continue
+
+            # If every format was rejected as 406/417, do one fresh login before
+            # declaring failure. This also establishes a fresh Test-gateway cookie
+            # if the gateway binds auth to the login HTTP session.
+            if negotiate_read_auth and last_format_failure is not None and retry_auth and not refreshed:
+                token = await self._login(force=True)
+                refreshed = True
+                last_format_failure = None
+                continue
+
+            if last_format_failure is not None:
+                response, _payload = last_format_failure
+                raise CdasError(
+                    status_code=response.status_code,
+                    message=(
+                        "CDAS rejected all supported read authorization formats after a fresh login. "
+                        "The CDAS API account or Test gateway must be checked by the provider."
+                    ),
+                    details={"provider_status": response.status_code},
+                )
+
+            raise CdasError(
+                status_code=502,
+                message="CDAS request ended without a usable response",
+            )
 
     async def employee_details(self, employee_no: str) -> dict[str, Any]:
         payload = await self._post(
             self.EMPLOYEE_DETAILS_PATH,
             body={"EmployeeNo": employee_no},
             token_header="Authorization",
-            fallback_token_header="Token",
         )
         if not isinstance(payload, dict):
             raise CdasError(502, "CDAS employee details returned an invalid response", payload)
@@ -352,13 +477,14 @@ class CdasClient:
         return payload
 
     async def add_update_deduction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # State-changing CDAS calls are never replayed automatically. A token or
-        # session failure after submission is surfaced so LoanHub can reconcile
+        # State-changing CDAS calls are never replayed or auth-negotiated
+        # automatically. A failure after submission is surfaced for reconciliation
         # before any user explicitly retries, avoiding duplicate deductions.
         value = await self._post(
             self.ADD_UPDATE_DEDUCTION_PATH,
             body=payload,
             retry_auth=False,
+            negotiate_read_auth=False,
         )
         if not isinstance(value, dict):
             raise CdasError(502, "CDAS deduction operation returned an invalid response", value)
@@ -375,6 +501,7 @@ class CdasClient:
             self.MODIFY_ACTIVE_DEDUCTION_PATH,
             body=payload,
             retry_auth=False,
+            negotiate_read_auth=False,
         )
 
     async def settle_deduction(self, payload: dict[str, Any]) -> Any:
@@ -382,6 +509,7 @@ class CdasClient:
             self.SETTLE_DEDUCTION_PATH,
             body=payload,
             retry_auth=False,
+            negotiate_read_auth=False,
         )
 
     async def get_document(self, *, year: int, month: int, document_type: int) -> Any:
