@@ -53,7 +53,8 @@ async def test_employee_and_affordability_use_documented_headers_and_reuse_token
 
 
 @pytest.mark.asyncio
-async def test_expired_token_is_refreshed_once_and_read_request_is_retried():
+@pytest.mark.parametrize("expired_status", [401, 406, 419])
+async def test_expired_or_invalid_token_is_refreshed_once_and_read_request_is_retried(expired_status: int):
     login_count = 0
     deduction_count = 0
 
@@ -66,7 +67,7 @@ async def test_expired_token_is_refreshed_once_and_read_request_is_retried():
             deduction_count += 1
             if deduction_count == 1:
                 assert request.headers.get("Token") == "token-1"
-                return httpx.Response(401, json={"Message": "Token expired"})
+                return httpx.Response(expired_status, json={"Message": "Token/session expired"})
             assert request.headers.get("Token") == "token-2"
             return httpx.Response(200, json=[])
         raise AssertionError(f"Unexpected CDAS request: {request.url.path}")
@@ -84,6 +85,7 @@ async def test_expired_token_is_refreshed_once_and_read_request_is_retried():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("auth_status", [401, 406, 419])
 @pytest.mark.parametrize(
     ("method_name", "path", "payload"),
     [
@@ -130,6 +132,7 @@ async def test_expired_token_is_refreshed_once_and_read_request_is_retried():
     ],
 )
 async def test_state_changing_request_is_not_replayed_after_auth_error(
+    auth_status: int,
     method_name: str,
     path: str,
     payload: dict[str, object],
@@ -145,7 +148,7 @@ async def test_state_changing_request_is_not_replayed_after_auth_error(
         if request.url.path == path:
             write_count += 1
             assert request.headers.get("Token") == "token-1"
-            return httpx.Response(401, json={"Message": "Token expired"})
+            return httpx.Response(auth_status, json={"Message": "Token/session expired"})
         raise AssertionError(f"Unexpected CDAS request: {request.url.path}")
 
     client = CdasClient(
@@ -159,7 +162,7 @@ async def test_state_changing_request_is_not_replayed_after_auth_error(
     with pytest.raises(CdasError) as raised:
         await method(payload)
 
-    assert raised.value.status_code == 401
+    assert raised.value.status_code == auth_status
     assert login_count == 1
     assert write_count == 1
 
