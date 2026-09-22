@@ -175,6 +175,12 @@ def update_configuration(
         raise ValueError("Provide a new password or clear the existing password, not both")
 
     row = _configuration_row(db, company_id)
+    previous_environment = (
+        str(row.environment or "test").strip().lower()
+        if row is not None
+        else None
+    )
+    environment_changed = row is not None and previous_environment != environment
     if row is None:
         row = OriginationIntegrationConfiguration(
             company_id=company_id,
@@ -182,13 +188,20 @@ def update_configuration(
         )
         db.add(row)
 
-    encrypted_credentials = row.encrypted_credentials
+    # Never carry an encrypted credential from Test into Live or vice versa.
+    # A new environment must either receive a new password explicitly or remain
+    # disabled with no stored password until one is supplied.
+    encrypted_credentials = None if environment_changed else row.encrypted_credentials
     if clear_password:
         encrypted_credentials = None
     elif password is not None and password != "":
         encrypted_credentials = _serialize_password(password)
 
     if enabled and not encrypted_credentials:
+        if environment_changed:
+            raise ValueError(
+                "Enter the CDAS password for the selected environment before enabling it"
+            )
         raise ValueError("A CDAS password must be configured before the integration can be enabled")
 
     row.environment = environment
