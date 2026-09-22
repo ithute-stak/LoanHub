@@ -4,9 +4,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext, get_tenant_context
+from database.session import get_db
 from integrations.cdas import CdasError, cdas_client
+from services.cdas_analysis_history import (
+    save_or_get_analysis_record,
+    serialize_analysis_record,
+)
+from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
@@ -87,6 +94,18 @@ def _require_company_member(context: TenantContext) -> None:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
 
 
+def _report_preparer(context: TenantContext) -> tuple[str, str]:
+    person = getattr(context.user, "person", None)
+    prepared_by = (
+        str(getattr(person, "full_name", "") or "").strip()
+        or str(context.user.email or "").strip()
+        or str(context.user.phone or "").strip()
+        or "Authorized company user"
+    )
+    role = getattr(context.role, "value", None) or str(context.role)
+    return prepared_by, str(role)
+
+
 def _cdas_http_error(exc: CdasError) -> HTTPException:
     # Never pass the upstream response wholesale to the client because CDAS may
     # include implementation detail that is inappropriate for LoanHub clients.
@@ -153,16 +172,50 @@ async def get_cdas_deductions(
 async def refresh_cdas_employee_snapshot(
     payload: CdasRefreshRequest,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    """Explicitly refresh one employee snapshot; never runs from background UI rebuilds."""
+    """Refresh one employee from CDAS and archive the material official snapshot.
+
+    This operation is deliberately user-triggered. It does not register, modify,
+    approve, settle or book a deduction. An unchanged official snapshot reuses
+    its existing Analysis History record instead of creating a timestamp-only
+    duplicate.
+    """
     _require_company_member(context)
+    employee_no = payload.employee_no.strip()
     try:
-        return await cdas_client.refresh_employee_snapshot(
-            payload.employee_no.strip(),
+        raw_snapshot = await cdas_client.refresh_employee_snapshot(
+            employee_no,
             own_deduction_status=payload.own_deduction_status,
         )
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+
+    analysis = normalize_official_cdas_snapshot(
+        raw_snapshot,
+        own_deduction_status=payload.own_deduction_status,
+    )
+    profile = analysis.get("profile") or {}
+    prepared_by, prepared_by_role = _report_preparer(context)
+    record, created = save_or_get_analysis_record(
+        db,
+        company_id=context.company_id,
+        analyzed_by_user_id=context.user.id,
+        analyzed_by_name=prepared_by,
+        analyzed_by_role=prepared_by_role,
+        client_name=profile.get("full_name"),
+        client_reference=profile.get("employee_no") or employee_no,
+        analysis=analysis,
+    )
+    return {
+        "source": "CDAS_API",
+        "checked_at": raw_snapshot.get("checked_at"),
+        "snapshot": analysis,
+        "archive": {
+            "created": created,
+            "record": serialize_analysis_record(record),
+        },
+    }
 
 
 @router.post("/deductions/actions")
