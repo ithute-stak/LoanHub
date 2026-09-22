@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum
@@ -119,12 +120,14 @@ class CdasClient:
         password: str | None = None,
         timeout_seconds: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        request_guard: Callable[[], None] | None = None,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.username = username
         self.password = password
         self.timeout_seconds = timeout_seconds or settings.CDAS_TIMEOUT_SECONDS
         self.transport = transport
+        self.request_guard = request_guard
         self._token: _TokenState | None = None
         self._token_lock = asyncio.Lock()
 
@@ -134,6 +137,10 @@ class CdasClient:
                 status_code=503,
                 message="CDAS integration credentials are incomplete",
             )
+
+    def _reserve_request(self) -> None:
+        if self.request_guard is not None:
+            self.request_guard()
 
     @staticmethod
     def _now() -> datetime:
@@ -162,6 +169,7 @@ class CdasClient:
                 transport=self.transport,
             ) as client:
                 try:
+                    self._reserve_request()
                     response = await client.post(
                         self.LOGIN_PATH,
                         json={"Username": self.username, "Password": self.password},
@@ -249,6 +257,7 @@ class CdasClient:
             transport=self.transport,
         ) as client:
             try:
+                self._reserve_request()
                 response = await client.post(path, headers=headers, json=body)
             except httpx.RequestError as exc:
                 raise CdasError(
@@ -265,6 +274,7 @@ class CdasClient:
                 transport=self.transport,
             ) as client:
                 try:
+                    self._reserve_request()
                     response = await client.post(
                         path,
                         headers={token_header: token},
