@@ -18,6 +18,7 @@ from services.crypto_service import decrypt_control_secret, encrypt_control_secr
 
 CDAS_PROVIDER = "cdas"
 DEFAULT_TEST_BASE_URL = "https://test-cdas-thirdpartyapi.sentraptt.com"
+DEFAULT_TEST_HOST = (urlparse(DEFAULT_TEST_BASE_URL).hostname or "").lower()
 PASSWORD_PURPOSE = b"loanhub-cdas-password-v1"
 ALLOWED_ENVIRONMENTS = {"test", "live"}
 
@@ -71,8 +72,13 @@ def _validate_environment_base_url(environment: str, base_url: str) -> None:
         raise ValueError(
             f"CDAS Test environment must use the official test URL {DEFAULT_TEST_BASE_URL}"
         )
-    if environment == "live" and base_url == DEFAULT_TEST_BASE_URL:
-        raise ValueError("CDAS Live environment cannot use the CDAS test URL")
+
+    # A URL string can vary while still reaching the same host (hostname case,
+    # explicit port, or a path). Live must never target the known Test host in
+    # any of those forms.
+    base_host = (urlparse(base_url).hostname or "").lower()
+    if environment == "live" and base_host == DEFAULT_TEST_HOST:
+        raise ValueError("CDAS Live environment cannot use the CDAS test host")
 
 
 def _serialize_password(password: str) -> str:
