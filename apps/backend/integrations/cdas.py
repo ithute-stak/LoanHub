@@ -83,16 +83,7 @@ class _TokenState:
 
 
 class CdasClient:
-    """Server-side client for one company's official CDAS Third Party API account.
-
-    Credentials are passed explicitly from the company configuration service.
-    The client deliberately has no server-wide username/password fallback, which
-    prevents one tenant from accidentally using another company's CDAS account.
-
-    The CDAS specification uses two different token headers: employee details
-    uses ``Authorization`` while the other documented operations use ``Token``.
-    This client intentionally preserves that endpoint-specific contract.
-    """
+    """Server-side client for one company's official CDAS Third Party API account."""
 
     LOGIN_PATH = "/api/security/login"
     EMPLOYEE_DETAILS_PATH = "/api/employee/getDetails"
@@ -110,7 +101,12 @@ class CdasClient:
     # server-side expiry boundary.
     _TOKEN_MAX_AGE = timedelta(hours=7, minutes=50)
     _TOKEN_IDLE_AGE = timedelta(minutes=9)
-    _AUTH_RETRY_STATUSES = {401, 402}
+
+    # 406 (invalid token format) and 419 (session inactive) are documented by
+    # CDAS v1.5. 401/402 remain accepted for defensive compatibility. A missing
+    # token (417) is not replayed because LoanHub always supplies a token header;
+    # receiving it indicates a request/proxy defect rather than stale auth.
+    _AUTH_RETRY_STATUSES = {401, 402, 406, 419}
 
     def __init__(
         self,
@@ -228,6 +224,9 @@ class CdasClient:
     def _error_from_response(self, response: httpx.Response, payload: Any) -> CdasError:
         status = response.status_code
         documented_messages = {
+            406: "CDAS rejected the authorization token format",
+            417: "CDAS reported a missing authorization token",
+            419: "The CDAS session is inactive or expired",
             429: "CDAS request limit has been reached",
             499: "Deduction amount exceeds maximum available fund",
             498: "CDAS rejected the item code for this company",
@@ -343,9 +342,9 @@ class CdasClient:
         return payload
 
     async def add_update_deduction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # State-changing CDAS calls are never replayed automatically. A 401/402
-        # after submission is surfaced so LoanHub can reconcile status before a
-        # user explicitly retries, avoiding duplicate or unintended deductions.
+        # State-changing CDAS calls are never replayed automatically. A token or
+        # session failure after submission is surfaced so LoanHub can reconcile
+        # before any user explicitly retries, avoiding duplicate deductions.
         value = await self._post(
             self.ADD_UPDATE_DEDUCTION_PATH,
             body=payload,
@@ -387,14 +386,7 @@ class CdasClient:
         *,
         own_deduction_status: int | None = None,
     ) -> dict[str, Any]:
-        """Run one deliberate, user-triggered read snapshot.
-
-        Calls are sequential on purpose: the CDAS service documents a finite daily
-        request allowance, so this method never fans out speculative/background
-        requests. Own deductions are only queried when a status is explicitly
-        supplied.
-        """
-
+        """Run one deliberate, user-triggered read snapshot."""
         employee = await self.employee_details(employee_no)
         affordability = await self.affordability(employee_no)
         deductions = await self.all_deductions(employee_no)
