@@ -133,6 +133,18 @@ const companyNavigation: NavItem[] = [
             { label: "Borrower service requests", href: "/company/borrower-requests", icon: MessageSquarePlus, roles: LENDING_OPERATIONS_ROLES },
         ],
     },
+    {
+        label: "CDAS & payroll deductions",
+        href: "/company/cdas-booking/management-dashboard",
+        icon: HandCoins,
+        activePaths: ["/company/cdas-booking"],
+        children: [
+            { label: "Management Dashboard", href: "/company/cdas-booking/management-dashboard", icon: LayoutDashboard },
+            { label: "Booking Centre", href: "/company/cdas-booking", icon: BookOpenCheck },
+            { label: "Verify Employee", href: "/company/cdas-booking/verify-employee", icon: ContactRound },
+            { label: "Official Loan Lifecycle", href: "/company/cdas-booking/lifecycle", icon: ShieldCheck },
+        ],
+    },
     { label: "Calls & recordings", href: "/company/calls", icon: Phone, roles: LENDING_ROLES },
     {
         label: "Payments & finance",
