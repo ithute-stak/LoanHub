@@ -5,16 +5,19 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from database.models.cdas_official import CdasOfficialMandateState
 from integrations.cdas import CdasError
 from routers.cdas_lifecycle import (
     CdasLinkedActionRequest,
     CdasLoanDeductionRegistrationRequest,
+    _require_active_lifecycle,
+    _require_lifecycle_transition,
 )
 from services.cdas_deduction_lifecycle import (
+    CdasLifecycleError,
     _lifecycle_from_code,
     _mark_uncertain_failure,
 )
-from database.models.cdas_official import CdasOfficialMandateState
 
 
 def _registration(**overrides):
@@ -64,6 +67,57 @@ def test_linked_action_accepts_only_non_registration_non_settlement_mutations(re
 def test_linked_action_rejects_unsafe_or_dedicated_request_types(request_type: int):
     with pytest.raises(ValidationError):
         CdasLinkedActionRequest(request_type=request_type)
+
+
+@pytest.mark.parametrize(
+    ("status", "request_type"),
+    [
+        ("registered", 3),
+        ("reserved", 3),
+        ("reviewed", 4),
+        ("approved", 5),
+        ("registered", 6),
+        ("reviewed", 6),
+        ("approved", 6),
+        ("cancelled_or_rejected", 9),
+        ("registered", 10),
+    ],
+)
+def test_backend_lifecycle_guard_accepts_valid_transitions(status: str, request_type: int):
+    _require_lifecycle_transition(status, request_type)
+
+
+@pytest.mark.parametrize(
+    ("status", "request_type"),
+    [
+        ("registered", 4),
+        ("registered", 5),
+        ("reviewed", 5),
+        ("active", 3),
+        ("active", 4),
+        ("active", 6),
+        ("settled", 10),
+        ("deleted", 9),
+        ("reconciliation_required", 4),
+    ],
+)
+def test_backend_lifecycle_guard_rejects_out_of_order_or_terminal_transitions(status: str, request_type: int):
+    with pytest.raises(CdasLifecycleError) as raised:
+        _require_lifecycle_transition(status, request_type)
+    assert raised.value.status_code == 409
+
+
+@pytest.mark.parametrize("status", ["active", "changed"])
+def test_active_only_guard_allows_active_deductions(status: str):
+    _require_active_lifecycle(status, "modified")
+    _require_active_lifecycle(status, "settled")
+
+
+@pytest.mark.parametrize("status", ["registered", "reviewed", "approved", "settled", "reconciliation_required"])
+def test_active_only_guard_rejects_non_active_deductions(status: str):
+    with pytest.raises(CdasLifecycleError) as raised:
+        _require_active_lifecycle(status, "modified")
+    assert raised.value.status_code == 409
 
 
 def test_documented_duplicate_status_codes_are_not_overinterpreted():
