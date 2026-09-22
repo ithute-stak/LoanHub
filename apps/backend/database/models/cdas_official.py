@@ -128,12 +128,12 @@ class CdasApiRequestBudget(Base):
         ),
     )
 
-    # Keep the company that first created the daily row for attribution. The
-    # actual quota key is account_key because CDAS limits requests per API user.
+    # Attribution only. The quota belongs to the CDAS API account, so deleting a
+    # LoanHub company must not reset that account's allowance for the current day.
     company_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("loan_companies.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("loan_companies.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     account_key = Column(String(64), nullable=False, index=True)
