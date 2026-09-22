@@ -11,11 +11,16 @@ from services import cdas_config_service as service
 
 
 def _row(*, username: str, password: str, enabled: bool = True, environment: str = "test"):
+    base_url = (
+        service.DEFAULT_TEST_BASE_URL
+        if environment == "test"
+        else "https://live-cdas.example.test"
+    )
     return SimpleNamespace(
         environment=environment,
         is_enabled=enabled,
         configuration={
-            "base_url": "https://cdas.example.test",
+            "base_url": base_url,
             "username": username,
             "timeout_seconds": 20,
         },
@@ -66,6 +71,24 @@ def test_cdas_base_url_rejects_unsafe_values(value: str):
         service._validate_base_url(value)
 
 
+def test_test_environment_is_bound_to_official_test_url():
+    service._validate_environment_base_url("test", service.DEFAULT_TEST_BASE_URL)
+
+    with pytest.raises(ValueError) as raised:
+        service._validate_environment_base_url("test", "https://live-cdas.example.test")
+
+    assert "official test url" in str(raised.value).lower()
+
+
+def test_live_environment_cannot_target_known_test_url():
+    service._validate_environment_base_url("live", "https://live-cdas.example.test")
+
+    with pytest.raises(ValueError) as raised:
+        service._validate_environment_base_url("live", service.DEFAULT_TEST_BASE_URL)
+
+    assert "cannot use the cdas test url" in str(raised.value).lower()
+
+
 def test_company_clients_are_isolated_by_tenant(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-company-isolation-test-key")
     company_a = uuid4()
@@ -85,6 +108,24 @@ def test_company_clients_are_isolated_by_tenant(monkeypatch: pytest.MonkeyPatch)
     assert client_a.password == "password-a"
     assert client_b.username == "company-b"
     assert client_b.password == "password-b"
+
+
+def test_mismatched_saved_environment_and_url_fail_closed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "FERNET_SECRET_KEY", "cdas-company-mismatch-test-key")
+    company_id = uuid4()
+    row = _row(username="company-a", password="password-a", environment="test")
+    row.configuration = {
+        **row.configuration,
+        "base_url": "https://live-cdas.example.test",
+    }
+    monkeypatch.setattr(service, "_configuration_row", lambda _db, _company_id: row)
+    service._client_cache.clear()
+
+    with pytest.raises(CdasConfigurationError) as raised:
+        service.get_company_cdas_client(object(), company_id)
+
+    assert raised.value.status_code == 503
+    assert "do not match" in raised.value.message.lower()
 
 
 def test_disabled_company_configuration_fails_closed(monkeypatch: pytest.MonkeyPatch):
