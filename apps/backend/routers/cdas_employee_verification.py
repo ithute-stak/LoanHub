@@ -76,7 +76,7 @@ async def verify_cdas_employee_for_borrower(
         company_id=context.company_id,
         borrower_id=borrower_id,
     )
-    if context.branch_id and account.branch_id and account.branch_id != context.branch_id:
+    if context.branch_id and account.branch_id != context.branch_id:
         raise HTTPException(status_code=403, detail="The selected borrower is outside the active branch")
 
     employee_no = payload.employee_no.strip()
