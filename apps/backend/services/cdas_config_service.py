@@ -65,6 +65,16 @@ def _validate_base_url(value: str) -> str:
     return normalized
 
 
+def _validate_environment_base_url(environment: str, base_url: str) -> None:
+    """Prevent the environment badge from disagreeing with the actual CDAS target."""
+    if environment == "test" and base_url != DEFAULT_TEST_BASE_URL:
+        raise ValueError(
+            f"CDAS Test environment must use the official test URL {DEFAULT_TEST_BASE_URL}"
+        )
+    if environment == "live" and base_url == DEFAULT_TEST_BASE_URL:
+        raise ValueError("CDAS Live environment cannot use the CDAS test URL")
+
+
 def _serialize_password(password: str) -> str:
     ciphertext, nonce, version = encrypt_control_secret(password, PASSWORD_PURPOSE)
     return json.dumps(
@@ -155,6 +165,7 @@ def update_configuration(
         raise ValueError("CDAS environment must be either test or live")
 
     base_url = _validate_base_url(base_url)
+    _validate_environment_base_url(environment, base_url)
     username = username.strip()
     if not username:
         raise ValueError("CDAS username is required")
@@ -234,6 +245,13 @@ def _credentials_from_row(
     environment = str(row.environment or "test").strip().lower()
     if environment not in ALLOWED_ENVIRONMENTS:
         raise CdasConfigurationError(503, "This company's CDAS environment is invalid")
+    try:
+        _validate_environment_base_url(environment, base_url)
+    except ValueError as exc:
+        raise CdasConfigurationError(
+            503,
+            "This company's CDAS environment and base URL do not match",
+        ) from exc
     return CdasCompanyCredentials(
         base_url=base_url,
         username=username,
