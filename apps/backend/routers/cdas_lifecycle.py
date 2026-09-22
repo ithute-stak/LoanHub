@@ -17,6 +17,8 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.cdas_official import CdasOfficialMandateEvent
+from database.models.enums import UserRole
+from database.models.lending_operations import CDASDeductionMandate
 from database.session import get_db
 from integrations.cdas import CdasError
 from services.cdas_config_service import get_company_cdas_client
@@ -36,9 +38,49 @@ from services.cdas_registration_workflow import register_loan_deduction_safely
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official Loan Lifecycle"])
 
-CDAS_LIFECYCLE_ROLES = set(LENDING_ROLES)
+# Least-privilege CDAS access. Employee/payroll data is financial information,
+# so generic company membership is not sufficient to read the lifecycle.
+CDAS_READ_ROLES = (
+    set(LENDING_ROLES)
+    | set(FINANCE_ROLES)
+    | set(COLLECTIONS_ROLES)
+    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR, UserRole.RISK_MANAGER}
+)
+
+# Maker/checker separation for provider mutations. Loan officers can submit a
+# registration, credit/management roles can review, and management performs
+# approval/activation or active-deduction changes. Settlement belongs to
+# finance/collections rather than ordinary loan officers.
+CDAS_REGISTRATION_ROLES = {
+    UserRole.COMPANY_OWNER,
+    UserRole.COMPANY_ADMIN,
+    UserRole.BRANCH_MANAGER,
+    UserRole.LOAN_OFFICER,
+}
+CDAS_REVIEW_ROLES = {
+    UserRole.COMPANY_OWNER,
+    UserRole.COMPANY_ADMIN,
+    UserRole.BRANCH_MANAGER,
+    UserRole.CREDIT_ANALYST,
+}
+CDAS_APPROVAL_ROLES = {
+    UserRole.COMPANY_OWNER,
+    UserRole.COMPANY_ADMIN,
+    UserRole.BRANCH_MANAGER,
+}
+CDAS_CHANGE_ROLES = set(CDAS_APPROVAL_ROLES)
+CDAS_CANCEL_ROLES = set(CDAS_REGISTRATION_ROLES) | {UserRole.CREDIT_ANALYST}
+CDAS_DELETE_ROLES = {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}
 CDAS_RECONCILIATION_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
-CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
+CDAS_SETTLEMENT_ROLES = set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
+CDAS_ACTION_ROLES: dict[int, set[UserRole]] = {
+    3: CDAS_REVIEW_ROLES,
+    4: CDAS_APPROVAL_ROLES,
+    5: CDAS_APPROVAL_ROLES,
+    6: CDAS_CANCEL_ROLES,
+    9: CDAS_DELETE_ROLES,
+    10: CDAS_CHANGE_ROLES,
+}
 
 # Keep the provider workflow enforceable on the backend. The UI also hides
 # invalid actions, but direct API callers must not be able to skip lifecycle
@@ -97,6 +139,22 @@ def _require_company(context: TenantContext) -> UUID:
     if context.is_platform_admin or not context.company_id or not context.staff:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
     return context.company_id
+
+
+def _require_read_access(context: TenantContext) -> None:
+    require_tenant_roles(context, CDAS_READ_ROLES)
+
+
+def _require_branch_scope(context: TenantContext, mandate: CDASDeductionMandate) -> None:
+    if context.branch_id and mandate.branch_id != context.branch_id:
+        raise HTTPException(status_code=403, detail="This CDAS mandate is outside the active branch")
+
+
+def _require_action_role(context: TenantContext, request_type: int) -> None:
+    allowed = CDAS_ACTION_ROLES.get(request_type)
+    if not allowed:
+        raise HTTPException(status_code=422, detail="Unsupported CDAS lifecycle action")
+    require_tenant_roles(context, allowed)
 
 
 def _lifecycle_http_error(exc: CdasLifecycleError) -> HTTPException:
@@ -159,7 +217,7 @@ async def register_cdas_loan_deduction(
     explicit reconciliation instead of making the registration replayable.
     """
     company_id = _require_company(context)
-    require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
+    require_tenant_roles(context, CDAS_REGISTRATION_ROLES)
     try:
         client = get_company_cdas_client(db, company_id)
         return await register_loan_deduction_safely(
@@ -194,8 +252,10 @@ async def retry_cdas_loan_deduction_registration(
 ):
     """Correct and retry only a previously confirmed, retry-safe CDAS rejection."""
     company_id = _require_company(context)
-    require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
+    require_tenant_roles(context, CDAS_REGISTRATION_ROLES)
     try:
+        _, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_branch_scope(context, mandate)
         client = get_company_cdas_client(db, company_id)
         return await retry_failed_registration(
             db,
@@ -224,10 +284,12 @@ def get_cdas_deduction_for_loan(
     db: Session = Depends(get_db),
 ):
     company_id = _require_company(context)
+    _require_read_access(context)
     row = get_official_mandate_for_loan(db, company_id=company_id, loan_id=loan_id)
     if row is None:
         raise HTTPException(status_code=404, detail="This loan does not have an official CDAS mandate")
     state, mandate = row
+    _require_branch_scope(context, mandate)
     return serialize_official_mandate(state, mandate)
 
 
@@ -238,10 +300,12 @@ def get_cdas_loan_deduction(
     db: Session = Depends(get_db),
 ):
     company_id = _require_company(context)
+    _require_read_access(context)
     try:
         state, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
     except CdasLifecycleError as exc:
         raise _lifecycle_http_error(exc) from exc
+    _require_branch_scope(context, mandate)
     return serialize_official_mandate(state, mandate)
 
 
@@ -254,10 +318,12 @@ def get_cdas_loan_deduction_events(
 ):
     """Return the append-only company-scoped audit trail for a linked mandate."""
     company_id = _require_company(context)
+    _require_read_access(context)
     try:
-        get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
     except CdasLifecycleError as exc:
         raise _lifecycle_http_error(exc) from exc
+    _require_branch_scope(context, mandate)
 
     events = (
         db.query(CdasOfficialMandateEvent)
@@ -281,9 +347,10 @@ async def run_linked_cdas_action(
 ):
     """Review/approve/activate/cancel/delete/update a linked CDAS mandate."""
     company_id = _require_company(context)
-    require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
+    _require_action_role(context, payload.request_type)
     try:
-        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        state, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_branch_scope(context, mandate)
         _require_lifecycle_transition(state.lifecycle_status, payload.request_type)
         client = get_company_cdas_client(db, company_id)
         return await perform_linked_action(
@@ -308,9 +375,10 @@ async def modify_linked_cdas_deduction(
     db: Session = Depends(get_db),
 ):
     company_id = _require_company(context)
-    require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
+    require_tenant_roles(context, CDAS_CHANGE_ROLES)
     try:
-        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        state, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_branch_scope(context, mandate)
         _require_active_lifecycle(state.lifecycle_status, "modified")
         client = get_company_cdas_client(db, company_id)
         return await modify_linked_active_deduction(
@@ -340,7 +408,8 @@ async def settle_linked_cdas_loan_deduction(
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_SETTLEMENT_ROLES)
     try:
-        state, _ = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        state, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_branch_scope(context, mandate)
         _require_active_lifecycle(state.lifecycle_status, "settled")
         client = get_company_cdas_client(db, company_id)
         return await settle_linked_deduction(
@@ -373,6 +442,8 @@ async def reconcile_linked_cdas_loan_deduction(
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_RECONCILIATION_ROLES)
     try:
+        _, mandate = get_official_mandate(db, company_id=company_id, state_id=state_id)
+        _require_branch_scope(context, mandate)
         client = get_company_cdas_client(db, company_id)
         return await reconcile_linked_deduction(
             db,
