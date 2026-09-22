@@ -325,7 +325,14 @@ class CdasClient:
         return payload
 
     async def add_update_deduction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        value = await self._post(self.ADD_UPDATE_DEDUCTION_PATH, body=payload)
+        # State-changing CDAS calls are never replayed automatically. A 401/402
+        # after submission is surfaced so LoanHub can reconcile status before a
+        # user explicitly retries, avoiding duplicate or unintended deductions.
+        value = await self._post(
+            self.ADD_UPDATE_DEDUCTION_PATH,
+            body=payload,
+            retry_auth=False,
+        )
         if not isinstance(value, dict):
             raise CdasError(502, "CDAS deduction operation returned an invalid response", value)
         return value
@@ -337,10 +344,18 @@ class CdasClient:
         )
 
     async def modify_active_deduction(self, payload: dict[str, Any]) -> Any:
-        return await self._post(self.MODIFY_ACTIVE_DEDUCTION_PATH, body=payload)
+        return await self._post(
+            self.MODIFY_ACTIVE_DEDUCTION_PATH,
+            body=payload,
+            retry_auth=False,
+        )
 
     async def settle_deduction(self, payload: dict[str, Any]) -> Any:
-        return await self._post(self.SETTLE_DEDUCTION_PATH, body=payload)
+        return await self._post(
+            self.SETTLE_DEDUCTION_PATH,
+            body=payload,
+            retry_auth=False,
+        )
 
     async def get_document(self, *, year: int, month: int, document_type: int) -> Any:
         return await self._post(
