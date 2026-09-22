@@ -43,6 +43,14 @@ def _raw_snapshot(*, checked_at: str) -> dict:
     }
 
 
+def _fingerprint(snapshot: dict) -> str:
+    return analysis_fingerprint(
+        snapshot,
+        client_name="Mpho Mokoena",
+        client_reference="EMP-001",
+    )
+
+
 def test_normalizes_official_snapshot_without_inventing_booking_approval():
     snapshot = normalize_official_cdas_snapshot(
         _raw_snapshot(checked_at="2026-09-22T10:00:00+00:00"),
@@ -75,11 +83,18 @@ def test_refresh_timestamp_does_not_create_a_new_analysis_fingerprint():
         own_deduction_status=5,
     )
 
-    assert analysis_fingerprint(first, client_name="Mpho Mokoena", client_reference="EMP-001") == analysis_fingerprint(
-        second,
-        client_name="Mpho Mokoena",
-        client_reference="EMP-001",
-    )
+    assert _fingerprint(first) == _fingerprint(second)
+
+
+def test_provider_row_order_does_not_create_a_new_analysis_fingerprint():
+    first_raw = _raw_snapshot(checked_at="2026-09-22T10:00:00+00:00")
+    second_raw = _raw_snapshot(checked_at="2026-09-22T10:05:00+00:00")
+    second_raw["deductions"] = list(reversed(second_raw["deductions"]))
+
+    first = normalize_official_cdas_snapshot(first_raw, own_deduction_status=5)
+    second = normalize_official_cdas_snapshot(second_raw, own_deduction_status=5)
+
+    assert _fingerprint(first) == _fingerprint(second)
 
 
 def test_changed_cdas_data_creates_a_new_fingerprint():
@@ -91,8 +106,4 @@ def test_changed_cdas_data_creates_a_new_fingerprint():
     changed_raw["affordability"] = 900.0
     second = normalize_official_cdas_snapshot(changed_raw, own_deduction_status=5)
 
-    assert analysis_fingerprint(first, client_name="Mpho Mokoena", client_reference="EMP-001") != analysis_fingerprint(
-        second,
-        client_name="Mpho Mokoena",
-        client_reference="EMP-001",
-    )
+    assert _fingerprint(first) != _fingerprint(second)
