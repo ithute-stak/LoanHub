@@ -21,6 +21,7 @@ from core.route_inspection import validate_http_route_contracts
 from database.config.config import settings
 from database.session import SessionLocal, get_db
 from utils.authContextMiddleware import AuthContextMiddleware
+from routers.cdas_api import close_cdas_client
 from services.employer_group_service import ensure_central_work_groups
 from services.maturity_recovery_scheduler import (
     start_maturity_recovery_scheduler,
@@ -78,6 +79,7 @@ async def lifespan(_: FastAPI):
             await stop_maturity_recovery_scheduler()
         if webhook_started:
             await stop_webhook_outbox_scheduler()
+        await close_cdas_client()
         await response_cache.close()
         await manager.shutdown()
 
