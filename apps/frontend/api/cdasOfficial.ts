@@ -1,5 +1,10 @@
 import { api } from "@/lib/api";
 import type {
+  CdasLinkedActionRequest,
+  CdasLinkedModifyRequest,
+  CdasLinkedSettlementRequest,
+  CdasLoanDeductionRegistrationRequest,
+  CdasOfficialMandateState,
   CdasOfficialRefreshRequest,
   CdasOfficialRefreshResponse,
 } from "@/types/cdasOfficial";
@@ -9,4 +14,60 @@ export const cdasOfficialApi = {
     payload: CdasOfficialRefreshRequest,
   ): Promise<CdasOfficialRefreshResponse> =>
     (await api.post<CdasOfficialRefreshResponse>("/cdas/refresh", payload)).data,
+
+  registerLoanDeduction: async (
+    payload: CdasLoanDeductionRegistrationRequest,
+  ): Promise<CdasOfficialMandateState> =>
+    (await api.post<CdasOfficialMandateState>("/cdas/loan-deductions", payload)).data,
+
+  getLoanDeduction: async (loanId: string): Promise<CdasOfficialMandateState> =>
+    (await api.get<CdasOfficialMandateState>(`/cdas/loans/${loanId}/deduction`)).data,
+
+  getDeductionState: async (stateId: string): Promise<CdasOfficialMandateState> =>
+    (await api.get<CdasOfficialMandateState>(`/cdas/loan-deductions/${stateId}`)).data,
+
+  runDeductionAction: async (
+    stateId: string,
+    payload: CdasLinkedActionRequest,
+  ): Promise<CdasOfficialMandateState> =>
+    (
+      await api.post<CdasOfficialMandateState>(
+        `/cdas/loan-deductions/${stateId}/actions`,
+        payload,
+      )
+    ).data,
+
+  modifyActiveDeduction: async (
+    stateId: string,
+    payload: CdasLinkedModifyRequest,
+  ): Promise<CdasOfficialMandateState> =>
+    (
+      await api.post<CdasOfficialMandateState>(
+        `/cdas/loan-deductions/${stateId}/modify-active`,
+        payload,
+      )
+    ).data,
+
+  settleDeduction: async (
+    stateId: string,
+    payload: CdasLinkedSettlementRequest,
+  ): Promise<CdasOfficialMandateState> =>
+    (
+      await api.post<CdasOfficialMandateState>(
+        `/cdas/loan-deductions/${stateId}/settle`,
+        payload,
+      )
+    ).data,
+
+  reconcileDeduction: async (
+    stateId: string,
+    deductionStatus: number,
+  ): Promise<CdasOfficialMandateState> =>
+    (
+      await api.post<CdasOfficialMandateState>(
+        `/cdas/loan-deductions/${stateId}/reconcile`,
+        undefined,
+        { params: { deduction_status: deductionStatus } },
+      )
+    ).data,
 };
