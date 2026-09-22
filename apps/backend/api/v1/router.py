@@ -38,6 +38,7 @@ from routers import (
     company_registration,
     company_staff,
     company_websites,
+    contract_email_otp,
     credit_bureau,
     credit_bureau_configuration,
     employees,
@@ -207,6 +208,7 @@ _ROUTE_REGISTRY = (
     # route so company users cannot reintroduce Experian credentials through the
     # legacy tenant integration editor.
     platform_credit_bureau.company_guard_router,
+    contract_email_otp.router,
     origination.router,
     credit_bureau_configuration.router,
     credit_bureau.router,
