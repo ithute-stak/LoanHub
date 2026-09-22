@@ -8,6 +8,7 @@ import type {
   CdasOfficialMandateState,
   CdasOfficialRefreshRequest,
   CdasOfficialRefreshResponse,
+  CdasRegistrationRetryRequest,
 } from "@/types/cdasOfficial";
 
 export const cdasOfficialApi = {
@@ -20,6 +21,17 @@ export const cdasOfficialApi = {
     payload: CdasLoanDeductionRegistrationRequest,
   ): Promise<CdasOfficialMandateState> =>
     (await api.post<CdasOfficialMandateState>("/cdas/loan-deductions", payload)).data,
+
+  retryLoanDeductionRegistration: async (
+    stateId: string,
+    payload: CdasRegistrationRetryRequest,
+  ): Promise<CdasOfficialMandateState> =>
+    (
+      await api.post<CdasOfficialMandateState>(
+        `/cdas/loan-deductions/${stateId}/retry-registration`,
+        payload,
+      )
+    ).data,
 
   getLoanDeduction: async (loanId: string): Promise<CdasOfficialMandateState> =>
     (await api.get<CdasOfficialMandateState>(`/cdas/loans/${loanId}/deduction`)).data,
