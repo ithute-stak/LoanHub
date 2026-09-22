@@ -12,7 +12,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadingButton } from "@/components/ui/loading-button";
-import type { CdasLinkedActionRequestType, CdasOfficialMandateState } from "@/types/cdasOfficial";
+import type {
+  CdasLinkedActionRequestType,
+  CdasOfficialMandateEvent,
+  CdasOfficialMandateState,
+} from "@/types/cdasOfficial";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
@@ -25,6 +29,13 @@ function money(value: number | string | null | undefined) {
 
 function titleCase(value?: string | null) {
   return (value || "unknown").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function eventTime(value?: string | null) {
+  if (!value) return "Unknown time";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
 }
 
 const TRANSITIONS: Partial<Record<string, Array<{ requestType: CdasLinkedActionRequestType; label: string }>>> = {
@@ -54,6 +65,8 @@ export function CdasLoanLifecyclePanel() {
   const [effectiveMonth, setEffectiveMonth] = useState("");
   const [borrowerConsent, setBorrowerConsent] = useState(false);
   const [state, setState] = useState<CdasOfficialMandateState | null>(null);
+  const [events, setEvents] = useState<CdasOfficialMandateEvent[]>([]);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const [effectiveDate, setEffectiveDate] = useState("");
   const [settlementReason, setSettlementReason] = useState("2");
@@ -63,6 +76,19 @@ export function CdasLoanLifecyclePanel() {
     () => TRANSITIONS[String(state?.lifecycle_status || "").toLowerCase()] || [],
     [state?.lifecycle_status],
   );
+
+  async function refreshAuditTrail(stateId: string, silent = false) {
+    if (!silent) setLoading("audit");
+    try {
+      const result = await cdasOfficialApi.getDeductionEvents(stateId);
+      setEvents(result);
+      setEventsLoaded(true);
+    } catch (error: unknown) {
+      if (!silent) toast.error(getErrorMessage(error, "Could not load the CDAS audit trail."));
+    } finally {
+      if (!silent) setLoading(null);
+    }
+  }
 
   async function lookupLoan() {
     const value = loanId.trim();
@@ -77,9 +103,12 @@ export function CdasLoanLifecyclePanel() {
       if (result.employee_no || result.employee_number) setEmployeeNo(String(result.employee_no || result.employee_number));
       if (result.item_code) setItemCode(result.item_code);
       if (result.reference_no) setReferenceNo(result.reference_no);
+      await refreshAuditTrail(result.id, true);
       toast.success("Linked CDAS deduction loaded.");
     } catch (error: unknown) {
       setState(null);
+      setEvents([]);
+      setEventsLoaded(false);
       toast.error(getErrorMessage(error, "No official CDAS deduction could be loaded for this loan."));
     } finally {
       setLoading(null);
@@ -116,12 +145,14 @@ export function CdasLoanLifecyclePanel() {
         borrower_consent: borrowerConsent,
       });
       setState(result);
+      await refreshAuditTrail(result.id, true);
       toast.success("CDAS deduction registered and permanently linked to the LoanHub loan.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "CDAS registration failed."));
       try {
         const existing = await cdasOfficialApi.getLoanDeduction(loanId.trim());
         setState(existing);
+        await refreshAuditTrail(existing.id, true);
       } catch {
         // The backend remains authoritative. Do not retry a failed provider write here.
       }
@@ -137,11 +168,14 @@ export function CdasLoanLifecyclePanel() {
     try {
       const result = await cdasOfficialApi.runDeductionAction(state.id, { request_type: requestType });
       setState(result);
+      await refreshAuditTrail(result.id, true);
       toast.success(`${label} completed.`);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, `${label} failed.`));
       try {
-        setState(await cdasOfficialApi.getDeductionState(state.id));
+        const refreshed = await cdasOfficialApi.getDeductionState(state.id);
+        setState(refreshed);
+        await refreshAuditTrail(refreshed.id, true);
       } catch {
         // Never auto-replay a CDAS write.
       }
@@ -160,10 +194,17 @@ export function CdasLoanLifecyclePanel() {
     try {
       const result = await cdasOfficialApi.modifyActiveDeduction(state.id, { effective_date: effectiveDate.trim() });
       setState(result);
+      await refreshAuditTrail(result.id, true);
       toast.success("Active CDAS deduction updated.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "CDAS modification failed."));
-      try { setState(await cdasOfficialApi.getDeductionState(state.id)); } catch { /* no replay */ }
+      try {
+        const refreshed = await cdasOfficialApi.getDeductionState(state.id);
+        setState(refreshed);
+        await refreshAuditTrail(refreshed.id, true);
+      } catch {
+        // Never auto-replay a CDAS write.
+      }
     } finally {
       setLoading(null);
     }
@@ -187,10 +228,17 @@ export function CdasLoanLifecyclePanel() {
         settlement_reason: reason as 1 | 2 | 3 | 4,
       });
       setState(result);
+      await refreshAuditTrail(result.id, true);
       toast.success("CDAS deduction settled.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "CDAS settlement failed."));
-      try { setState(await cdasOfficialApi.getDeductionState(state.id)); } catch { /* no replay */ }
+      try {
+        const refreshed = await cdasOfficialApi.getDeductionState(state.id);
+        setState(refreshed);
+        await refreshAuditTrail(refreshed.id, true);
+      } catch {
+        // Never auto-replay a CDAS write.
+      }
     } finally {
       setLoading(null);
     }
@@ -207,6 +255,7 @@ export function CdasLoanLifecyclePanel() {
     try {
       const result = await cdasOfficialApi.reconcileDeduction(state.id, status);
       setState(result);
+      await refreshAuditTrail(result.id, true);
       toast.success("CDAS state reconciled from the provider.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "CDAS reconciliation failed."));
@@ -366,6 +415,48 @@ export function CdasLoanLifecyclePanel() {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle>CDAS lifecycle audit trail</CardTitle>
+                  <CardDescription>Local append-only history of provider writes and reconciliation activity for this mandate.</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" disabled={loading === "audit"} onClick={() => refreshAuditTrail(state.id)}>
+                  <RefreshCw className={loading === "audit" ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                  Refresh audit
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!eventsLoaded ? (
+                <p className="text-sm text-muted-foreground">Audit history has not been loaded yet.</p>
+              ) : events.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No lifecycle events have been recorded yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {events.map((event) => (
+                    <div key={event.id} className="rounded-lg border p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-medium">{titleCase(event.event_type)}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{eventTime(event.occurred_at)}</div>
+                        </div>
+                        <Badge variant={event.success ? "secondary" : "destructive"}>{event.success ? "Success" : "Failed"}</Badge>
+                      </div>
+                      <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                        <div>Request type: <span className="text-foreground">{event.request_type ?? "—"}</span></div>
+                        <div>Provider status: <span className="text-foreground">{event.provider_status_code ?? "—"}</span></div>
+                        <div>Actor: <span className="break-all text-foreground">{event.actor_user_id ?? "System"}</span></div>
+                      </div>
+                      {event.message && <div className="mt-2 text-sm">{event.message}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>
