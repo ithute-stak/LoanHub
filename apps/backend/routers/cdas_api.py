@@ -7,7 +7,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.access_control import (
+    COLLECTIONS_ROLES,
     COMPANY_MANAGEMENT_ROLES,
+    FINANCE_ROLES,
+    LENDING_ROLES,
     TenantContext,
     get_tenant_context,
     require_tenant_roles,
@@ -29,6 +32,15 @@ from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
+
+# Official CDAS writes affect payroll deductions outside LoanHub. Keep them
+# narrower than read access and configuration access. Lending roles may manage
+# registration/review/approval/activation and active-deduction changes. Final
+# settlement can also be performed by finance/collections roles because it is a
+# repayment/recovery operation. Company owners/admins are already included in
+# these role groups.
+CDAS_DEDUCTION_WRITE_ROLES = set(LENDING_ROLES)
+CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
 
 
 class CdasConfigurationUpdateRequest(BaseModel):
@@ -123,6 +135,16 @@ def _require_company_manager(context: TenantContext) -> None:
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
 
 
+def _require_deduction_writer(context: TenantContext) -> None:
+    _require_company_member(context)
+    require_tenant_roles(context, CDAS_DEDUCTION_WRITE_ROLES)
+
+
+def _require_settlement_writer(context: TenantContext) -> None:
+    _require_company_member(context)
+    require_tenant_roles(context, CDAS_SETTLEMENT_ROLES)
+
+
 def _company_client(db: Session, context: TenantContext) -> CdasClient:
     _require_company_member(context)
     assert context.company_id is not None
@@ -160,7 +182,7 @@ def get_cdas_configuration(
     db: Session = Depends(get_db),
 ):
     """Return this company's sanitized CDAS configuration; never return its password."""
-    _require_company_member(context)
+    _require_company_manager(context)
     assert context.company_id is not None
     return configuration_summary(get_configuration(db, context.company_id))
 
@@ -320,6 +342,7 @@ async def run_cdas_deduction_action(
     db: Session = Depends(get_db),
 ):
     """Register/update/review/approve/cancel using CDAS's documented RequestType contract."""
+    _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
         return await client.add_update_deduction(payload.to_cdas_payload())
@@ -346,6 +369,7 @@ async def modify_active_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
         return await client.modify_active_deduction(payload.to_cdas_payload())
@@ -359,6 +383,7 @@ async def settle_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    _require_settlement_writer(context)
     client = _company_client(db, context)
     try:
         return await client.settle_deduction(payload.to_cdas_payload())
