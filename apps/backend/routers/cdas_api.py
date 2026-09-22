@@ -150,7 +150,12 @@ def _require_cdas_reader(context: TenantContext) -> None:
 
 
 def _require_employee_scope(db: Session, context: TenantContext, employee_no: str) -> None:
-    """Prevent branch users from probing employee numbers outside their branch."""
+    """Prevent branch users from probing employee numbers outside their branch.
+
+    A manually-entered payroll profile is not enough. The employee number must
+    have been verified against the official CDAS employee endpoint for a borrower
+    in this active branch before low-level CDAS reads are allowed.
+    """
     if not context.branch_id:
         return
     assert context.company_id is not None
@@ -160,13 +165,15 @@ def _require_employee_scope(db: Session, context: TenantContext, employee_no: st
             CDASPayrollProfile.company_id == context.company_id,
             CDASPayrollProfile.branch_id == context.branch_id,
             CDASPayrollProfile.employee_number == employee_no.strip(),
+            CDASPayrollProfile.verified.is_(True),
+            CDASPayrollProfile.verification_reference == "CDAS_API_V1_5",
         )
         .first()
     )
     if profile is None:
         raise HTTPException(
             status_code=403,
-            detail="This employee number is not linked to a borrower in the active branch",
+            detail="This employee number has not been officially verified for a borrower in the active branch",
         )
 
 
