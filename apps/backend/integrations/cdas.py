@@ -82,7 +82,11 @@ class _TokenState:
 
 
 class CdasClient:
-    """Server-side client for the official CDAS Third Party API.
+    """Server-side client for one company's official CDAS Third Party API account.
+
+    Credentials are passed explicitly from the company configuration service.
+    The client deliberately has no server-wide username/password fallback, which
+    prevents one tenant from accidentally using another company's CDAS account.
 
     The CDAS specification uses two different token headers: employee details
     uses ``Authorization`` while the other documented operations use ``Token``.
@@ -116,9 +120,9 @@ class CdasClient:
         timeout_seconds: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self.base_url = (base_url or settings.CDAS_BASE_URL or "").rstrip("/")
-        self.username = username if username is not None else settings.CDAS_USERNAME
-        self.password = password if password is not None else settings.CDAS_PASSWORD
+        self.base_url = (base_url or "").rstrip("/")
+        self.username = username
+        self.password = password
         self.timeout_seconds = timeout_seconds or settings.CDAS_TIMEOUT_SECONDS
         self.transport = transport
         self._token: _TokenState | None = None
@@ -128,7 +132,7 @@ class CdasClient:
         if not self.base_url or not self.username or not self.password:
             raise CdasConfigurationError(
                 status_code=503,
-                message="CDAS integration is not configured on this LoanHub server",
+                message="CDAS integration credentials are incomplete",
             )
 
     @staticmethod
@@ -184,6 +188,10 @@ class CdasClient:
                 last_used_at=now,
             )
             return self._token.value
+
+    async def check_connection(self) -> None:
+        """Authenticate without exposing the returned CDAS token to callers."""
+        await self._login(force=True)
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> Any:
@@ -391,6 +399,3 @@ class CdasClient:
             "deductions": deductions,
             "own_deductions": own,
         }
-
-
-cdas_client = CdasClient()
