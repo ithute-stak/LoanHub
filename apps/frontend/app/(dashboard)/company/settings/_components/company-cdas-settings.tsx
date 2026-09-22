@@ -39,6 +39,15 @@ type CdasConfiguration = {
     last_tested_at: string | null;
 };
 
+type CdasRequestBudget = {
+    environment: CdasEnvironment;
+    request_date: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    last_request_at: string | null;
+};
+
 type CdasForm = {
     environment: CdasEnvironment;
     enabled: boolean;
@@ -79,6 +88,7 @@ function formFromConfiguration(configuration: CdasConfiguration): CdasForm {
 
 export function CompanyCdasSettings({ canManage }: Props) {
     const [configuration, setConfiguration] = useState<CdasConfiguration | null>(null);
+    const [budget, setBudget] = useState<CdasRequestBudget | null>(null);
     const [form, setForm] = useState<CdasForm>(DEFAULT_FORM);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -89,6 +99,15 @@ export function CompanyCdasSettings({ canManage }: Props) {
         configuration && form.environment !== configuration.environment,
     );
 
+    const refreshBudget = useCallback(async () => {
+        try {
+            const response = await api.get<CdasRequestBudget>("/cdas/request-budget");
+            setBudget(response.data);
+        } catch {
+            setBudget(null);
+        }
+    }, []);
+
     const load = useCallback(async () => {
         setLoading(true);
         setLoadError(null);
@@ -96,6 +115,12 @@ export function CompanyCdasSettings({ canManage }: Props) {
             const response = await api.get<CdasConfiguration>("/cdas/configuration");
             setConfiguration(response.data);
             setForm(formFromConfiguration(response.data));
+            try {
+                const budgetResponse = await api.get<CdasRequestBudget>("/cdas/request-budget");
+                setBudget(budgetResponse.data);
+            } catch {
+                setBudget(null);
+            }
         } catch (error: unknown) {
             setLoadError(getErrorMessage(error, "CDAS configuration could not be loaded."));
         } finally {
@@ -153,6 +178,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
             });
             setConfiguration(response.data);
             setForm(formFromConfiguration(response.data));
+            await refreshBudget();
             toast.success("CDAS company configuration saved.");
         } catch (error: unknown) {
             toast.error(getErrorMessage(error, "CDAS configuration could not be saved."));
@@ -170,6 +196,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
             );
             setConfiguration(response.data.configuration);
             setForm(formFromConfiguration(response.data.configuration));
+            await refreshBudget();
             toast.success("CDAS connection verified successfully.");
         } catch (error: unknown) {
             toast.error(getErrorMessage(error, "CDAS connection test failed."));
@@ -404,6 +431,35 @@ export function CompanyCdasSettings({ canManage }: Props) {
                         <StatusRow label="URL & username" value={configuration?.base_url && configuration?.username ? "Configured" : "Incomplete"} />
                         <StatusRow label="Password" value={configuration?.password_configured ? "Encrypted & stored" : "Not configured"} />
                         <StatusRow label="Operational state" value={configuration?.enabled ? "Enabled" : "Disabled"} />
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                            <ServerCog className="h-4 w-4" /> Daily API budget
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4 text-sm">
+                        {budget ? (
+                            <>
+                                <StatusRow label="Environment" value={budget.environment.toUpperCase()} />
+                                <StatusRow label="Used today" value={`${budget.used} / ${budget.limit}`} />
+                                <StatusRow label="Remaining" value={String(budget.remaining)} />
+                                <p className="text-xs leading-5 text-muted-foreground">
+                                    LoanHub reserves one slot immediately before every outbound CDAS HTTP request, including login and token refresh. The counter uses the Lesotho calendar date and is enforced across backend workers.
+                                </p>
+                                {budget.last_request_at && (
+                                    <p className="text-xs text-muted-foreground">
+                                        Last outbound request: {new Date(budget.last_request_at).toLocaleString()}
+                                    </p>
+                                )}
+                            </>
+                        ) : (
+                            <p className="text-xs leading-5 text-muted-foreground">
+                                Request-budget status is unavailable. Provider calls remain protected by the backend limit when the integration is configured.
+                            </p>
+                        )}
                     </CardContent>
                 </Card>
 
