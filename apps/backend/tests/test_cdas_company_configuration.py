@@ -89,13 +89,22 @@ def test_test_environment_is_bound_to_official_test_url():
     assert "official test url" in str(raised.value).lower()
 
 
-def test_live_environment_cannot_target_known_test_url():
+@pytest.mark.parametrize(
+    "test_target",
+    [
+        service.DEFAULT_TEST_BASE_URL,
+        "https://TEST-CDAS-THIRDPARTYAPI.SENTRAPTT.COM",
+        "https://test-cdas-thirdpartyapi.sentraptt.com:443",
+        "https://test-cdas-thirdpartyapi.sentraptt.com/api",
+    ],
+)
+def test_live_environment_cannot_target_known_test_host_variants(test_target: str):
     service._validate_environment_base_url("live", "https://live-cdas.example.test")
 
     with pytest.raises(ValueError) as raised:
-        service._validate_environment_base_url("live", service.DEFAULT_TEST_BASE_URL)
+        service._validate_environment_base_url("live", test_target)
 
-    assert "cannot use the cdas test url" in str(raised.value).lower()
+    assert "cannot use the cdas test host" in str(raised.value).lower()
 
 
 def test_switching_environment_clears_previous_password(monkeypatch: pytest.MonkeyPatch):
