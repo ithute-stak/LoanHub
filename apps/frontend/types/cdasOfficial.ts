@@ -75,6 +75,8 @@ export interface CdasOfficialRefreshRequest {
 
 export type CdasLoanLifecycleStatus =
   | "registration_pending"
+  | "registration_failed"
+  | "registration_retry_pending"
   | "registered"
   | "reviewed"
   | "approved"
@@ -97,6 +99,16 @@ export interface CdasLoanDeductionRegistrationRequest {
   total_installment: number;
   effective_month: string;
   borrower_consent: boolean;
+}
+
+export interface CdasRegistrationRetryRequest {
+  item_code: string;
+  reference_no: string;
+  loan_policy?: number;
+  deduction_amount: number;
+  principal_amount: number;
+  total_installment: number;
+  effective_month: string;
 }
 
 export type CdasLinkedActionRequestType = 3 | 4 | 5 | 6 | 9 | 10;
