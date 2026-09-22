@@ -9,6 +9,7 @@ from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficial
 from database.models.client_loan_company import ClientCompanyLoan
 from integrations.cdas import CdasClient, CdasError
 from services.cdas_deduction_lifecycle import (
+    CDAS_AUTH_UNCERTAIN_STATUSES,
     CdasLifecycleError,
     _apply_provider_response,
     _effective_month_start,
@@ -26,17 +27,11 @@ from services.cdas_registration_workflow import (
 
 
 _RETRYABLE_LOCAL_STATUSES = {"registration_pending", "registration_failed"}
-_UNCERTAIN_PROVIDER_STATUSES = {401, 402}
+_UNCERTAIN_PROVIDER_STATUSES = set(CDAS_AUTH_UNCERTAIN_STATUSES)
 
 
 def _provider_failure_is_safe_to_retry(status_code: int | None) -> bool:
-    """Return True only when the prior provider rejection is known to be final.
-
-    Authentication expiry and 5xx/network-style failures can leave the caller
-    unsure whether CDAS applied the write, so those cases must be reconciled
-    rather than replayed. Documented 4xx validation/rate-limit responses are
-    treated as definitive rejections and may be corrected and resubmitted.
-    """
+    """Return True only when the prior provider rejection is known to be final."""
     if status_code is None:
         return False
     if status_code in _UNCERTAIN_PROVIDER_STATUSES:
@@ -164,9 +159,6 @@ async def retry_failed_registration(
     state.effective_month = effective_month.strip()
     state.last_request_type = 1
     state.last_error = None
-    # Mark the state uncertain before the external write. If the worker dies
-    # after CDAS receives the request but before LoanHub stores the response,
-    # the persisted state safely forces reconciliation rather than replay.
     state.requires_reconciliation = True
     state.lifecycle_status = "registration_retry_pending"
     db.commit()
@@ -207,7 +199,14 @@ async def retry_failed_registration(
         db.commit()
         raise
 
-    _apply_provider_response(state, mandate, response, requested_lifecycle="registered")
+    complete = _apply_provider_response(
+        state,
+        mandate,
+        response,
+        requested_lifecycle="registered",
+        require_status=True,
+        require_deduction_id=True,
+    )
     _record_event(
         db,
         state=state,
@@ -217,9 +216,12 @@ async def retry_failed_registration(
         request_snapshot=request_payload,
         response_snapshot=response,
         provider_status_code=200,
-        success=True,
+        success=complete,
+        message=None if complete else state.last_error,
     )
     db.commit()
     db.refresh(state)
     db.refresh(mandate)
+    if not complete:
+        raise CdasLifecycleError(502, state.last_error or "CDAS returned an incomplete registration response")
     return serialize_official_mandate(state, mandate)
