@@ -33,14 +33,15 @@ from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
 
-# Official CDAS writes affect payroll deductions outside LoanHub. Keep them
-# narrower than read access and configuration access. Lending roles may manage
-# registration/review/approval/activation and active-deduction changes. Final
-# settlement can also be performed by finance/collections roles because it is a
-# repayment/recovery operation. Company owners/admins are already included in
-# these role groups.
+# These legacy role groups are intentionally retained as documentation of who
+# may perform writes through the loan-linked lifecycle router. Raw provider
+# write routes below are disabled so they cannot bypass the LoanHub loan link,
+# lifecycle ordering, reconciliation rules or append-only audit ledger.
 CDAS_DEDUCTION_WRITE_ROLES = set(LENDING_ROLES)
 CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
+RAW_WRITE_DISABLED_MESSAGE = (
+    "Direct CDAS provider writes are disabled. Use the loan-linked CDAS lifecycle endpoints so the operation is tied to a LoanHub loan, validated, reconciled and audited."
+)
 
 
 class CdasConfigurationUpdateRequest(BaseModel):
@@ -137,12 +138,12 @@ def _require_company_manager(context: TenantContext) -> None:
 
 def _require_deduction_writer(context: TenantContext) -> None:
     _require_company_member(context)
-    require_tenant_roles(context, CDAS_DEDUCTION_WRITE_ROLES)
+    raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
 
 
 def _require_settlement_writer(context: TenantContext) -> None:
     _require_company_member(context)
-    require_tenant_roles(context, CDAS_SETTLEMENT_ROLES)
+    raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
 
 
 def _company_client(db: Session, context: TenantContext) -> CdasClient:
@@ -341,7 +342,7 @@ async def run_cdas_deduction_action(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Register/update/review/approve/cancel using CDAS's documented RequestType contract."""
+    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
@@ -369,6 +370,7 @@ async def modify_active_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_deduction_writer(context)
     client = _company_client(db, context)
     try:
@@ -383,6 +385,7 @@ async def settle_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
+    """Disabled raw provider write; use the loan-linked lifecycle route."""
     _require_settlement_writer(context)
     client = _company_client(db, context)
     try:
