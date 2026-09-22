@@ -27,11 +27,11 @@ from services.cdas_deduction_lifecycle import (
     modify_linked_active_deduction,
     perform_linked_action,
     reconcile_linked_deduction,
-    register_loan_deduction,
     serialize_official_mandate,
     settle_linked_deduction,
 )
 from services.cdas_registration_retry import retry_failed_registration
+from services.cdas_registration_workflow import register_loan_deduction_safely
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official Loan Lifecycle"])
@@ -154,15 +154,15 @@ async def register_cdas_loan_deduction(
 ):
     """Register a CDAS deduction that is permanently tied to a LoanHub loan.
 
-    A local mandate is committed before the provider write. If CDAS returns an
-    uncertain authentication/server/network failure, LoanHub preserves the link
-    and requires explicit reconciliation instead of replaying the write.
+    LoanHub persists an uncertain-before-write marker before CDAS receives the
+    mutation. A process crash or uncertain provider failure therefore requires
+    explicit reconciliation instead of making the registration replayable.
     """
     company_id = _require_company(context)
     require_tenant_roles(context, CDAS_LIFECYCLE_ROLES)
     try:
         client = get_company_cdas_client(db, company_id)
-        return await register_loan_deduction(
+        return await register_loan_deduction_safely(
             db,
             client=client,
             company_id=company_id,
