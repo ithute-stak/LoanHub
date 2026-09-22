@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -39,6 +40,14 @@ def _is_active_status(value: Any) -> bool:
     return value in _ACTIVE_STATUS_VALUES
 
 
+def _stable_provider_rows(value: Any) -> list[dict[str, Any]]:
+    rows = [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+    return sorted(
+        rows,
+        key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":"), default=str),
+    )
+
+
 def _normalize_deduction(row: dict[str, Any], *, own: bool) -> dict[str, Any]:
     return {
         "deduction_id": _first(row, "DeductionID", "deductionId", "deduction_id"),
@@ -69,23 +78,23 @@ def normalize_official_cdas_snapshot(
 ) -> dict[str, Any]:
     """Convert the official CDAS response into a stable LoanHub archive shape.
 
-    The raw provider payload is kept under ``official_api`` for auditability,
-    while the top-level compatibility fields let the existing Analysis History
-    database and reports archive the snapshot without storing pasted screen text.
-    No booking approval is inferred here: an official refresh is a read action,
-    so ``decision`` remains REVIEW_REQUIRED until LoanHub's booking rules are run
-    deliberately by a separate workflow.
+    The provider payload is preserved under ``official_api`` for auditability,
+    while compatibility fields let the existing Analysis History database store
+    official responses without ever persisting pasted CDAS screen text.
 
-    The provider request timestamp is intentionally not included in the archived
-    analysis payload. Analysis History fingerprints represent material CDAS data,
-    so refreshing the same unchanged employee does not manufacture a new version.
-    The database record's own ``created_at`` remains the archive timestamp.
+    No booking approval is inferred here. An official refresh is a read action,
+    so ``decision`` remains REVIEW_REQUIRED until a separate controlled workflow
+    deliberately applies LoanHub booking rules.
+
+    Provider timestamps and response row ordering are excluded as version noise:
+    refreshing unchanged material data therefore reuses the existing history
+    version instead of manufacturing duplicates.
     """
 
     employee = raw_snapshot.get("employee") if isinstance(raw_snapshot.get("employee"), dict) else {}
-    all_rows = raw_snapshot.get("deductions") if isinstance(raw_snapshot.get("deductions"), list) else []
+    all_rows = _stable_provider_rows(raw_snapshot.get("deductions"))
     own_rows_value = raw_snapshot.get("own_deductions")
-    own_rows = own_rows_value if isinstance(own_rows_value, list) else []
+    own_rows = _stable_provider_rows(own_rows_value)
 
     employee_no = _text(_first(employee, "EmployeeNo", "employeeNo", "employee_no"))
     name = _text(_first(employee, "Name", "name"))
@@ -93,16 +102,8 @@ def normalize_official_cdas_snapshot(
     full_name = " ".join(value for value in (name, surname) if value) or None
     affordability = _amount(raw_snapshot.get("affordability"))
 
-    normalized_all = [
-        _normalize_deduction(row, own=False)
-        for row in all_rows
-        if isinstance(row, dict)
-    ]
-    normalized_own = [
-        _normalize_deduction(row, own=True)
-        for row in own_rows
-        if isinstance(row, dict)
-    ]
+    normalized_all = [_normalize_deduction(row, own=False) for row in all_rows]
+    normalized_own = [_normalize_deduction(row, own=True) for row in own_rows]
 
     total_monthly = sum(row["deduction_amount"] for row in normalized_all)
     active_monthly = sum(
@@ -185,7 +186,7 @@ def normalize_official_cdas_snapshot(
             "employee": employee,
             "affordability": affordability,
             "deductions": all_rows,
-            "own_deductions": own_rows_value,
+            "own_deductions": own_rows if isinstance(own_rows_value, list) else None,
             "own_deduction_status": own_deduction_status,
         },
     }
