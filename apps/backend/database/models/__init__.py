@@ -1,10 +1,11 @@
 from database.base import Base
+
 from database.models.audit_log import AuditLog
 from database.models.borrower import Borrower
-from database.models.borrower_contacts import BorrowerContact
+from database.models.borrower_contact import BorrowerContact
 from database.models.borrower_service_request import BorrowerServiceRequest
-from database.models.cash_transaction import CashTransaction
-from database.models.company_branch import CompanyBranch
+from database.models.cash import CashTransaction
+from database.models.branch import CompanyBranch
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company import LoanCompany
 from database.models.call_management import (
@@ -15,23 +16,15 @@ from database.models.call_management import (
     RecordingLegalHold,
     CallQualityReview,
 )
-from database.models.company_operating_system import (
-    InstitutionGovernanceProfile,
-    CompanyOperatingRecord,
-    CompanyAPIKey,
-    CompanyWebhookEndpoint,
-    CompanyWebsiteProfile,
-)
+from database.models.institution_governance import InstitutionGovernanceProfile
+from database.models.company_operating_system import CompanyOperatingRecord, CompanyAPIKey, CompanyWebhookEndpoint
+from database.models.company_website import CompanyWebsiteProfile
 from database.models.company_staff import CompanyStaff
-from database.models.company_client import (
-    CompanyBorrowerAccount,
-    CompanyClientCaseEntry,
-    CompanyClientIdentityChangeRequest,
-)
-from database.models.borrower_document import BorrowerDocument
-from database.models.loan_request_document import LoanRequestDocument
-from database.models.employee_profile import EmployeeProfile
-from database.models.performance import PerformanceGoal, PerformanceReview
+from database.models.company_client import CompanyBorrowerAccount
+from database.models.company_client_case import CompanyClientCaseEntry
+from database.models.company_client_identity_change import CompanyClientIdentityChangeRequest
+from database.models.documents import BorrowerDocument, LoanRequestDocument
+from database.models.employee import EmployeeProfile, PerformanceGoal, PerformanceReview
 from database.models.employer_group import EmployerGroup
 from database.models.hrms import (
     HRAsset,
@@ -49,19 +42,21 @@ from database.models.hrms import (
     HRTrainingProgram,
     HRVacancy,
 )
-from database.models.lender_access_request import LenderAccessRequest
+from database.models.lender_access import LenderAccessRequest
 from database.models.loan_offer import LoanOffer
 from database.models.loan_product import LoanProduct
 from database.models.loan_request import LoanRequest
 from database.models.legacy_loan_capture import LegacyLoanCapture
-from database.models.marketplace_unlock import MarketplaceUnlock
-from database.models.mobile_push_device import MobilePushDevice
-from database.models.notification import Broadcast, Notification
-from database.models.payment_transaction import PaymentTransaction
-from database.models.lelefa_paygate import LelefaPayGateWebhookEvent, LelefaPayGateConfiguration
-from database.models.credit_bureau import PlatformCreditBureauConfiguration
-from database.models.loan_operations import (
-    LoanEarlySettlement,
+from database.models.marketplace_access import MarketplaceUnlock
+from database.models.mobile_push import MobilePushDevice
+from database.models.notificat import Broadcast
+from database.models.notification import Notification
+from database.models.payment import PaymentTransaction
+from database.models.lelefa_paygate import LelefaPayGateWebhookEvent
+from database.models.lelefa_paygate_configuration import LelefaPayGateConfiguration
+from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
+from database.models.early_settlement import LoanEarlySettlement
+from database.models.loan_payment_operations import (
     AccountingExport,
     BorrowerReminderPreference,
     LoanRestructureRequest,
@@ -69,21 +64,25 @@ from database.models.loan_operations import (
     RepaymentReminder,
 )
 from database.models.person import Person
-from database.models.payment_allocation import PaymentAllocation
-from database.models.repayment_installment import RepaymentInstallment
+from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.subscription import CompanySubscription, SubscriptionPlan
-from database.models.system_error_log import SystemErrorLog
+from database.models.system_error import SystemErrorLog
 from database.models.user import RefreshToken, User
-from database.models.user_mfa import UserMFAEnrollment, UserSecurityState
-from database.models.approval_request import ApprovalRequest
-from database.models.payment_adjustment import PaymentAdjustment
-from database.models.webhook_outbox import WebhookOutboxEvent, WebhookDeliveryAttempt
-from database.models.accounting_period import AccountingPeriod
-from database.models.bank_statement_line import BankStatementLine
-from database.models.loan_guarantor import LoanGuarantor
-from database.models.loan_collateral import LoanCollateral
-from database.models.complaint_case import ComplaintCase
-from database.models.data_rights_request import DataRightsRequest
+from database.models.governance_control import (
+    AccountingPeriod,
+    ApprovalRequest,
+    BankStatementLine,
+    ComplaintCase,
+    DataRightsRequest,
+    LoanCollateral,
+    LoanGuarantor,
+    PaymentAdjustment,
+    UserMFAEnrollment,
+    UserSecurityState,
+    WebhookDeliveryAttempt,
+    WebhookOutboxEvent,
+)
+
 from database.models.file_management import ManagedFile
 from database.models.file_sharing import CompanySocialShareSettings, ExternalFileShare
 from database.models.chat import ChatConversation, ChatParticipant, ChatMessage, ChatMessageAttachment
@@ -220,4 +219,54 @@ from database.models.finance import (
     PlatformStaffProfile,
     CompanyAccountOpeningFeeConfiguration,
 )
-from database.models.maturity_recovery import MaturityRenewalPolicy, LoanRenewalCycle
+
+from database.models.origination import (
+    OriginationPolicy,
+    BorrowerKYCProfile,
+    BorrowerEmploymentProfile,
+    BorrowerIncomeSource,
+    BorrowerExpense,
+    BorrowerDebtObligation,
+    BorrowerDebtObligationEvent,
+    BorrowerBankAccount,
+    AffordabilityAssessment,
+    LoanContract,
+    OriginationIntegrationConfiguration,
+    LoanTopUpSettlement,
+)
+
+from database.models.treasury import (
+    TreasurySettings,
+    ExpenseCategory,
+    BranchDailyLedger,
+    TreasuryEntry,
+    BranchFundingTransfer,
+    BranchDailySubmission,
+    BranchOpeningSource,
+)
+
+from database.models.lending_operations import (
+    CDASPayrollProfile,
+    CDASDeductionMandate,
+    CDASRemittanceBatch,
+    CDASRemittanceLine,
+    ReconciliationRun,
+    ReconciliationException,
+    CreditBureauEnquiry,
+    ComplianceCase,
+    ComplianceScreening,
+    CollectionCase,
+    CollectionActivity,
+    RegulatorySubmission,
+    CreditDecisionPolicy,
+    CreditDecision,
+    WorkflowTemplate,
+    WorkflowInstance,
+)
+
+from database.models.maturity_recovery import (
+    MaturityRenewalPolicy,
+    LoanRenewalCycle,
+)
+# Maps recovery coordination columns onto the pre-existing CollectionCase model.
+from database.models import maturity_model_extensions as _maturity_model_extensions  # noqa: F401,E402
