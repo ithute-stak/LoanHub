@@ -1,7 +1,7 @@
 """Official CDAS mandate lifecycle
 
 Revision ID: c6u0v2w4x247
-Revises: z9n3p5q7r800
+Revises: g7v1w3x5y030
 Create Date: 2026-09-22
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "c6u0v2w4x247"
-down_revision: Union[str, Sequence[str], None] = "z9n3p5q7r800"
+down_revision: Union[str, Sequence[str], None] = "g7v1w3x5y030"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
