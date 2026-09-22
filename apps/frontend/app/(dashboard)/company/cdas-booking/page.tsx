@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Database,
+  Printer,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -117,6 +118,29 @@ function typeLabel(value: number | string | null) {
   return DEDUCTION_TYPE[key] || key;
 }
 
+function safeReportFilename(value?: string | null) {
+  const base = (value || "CDAS-client")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  return `CDAS-Analysis-${base || "client"}.pdf`;
+}
+
+function openPdfForPrint(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const preview = window.open(url, "_blank");
+  if (!preview) {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } else {
+    preview.opener = null;
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function DeductionTable({ rows, title }: { rows: CdasOfficialDeduction[]; title: string }) {
   return (
     <Card>
@@ -173,6 +197,7 @@ export default function CdasBookingPage() {
   const [items, setItems] = useState<CdasBookingOpportunity[]>([]);
   const [analyses, setAnalyses] = useState<CdasAnalysisRecord[]>([]);
   const [localLoading, setLocalLoading] = useState(false);
+  const [reportingId, setReportingId] = useState<string | null>(null);
 
   const refreshLoanHub = useCallback(async () => {
     setLocalLoading(true);
@@ -235,6 +260,22 @@ export default function CdasBookingPage() {
     }
   }
 
+  async function printArchivedReport(record: CdasAnalysisRecord) {
+    setReportingId(record.id);
+    setError("");
+    try {
+      const report = await cdasBookingApi.downloadArchivedAnalysisReport(record.id);
+      openPdfForPrint(
+        report.blob,
+        report.filename || safeReportFilename(record.client_name || record.client_reference || record.employee_no),
+      );
+    } catch (requestError: any) {
+      setError(errorMessage(requestError, "Could not prepare the archived CDAS full report."));
+    } finally {
+      setReportingId(null);
+    }
+  }
+
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "official", label: "Official CDAS" },
     { id: "history", label: "Analysis History", count: analyses.length },
@@ -250,9 +291,9 @@ export default function CdasBookingPage() {
           <div className="flex items-start gap-3">
             <div className="rounded-lg border bg-muted/40 p-2"><Database className="h-5 w-5" /></div>
             <div>
-              <CardTitle>CDAS Analysis History</CardTitle>
+              <CardTitle>CDAS Analysis Database</CardTitle>
               <CardDescription>
-                Official API refreshes are archived as immutable structured snapshots. Refreshing unchanged CDAS data reuses the existing version; materially changed data creates a new version.
+                Every distinct structured CDAS analysis is archived as an immutable company snapshot. Official API refreshes that return unchanged material data reuse the existing version; changed CDAS data creates a new version. Raw pasted CDAS text is never stored.
               </CardDescription>
             </div>
           </div>
@@ -272,6 +313,7 @@ export default function CdasBookingPage() {
                     <TableHead>Active deductions</TableHead>
                     <TableHead>Total deductions</TableHead>
                     <TableHead>State</TableHead>
+                    <TableHead className="text-right">Full report</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,6 +332,17 @@ export default function CdasBookingPage() {
                         <Badge variant={record.decision === "REVIEW_REQUIRED" ? "outline" : "secondary"}>
                           {record.decision === "REVIEW_REQUIRED" ? "Read snapshot" : record.decision.replaceAll("_", " ")}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={reportingId === record.id}
+                          onClick={() => void printArchivedReport(record)}
+                        >
+                          <Printer className="mr-2 h-4 w-4" />
+                          {reportingId === record.id ? "Preparing..." : "Print full report"}
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
