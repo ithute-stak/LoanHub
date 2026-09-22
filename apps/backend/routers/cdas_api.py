@@ -6,17 +6,39 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.access_control import TenantContext, get_tenant_context
+from core.access_control import (
+    COMPANY_MANAGEMENT_ROLES,
+    TenantContext,
+    get_tenant_context,
+    require_tenant_roles,
+)
 from database.session import get_db
-from integrations.cdas import CdasError, cdas_client
+from integrations.cdas import CdasClient, CdasError
 from services.cdas_analysis_history import (
     save_or_get_analysis_record,
     serialize_analysis_record,
+)
+from services.cdas_config_service import (
+    configuration_summary,
+    get_company_cdas_client,
+    get_configuration,
+    test_company_configuration,
+    update_configuration,
 )
 from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
+
+
+class CdasConfigurationUpdateRequest(BaseModel):
+    environment: Literal["test", "live"] = "test"
+    enabled: bool = False
+    base_url: str = Field(min_length=8, max_length=500)
+    username: str = Field(min_length=1, max_length=200)
+    password: str | None = Field(default=None, max_length=500)
+    clear_password: bool = False
+    timeout_seconds: float = Field(default=20.0, ge=1, le=120)
 
 
 class CdasRefreshRequest(BaseModel):
@@ -96,6 +118,20 @@ def _require_company_member(context: TenantContext) -> None:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
 
 
+def _require_company_manager(context: TenantContext) -> None:
+    _require_company_member(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+
+
+def _company_client(db: Session, context: TenantContext) -> CdasClient:
+    _require_company_member(context)
+    assert context.company_id is not None
+    try:
+        return get_company_cdas_client(db, context.company_id)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+
+
 def _report_preparer(context: TenantContext) -> tuple[str, str]:
     person = getattr(context.user, "person", None)
     prepared_by = (
@@ -118,15 +154,69 @@ def _cdas_http_error(exc: CdasError) -> HTTPException:
     )
 
 
+@router.get("/configuration")
+def get_cdas_configuration(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return this company's sanitized CDAS configuration; never return its password."""
+    _require_company_member(context)
+    assert context.company_id is not None
+    return configuration_summary(get_configuration(db, context.company_id))
+
+
+@router.put("/configuration")
+def put_cdas_configuration(
+    payload: CdasConfigurationUpdateRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Create or update company-owned Test/Live CDAS credentials."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    try:
+        row = update_configuration(
+            db,
+            company_id=context.company_id,
+            configured_by_user_id=context.user.id,
+            environment=payload.environment,
+            enabled=payload.enabled,
+            base_url=payload.base_url,
+            username=payload.username,
+            password=payload.password,
+            clear_password=payload.clear_password,
+            timeout_seconds=payload.timeout_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return configuration_summary(row)
+
+
+@router.post("/configuration/test")
+async def test_cdas_configuration(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Authenticate using the stored company credential without exposing a CDAS token."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    try:
+        configuration = await test_company_configuration(db, company_id=context.company_id)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    return {"ok": True, "configuration": configuration}
+
+
 @router.get("/employees/{employee_no}")
 async def get_cdas_employee(
     employee_no: str,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    """Read the employee identity directly from the official CDAS API."""
-    _require_company_member(context)
+    """Read the employee identity using this company's official CDAS account."""
+    client = _company_client(db, context)
     try:
-        return await cdas_client.employee_details(employee_no.strip())
+        return await client.employee_details(employee_no.strip())
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -135,11 +225,12 @@ async def get_cdas_employee(
 async def get_cdas_affordability(
     employee_no: str,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
     """Read current CDAS affordability. No value is calculated locally."""
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        amount = await cdas_client.affordability(employee_no.strip())
+        amount = await client.affordability(employee_no.strip())
         return {"employee_no": employee_no.strip(), "affordability": amount, "source": "CDAS_API"}
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
@@ -151,9 +242,10 @@ async def get_cdas_deductions(
     own_only: bool = Query(default=False),
     deduction_status: int | None = Query(default=None, ge=1, le=10),
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
     """Read all deductions or the connected company's deductions for a status."""
-    _require_company_member(context)
+    client = _company_client(db, context)
     employee_no = employee_no.strip()
     try:
         if own_only:
@@ -162,9 +254,9 @@ async def get_cdas_deductions(
                     status_code=422,
                     detail="deduction_status is required when own_only=true",
                 )
-            items = await cdas_client.own_deductions(employee_no, deduction_status)
+            items = await client.own_deductions(employee_no, deduction_status)
         else:
-            items = await cdas_client.all_deductions(employee_no)
+            items = await client.all_deductions(employee_no)
         return {"employee_no": employee_no, "items": items, "total": len(items), "source": "CDAS_API"}
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
@@ -183,10 +275,11 @@ async def refresh_cdas_employee_snapshot(
     its existing Analysis History record instead of creating a timestamp-only
     duplicate.
     """
-    _require_company_member(context)
+    client = _company_client(db, context)
+    assert context.company_id is not None
     employee_no = payload.employee_no.strip()
     try:
-        raw_snapshot = await cdas_client.refresh_employee_snapshot(
+        raw_snapshot = await client.refresh_employee_snapshot(
             employee_no,
             own_deduction_status=payload.own_deduction_status,
         )
@@ -224,11 +317,12 @@ async def refresh_cdas_employee_snapshot(
 async def run_cdas_deduction_action(
     payload: CdasDeductionActionRequest,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
     """Register/update/review/approve/cancel using CDAS's documented RequestType contract."""
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        return await cdas_client.add_update_deduction(payload.to_cdas_payload())
+        return await client.add_update_deduction(payload.to_cdas_payload())
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -237,10 +331,11 @@ async def run_cdas_deduction_action(
 async def get_active_and_approved_cdas_deductions(
     employee_no: str,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        return await cdas_client.active_and_approved_deductions(employee_no.strip())
+        return await client.active_and_approved_deductions(employee_no.strip())
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -249,10 +344,11 @@ async def get_active_and_approved_cdas_deductions(
 async def modify_active_cdas_deduction(
     payload: CdasModifyActiveDeductionRequest,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        return await cdas_client.modify_active_deduction(payload.to_cdas_payload())
+        return await client.modify_active_deduction(payload.to_cdas_payload())
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -261,10 +357,11 @@ async def modify_active_cdas_deduction(
 async def settle_cdas_deduction(
     payload: CdasSettleDeductionRequest,
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        return await cdas_client.settle_deduction(payload.to_cdas_payload())
+        return await client.settle_deduction(payload.to_cdas_payload())
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -275,10 +372,11 @@ async def get_cdas_document(
     month: int = Query(ge=1, le=12),
     document_type: int = Query(ge=1, le=2),
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
-    _require_company_member(context)
+    client = _company_client(db, context)
     try:
-        return await cdas_client.get_document(
+        return await client.get_document(
             year=year,
             month=month,
             document_type=document_type,
