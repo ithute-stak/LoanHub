@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from database.models.cdas_official import CdasOfficialMandateState
+from database.models.enums import LoanStatus
 from integrations.cdas import CdasError
 from routers.cdas_lifecycle import (
     CdasLinkedActionRequest,
@@ -15,8 +18,11 @@ from routers.cdas_lifecycle import (
 )
 from services.cdas_deduction_lifecycle import (
     CdasLifecycleError,
+    _apply_provider_response,
     _lifecycle_from_code,
     _mark_uncertain_failure,
+    _require_maker_checker,
+    _validate_settlement_against_loan,
 )
 
 
@@ -125,7 +131,7 @@ def test_documented_duplicate_status_codes_are_not_overinterpreted():
     assert _lifecycle_from_code(8) == "expired_or_auto_settled"
 
 
-@pytest.mark.parametrize("status", [401, 402, 500, 503])
+@pytest.mark.parametrize("status", [401, 402, 406, 417, 419, 500, 503])
 def test_uncertain_write_failures_require_reconciliation(status: int):
     state = CdasOfficialMandateState(lifecycle_status="registered")
     _mark_uncertain_failure(state, CdasError(status, "provider failure"))
@@ -138,3 +144,94 @@ def test_documented_validation_failure_does_not_force_reconciliation():
     _mark_uncertain_failure(state, CdasError(499, "affordability exceeded"))
     assert state.requires_reconciliation is False
     assert state.lifecycle_status == "registration_pending"
+
+
+def _mandate_stub():
+    return SimpleNamespace(
+        status="registration_submission_pending",
+        activated_at=None,
+        completed_at=None,
+        external_reference=None,
+    )
+
+
+def test_add_update_success_without_documented_status_is_reconciliation_required():
+    state = CdasOfficialMandateState(lifecycle_status="registration_submission_pending")
+    complete = _apply_provider_response(
+        state,
+        _mandate_stub(),
+        {"DeductionID": 123},
+        requested_lifecycle="registered",
+        require_status=True,
+        require_deduction_id=True,
+    )
+    assert complete is False
+    assert state.requires_reconciliation is True
+    assert state.lifecycle_status == "reconciliation_required"
+
+
+def test_registration_success_requires_deduction_id_and_status():
+    state = CdasOfficialMandateState(lifecycle_status="registration_submission_pending")
+    mandate = _mandate_stub()
+    complete = _apply_provider_response(
+        state,
+        mandate,
+        {"DeductionID": 123, "DeductionStatus": 1, "ReferenceNo": "REF-1"},
+        requested_lifecycle="registered",
+        require_status=True,
+        require_deduction_id=True,
+    )
+    assert complete is True
+    assert state.deduction_id == 123
+    assert state.lifecycle_status == "registered"
+    assert state.requires_reconciliation is False
+    assert mandate.status == "registered"
+
+
+class _EventQuery:
+    def __init__(self, event):
+        self.event = event
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def order_by(self, *_args, **_kwargs):
+        return self
+
+    def first(self):
+        return self.event
+
+
+def test_registration_maker_cannot_review_or_approve_same_mandate():
+    maker = uuid4()
+    db = SimpleNamespace(query=lambda *_models: _EventQuery(SimpleNamespace(actor_user_id=maker)))
+    for request_type in (3, 4, 5):
+        with pytest.raises(CdasLifecycleError) as raised:
+            _require_maker_checker(db, state_id=uuid4(), actor_user_id=maker, request_type=request_type)
+        assert raised.value.status_code == 409
+
+
+def test_different_checker_can_review_and_approve():
+    maker = uuid4()
+    checker = uuid4()
+    db = SimpleNamespace(query=lambda *_models: _EventQuery(SimpleNamespace(actor_user_id=maker)))
+    _require_maker_checker(db, state_id=uuid4(), actor_user_id=checker, request_type=3)
+    _require_maker_checker(db, state_id=uuid4(), actor_user_id=checker, request_type=4)
+
+
+def test_paid_or_consolidated_settlement_requires_loanhub_debt_to_be_closed():
+    active_loan = SimpleNamespace(status=LoanStatus.ACTIVE, balance=Decimal("100.00"))
+    for reason in (2, 3):
+        with pytest.raises(CdasLifecycleError) as raised:
+            _validate_settlement_against_loan(active_loan, reason)
+        assert raised.value.status_code == 409
+
+    completed = SimpleNamespace(status=LoanStatus.COMPLETED, balance=Decimal("0.00"))
+    _validate_settlement_against_loan(completed, 2)
+    _validate_settlement_against_loan(completed, 3)
+
+
+def test_policy_expiry_or_deceased_settlement_does_not_require_zero_balance():
+    active_loan = SimpleNamespace(status=LoanStatus.ACTIVE, balance=Decimal("100.00"))
+    _validate_settlement_against_loan(active_loan, 1)
+    _validate_settlement_against_loan(active_loan, 4)
