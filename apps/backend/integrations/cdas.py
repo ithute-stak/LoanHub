@@ -104,8 +104,10 @@ class CdasClient:
 
     # 406 (invalid token format) and 419 (session inactive) are documented by
     # CDAS v1.5. 401/402 remain accepted for defensive compatibility. A missing
-    # token (417) is not replayed because LoanHub always supplies a token header;
-    # receiving it indicates a request/proxy defect rather than stale auth.
+    # token (417) is deliberately not a generic auth retry: the live Test API has
+    # shown that employee-details may reject the documented Authorization header,
+    # so only that read-only operation is permitted an explicit Token-header
+    # compatibility retry.
     _AUTH_RETRY_STATUSES = {401, 402, 406, 419}
 
     def __init__(
@@ -246,27 +248,13 @@ class CdasClient:
         *,
         body: dict[str, Any],
         token_header: Literal["Authorization", "Token"] = "Token",
+        fallback_token_header: Literal["Authorization", "Token"] | None = None,
         retry_auth: bool = True,
     ) -> Any:
         token = await self._login()
-        headers = {token_header: token}
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=self.timeout_seconds,
-            transport=self.transport,
-        ) as client:
-            try:
-                self._reserve_request()
-                response = await client.post(path, headers=headers, json=body)
-            except httpx.RequestError as exc:
-                raise CdasError(
-                    status_code=503,
-                    message="CDAS service is unavailable",
-                ) from exc
+        active_token_header = token_header
 
-        payload = self._decode_response(response)
-        if response.status_code in self._AUTH_RETRY_STATUSES and retry_auth:
-            token = await self._login(force=True)
+        async def send(current_token: str, header_name: Literal["Authorization", "Token"]) -> httpx.Response:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout_seconds,
@@ -274,9 +262,9 @@ class CdasClient:
             ) as client:
                 try:
                     self._reserve_request()
-                    response = await client.post(
+                    return await client.post(
                         path,
-                        headers={token_header: token},
+                        headers={header_name: current_token},
                         json=body,
                     )
                 except httpx.RequestError as exc:
@@ -284,6 +272,27 @@ class CdasClient:
                         status_code=503,
                         message="CDAS service is unavailable",
                     ) from exc
+
+        response = await send(token, active_token_header)
+        payload = self._decode_response(response)
+
+        # CDAS v1.5 documents Authorization for Employee Details. The real Test
+        # service has also been observed returning 417 (missing token) when that
+        # documented header is used. For an explicitly opted-in read only, retry
+        # once with Token using the same authenticated session. This is not a
+        # generic 417 retry and is never enabled for state-changing operations.
+        if (
+            response.status_code == 417
+            and fallback_token_header is not None
+            and fallback_token_header != active_token_header
+        ):
+            active_token_header = fallback_token_header
+            response = await send(token, active_token_header)
+            payload = self._decode_response(response)
+
+        if response.status_code in self._AUTH_RETRY_STATUSES and retry_auth:
+            token = await self._login(force=True)
+            response = await send(token, active_token_header)
             payload = self._decode_response(response)
 
         if response.status_code >= 400:
@@ -298,6 +307,7 @@ class CdasClient:
             self.EMPLOYEE_DETAILS_PATH,
             body={"EmployeeNo": employee_no},
             token_header="Authorization",
+            fallback_token_header="Token",
         )
         if not isinstance(payload, dict):
             raise CdasError(502, "CDAS employee details returned an invalid response", payload)
