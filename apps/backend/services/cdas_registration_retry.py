@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficialMandateState
+from database.models.client_loan_company import ClientCompanyLoan
 from integrations.cdas import CdasClient, CdasError
 from services.cdas_deduction_lifecycle import (
     CdasLifecycleError,
@@ -16,6 +17,11 @@ from services.cdas_deduction_lifecycle import (
     _record_event,
     get_official_mandate,
     serialize_official_mandate,
+)
+from services.cdas_registration_workflow import (
+    _money,
+    _validate_employee_identity,
+    _validate_loan_terms,
 )
 
 
@@ -100,6 +106,35 @@ async def retry_failed_registration(
     if total_installment <= 0:
         raise CdasLifecycleError(422, "A CDAS loan deduction requires at least one installment")
 
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.id == mandate.loan_id,
+            ClientCompanyLoan.company_id == company_id,
+        )
+        .one_or_none()
+    )
+    if loan is None:
+        raise CdasLifecycleError(404, "The linked LoanHub loan was not found")
+
+    _validate_loan_terms(
+        loan,
+        branch_id=None,
+        deduction_amount=deduction_amount,
+        principal_amount=principal_amount,
+        total_installment=total_installment,
+        effective_month=effective_month,
+    )
+
+    employee_details = await client.employee_details(mandate.employee_number)
+    _validate_employee_identity(loan, mandate.employee_number, employee_details)
+    live_affordability = Decimal(str(await client.affordability(mandate.employee_number)))
+    if _money(deduction_amount) > _money(live_affordability):
+        raise CdasLifecycleError(
+            422,
+            "The LoanHub installment exceeds the current CDAS affordability for this employee",
+        )
+
     cleaned_reference = reference_no.strip()
     duplicate_reference = (
         db.query(CdasOfficialMandateState)
@@ -115,17 +150,17 @@ async def retry_failed_registration(
         raise CdasLifecycleError(409, "That CDAS reference number is already linked to another mandate")
 
     start_date = _effective_month_start(effective_month)
-    mandate.monthly_deduction = deduction_amount
+    mandate.monthly_deduction = _money(loan.installment_amount)
     mandate.start_date = start_date
-    mandate.expected_installments = total_installment
-    mandate.total_expected = deduction_amount * Decimal(total_installment)
+    mandate.expected_installments = int(loan.repayment_period)
+    mandate.total_expected = _money(loan.installment_amount) * Decimal(int(loan.repayment_period))
     mandate.external_reference = cleaned_reference
     mandate.status = "registration_retry_pending"
 
     state.item_code = item_code.strip()
     state.reference_no = cleaned_reference
     state.loan_policy = loan_policy
-    state.principal_amount = principal_amount
+    state.principal_amount = _money(loan.principal_amount)
     state.effective_month = effective_month.strip()
     state.last_request_type = 1
     state.last_error = None
