@@ -97,6 +97,7 @@ from database.models.workspace_document import (
 )
 from database.models.cdas_official import (
     CdasApiRequestBudget,
+    CdasDailyIntelligenceRun,
     CdasOfficialMandateEvent,
     CdasOfficialMandateState,
 )
@@ -207,6 +208,7 @@ __all__ = [
     "CdasOfficialMandateState",
     "CdasOfficialMandateEvent",
     "CdasApiRequestBudget",
+    "CdasDailyIntelligenceRun",
 ]
 
 from database.models.professional_lending import DirectLoanApplication, CreditBlacklist, Suggestion, OfferWallPost, OfferWallInterest, PaymentReceipt, PrintAgent, PrintJob
