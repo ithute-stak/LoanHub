@@ -10,6 +10,7 @@ import type {
   CdasOfficialMandateState,
   CdasOfficialRefreshRequest,
   CdasOfficialRefreshResponse,
+  CdasRegistrationPlan,
   CdasRegistrationRetryRequest,
 } from "@/types/cdasOfficial";
 
@@ -23,6 +24,9 @@ export const cdasOfficialApi = {
     payload: CdasBorrowerIntelligenceRequest,
   ): Promise<CdasBorrowerIntelligenceResponse> =>
     (await api.post<CdasBorrowerIntelligenceResponse>("/cdas/intelligence", payload)).data,
+
+  getRegistrationPlan: async (loanId: string): Promise<CdasRegistrationPlan> =>
+    (await api.get<CdasRegistrationPlan>(`/cdas/loans/${loanId}/registration-plan`)).data,
 
   registerLoanDeduction: async (
     payload: CdasLoanDeductionRegistrationRequest,
