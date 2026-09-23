@@ -25,6 +25,7 @@ from services.cdas_monthly_automation import (
     get_monthly_automation_configuration,
     update_monthly_automation_configuration,
 )
+from services.cdas_sub1000_auto_modification import AUTO_MODIFY_TARGET
 
 
 router = APIRouter(prefix="/cdas/monthly-automation", tags=["CDAS Monthly Automation"])
@@ -53,6 +54,8 @@ def _configuration_payload(db: Session, context: TenantContext) -> dict[str, Any
         "window_end_day": WINDOW_END_DAY,
         "scheduled_time": f"{WINDOW_HOUR:02d}:00",
         "authorization_basis": AUTOMATION_AUTHORIZATION_BASIS,
+        "auto_modify_below": float(AUTO_MODIFY_TARGET),
+        "auto_modify_target": float(AUTO_MODIFY_TARGET),
         "cdas_integration": configuration_summary(row),
     }
 
@@ -114,6 +117,7 @@ def get_automation_status(
     totals = {
         "runs": len(snapshots),
         "activated": sum(int(item.get("activated") or 0) for item in snapshots),
+        "modified": sum(int(item.get("modified") or 0) for item in snapshots),
         "provider_writes": sum(int(item.get("provider_writes") or 0) for item in snapshots),
         "failed": sum(1 for item in snapshots if item.get("last_check_status") in {"failed", "degraded"}),
     }
