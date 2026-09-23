@@ -114,19 +114,35 @@ def reconciliation_status_order(lifecycle_status: str | None, cdas_status: int |
     return tuple(values)
 
 
-def automatic_settlement_reason(*, outstanding_balance: object, has_consolidation_successor: bool) -> int | None:
-    """Return a safe automatic settlement reason or None.
+def automatic_settlement_reason(
+    *,
+    outstanding_balance: object,
+    amount_paid: object,
+    total_repayable: object,
+    has_consolidation_successor: bool,
+) -> int | None:
+    """Return an evidence-backed automatic settlement reason or None.
 
-    Automatic settlement is intentionally stricter than the manual endpoint: the
+    Automatic settlement is deliberately stricter than the manual endpoint. The
     LoanHub balance must already be zero. A disbursed top-up that explicitly
-    settled this loan is treated as consolidation; otherwise the debt is treated
-    as paid by the employee. Policy-expiry and deceased-employee reasons remain
+    settled this loan proves consolidation. Otherwise LoanHub only uses CDAS
+    reason 2 (Paid By Employee) when the posted amount paid covers the loan's
+    total repayable amount. A zero balance caused by a write-off, waiver or other
+    adjustment therefore stays for human review instead of being mislabelled as
+    an employee payment. Policy-expiry and deceased-employee reasons also remain
     outside automatic processing because they require different evidence.
     """
 
     if _money(outstanding_balance) > Decimal("0.00"):
         return None
-    return SETTLEMENT_REASON_CONSOLIDATION if has_consolidation_successor else SETTLEMENT_REASON_PAID_BY_EMPLOYEE
+    if has_consolidation_successor:
+        return SETTLEMENT_REASON_CONSOLIDATION
+
+    paid = _money(amount_paid)
+    repayable = _money(total_repayable)
+    if repayable > Decimal("0.00") and paid >= repayable - _MONEY_QUANTUM:
+        return SETTLEMENT_REASON_PAID_BY_EMPLOYEE
+    return None
 
 
 def _marker_reference(operation: str, state_id: UUID, run_date: date) -> str:
@@ -605,11 +621,16 @@ async def process_company_automatic_settlements(
             )
             reason = automatic_settlement_reason(
                 outstanding_balance=loan.balance,
+                amount_paid=loan.amount_paid,
+                total_repayable=loan.total_repayable,
                 has_consolidation_successor=consolidation,
             )
             if reason is None:
                 summary["skipped"] += 1
-                snapshot["recommended_action"] = "NO_AUTOMATIC_SETTLEMENT"
+                snapshot["outstanding_balance"] = float(_money(loan.balance))
+                snapshot["amount_paid"] = float(_money(loan.amount_paid))
+                snapshot["total_repayable"] = float(_money(loan.total_repayable))
+                snapshot["recommended_action"] = "ZERO_BALANCE_REQUIRES_MANUAL_SETTLEMENT_REVIEW"
                 _finish_marker(db, marker, snapshot)
                 continue
 
@@ -635,6 +656,8 @@ async def process_company_automatic_settlements(
                     "Automation": True,
                     "AuthorizationBasis": AUTOMATION_AUTHORIZATION_BASIS,
                     "OutstandingBalanceAtDecision": float(_money(loan.balance)),
+                    "AmountPaidAtDecision": float(_money(loan.amount_paid)),
+                    "TotalRepayableAtDecision": float(_money(loan.total_repayable)),
                     "SettlementReason": reason,
                     "EffectiveDate": effective_date,
                     "ConsolidationSuccessor": consolidation,
@@ -665,6 +688,8 @@ async def process_company_automatic_settlements(
             snapshot["settlement_reason_label"] = reason_label
             snapshot["effective_date"] = effective_date
             snapshot["outstanding_balance"] = float(_money(loan.balance))
+            snapshot["amount_paid"] = float(_money(loan.amount_paid))
+            snapshot["total_repayable"] = float(_money(loan.total_repayable))
             snapshot["recommended_action"] = "AUTO_SETTLED"
         except CdasError as exc:
             summary["failed"] += 1
