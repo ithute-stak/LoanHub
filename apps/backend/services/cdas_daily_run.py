@@ -14,6 +14,7 @@ from database.models.lending_operations import CDASPayrollProfile
 
 
 _ELIGIBLE_LOAN_STATUSES = {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}
+_STALE_RUNNING_SECONDS = 60 * 60
 
 
 def _utcnow() -> datetime:
@@ -170,9 +171,16 @@ def serialize_daily_intelligence_run(
         healthy = True
         message = "The latest scheduled CDAS monitoring run completed normally."
     elif status == "running":
-        health = "running"
-        healthy = True
-        message = "The scheduled CDAS monitoring run is currently in progress."
+        started_at = run.started_at
+        stale = bool(started_at and (_utcnow() - started_at).total_seconds() > _STALE_RUNNING_SECONDS)
+        if stale:
+            health = "needs_intervention"
+            healthy = False
+            message = "The latest CDAS monitoring run has remained in progress for over one hour. Review the maintenance worker before any manual retry."
+        else:
+            health = "running"
+            healthy = True
+            message = "The scheduled CDAS monitoring run is currently in progress."
     elif status == "completed_with_issues":
         health = "needs_review"
         healthy = False
