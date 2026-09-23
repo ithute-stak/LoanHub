@@ -58,7 +58,39 @@ export type CdasDashboardKpis = {
   methodology: string;
 };
 
+export type CdasMonthlyAutomationStatus = {
+  enabled: boolean;
+  configured: boolean;
+  item_code: string;
+  loan_policy: number;
+  timezone: string;
+  window_start_day: number;
+  window_end_day: number;
+  scheduled_time: string;
+  authorization_basis: string;
+  legacy_daily_0345_enabled: boolean;
+  latest: Record<string, unknown> | null;
+  latest_run: {
+    date: string | null;
+    checked: number;
+    positive_affordability: number;
+    activated: number;
+    no_capacity: number;
+    failed: number;
+    provider_writes: number;
+    remaining_affordability: number;
+  };
+  totals: {
+    checks: number;
+    activated: number;
+    provider_writes: number;
+    failed: number;
+  };
+};
+
 export const cdasDashboardApi = {
   getKpis: async (): Promise<CdasDashboardKpis> =>
     (await api.get<CdasDashboardKpis>("/cdas/daily-intelligence/dashboard-kpis")).data,
+  getMonthlyAutomationStatus: async (): Promise<CdasMonthlyAutomationStatus> =>
+    (await api.get<CdasMonthlyAutomationStatus>("/cdas/monthly-automation/status")).data,
 };
