@@ -54,6 +54,19 @@ def _next_month(value: date) -> str:
     return f"{year:04d}-{month:02d}"
 
 
+def build_registration_draft_math(*, outstanding: object, affordability: object) -> tuple[Decimal, int]:
+    """Return the safe monthly deduction and term for an existing LoanHub balance."""
+    balance = max(_money(outstanding), Decimal("0.00"))
+    available = max(_money(affordability), Decimal("0.00"))
+    deduction = min(balance, available)
+    if balance <= 0 or deduction <= 0:
+        raise ValueError("A positive outstanding balance and affordability are required")
+    installments = int((balance / deduction).to_integral_value(rounding=ROUND_CEILING))
+    if installments > 600:
+        raise ValueError("Calculated term exceeds the 600-installment safety limit")
+    return deduction, installments
+
+
 @router.get("/status")
 def get_daily_cdas_intelligence_status(
     days: int = Query(default=7, ge=1, le=31),
@@ -209,15 +222,16 @@ def get_registration_draft(
     if context.branch_id and loan.branch_id != context.branch_id:
         raise HTTPException(status_code=403, detail="The selected loan is outside the active branch")
 
+    try:
+        deduction, installments = build_registration_draft_math(
+            outstanding=loan.balance,
+            affordability=snapshot.get("available_affordability"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     affordability = max(_money(snapshot.get("available_affordability")), Decimal("0.00"))
     outstanding = max(_money(loan.balance), Decimal("0.00"))
-    deduction = min(affordability, outstanding)
-    if deduction <= 0 or outstanding <= 0:
-        raise HTTPException(status_code=409, detail="No positive same-day CDAS collection capacity is available")
-
-    installments = int((outstanding / deduction).to_integral_value(rounding=ROUND_CEILING))
-    if installments > 600:
-        raise HTTPException(status_code=409, detail="The calculated CDAS collection term exceeds the 600-installment safety limit")
 
     return {
         "opportunity_id": str(opportunity.id),
