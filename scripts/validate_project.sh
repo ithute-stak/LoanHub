@@ -15,6 +15,8 @@ trap cleanup EXIT
 cd "$ROOT_DIR/apps/backend"
 "$PYTHON_BIN" -m compileall -q .
 "$PYTHON_BIN" -m pytest -q \
+  tests/test_alembic_single_head.py \
+  tests/test_alembic_history_reconciliation.py \
   tests/test_external_debt_tracking.py \
   tests/test_financial_and_tenant_invariants.py \
   tests/test_global_borrower_lookup_frontend.py \
@@ -34,13 +36,19 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_cdas_daily_intelligence.py \
   tests/test_cdas_loan_lifecycle.py \
   tests/test_cdas_production_hardening.py
-"$PYTHON_BIN" -m alembic heads
+
+mapfile -t alembic_heads < <("$PYTHON_BIN" -m alembic heads | awk 'NF {print $1}')
+if [[ "${#alembic_heads[@]}" -ne 1 ]]; then
+  echo "[LoanHub] Migration verification failed: expected exactly one Alembic head, found ${#alembic_heads[@]}: ${alembic_heads[*]}" >&2
+  exit 1
+fi
+printf '[LoanHub] Single Alembic head: %s\n' "${alembic_heads[0]}"
 
 if [[ "${LOANHUB_VALIDATE_LIVE_MIGRATIONS:-false}" == "true" ]]; then
   echo "[LoanHub] Validating full Alembic upgrade against disposable PostgreSQL"
   "$PYTHON_BIN" -m alembic upgrade head
   current_revision="$("$PYTHON_BIN" -m alembic current | awk 'NF {print $1; exit}')"
-  head_revision="$("$PYTHON_BIN" -m alembic heads | awk 'NF {print $1; exit}')"
+  head_revision="${alembic_heads[0]}"
   if [[ "$current_revision" != "$head_revision" ]]; then
     echo "[LoanHub] Migration verification failed: current=$current_revision head=$head_revision" >&2
     exit 1
