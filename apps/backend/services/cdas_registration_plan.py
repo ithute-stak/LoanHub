@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus, RepaymentType
@@ -26,7 +28,7 @@ def _money(value: object) -> Decimal:
 
 
 def _current_effective_month() -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     return f"{now.year:04d}-{now.month:02d}"
 
 
