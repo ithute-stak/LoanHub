@@ -20,6 +20,24 @@ export interface CdasManagementWorkflow {
   failure_attempts: number;
 }
 
+export interface CdasManagementAutomation {
+  schedule: string;
+  timezone: string;
+  status: string;
+  health: "healthy" | "running" | "needs_review" | "needs_intervention" | "awaiting_first_run" | string;
+  healthy: boolean;
+  run_date: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  eligible_profiles: number;
+  checked_profiles: number;
+  ready_profiles: number;
+  no_capacity_profiles: number;
+  issue_count: number;
+  provider_writes: number;
+  message: string;
+}
+
 export interface CdasManagementDataQuality {
   profiles_checked: number;
   profiles_with_issues: number;
@@ -97,6 +115,7 @@ export interface CdasManagementAgencyConcentration extends CdasManagementConcent
 
 export interface CdasManagementDashboard {
   as_of: string | null;
+  automation: CdasManagementAutomation;
   operations: CdasManagementOperations;
   workflow: CdasManagementWorkflow;
   data_quality: CdasManagementDataQuality;
