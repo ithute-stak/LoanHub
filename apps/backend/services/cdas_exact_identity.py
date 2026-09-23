@@ -117,6 +117,36 @@ def validate_exact_provider_identity(
     }
 
 
+def require_exact_verified_payroll_profile(
+    profile: CDASPayrollProfile | None,
+    *,
+    requested_employee_no: str,
+) -> CDASPayrollProfile:
+    """Reject legacy/fuzzy payroll links before any provider mutation.
+
+    Exact-ID verification writes a distinctive audit note. Existing historical
+    profiles that were verified with name/DOB rules must be re-verified through
+    the National-ID flow before they can be used for a new CDAS write.
+    """
+    if profile is None or not bool(profile.verified):
+        raise CdasExactIdentityError(
+            409,
+            "Verify this borrower with exact National ID matching before registering a CDAS deduction",
+        )
+    if profile.employee_number.strip().casefold() != str(requested_employee_no or "").strip().casefold():
+        raise CdasExactIdentityError(
+            409,
+            "The employee number does not match this borrower's exact-ID verified payroll profile",
+        )
+    notes = str(profile.verification_notes or "")
+    if "Exact-ID link basis:" not in notes or "No fuzzy name or date-of-birth matching was used." not in notes:
+        raise CdasExactIdentityError(
+            409,
+            "This payroll profile predates exact-ID verification. Re-verify the borrower by National ID before a CDAS write",
+        )
+    return profile
+
+
 def resolve_company_borrower_by_national_id(
     db: Session,
     *,
