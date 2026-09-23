@@ -18,15 +18,24 @@ const interfacePreferencesBootScript = `
 (() => {
     try {
         const root = document.documentElement;
-        const rawScale = Number(localStorage.getItem("loanhub.interface-scale"));
-        const safeScale = Number.isFinite(rawScale) && rawScale >= 80 && rawScale <= 125
+        const storedScale = localStorage.getItem("loanhub.interface-scale");
+        const rawScale = Number(storedScale);
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1920;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1080;
+        const automaticScale = viewportWidth <= 1280 || viewportHeight <= 720
+            ? 90
+            : viewportWidth <= 1440 || viewportHeight <= 800
+                ? 95
+                : 100;
+        const safeScale = storedScale !== null && Number.isFinite(rawScale) && rawScale >= 80 && rawScale <= 125
             ? Math.round(rawScale / 5) * 5
-            : 100;
+            : automaticScale;
         const lite = localStorage.getItem("loanhub.low-resource-mode") === "true";
         const storedWorkspaceMode = localStorage.getItem("loanhub.workspace-fullscreen");
         const workspaceFullscreen = storedWorkspaceMode === null ? true : storedWorkspaceMode === "true";
         root.style.setProperty("--loanhub-ui-scale", safeScale + "%");
         root.dataset.loanhubUiScale = String(safeScale);
+        root.dataset.loanhubAutoCompact = storedScale === null && automaticScale < 100 ? "true" : "false";
         root.dataset.loanhubLite = lite ? "true" : "false";
         root.dataset.loanhubWorkspace = workspaceFullscreen ? "fullscreen" : "normal";
     } catch {
