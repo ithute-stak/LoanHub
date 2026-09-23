@@ -38,6 +38,7 @@ import { originationApi } from "@/api/origination";
 import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
+import { CdasLoanCollectionCard } from "@/components/origination/cdas-loan-collection-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -580,6 +581,14 @@ function OriginationWizard() {
                   />
                 </div>
                 <Field label="Loan purpose"><Textarea value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Describe exactly what the borrower needs the loan for" /></Field>
+                <CdasLoanCollectionCard
+                  applicationId={application?.id ?? null}
+                  borrowerId={borrowerId}
+                  calculation={calculation}
+                  selectedTermCount={termCount}
+                  firstPaymentDate={installmentDueDates[0] ?? null}
+                  ensureApplication={ensureApplication}
+                />
                 <MicroLoanPreview calculation={calculation} calculating={calculating} />
               </div>
             ) : null}
@@ -631,7 +640,7 @@ function TopUpPanel({
     </div>
     <div className="grid gap-4 sm:grid-cols-4"><Summary label="Paid" value={`${Number(eligibility.paid_percent).toFixed(1)}%`} /><Summary label="Required" value={`${Number(eligibility.required_paid_percent).toFixed(1)}%`} /><Summary label="Paid instalments" value={String(eligibility.paid_installments)} /><Summary label="Old balance" value={formatMoney(eligibility.loan.balance)} /></div>
     <NumberField label="Additional cash requested" value={cashRequested} min={1} onChange={onCashRequested} />
-    {eligibility.requires_owner_exception && !eligibility.eligible ? <Field label="Reason for owner exception"><Textarea required minLength={10} value={exceptionReason} onChange={(event) => onExceptionReason(event.target.value)} placeholder="Explain the exceptional business and affordability reasons for granting the top-up before the normal repayment threshold." /><p className="text-xs text-muted-foreground">The Company Owner must approve this exception before the application can be approved.</p></Field> : null}
+    {eligibility.requires_owner_exception && !eligibility.eligible ? <Field label="Reason for owner exception"><Textarea required minLength={10} value={topUpExceptionReason} onChange={(event) => onTopUpExceptionReason(event.target.value)} placeholder="Explain the exceptional business and affordability reasons for granting the top-up before the normal repayment threshold." /><p className="text-xs text-muted-foreground">The Company Owner must approve this exception before the application can be approved.</p></Field> : null}
     <p className="text-sm text-muted-foreground">{eligibility.reason}</p>
   </div>;
 }
