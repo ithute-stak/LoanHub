@@ -26,6 +26,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_cdas_analysis_report.py \
   tests/test_cdas_analysis_history.py \
   tests/test_cdas_analysis_history_frontend.py \
+  tests/test_cdas_dashboard_kpis.py \
   tests/test_cdas_official_client.py \
   tests/test_cdas_auth_session_negotiation.py \
   tests/test_cdas_employee_verification_scope.py \
