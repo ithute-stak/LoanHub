@@ -16,6 +16,7 @@ import type {
   CdasLinkedActionRequestType,
   CdasOfficialMandateEvent,
   CdasOfficialMandateState,
+  CdasRegistrationPlan,
 } from "@/types/cdasOfficial";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
@@ -64,6 +65,7 @@ export function CdasLoanLifecyclePanel() {
   const [installments, setInstallments] = useState("");
   const [effectiveMonth, setEffectiveMonth] = useState("");
   const [borrowerConsent, setBorrowerConsent] = useState(false);
+  const [registrationPlan, setRegistrationPlan] = useState<CdasRegistrationPlan | null>(null);
   const [state, setState] = useState<CdasOfficialMandateState | null>(null);
   const [events, setEvents] = useState<CdasOfficialMandateEvent[]>([]);
   const [eventsLoaded, setEventsLoaded] = useState(false);
@@ -118,6 +120,7 @@ export function CdasLoanLifecyclePanel() {
     setLoading("lookup");
     try {
       const result = await cdasOfficialApi.getLoanDeduction(value);
+      setRegistrationPlan(null);
       setState(result);
       hydrateFormFromState(result);
       await refreshAuditTrail(result.id, true);
@@ -132,9 +135,43 @@ export function CdasLoanLifecyclePanel() {
     }
   }
 
+  async function prepareFromIntelligence() {
+    const value = loanId.trim();
+    if (!value) {
+      toast.error("Enter the LoanHub loan ID first.");
+      return;
+    }
+    setLoading("prepare");
+    try {
+      const plan = await cdasOfficialApi.getRegistrationPlan(value);
+      setRegistrationPlan(plan);
+      setState(null);
+      if (plan.employee_no) setEmployeeNo(plan.employee_no);
+      setDeductionAmount(String(plan.deduction_amount));
+      setPrincipalAmount(String(plan.principal_amount));
+      setInstallments(String(plan.total_installment));
+      setEffectiveMonth(plan.effective_month);
+      setBorrowerConsent(false);
+      if (plan.ready) {
+        toast.success("LoanHub contract and latest CDAS intelligence are ready for registration review.");
+      } else {
+        toast.info("Registration plan prepared. Resolve the listed items before sending a CDAS write.");
+      }
+    } catch (error: unknown) {
+      setRegistrationPlan(null);
+      toast.error(getErrorMessage(error, "Could not prepare this loan from CDAS intelligence."));
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function register() {
     if (!loanId.trim() || !employeeNo.trim() || !itemCode.trim() || !referenceNo.trim()) {
       toast.error("Loan ID, employee number, item code and reference number are required.");
+      return;
+    }
+    if (registrationPlan && !registrationPlan.ready) {
+      toast.error("Resolve the registration-plan items before sending a CDAS write.");
       return;
     }
     if (!borrowerConsent) {
@@ -145,7 +182,7 @@ export function CdasLoanLifecyclePanel() {
       toast.error("Effective month must use YYYY-MM format.");
       return;
     }
-    if (!window.confirm("Register this LoanHub loan as a payroll deduction in CDAS? This is an external state-changing action.")) return;
+    if (!window.confirm("Register this LoanHub loan as a payroll deduction in CDAS? LoanHub will refresh exact identity and live affordability before the single provider write.")) return;
 
     setLoading("register");
     try {
@@ -161,6 +198,7 @@ export function CdasLoanLifecyclePanel() {
         effective_month: effectiveMonth,
         borrower_consent: borrowerConsent,
       });
+      setRegistrationPlan(null);
       setState(result);
       hydrateFormFromState(result);
       await refreshAuditTrail(result.id, true);
@@ -339,22 +377,57 @@ export function CdasLoanLifecyclePanel() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Find an existing loan deduction</CardTitle>
-          <CardDescription>Enter the LoanHub loan UUID. This lookup is explicit and does not run automatically on page load.</CardDescription>
+          <CardTitle>Find or prepare a loan deduction</CardTitle>
+          <CardDescription>Enter the LoanHub loan UUID. Loading checks for an existing mandate; preparing uses stored 03:45 CDAS intelligence and makes no provider write.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row">
-          <Input value={loanId} onChange={(event) => setLoanId(event.target.value)} placeholder="LoanHub loan ID" autoComplete="off" />
+          <Input
+            value={loanId}
+            onChange={(event) => {
+              setLoanId(event.target.value);
+              setRegistrationPlan(null);
+            }}
+            placeholder="LoanHub loan ID"
+            autoComplete="off"
+          />
           <LoadingButton loading={loading === "lookup"} loadingText="Loading..." onClick={lookupLoan} variant="outline">
             <Link2 className="h-4 w-4" />Load linked deduction
           </LoadingButton>
+          <LoadingButton loading={loading === "prepare"} loadingText="Preparing..." onClick={prepareFromIntelligence} variant="outline">
+            <ShieldCheck className="h-4 w-4" />Prepare from intelligence
+          </LoadingButton>
         </CardContent>
       </Card>
+
+      {!state && registrationPlan && (
+        <Alert>
+          {registrationPlan.ready ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+          <AlertTitle>{registrationPlan.ready ? "Ready for controlled registration" : "Registration preparation needs attention"}</AlertTitle>
+          <AlertDescription>
+            <div className="space-y-2">
+              <p>{registrationPlan.message}</p>
+              <div className="grid gap-1 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                <span>Latest affordability: <strong>{money(registrationPlan.latest_affordability)}</strong></span>
+                <span>Contractual installment: <strong>{money(registrationPlan.deduction_amount)}</strong></span>
+                <span>Daily suggested amount: <strong>{money(registrationPlan.daily_suggested_monthly_deduction)}</strong></span>
+                <span>Monitor date: <strong>{registrationPlan.latest_monitor_date || "—"}</strong></span>
+              </div>
+              {registrationPlan.blockers.length > 0 && (
+                <ul className="list-disc space-y-1 pl-5 text-xs">
+                  {registrationPlan.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                </ul>
+              )}
+              <p className="text-xs">No CDAS provider write occurred during preparation. Registration still requires borrower consent and performs a fresh exact-ID and live-affordability check.</p>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {!state && (
         <Card>
           <CardHeader>
             <CardTitle>Register approved loan in CDAS</CardTitle>
-            <CardDescription>Use only after the LoanHub loan, employee details, affordability and borrower consent have been verified.</CardDescription>
+            <CardDescription>Contract values must match LoanHub exactly. The backend requires an exact-ID verified payroll profile and fresh CDAS affordability before it sends the single provider write.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
