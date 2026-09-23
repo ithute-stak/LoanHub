@@ -60,6 +60,66 @@ button {
   min-width: max-content;
 }
 
+/*
+ * Low-resolution desktop profile.
+ *
+ * Many office PCs still use 1280x720 or 1366x768 displays. Keep the normal
+ * desktop navigation model, but reduce GPU-heavy decoration and vertical waste.
+ * An explicit user-selected interface scale still wins because it is applied as
+ * an inline CSS variable by the boot script.
+ */
+@media (min-width: 768px) and (max-width: 1439.98px),
+       (min-width: 768px) and (max-height: 800px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  .loanhub-page {
+    gap: 1rem;
+    padding-bottom: 1.5rem;
+  }
+
+  .loanhub-hero,
+  .loanhub-panel,
+  .loanhub-stat {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .loanhub-hero,
+  .loanhub-panel {
+    box-shadow: var(--shadow-xs);
+  }
+
+  .loanhub-stat {
+    padding: 1rem;
+  }
+
+  main .overflow-x-auto,
+  main .overflow-auto {
+    max-width: 100%;
+    overscroll-behavior-inline: contain;
+  }
+}
+
+/* Auto-compact mode is selected only when no explicit interface scale exists. */
+html[data-loanhub-auto-compact="true"] body {
+  background-image: none;
+  background-attachment: scroll;
+}
+
+html[data-loanhub-auto-compact="true"] .loanhub-hero,
+html[data-loanhub-auto-compact="true"] .loanhub-panel,
+html[data-loanhub-auto-compact="true"] .loanhub-stat {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-loanhub-auto-compact="true"] [class*="blur-3xl"],
+html[data-loanhub-auto-compact="true"] [class*="blur-2xl"] {
+  filter: none !important;
+}
+
 @media (max-width: 1023.98px) {
   .loanhub-page {
     width: 100%;
@@ -145,5 +205,13 @@ button {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

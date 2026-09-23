@@ -12,15 +12,15 @@ export function MetricCard({
     icon: LucideIcon;
 }) {
     return (
-        <article className="rounded-3xl border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <p className="text-sm font-semibold text-muted-foreground">{title}</p>
-                    <p className="mt-3 text-3xl font-black tracking-tight">{value}</p>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{description}</p>
+        <article className="min-w-0 rounded-2xl border bg-card p-4 shadow-sm transition hover:border-primary/30 2xl:rounded-3xl 2xl:p-5">
+            <div className="flex min-w-0 items-start justify-between gap-3 2xl:gap-4">
+                <div className="min-w-0">
+                    <p className="text-xs font-semibold text-muted-foreground 2xl:text-sm">{title}</p>
+                    <p className="mt-2 break-words text-2xl font-black tracking-tight 2xl:mt-3 2xl:text-3xl">{value}</p>
+                    <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground 2xl:mt-2 2xl:text-xs 2xl:leading-5">{description}</p>
                 </div>
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Icon className="h-6 w-6" />
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary 2xl:h-12 2xl:w-12 2xl:rounded-2xl">
+                    <Icon className="h-5 w-5 2xl:h-6 2xl:w-6" />
                 </div>
             </div>
         </article>

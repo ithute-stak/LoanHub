@@ -17,5 +17,21 @@ export function MarketableQuickActions({ base }: { base: "/company" | "/borrower
             { label: "Accounting", href: `${base}/accounting`, icon: Landmark, description: "Review journals and financial statements." },
         ] : []),
     ];
-    return <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{actions.map(({ label, href, icon: Icon, description }) => <Link key={href} href={href} className="group rounded-2xl border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-primary hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground"><Icon className="h-5 w-5" /></div><p className="mt-4 font-black">{label}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p></Link>)}</section>;
+    return (
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 2xl:gap-4">
+            {actions.map(({ label, href, icon: Icon, description }) => (
+                <Link
+                    key={href}
+                    href={href}
+                    className="group min-w-0 rounded-2xl border bg-card p-4 shadow-sm transition hover:border-primary 2xl:p-5"
+                >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground 2xl:h-10 2xl:w-10">
+                        <Icon className="h-4 w-4 2xl:h-5 2xl:w-5" />
+                    </div>
+                    <p className="mt-3 font-black 2xl:mt-4">{label}</p>
+                    <p className="mt-1 text-[11px] leading-4 text-muted-foreground 2xl:text-xs 2xl:leading-5">{description}</p>
+                </Link>
+            ))}
+        </section>
+    );
 }
