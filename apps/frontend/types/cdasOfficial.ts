@@ -73,6 +73,70 @@ export interface CdasOfficialRefreshRequest {
   own_deduction_status?: number;
 }
 
+export interface CdasBorrowerIntelligenceRequest {
+  national_id: string;
+  employee_no: string;
+  own_deduction_status?: number;
+}
+
+export interface CdasExactIdentityLink {
+  borrower_id: string;
+  account_id: string;
+  account_reference: string;
+  client_name: string | null;
+  national_id_masked: string;
+  employee_no: string;
+  verified: boolean;
+  basis: "EXACT_NATIONAL_ID_AND_CDAS_EMPLOYEE_NO" | "EXACT_LOANHUB_NATIONAL_ID_PLUS_CDAS_EMPLOYEE_NO" | string;
+  provider_national_id_present: boolean;
+}
+
+export interface CdasLoanHubLoanIntelligence {
+  loan_id: string;
+  loan_reference: string;
+  status: string;
+  balance: number;
+  amount_paid: number;
+  principal_amount: number;
+  installment_amount: number;
+  repayment_period: number;
+  maturity_date: string | null;
+  is_overdue: boolean;
+  eligible_existing_obligation: boolean;
+}
+
+export interface CdasCollectionProposal {
+  total_outstanding: number;
+  available_affordability: number;
+  suggested_monthly_deduction: number;
+  estimated_collection_months: number | null;
+  can_add_deduction: boolean;
+  calculation_basis: string;
+  warning: string;
+  current_contractual_monthly_installments: number;
+}
+
+export interface CdasLoanHubBorrowerIntelligence {
+  total_outstanding: number;
+  approved_not_active_balance: number;
+  active_or_defaulted_loan_count: number;
+  approved_not_active_loan_count: number;
+  loans: CdasLoanHubLoanIntelligence[];
+  collection_proposal: CdasCollectionProposal;
+}
+
+export interface CdasBorrowerIntelligenceResponse {
+  source: "CDAS_API";
+  checked_at: string | null;
+  identity: CdasExactIdentityLink;
+  snapshot: CdasOfficialSnapshot;
+  loanhub: CdasLoanHubBorrowerIntelligence;
+  archive: {
+    created: boolean;
+    record: CdasAnalysisRecord;
+  };
+}
+
 export type CdasLoanLifecycleStatus =
   | "registration_pending"
   | "registration_failed"
