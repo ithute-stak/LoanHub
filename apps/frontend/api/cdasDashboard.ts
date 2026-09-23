@@ -13,6 +13,22 @@ export type CdasWindowKpi = {
   nearest_date: string | null;
 };
 
+export type CdasBranchBookKpi = {
+  branch_id: string | null;
+  name: string;
+  active_deduction_count: number;
+  active_client_count: number;
+  monthly_amount: number;
+};
+
+export type CdasOfficerBookKpi = {
+  user_id: string;
+  name: string;
+  active_deduction_count: number;
+  active_client_count: number;
+  monthly_amount: number;
+};
+
 export type CdasDashboardKpis = {
   configured: boolean;
   environment: "test" | "live" | string;
@@ -37,6 +53,8 @@ export type CdasDashboardKpis = {
   latest_daily_check: string | null;
   daily_check_failures_today: number;
   run_rate_history: Array<{ month: string; amount: number }>;
+  top_branches: CdasBranchBookKpi[];
+  top_officers: CdasOfficerBookKpi[];
   methodology: string;
 };
 
