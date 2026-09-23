@@ -206,8 +206,8 @@ html[data-loanhub-auto-compact="true"] [class*="blur-2xl"] {
 
 /*
  * Low-resource mode complements the global controller in globals.css. It also
- * removes filters and costly hover transforms while keeping loading spinners
- * visible, so a weak GPU/CPU still gives clear state feedback.
+ * removes filters and costly hover transforms. The small loading spinner is
+ * restored below so slow machines still communicate active work to the user.
  */
 html[data-loanhub-lite="true"] [class*="blur-"],
 html[data-loanhub-lite="true"] [class*="backdrop-blur"] {
@@ -227,6 +227,11 @@ html[data-loanhub-lite="true"] .loanhub-stat {
 html[data-loanhub-lite="true"] .loanhub-stat:hover,
 html[data-loanhub-lite="true"] [class*="hover:-translate"]:hover {
   transform: none !important;
+}
+
+html[data-loanhub-lite="true"] .animate-spin {
+  animation-duration: 1s !important;
+  animation-iteration-count: infinite !important;
 }
 
 @media (max-width: 1023.98px) {
