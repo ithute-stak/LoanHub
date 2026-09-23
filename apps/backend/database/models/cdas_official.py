@@ -141,3 +141,43 @@ class CdasApiRequestBudget(Base):
     request_date = Column(Date, nullable=False, index=True)
     request_count = Column(Integer, nullable=False, default=0)
     last_request_at = Column(DateTime, nullable=True)
+
+
+class CdasDailyIntelligenceRun(Base):
+    """Durable per-company claim and audit record for the 03:45 CDAS monitor.
+
+    The company/date uniqueness constraint is the cross-process idempotency gate:
+    a container restart or a second maintenance replica cannot consume the same
+    provider quota twice for the same company on the same local day.
+    """
+
+    __tablename__ = "cdas_daily_intelligence_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "run_date",
+            name="uq_cdas_daily_intelligence_company_date",
+        ),
+    )
+
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("loan_companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_date = Column(Date, nullable=False, index=True)
+    timezone = Column(String(64), nullable=False, default="Africa/Maseru")
+    scheduled_time = Column(String(5), nullable=False, default="03:45")
+    status = Column(String(40), nullable=False, default="running", index=True)
+    started_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    max_profiles = Column(Integer, nullable=False, default=100)
+    eligible_profiles = Column(Integer, nullable=False, default=0)
+    checked_profiles = Column(Integer, nullable=False, default=0)
+    ready_profiles = Column(Integer, nullable=False, default=0)
+    no_capacity_profiles = Column(Integer, nullable=False, default=0)
+    issue_count = Column(Integer, nullable=False, default=0)
+    provider_writes = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    summary = Column(JSONB, nullable=False, default=dict)
