@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -21,9 +20,13 @@ from services.cdas_deduction_lifecycle import (
     _mark_uncertain_failure,
     _record_event,
     _utcnow,
-    _value,
     get_official_mandate_for_loan,
     serialize_official_mandate,
+)
+from services.cdas_exact_identity import (
+    CdasExactIdentityError,
+    require_exact_verified_payroll_profile,
+    validate_exact_provider_identity,
 )
 
 
@@ -32,27 +35,6 @@ _MONEY_QUANTUM = Decimal("0.01")
 
 def _money(value: Decimal | int | float | str) -> Decimal:
     return Decimal(str(value)).quantize(_MONEY_QUANTUM)
-
-
-def _normalized_name(value: object) -> str:
-    return " ".join(str(value or "").strip().casefold().replace("-", " ").split())
-
-
-def _parse_cdas_date(value: object) -> date | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    iso_candidate = text[:10]
-    try:
-        return date.fromisoformat(iso_candidate)
-    except ValueError:
-        pass
-    for pattern in ("%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(text, pattern).date()
-        except ValueError:
-            continue
-    return None
 
 
 def _validate_loan_terms(
@@ -83,36 +65,53 @@ def _validate_loan_terms(
         raise CdasLifecycleError(422, "CDAS effective month cannot be in the past")
 
 
-def _validate_employee_identity(loan: ClientCompanyLoan, employee_no: str, payload: dict[str, object]) -> None:
+def _exact_profile_for_registration(
+    db: Session,
+    *,
+    company_id: UUID,
+    loan: ClientCompanyLoan,
+    employee_no: str,
+) -> CDASPayrollProfile:
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.borrower_id == loan.borrower_id,
+        )
+        .one_or_none()
+    )
+    try:
+        return require_exact_verified_payroll_profile(
+            profile,
+            requested_employee_no=employee_no,
+        )
+    except CdasExactIdentityError as exc:
+        raise CdasLifecycleError(exc.status_code, exc.message) from exc
+
+
+def _validate_fresh_exact_identity(
+    loan: ClientCompanyLoan,
+    *,
+    employee_no: str,
+    employee_details: dict[str, object],
+) -> None:
     borrower = getattr(loan, "borrower", None)
     user = getattr(borrower, "user", None)
     person = getattr(user, "person", None)
-    if person is None:
-        raise CdasLifecycleError(422, "The borrower identity profile must be complete before CDAS registration")
-    if not getattr(person, "date_of_birth", None):
-        raise CdasLifecycleError(422, "The borrower's date of birth must be recorded before CDAS registration")
-
-    provider_employee_no = str(_value(payload, "EmployeeNo", "employeeNo", "employee_no") or "").strip()
-    provider_name = _normalized_name(_value(payload, "Name", "name"))
-    provider_surname = _normalized_name(_value(payload, "Surname", "surname"))
-    provider_dob = _parse_cdas_date(_value(payload, "DOB", "DateOfBirth", "dateOfBirth", "date_of_birth"))
-
-    if not provider_employee_no or not provider_name or not provider_surname or provider_dob is None:
-        raise CdasLifecycleError(502, "CDAS employee details are incomplete and cannot be safely linked to this borrower")
-    if provider_employee_no.casefold() != employee_no.strip().casefold():
-        raise CdasLifecycleError(409, "CDAS returned a different employee number than the one being registered")
-
-    borrower_given_tokens = set(_normalized_name(getattr(person, "first_name", "")).split())
-    borrower_surname = _normalized_name(getattr(person, "last_name", ""))
-    provider_given_tokens = set(provider_name.split())
-    if (
-        not borrower_given_tokens
-        or not borrower_given_tokens.issubset(provider_given_tokens)
-        or borrower_surname != provider_surname
-    ):
-        raise CdasLifecycleError(409, "CDAS employee name does not match the LoanHub borrower identity")
-    if provider_dob != person.date_of_birth:
-        raise CdasLifecycleError(409, "CDAS employee date of birth does not match the LoanHub borrower identity")
+    national_id = str(getattr(person, "national_id", "") or "").strip()
+    if not national_id:
+        raise CdasLifecycleError(
+            422,
+            "The LoanHub client must have a National ID before CDAS registration",
+        )
+    try:
+        validate_exact_provider_identity(
+            loanhub_national_id=national_id,
+            requested_employee_no=employee_no,
+            employee_details=employee_details,
+        )
+    except CdasExactIdentityError as exc:
+        raise CdasLifecycleError(exc.status_code, exc.message) from exc
 
 
 async def register_loan_deduction_safely(
@@ -133,7 +132,7 @@ async def register_loan_deduction_safely(
     effective_month: str,
     borrower_consent: bool,
 ) -> dict[str, object]:
-    """Register a loan deduction with identity, term and crash-safety controls."""
+    """Register a loan deduction with exact-ID, term and crash-safety controls."""
     if not borrower_consent:
         raise CdasLifecycleError(422, "Borrower consent must be confirmed before registering a CDAS deduction")
     if total_installment <= 0:
@@ -161,8 +160,22 @@ async def register_loan_deduction_safely(
         raise CdasLifecycleError(409, "This LoanHub loan already has an official CDAS mandate")
 
     cleaned_employee_no = employee_no.strip()
+    profile = _exact_profile_for_registration(
+        db,
+        company_id=company_id,
+        loan=loan,
+        employee_no=cleaned_employee_no,
+    )
+
+    # Refresh the provider identity immediately before the write, but retain the
+    # exact-identifier policy: EmployeeNo must match and an optional provider
+    # National ID must exactly match LoanHub. Names and DOB are display-only.
     employee_details = await client.employee_details(cleaned_employee_no)
-    _validate_employee_identity(loan, cleaned_employee_no, employee_details)
+    _validate_fresh_exact_identity(
+        loan,
+        employee_no=cleaned_employee_no,
+        employee_details=employee_details,
+    )
 
     live_affordability = Decimal(str(await client.affordability(cleaned_employee_no)))
     if _money(deduction_amount) > _money(live_affordability):
@@ -188,45 +201,11 @@ async def register_loan_deduction_safely(
     start_date = _effective_month_start(effective_month)
     cleaned_reference = reference_no.strip()
 
-    # Reserve the local borrower/profile/loan/reference linkage before any CDAS
+    # Reserve the local verified-profile/loan/reference linkage before any CDAS
     # mutation. Database uniqueness is the final concurrency authority: if two
     # requests race after the preliminary checks, the losing transaction is
     # rolled back and reported as a controlled 409 instead of reaching CDAS.
     try:
-        profile = (
-            db.query(CDASPayrollProfile)
-            .filter(
-                CDASPayrollProfile.company_id == company_id,
-                CDASPayrollProfile.borrower_id == loan.borrower_id,
-            )
-            .one_or_none()
-        )
-        if profile is None:
-            profile = CDASPayrollProfile(
-                company_id=company_id,
-                borrower_id=loan.borrower_id,
-                branch_id=branch_id or loan.branch_id,
-                employee_number=cleaned_employee_no,
-                verified=True,
-                verified_at=_utcnow(),
-                verified_by_user_id=actor_user_id,
-                verification_reference="CDAS_API_V1_5",
-                verification_notes="Employee number, name, surname and date of birth matched against the official CDAS employee endpoint.",
-            )
-            db.add(profile)
-            db.flush()
-        elif profile.employee_number.strip().casefold() != cleaned_employee_no.casefold():
-            raise CdasLifecycleError(
-                409,
-                "The supplied employee number does not match this borrower's existing CDAS payroll profile",
-            )
-        else:
-            profile.verified = True
-            profile.verified_at = _utcnow()
-            profile.verified_by_user_id = actor_user_id
-            profile.verification_reference = "CDAS_API_V1_5"
-            profile.verification_notes = "Employee number, name, surname and date of birth matched against the official CDAS employee endpoint."
-
         duplicate_reference = (
             db.query(CdasOfficialMandateState)
             .filter(
