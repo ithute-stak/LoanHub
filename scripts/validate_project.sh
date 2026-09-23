@@ -25,7 +25,12 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_hrms_hybrid_navigation_frontend.py \
   tests/test_cdas_analysis_report.py \
   tests/test_cdas_analysis_history.py \
-  tests/test_cdas_analysis_history_frontend.py
+  tests/test_cdas_analysis_history_frontend.py \
+  tests/test_cdas_official_client.py \
+  tests/test_cdas_auth_session_negotiation.py \
+  tests/test_cdas_employee_verification_scope.py \
+  tests/test_cdas_exact_identity.py \
+  tests/test_cdas_borrower_intelligence.py
 "$PYTHON_BIN" -m alembic heads
 
 if [[ "${LOANHUB_VALIDATE_LIVE_MIGRATIONS:-false}" == "true" ]]; then
