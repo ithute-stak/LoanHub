@@ -51,6 +51,16 @@ function MetricCard({
   return href ? <Link href={href} className="block h-full">{body}</Link> : body;
 }
 
+function automationLabel(health: string) {
+  switch (health) {
+    case "healthy": return "Healthy";
+    case "running": return "Running";
+    case "needs_review": return "Needs review";
+    case "needs_intervention": return "Needs intervention";
+    default: return "Awaiting first run";
+  }
+}
+
 export function CdasManagementDashboardView() {
   const [data, setData] = useState<CdasManagementDashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,7 +99,7 @@ export function CdasManagementDashboardView() {
           <h1 className="text-2xl font-semibold tracking-tight">CDAS Management Dashboard</h1>
         </div>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Company-wide operational view of booking workload, follow-ups, failures, data quality and known future booking windows.
+          Company-wide operational view of booking workload, follow-ups, exceptions, data quality and known future booking windows.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -117,6 +127,43 @@ export function CdasManagementDashboardView() {
     {data && <>
       <section className="space-y-3">
         <div className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          <h2 className="text-lg font-semibold">Daily CDAS automation</h2>
+        </div>
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">03:45 borrower intelligence monitor</CardTitle>
+                <CardDescription>{data.automation.message}</CardDescription>
+              </div>
+              <Badge variant={data.automation.healthy ? "secondary" : "destructive"}>
+                {automationLabel(data.automation.health)}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-md border p-3"><div className="text-xs text-muted-foreground">Schedule</div><div className="mt-1 font-medium">{data.automation.schedule} · {data.automation.timezone}</div></div>
+              <div className="rounded-md border p-3"><div className="text-xs text-muted-foreground">Profiles checked</div><div className="mt-1 text-xl font-semibold">{data.automation.checked_profiles}</div></div>
+              <div className="rounded-md border p-3"><div className="text-xs text-muted-foreground">Ready for collection review</div><div className="mt-1 text-xl font-semibold">{data.automation.ready_profiles}</div></div>
+              <div className="rounded-md border p-3"><div className="text-xs text-muted-foreground">Issues to review</div><div className="mt-1 text-xl font-semibold">{data.automation.issue_count}</div></div>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+              <span>Run date: {data.automation.run_date || "Not run yet"}</span>
+              <span>No-capacity profiles: {data.automation.no_capacity_profiles}</span>
+              <span>Eligible profiles: {data.automation.eligible_profiles}</span>
+              <span>Provider writes: {data.automation.provider_writes}</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Scheduled monitoring is read-only against CDAS. Registrations and changes stay behind exact-ID verification, borrower consent, role controls and the official lifecycle.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
           <Activity className="h-5 w-5" />
           <h2 className="text-lg font-semibold">Operations pulse</h2>
         </div>
@@ -136,8 +183,8 @@ export function CdasManagementDashboardView() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard title="Unassigned open" value={data.workflow.unassigned_open} detail="Open opportunities without an assigned officer" href="/company/cdas-booking/officer-performance" />
           <MetricCard title="Overdue follow-ups" value={data.workflow.overdue_follow_ups} detail={`${data.workflow.scheduled_follow_ups} scheduled follow-ups`} href="/company/cdas-booking/follow-ups" />
-          <MetricCard title="Currently failed" value={data.workflow.currently_failed} detail={`${data.workflow.retry_due} retry due · ${data.workflow.retryable} retryable`} href="/company/cdas-booking/failures" />
-          <MetricCard title="Contacted open" value={data.workflow.contacted_open} detail={`${data.workflow.failure_attempts} recorded failure attempt(s)`} href="/company/cdas-booking/follow-ups" />
+          <MetricCard title="Needs intervention" value={data.workflow.currently_failed} detail={`${data.workflow.retry_due} retry due · ${data.workflow.retryable} retryable`} href="/company/cdas-booking/failures" />
+          <MetricCard title="Contacted open" value={data.workflow.contacted_open} detail={`${data.workflow.failure_attempts} recorded issue attempt(s)`} href="/company/cdas-booking/follow-ups" />
         </div>
       </section>
 
@@ -160,14 +207,14 @@ export function CdasManagementDashboardView() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/><CardTitle className="text-base">Failure reasons</CardTitle></div>
-            <CardDescription>Recorded booking failure attempts grouped by controlled reason code.</CardDescription>
+            <div className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/><CardTitle className="text-base">Issue breakdown</CardTitle></div>
+            <CardDescription>Recorded booking exceptions grouped by controlled operational reason.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {data.failure_reasons.length > 0 ? data.failure_reasons.map((reason) => <div key={reason.reason_code} className="flex items-center justify-between gap-3 rounded-md border p-3">
               <span className="text-sm">{reason.reason_label}</span>
               <Badge variant="outline">{reason.count}</Badge>
-            </div>) : <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">No booking failures have been recorded.</div>}
+            </div>) : <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">No operational issues have been recorded.</div>}
           </CardContent>
         </Card>
       </div>
