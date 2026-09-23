@@ -9,6 +9,7 @@ from services.cdas_monthly_automation import (
     is_monthly_automation_window,
     next_effective_month,
 )
+from services.cdas_sub1000_auto_modification import calculate_sub1000_modification
 
 
 MASERU = ZoneInfo("Africa/Maseru")
@@ -53,3 +54,43 @@ def test_automatic_term_respects_provider_safety_limit():
 def test_next_effective_month_rolls_year():
     assert next_effective_month(datetime(2026, 11, 15).date()) == "2026-12"
     assert next_effective_month(datetime(2026, 12, 15).date()) == "2027-01"
+
+
+def test_sub1000_modification_uses_only_incremental_affordability():
+    target, increase, installments = calculate_sub1000_modification(
+        current_deduction=Decimal("650.00"),
+        outstanding=Decimal("5000.00"),
+        affordability=Decimal("350.00"),
+    )
+    assert target == Decimal("1000.00")
+    assert increase == Decimal("350.00")
+    assert installments == 5
+
+
+def test_sub1000_modification_rejects_when_incremental_capacity_is_short():
+    with pytest.raises(ValueError, match="Additional CDAS affordability"):
+        calculate_sub1000_modification(
+            current_deduction=Decimal("650.00"),
+            outstanding=Decimal("5000.00"),
+            affordability=Decimal("349.99"),
+        )
+
+
+def test_sub1000_modification_never_exceeds_remaining_balance():
+    target, increase, installments = calculate_sub1000_modification(
+        current_deduction=Decimal("500.00"),
+        outstanding=Decimal("800.00"),
+        affordability=Decimal("300.00"),
+    )
+    assert target == Decimal("800.00")
+    assert increase == Decimal("300.00")
+    assert installments == 1
+
+
+def test_sub1000_modification_does_not_change_deduction_already_at_target():
+    with pytest.raises(ValueError, match="does not require"):
+        calculate_sub1000_modification(
+            current_deduction=Decimal("1000.00"),
+            outstanding=Decimal("5000.00"),
+            affordability=Decimal("500.00"),
+        )

@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from database.session import SessionLocal
 from services.cdas_monthly_automation import is_monthly_automation_window, local_now, run_monthly_cdas_automation
+from services.cdas_sub1000_auto_modification import run_sub1000_auto_modifications
 
 
 _ADVISORY_LOCK_KEY = 604142006
@@ -34,9 +35,11 @@ async def _run_once_if_due() -> None:
         else:
             acquired = True
 
-        # Per-borrower durable date markers make this idempotent even when a
-        # second process obtains the lock later in the same 06:00 hour.
+        # Per-borrower and per-deduction durable date markers make both stages
+        # idempotent even when a second process obtains the lock later in the
+        # same 06:00 hour after an interrupted run.
         await run_monthly_cdas_automation(db, now=now, enforce_window=True)
+        await run_sub1000_auto_modifications(db, now=now, enforce_window=True)
         _last_run_date = now.date()
     finally:
         if acquired and db.get_bind().dialect.name == "postgresql":
@@ -56,7 +59,7 @@ async def _scheduler_loop(interval_seconds: int) -> None:
             raise
         except Exception:
             # The next scheduler tick retries. Individual borrower/provider
-            # failures are already persisted by the automation service.
+            # failures are already persisted by the automation services.
             pass
         try:
             await asyncio.wait_for(_stop_event.wait(), timeout=interval_seconds)
