@@ -38,6 +38,7 @@ from services.cdas_registration_workflow import _validate_employee_identity
 AUTOMATION_KEY = "monthly_auto_deductions"
 AUTOMATION_SOURCE = "CDAS_MONTHLY_AUTO_DEDUCTION"
 AUTOMATION_AUTHORIZATION_BASIS = "STORED_CDAS_EMPLOYEE_NUMBER_AGREEMENT"
+ORIGINATION_AUTHORIZATION_BASIS = "LOAN_ORIGINATION_CDAS_OPT_IN"
 WINDOW_START_DAY = 14
 WINDOW_END_DAY = 20
 WINDOW_HOUR = 6
@@ -195,6 +196,29 @@ def _finish_marker(db: Session, marker: CdasBookingOpportunity, snapshot: dict[s
     db.commit()
 
 
+def _loan_origination_cdas_choice(
+    db: Session,
+    *,
+    company_id: UUID,
+    loan: ClientCompanyLoan,
+) -> tuple[bool | None, str | None]:
+    """Return per-loan CDAS choice, preserving legacy applications as None."""
+    if not loan.direct_application_id:
+        return None, None
+    application = (
+        db.query(DirectLoanApplication)
+        .filter(
+            DirectLoanApplication.id == loan.direct_application_id,
+            DirectLoanApplication.company_id == company_id,
+            DirectLoanApplication.borrower_id == loan.borrower_id,
+        )
+        .one_or_none()
+    )
+    if application is None:
+        return None, None
+    return application.cdas_collection_enabled, str(application.cdas_employee_number or "").strip() or None
+
+
 async def _register_automatic_deduction(
     db: Session,
     *,
@@ -235,6 +259,19 @@ async def _register_automatic_deduction(
             )
             .one_or_none()
         )
+    if application is not None and application.cdas_collection_enabled is False:
+        raise CdasLifecycleError(409, "This loan application explicitly opted out of CDAS payroll collection")
+    if application is not None and application.cdas_collection_enabled is True:
+        linked_employee_no = str(application.cdas_employee_number or "").strip()
+        if not linked_employee_no:
+            raise CdasLifecycleError(409, "The CDAS-enabled loan application has no verified employee number")
+        if linked_employee_no != employee_no:
+            raise CdasLifecycleError(409, "The loan CDAS employee number no longer matches the verified payroll profile")
+    authorization_basis = (
+        ORIGINATION_AUTHORIZATION_BASIS
+        if application is not None and application.cdas_collection_enabled is True
+        else AUTOMATION_AUTHORIZATION_BASIS
+    )
 
     environment = _configuration_environment(db, company_id)
     start_date = _effective_month_start(effective_month)
@@ -247,7 +284,12 @@ async def _register_automatic_deduction(
         profile.verified_by_user_id = None
         profile.verification_reference = "CDAS_API_V1_5_AUTO"
         profile.verification_notes = (
-            "Identity matched against CDAS during automatic collection. Stored CDAS employee number is the company-configured agreement basis."
+            "Identity matched against CDAS during automatic collection. "
+            + (
+                "This loan was explicitly enabled for CDAS collection during origination."
+                if authorization_basis == ORIGINATION_AUTHORIZATION_BASIS
+                else "Stored CDAS employee number is the company-configured agreement basis."
+            )
         )
 
         duplicate_reference = (
@@ -320,7 +362,7 @@ async def _register_automatic_deduction(
     audit_payload = {
         **provider_payload,
         "Automation": True,
-        "AuthorizationBasis": AUTOMATION_AUTHORIZATION_BASIS,
+        "AuthorizationBasis": authorization_basis,
         "AffordabilityAtDecision": float(_money(affordability)),
         "OutstandingBalanceAtDecision": float(balance),
     }
@@ -508,6 +550,35 @@ async def process_company_monthly_automation(
                     summary["skipped"] += 1
                     snapshot["loans"].append({"loan_id": str(loan.id), "status": "existing_mandate"})
                     continue
+
+                collection_choice, linked_employee_no = _loan_origination_cdas_choice(
+                    db,
+                    company_id=company_id,
+                    loan=loan,
+                )
+                if collection_choice is False:
+                    summary["skipped"] += 1
+                    snapshot["loans"].append(
+                        {
+                            "loan_id": str(loan.id),
+                            "loan_reference": loan.loan_reference,
+                            "status": "explicit_cdas_opt_out",
+                        }
+                    )
+                    continue
+                if collection_choice is True and linked_employee_no != str(profile.employee_number or "").strip():
+                    summary["failed"] += 1
+                    snapshot["last_check_status"] = "degraded"
+                    snapshot["loans"].append(
+                        {
+                            "loan_id": str(loan.id),
+                            "loan_reference": loan.loan_reference,
+                            "status": "cdas_employee_mismatch",
+                            "error": "The loan CDAS employee number does not match the verified payroll profile",
+                        }
+                    )
+                    continue
+
                 if remaining <= 0:
                     break
                 allocation, installments = calculate_automatic_terms(outstanding=loan.balance, affordability=remaining)
@@ -547,6 +618,11 @@ async def process_company_monthly_automation(
                             "deduction_amount": float(allocation),
                             "installments": installments,
                             "outstanding": float(_money(loan.balance)),
+                            "authorization_basis": (
+                                ORIGINATION_AUTHORIZATION_BASIS
+                                if collection_choice is True
+                                else AUTOMATION_AUTHORIZATION_BASIS
+                            ),
                         }
                     )
                     remaining = max(remaining - allocation, Decimal("0.00"))
