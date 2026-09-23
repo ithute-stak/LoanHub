@@ -23,6 +23,7 @@ from services.cdas_booking_storage import dedupe_serialized_opportunities
 from services.cdas_change_detection import build_change_detection
 from services.cdas_client_profiles import build_client_profiles
 from services.cdas_contact_followups import build_follow_up_workspace
+from services.cdas_daily_run import latest_daily_intelligence_run, serialize_daily_intelligence_run
 from services.cdas_data_quality import build_data_quality_centre
 from services.cdas_duplicate_detection import build_duplicate_detection
 from services.cdas_forecast import build_cdas_forecast
@@ -48,6 +49,7 @@ def get_cdas_management_dashboard(
 ):
     """Return aggregate company-scoped CDAS operating intelligence for management review."""
     _require_company_member(context)
+    assert context.company_id is not None
     today = local_today()
     now = _now()
 
@@ -82,6 +84,12 @@ def get_cdas_management_dashboard(
     duplicates = build_duplicate_detection(profiles)
     changes = build_change_detection(analyses)
     forecast = build_cdas_forecast(profiles, today=today, horizon_months=12)
+    latest_run = latest_daily_intelligence_run(db, company_id=context.company_id)
+    automation = serialize_daily_intelligence_run(
+        latest_run,
+        timezone_name=settings.APP_TIMEZONE,
+        scheduled_time="03:45",
+    )
 
     return build_management_dashboard(
         calendar=calendar,
@@ -93,4 +101,5 @@ def get_cdas_management_dashboard(
         duplicates=duplicates,
         changes=changes,
         forecast=forecast,
+        automation=automation,
     )
