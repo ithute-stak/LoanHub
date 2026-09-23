@@ -44,8 +44,13 @@ def classify_daily_collection_action(*, outstanding: object, affordability: obje
     return "READY_FOR_COLLECTION_REVIEW"
 
 
-def _eligible_profiles(db: Session, *, limit: int) -> list[CDASPayrollProfile]:
-    rows = (
+def _eligible_profiles(
+    db: Session,
+    *,
+    limit: int,
+    company_id: UUID | None = None,
+) -> list[CDASPayrollProfile]:
+    query = (
         db.query(CDASPayrollProfile)
         .join(
             ClientCompanyLoan,
@@ -57,12 +62,15 @@ def _eligible_profiles(db: Session, *, limit: int) -> list[CDASPayrollProfile]:
             ClientCompanyLoan.status.in_(_ELIGIBLE_LOAN_STATUSES),
             ClientCompanyLoan.balance > 0,
         )
-        .order_by(CDASPayrollProfile.company_id, CDASPayrollProfile.verified_at.asc().nullsfirst())
+    )
+    if company_id is not None:
+        query = query.filter(CDASPayrollProfile.company_id == company_id)
+    return (
+        query.order_by(CDASPayrollProfile.company_id, CDASPayrollProfile.verified_at.asc().nullsfirst())
         .distinct()
         .limit(max(0, int(limit)))
         .all()
     )
-    return rows
 
 
 def _upsert_monitoring_opportunity(
@@ -128,14 +136,16 @@ async def run_daily_cdas_intelligence(
     *,
     local_date: date,
     max_profiles: int = 100,
+    company_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Refresh CDAS capacity for verified borrowers with existing LoanHub debt.
 
     This job is deliberately read-only against CDAS. It never registers, modifies,
-    approves or settles a provider deduction automatically. It prepares the
-    operational queue using an already verified exact-ID payroll profile.
+    approves or settles a provider deduction automatically. The maintenance worker
+    normally calls this once for an atomically claimed company/day, so the profile
+    cap applies to one provider account rather than being shared across tenants.
     """
-    profiles = _eligible_profiles(db, limit=max_profiles)
+    profiles = _eligible_profiles(db, limit=max_profiles, company_id=company_id)
     by_company: dict[UUID, list[CDASPayrollProfile]] = defaultdict(list)
     for profile in profiles:
         by_company[profile.company_id].append(profile)
@@ -145,9 +155,9 @@ async def run_daily_cdas_intelligence(
     no_capacity = 0
     failures = 0
 
-    for company_id, company_profiles in by_company.items():
+    for current_company_id, company_profiles in by_company.items():
         try:
-            client = get_company_cdas_client(db, company_id)
+            client = get_company_cdas_client(db, current_company_id)
         except Exception:
             failures += len(company_profiles)
             continue
@@ -158,7 +168,7 @@ async def run_daily_cdas_intelligence(
                 deductions = await client.all_deductions(profile.employee_number)
                 loan_intelligence = build_borrower_loan_intelligence(
                     db,
-                    company_id=company_id,
+                    company_id=current_company_id,
                     borrower_id=profile.borrower_id,
                     affordability=affordability,
                 )
@@ -189,6 +199,7 @@ async def run_daily_cdas_intelligence(
 
     return {
         "local_date": local_date.isoformat(),
+        "company_id": str(company_id) if company_id else None,
         "eligible_profiles": len(profiles),
         "checked": checked,
         "ready_for_collection_review": ready,
