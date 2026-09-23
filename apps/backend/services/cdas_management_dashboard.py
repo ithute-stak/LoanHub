@@ -65,6 +65,27 @@ def _safe_concentrations(values: list[dict[str, Any]] | None, *, label_key: str)
     return result
 
 
+def _safe_automation(source: dict[str, Any] | None) -> dict[str, Any]:
+    source = source or {}
+    return {
+        "schedule": str(source.get("schedule") or "03:45"),
+        "timezone": str(source.get("timezone") or "Africa/Maseru"),
+        "status": str(source.get("status") or "not_run"),
+        "health": str(source.get("health") or "awaiting_first_run"),
+        "healthy": bool(source.get("healthy", True)),
+        "run_date": source.get("run_date"),
+        "started_at": source.get("started_at"),
+        "completed_at": source.get("completed_at"),
+        "eligible_profiles": int(source.get("eligible_profiles") or 0),
+        "checked_profiles": int(source.get("checked_profiles") or 0),
+        "ready_profiles": int(source.get("ready_profiles") or 0),
+        "no_capacity_profiles": int(source.get("no_capacity_profiles") or 0),
+        "issue_count": int(source.get("issue_count") or 0),
+        "provider_writes": int(source.get("provider_writes") or 0),
+        "message": str(source.get("message") or "Daily CDAS monitoring is scheduled and has not run yet."),
+    }
+
+
 def build_management_dashboard(
     *,
     calendar: dict[str, Any],
@@ -76,6 +97,7 @@ def build_management_dashboard(
     duplicates: dict[str, Any],
     changes: dict[str, Any],
     forecast: dict[str, Any],
+    automation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compose existing CDAS operational summaries into a management-safe view.
 
@@ -95,6 +117,7 @@ def build_management_dashboard(
 
     return {
         "as_of": calendar.get("as_of") or forecast.get("as_of"),
+        "automation": _safe_automation(automation),
         "operations": {
             "active_opportunities": int(pipeline_summary.get("active") or 0),
             "active_monthly_deduction_value": round(float(pipeline_summary.get("active_monthly_deduction_value") or 0), 2),
