@@ -4,6 +4,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from services.cdas_lifecycle_automation import (
+    SETTLEMENT_REASON_CONSOLIDATION,
+    SETTLEMENT_REASON_PAID_BY_EMPLOYEE,
+    automatic_settlement_reason,
+    reconciliation_status_order,
+)
 from services.cdas_monthly_automation import (
     calculate_automatic_terms,
     is_monthly_automation_window,
@@ -94,3 +100,62 @@ def test_sub1000_modification_does_not_change_deduction_already_at_target():
             outstanding=Decimal("5000.00"),
             affordability=Decimal("500.00"),
         )
+
+
+def test_active_reconciliation_searches_current_then_forward_and_terminal_states():
+    order = reconciliation_status_order("active", 5)
+    assert order[0] == 5
+    assert 10 in order
+    assert 7 in order
+    assert 8 in order
+    assert len(order) == len(set(order))
+
+
+def test_reconciliation_required_searches_all_documented_statuses_with_known_status_first():
+    order = reconciliation_status_order("reconciliation_required", 4)
+    assert order[0] == 4
+    assert set(order) == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+
+def test_fully_paid_zero_balance_is_automatically_settled_as_paid_by_employee():
+    reason = automatic_settlement_reason(
+        outstanding_balance=Decimal("0.00"),
+        amount_paid=Decimal("5000.00"),
+        total_repayable=Decimal("5000.00"),
+        has_consolidation_successor=False,
+    )
+    assert reason == SETTLEMENT_REASON_PAID_BY_EMPLOYEE
+
+
+def test_zero_balance_with_disbursed_topup_is_settled_as_consolidation():
+    reason = automatic_settlement_reason(
+        outstanding_balance=Decimal("0.00"),
+        amount_paid=Decimal("1200.00"),
+        total_repayable=Decimal("5000.00"),
+        has_consolidation_successor=True,
+    )
+    assert reason == SETTLEMENT_REASON_CONSOLIDATION
+
+
+def test_positive_balance_is_never_auto_settled():
+    assert (
+        automatic_settlement_reason(
+            outstanding_balance=Decimal("0.01"),
+            amount_paid=Decimal("5000.00"),
+            total_repayable=Decimal("5000.00"),
+            has_consolidation_successor=True,
+        )
+        is None
+    )
+
+
+def test_zero_balance_without_payment_or_consolidation_requires_manual_review():
+    assert (
+        automatic_settlement_reason(
+            outstanding_balance=Decimal("0.00"),
+            amount_paid=Decimal("1000.00"),
+            total_repayable=Decimal("5000.00"),
+            has_consolidation_successor=False,
+        )
+        is None
+    )
