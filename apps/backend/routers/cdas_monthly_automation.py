@@ -110,16 +110,35 @@ def get_automation_status(
         for row in rows
         if dict(row.analysis_snapshot or {}).get("source") == AUTOMATION_SOURCE
     ]
-    latest = snapshots[0] if snapshots else None
+    latest_check_date = max(
+        (str(item.get("last_check_date") or "") for item in snapshots if item.get("last_check_date")),
+        default=None,
+    )
+    latest_run = [
+        item for item in snapshots
+        if latest_check_date and str(item.get("last_check_date") or "") == latest_check_date
+    ]
+    latest = latest_run[0] if latest_run else None
     totals = {
-        "runs": len(snapshots),
+        "checks": len(snapshots),
         "activated": sum(int(item.get("activated") or 0) for item in snapshots),
         "provider_writes": sum(int(item.get("provider_writes") or 0) for item in snapshots),
         "failed": sum(1 for item in snapshots if item.get("last_check_status") in {"failed", "degraded"}),
     }
+    latest_run_summary = {
+        "date": latest_check_date,
+        "checked": len(latest_run),
+        "positive_affordability": sum(1 for item in latest_run if float(item.get("available_affordability") or 0) > 0),
+        "activated": sum(int(item.get("activated") or 0) for item in latest_run),
+        "no_capacity": sum(1 for item in latest_run if item.get("recommended_action") == "MONITOR_NO_CAPACITY"),
+        "failed": sum(1 for item in latest_run if item.get("last_check_status") in {"failed", "degraded"}),
+        "provider_writes": sum(int(item.get("provider_writes") or 0) for item in latest_run),
+        "remaining_affordability": round(sum(float(item.get("remaining_affordability") or 0) for item in latest_run), 2),
+    }
     return {
         **_configuration_payload(db, context),
         "latest": latest,
+        "latest_run": latest_run_summary,
         "totals": totals,
         "legacy_daily_0345_enabled": False,
     }
