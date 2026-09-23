@@ -27,8 +27,12 @@ def _money(value: object) -> Decimal:
         return Decimal("0.00")
 
 
+def _local_now() -> datetime:
+    return datetime.now(ZoneInfo(settings.APP_TIMEZONE))
+
+
 def _current_effective_month() -> str:
-    now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
+    now = _local_now()
     return f"{now.year:04d}-{now.month:02d}"
 
 
@@ -121,12 +125,18 @@ def build_cdas_registration_plan(
     suggested = _money(snapshot.get("suggested_monthly_deduction")) if snapshot else None
     estimated_months = snapshot.get("estimated_collection_months") if snapshot else None
     monitored_on = snapshot.get("local_date") if snapshot else None
+    current_local_date = _local_now().date().isoformat()
 
     contractual_installment = _money(loan.installment_amount)
     if snapshot is None:
         blockers.append("No daily CDAS affordability result is available yet for this borrower.")
-    elif latest_affordability is not None and latest_affordability < contractual_installment:
-        blockers.append("The latest monitored CDAS affordability is below the contractual LoanHub installment.")
+    else:
+        if monitored_on != current_local_date:
+            blockers.append(
+                "The latest stored CDAS affordability is not from today. Refresh borrower intelligence or wait for the 03:45 daily monitor before using this preparation as ready evidence."
+            )
+        if latest_affordability is not None and latest_affordability < contractual_installment:
+            blockers.append("The latest monitored CDAS affordability is below the contractual LoanHub installment.")
 
     return {
         "ready": len(blockers) == 0,
