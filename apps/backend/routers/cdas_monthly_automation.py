@@ -16,6 +16,10 @@ from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.session import get_db
 from services.cdas_config_service import configuration_summary, get_configuration
+from services.cdas_lifecycle_automation import (
+    SETTLEMENT_REASON_CONSOLIDATION,
+    SETTLEMENT_REASON_PAID_BY_EMPLOYEE,
+)
 from services.cdas_monthly_automation import (
     AUTOMATION_AUTHORIZATION_BASIS,
     AUTOMATION_SOURCE,
@@ -56,6 +60,12 @@ def _configuration_payload(db: Session, context: TenantContext) -> dict[str, Any
         "authorization_basis": AUTOMATION_AUTHORIZATION_BASIS,
         "auto_modify_below": float(AUTO_MODIFY_TARGET),
         "auto_modify_target": float(AUTO_MODIFY_TARGET),
+        "automatic_status_reconciliation": True,
+        "automatic_zero_balance_settlement": True,
+        "automatic_settlement_reasons": {
+            "paid_by_employee": SETTLEMENT_REASON_PAID_BY_EMPLOYEE,
+            "consolidation": SETTLEMENT_REASON_CONSOLIDATION,
+        },
         "cdas_integration": configuration_summary(row),
     }
 
@@ -118,7 +128,25 @@ def get_automation_status(
         "runs": len(snapshots),
         "activated": sum(int(item.get("activated") or 0) for item in snapshots),
         "modified": sum(int(item.get("modified") or 0) for item in snapshots),
+        "reconciled": sum(int(item.get("reconciled") or 0) for item in snapshots),
+        "settled": sum(int(item.get("settled") or 0) for item in snapshots),
+        "paid_settlements": sum(
+            1
+            for item in snapshots
+            if int(item.get("settled") or 0) and int(item.get("settlement_reason") or 0) == SETTLEMENT_REASON_PAID_BY_EMPLOYEE
+        ),
+        "consolidation_settlements": sum(
+            1
+            for item in snapshots
+            if int(item.get("settled") or 0) and int(item.get("settlement_reason") or 0) == SETTLEMENT_REASON_CONSOLIDATION
+        ),
+        "provider_reads": sum(int(item.get("provider_reads") or 0) for item in snapshots),
         "provider_writes": sum(int(item.get("provider_writes") or 0) for item in snapshots),
+        "provider_missing": sum(
+            1
+            for item in snapshots
+            if item.get("recommended_action") == "RECONCILIATION_REQUIRED_PROVIDER_RECORD_NOT_FOUND"
+        ),
         "failed": sum(1 for item in snapshots if item.get("last_check_status") in {"failed", "degraded"}),
     }
     return {
