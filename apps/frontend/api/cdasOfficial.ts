@@ -1,5 +1,7 @@
 import { api } from "@/lib/api";
 import type {
+  CdasBorrowerIntelligenceRequest,
+  CdasBorrowerIntelligenceResponse,
   CdasLinkedActionRequest,
   CdasLinkedModifyRequest,
   CdasLinkedSettlementRequest,
@@ -16,6 +18,11 @@ export const cdasOfficialApi = {
     payload: CdasOfficialRefreshRequest,
   ): Promise<CdasOfficialRefreshResponse> =>
     (await api.post<CdasOfficialRefreshResponse>("/cdas/refresh", payload)).data,
+
+  runBorrowerIntelligence: async (
+    payload: CdasBorrowerIntelligenceRequest,
+  ): Promise<CdasBorrowerIntelligenceResponse> =>
+    (await api.post<CdasBorrowerIntelligenceResponse>("/cdas/intelligence", payload)).data,
 
   registerLoanDeduction: async (
     payload: CdasLoanDeductionRegistrationRequest,

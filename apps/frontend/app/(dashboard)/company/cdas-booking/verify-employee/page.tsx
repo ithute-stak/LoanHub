@@ -15,8 +15,13 @@ import { getErrorMessage } from "@/utils/apiError";
 
 type VerificationResult = {
   borrower_id: string;
+  account_id: string;
+  account_reference: string;
+  national_id_masked: string;
   employee_no: string;
   verified: boolean;
+  identity_basis: string;
+  provider_national_id_present: boolean;
   verification_reference: string;
   verified_at: string | null;
   employee: {
@@ -31,17 +36,17 @@ type VerificationResult = {
 };
 
 export default function VerifyCdasEmployeePage() {
-  const [borrowerId, setBorrowerId] = useState("");
+  const [nationalId, setNationalId] = useState("");
   const [employeeNo, setEmployeeNo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<VerificationResult | null>(null);
 
   async function verify() {
-    const borrower = borrowerId.trim();
+    const id = nationalId.trim();
     const employee = employeeNo.trim();
-    if (!borrower || !employee) {
-      setError("Enter both the LoanHub borrower ID and the CDAS employee number.");
+    if (!id || !employee) {
+      setError("Enter both the LoanHub client National ID and the CDAS employee number.");
       return;
     }
 
@@ -49,10 +54,10 @@ export default function VerifyCdasEmployeePage() {
     setError("");
     setResult(null);
     try {
-      const response = await api.post<VerificationResult>(
-        `/cdas/borrowers/${borrower}/verify-employee`,
-        { employee_no: employee },
-      );
+      const response = await api.post<VerificationResult>("/cdas/verify-employee", {
+        national_id: id,
+        employee_no: employee,
+      });
       setResult(response.data);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS employee verification failed."));
@@ -69,15 +74,15 @@ export default function VerifyCdasEmployeePage() {
           <h1 className="text-2xl font-semibold tracking-tight">Verify CDAS Employee</h1>
         </div>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Bind a CDAS employee number to a known LoanHub borrower before branch-scoped affordability and deduction reads are allowed.
+          Link a CDAS employee number to exactly one active LoanHub client using the client&apos;s National ID.
         </p>
       </div>
 
       <Alert>
         <ShieldCheck className="h-4 w-4" />
-        <AlertTitle>Borrower-scoped verification</AlertTitle>
+        <AlertTitle>Exact-ID policy</AlertTitle>
         <AlertDescription>
-          LoanHub calls only the CDAS employee-details endpoint first. The employee number, name, surname and date of birth must match the selected borrower before the payroll profile is marked verified. This screen is not a general employee-directory search.
+          LoanHub matches the National ID exactly after removing harmless formatting such as spaces and hyphens, then requires CDAS to return the exact employee number searched. Names and date of birth are display information only and are never used as a fuzzy identity fallback. CDAS v1.5 does not document National ID in Employee Details; if the provider supplies one, it must also match exactly.
         </AlertDescription>
       </Alert>
 
@@ -90,20 +95,20 @@ export default function VerifyCdasEmployeePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Borrower and employee</CardTitle>
+          <CardTitle>National ID and employee number</CardTitle>
           <CardDescription>
-            Use the borrower ID from the LoanHub client/borrower record and the employee number supplied for CDAS payroll verification.
+            No LoanHub borrower UUID is required. Use the National ID already recorded on the client profile and the employee number used by CDAS.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="borrower-id">LoanHub borrower ID</Label>
+              <Label htmlFor="national-id">LoanHub client National ID</Label>
               <Input
-                id="borrower-id"
-                value={borrowerId}
-                onChange={(event) => setBorrowerId(event.target.value)}
-                placeholder="UUID"
+                id="national-id"
+                value={nationalId}
+                onChange={(event) => setNationalId(event.target.value)}
+                placeholder="National ID"
                 autoComplete="off"
               />
             </div>
@@ -118,8 +123,8 @@ export default function VerifyCdasEmployeePage() {
               />
             </div>
           </div>
-          <LoadingButton loading={loading} loadingText="Verifying with CDAS..." onClick={verify}>
-            <UserCheck className="h-4 w-4" />Verify employee
+          <LoadingButton loading={loading} loadingText="Verifying exact identifiers..." onClick={verify}>
+            <UserCheck className="h-4 w-4" />Verify exact link
           </LoadingButton>
         </CardContent>
       </Card>
@@ -128,21 +133,21 @@ export default function VerifyCdasEmployeePage() {
         <Card className="border-emerald-500/40">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <BadgeCheck className="h-5 w-5" />Official identity verified
+              <BadgeCheck className="h-5 w-5" />Exact employee link verified
             </CardTitle>
             <CardDescription>
-              This borrower may now use branch-scoped CDAS affordability, deduction and snapshot reads for employee {result.employee_no}.
+              LoanHub account {result.account_reference} · National ID {result.national_id_masked} · CDAS employee {result.employee_no}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div><div className="text-muted-foreground">Name</div><div className="font-medium">{result.employee.name || "—"}</div></div>
-              <div><div className="text-muted-foreground">Surname</div><div className="font-medium">{result.employee.surname || "—"}</div></div>
-              <div><div className="text-muted-foreground">Date of birth</div><div className="font-medium">{result.employee.dob || "—"}</div></div>
+              <div><div className="text-muted-foreground">Name from CDAS</div><div className="font-medium">{result.employee.name || "—"}</div></div>
+              <div><div className="text-muted-foreground">Surname from CDAS</div><div className="font-medium">{result.employee.surname || "—"}</div></div>
               <div><div className="text-muted-foreground">Department</div><div className="font-medium">{result.employee.department || "—"}</div></div>
+              <div><div className="text-muted-foreground">Provider National ID</div><div className="font-medium">{result.provider_national_id_present ? "Returned and matched" : "Not returned by documented v1.5 response"}</div></div>
             </div>
             <Button asChild>
-              <Link href="/company/cdas-booking">Continue to Official CDAS reads</Link>
+              <Link href="/company/cdas-booking/intelligence">Continue to Borrower Intelligence</Link>
             </Button>
           </CardContent>
         </Card>
