@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable
@@ -7,9 +8,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from database.models.branch import CompanyBranch
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.models.cdas_official import CdasOfficialMandateState
+from database.models.company_staff import CompanyStaff
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
+from database.models.person import Person
+from database.models.user import User
 from services.cdas_config_service import get_configuration
 
 
@@ -129,6 +134,113 @@ def _snapshot_matches_environment(snapshot: dict[str, Any], environment: str | N
     return str(environment or "test").lower() == "test"
 
 
+def summarize_active_book(
+    rows: Iterable[tuple[CdasOfficialMandateState, CDASDeductionMandate]],
+    *,
+    branch_names: dict[UUID, str] | None = None,
+    officer_names: dict[UUID, str] | None = None,
+    limit: int = 5,
+) -> dict[str, list[dict[str, Any]]]:
+    """Summarize active CDAS book by branch and mandate-registering officer.
+
+    Input rows are already tenant/environment/branch scoped by the caller. Keeping
+    aggregation here makes the ranking deterministic and unit-testable without
+    loading raw mandate detail into the browser.
+    """
+    branch_names = branch_names or {}
+    officer_names = officer_names or {}
+    branch_totals: dict[UUID | None, dict[str, Any]] = defaultdict(
+        lambda: {"active_deduction_count": 0, "client_ids": set(), "monthly_amount": Decimal("0.00")}
+    )
+    officer_totals: dict[UUID, dict[str, Any]] = defaultdict(
+        lambda: {"active_deduction_count": 0, "client_ids": set(), "monthly_amount": Decimal("0.00")}
+    )
+
+    for _, mandate in rows:
+        amount = max(_money(mandate.monthly_deduction), Decimal("0.00"))
+        branch_bucket = branch_totals[getattr(mandate, "branch_id", None)]
+        branch_bucket["active_deduction_count"] += 1
+        branch_bucket["client_ids"].add(mandate.borrower_id)
+        branch_bucket["monthly_amount"] += amount
+
+        officer_id = getattr(mandate, "created_by_user_id", None)
+        if officer_id:
+            officer_bucket = officer_totals[officer_id]
+            officer_bucket["active_deduction_count"] += 1
+            officer_bucket["client_ids"].add(mandate.borrower_id)
+            officer_bucket["monthly_amount"] += amount
+
+    branches = [
+        {
+            "branch_id": str(branch_id) if branch_id else None,
+            "name": branch_names.get(branch_id, "Unassigned branch") if branch_id else "Unassigned branch",
+            "active_deduction_count": values["active_deduction_count"],
+            "active_client_count": len(values["client_ids"]),
+            "monthly_amount": float(values["monthly_amount"].quantize(Decimal("0.01"))),
+        }
+        for branch_id, values in branch_totals.items()
+    ]
+    officers = [
+        {
+            "user_id": str(user_id),
+            "name": officer_names.get(user_id, "Company staff"),
+            "active_deduction_count": values["active_deduction_count"],
+            "active_client_count": len(values["client_ids"]),
+            "monthly_amount": float(values["monthly_amount"].quantize(Decimal("0.01"))),
+        }
+        for user_id, values in officer_totals.items()
+    ]
+
+    sort_key = lambda item: (-float(item["monthly_amount"]), -int(item["active_deduction_count"]), str(item["name"]).casefold())
+    branches.sort(key=sort_key)
+    officers.sort(key=sort_key)
+    return {"branches": branches[:limit], "officers": officers[:limit]}
+
+
+def _active_book_names(
+    db: Session,
+    *,
+    company_id: UUID,
+    rows: Iterable[tuple[CdasOfficialMandateState, CDASDeductionMandate]],
+) -> tuple[dict[UUID, str], dict[UUID, str]]:
+    mandates = [mandate for _, mandate in rows]
+    branch_ids = {mandate.branch_id for mandate in mandates if mandate.branch_id}
+    officer_ids = {mandate.created_by_user_id for mandate in mandates if mandate.created_by_user_id}
+
+    branch_names: dict[UUID, str] = {}
+    if branch_ids:
+        branch_names = {
+            branch.id: branch.name
+            for branch in db.query(CompanyBranch)
+            .filter(CompanyBranch.company_id == company_id, CompanyBranch.id.in_(branch_ids))
+            .all()
+        }
+
+    officer_names: dict[UUID, str] = {}
+    if officer_ids:
+        staff_rows = (
+            db.query(CompanyStaff, User, Person)
+            .join(User, User.id == CompanyStaff.user_id)
+            .outerjoin(Person, Person.user_id == User.id)
+            .filter(
+                CompanyStaff.company_id == company_id,
+                CompanyStaff.user_id.in_(officer_ids),
+                CompanyStaff.is_active.is_(True),
+            )
+            .all()
+        )
+        for staff, user, person in staff_rows:
+            if staff.user_id in officer_names:
+                continue
+            if person:
+                name = person.full_name
+            else:
+                name = str(user.email or user.phone or "Company staff")
+            officer_names[staff.user_id] = name
+
+    return branch_names, officer_names
+
+
 def build_company_cdas_dashboard_kpis(
     db: Session,
     *,
@@ -164,6 +276,16 @@ def build_company_cdas_dashboard_kpis(
         Decimal("0.00"),
     ).quantize(Decimal("0.01"))
     active_clients = len({mandate.borrower_id for _, mandate in current_active})
+    branch_names, officer_names = _active_book_names(
+        db,
+        company_id=company_id,
+        rows=current_active,
+    )
+    active_book = summarize_active_book(
+        current_active,
+        branch_names=branch_names,
+        officer_names=officer_names,
+    )
 
     current_start, current_end = month_bounds(today)
     previous_start = shift_month(current_start, -1)
@@ -308,5 +430,7 @@ def build_company_cdas_dashboard_kpis(
         "latest_daily_check": latest_daily_check,
         "daily_check_failures_today": daily_failures,
         "run_rate_history": history,
+        "top_branches": active_book["branches"],
+        "top_officers": active_book["officers"],
         "methodology": "Contracted CDAS monthly run-rate from LoanHub-linked mandates. This is not proof of payroll cash receipt; actual receipts remain subject to remittance/payment reconciliation.",
     }
