@@ -14,7 +14,7 @@ from database.models.enums import LoanStatus
 from database.models.lending_operations import CDASPayrollProfile
 from integrations.cdas import CdasError
 from services.cdas_borrower_intelligence import build_borrower_loan_intelligence
-from services.cdas_config_service import get_company_cdas_client
+from services.cdas_config_service import get_company_cdas_client, get_configuration
 
 
 _ELIGIBLE_LOAN_STATUSES = {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}
@@ -94,6 +94,7 @@ def _upsert_monitoring_opportunity(
     deductions: list[dict[str, Any]],
     loan_intelligence: dict[str, Any],
     local_date: date,
+    environment: str,
 ) -> CdasBookingOpportunity:
     row = _get_or_create_opportunity(db, profile=profile)
 
@@ -111,6 +112,7 @@ def _upsert_monitoring_opportunity(
     row.total_monthly_deductions = total_deductions
     row.analysis_snapshot = {
         "source": "CDAS_DAILY_INTELLIGENCE",
+        "environment": environment,
         "local_date": local_date.isoformat(),
         "last_check_date": local_date.isoformat(),
         "last_check_status": "success",
@@ -136,11 +138,13 @@ def _record_failed_check(
     profile: CDASPayrollProfile,
     local_date: date,
     error: Exception,
+    environment: str,
 ) -> CdasBookingOpportunity:
     """Persist sanitized overnight check health without destroying the last good result."""
     row = _get_or_create_opportunity(db, profile=profile)
     snapshot = dict(row.analysis_snapshot or {})
     snapshot.setdefault("source", "CDAS_DAILY_INTELLIGENCE")
+    snapshot["environment"] = environment
     snapshot.setdefault("identity_policy", "EXACT_NATIONAL_ID_VERIFIED_PROFILE_ONLY")
     snapshot.setdefault("borrower_id", str(profile.borrower_id))
     snapshot.setdefault("employee_no", profile.employee_number)
@@ -181,12 +185,20 @@ async def run_daily_cdas_intelligence(
     failures = 0
 
     for company_id, company_profiles in by_company.items():
+        configuration = get_configuration(db, company_id)
+        environment = str(getattr(configuration, "environment", "test") or "test").strip().lower()
         try:
             client = get_company_cdas_client(db, company_id)
         except Exception as exc:
             for profile in company_profiles:
                 try:
-                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    _record_failed_check(
+                        db,
+                        profile=profile,
+                        local_date=local_date,
+                        error=exc,
+                        environment=environment,
+                    )
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -214,6 +226,7 @@ async def run_daily_cdas_intelligence(
                     deductions=deductions,
                     loan_intelligence=loan_intelligence,
                     local_date=local_date,
+                    environment=environment,
                 )
                 db.commit()
                 checked += 1
@@ -224,7 +237,13 @@ async def run_daily_cdas_intelligence(
             except CdasError as exc:
                 db.rollback()
                 try:
-                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    _record_failed_check(
+                        db,
+                        profile=profile,
+                        local_date=local_date,
+                        error=exc,
+                        environment=environment,
+                    )
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -232,7 +251,13 @@ async def run_daily_cdas_intelligence(
             except Exception as exc:
                 db.rollback()
                 try:
-                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    _record_failed_check(
+                        db,
+                        profile=profile,
+                        local_date=local_date,
+                        error=exc,
+                        environment=environment,
+                    )
                     db.commit()
                 except Exception:
                     db.rollback()
