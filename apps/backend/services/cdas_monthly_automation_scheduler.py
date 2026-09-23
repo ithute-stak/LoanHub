@@ -37,14 +37,15 @@ async def _run_once_if_due() -> None:
             acquired = True
 
         # The monthly 06:00 cycle is deliberately ordered:
-        # 1) register/approve/activate new eligible deductions;
-        # 2) increase eligible sub-M1,000 deductions;
-        # 3) reconcile LoanHub with the provider and settle zero-balance loans.
-        # Durable borrower/deduction/day markers plus the provider-write arming
-        # layer make retries idempotent and prevent blind duplicate writes.
+        # 1) register/review/approve/activate new eligible deductions;
+        # 2) reconcile every official mandate with CDAS and settle zero-balance
+        #    loans before any further state-changing modification is attempted;
+        # 3) increase eligible sub-M1,000 deductions using the reconciled state.
+        # This order also means an uncertain modification from a previous run is
+        # reconciled before LoanHub can consider sending another modification.
         await run_monthly_cdas_automation(db, now=now, enforce_window=True)
-        await run_sub1000_auto_modifications(db, now=now, enforce_window=True)
         await run_monthly_cdas_lifecycle_automation(db, now=now, enforce_window=True)
+        await run_sub1000_auto_modifications(db, now=now, enforce_window=True)
         _last_run_date = now.date()
     finally:
         if acquired and db.get_bind().dialect.name == "postgresql":
