@@ -8,18 +8,32 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from core.access_control import TenantContext, get_tenant_context, require_tenant_roles
+from core.access_control import (
+    COLLECTIONS_ROLES,
+    FINANCE_ROLES,
+    LENDING_ROLES,
+    TenantContext,
+    get_tenant_context,
+    require_tenant_roles,
+)
 from database.config.config import settings
 from database.models.cdas_booking import CdasBookingOpportunity
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASPayrollProfile
 from database.session import get_db
+from services.cdas_dashboard_kpis import build_company_cdas_dashboard_kpis
 
 
 router = APIRouter(prefix="/cdas/daily-intelligence", tags=["CDAS Daily Intelligence"])
 
 _HEALTH_ROLES = {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}
+_DASHBOARD_ROLES = (
+    set(LENDING_ROLES)
+    | set(FINANCE_ROLES)
+    | set(COLLECTIONS_ROLES)
+    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR, UserRole.RISK_MANAGER}
+)
 _REGISTRATION_DRAFT_ROLES = {
     UserRole.COMPANY_OWNER,
     UserRole.COMPANY_ADMIN,
@@ -65,6 +79,22 @@ def build_registration_draft_math(*, outstanding: object, affordability: object)
     if installments > 600:
         raise ValueError("Calculated term exceeds the 600-installment safety limit")
     return deduction, installments
+
+
+@router.get("/dashboard-kpis")
+def get_company_cdas_dashboard_kpis(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return company/branch-scoped CDAS payroll run-rate and forward-looking KPIs."""
+    company_id = _require_company(context)
+    require_tenant_roles(context, _DASHBOARD_ROLES)
+    return build_company_cdas_dashboard_kpis(
+        db,
+        company_id=company_id,
+        branch_id=context.branch_id,
+        today=_local_today(),
+    )
 
 
 @router.get("/status")
