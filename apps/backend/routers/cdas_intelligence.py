@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -10,7 +12,7 @@ from integrations.cdas import CdasError
 from services.cdas_analysis_history import save_or_get_analysis_record, serialize_analysis_record
 from services.cdas_borrower_intelligence import build_borrower_loan_intelligence
 from services.cdas_config_service import get_company_cdas_client
-from services.cdas_deduction_lifecycle import _utcnow
+from services.cdas_deduction_lifecycle import CdasLifecycleError, _utcnow
 from services.cdas_exact_identity import (
     CdasExactIdentityError,
     mask_national_id,
@@ -19,6 +21,7 @@ from services.cdas_exact_identity import (
     validate_exact_provider_identity,
 )
 from services.cdas_official_snapshot import normalize_official_cdas_snapshot
+from services.cdas_registration_plan import build_cdas_registration_plan
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Borrower Intelligence"])
@@ -58,6 +61,26 @@ def _report_preparer(context: TenantContext) -> tuple[str, str]:
     )
     role = getattr(context.role, "value", None) or str(context.role)
     return prepared_by, str(role)
+
+
+@router.get("/loans/{loan_id}/registration-plan")
+def get_cdas_registration_plan(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Prepare contract-safe fields for the official lifecycle without provider I/O."""
+    _require_lending_member(context)
+    assert context.company_id is not None
+    try:
+        return build_cdas_registration_plan(
+            db,
+            company_id=context.company_id,
+            branch_id=context.branch_id,
+            loan_id=loan_id,
+        )
+    except CdasLifecycleError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 @router.post("/intelligence")
