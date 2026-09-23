@@ -137,6 +137,29 @@ export interface CdasBorrowerIntelligenceResponse {
   };
 }
 
+export interface CdasRegistrationPlan {
+  ready: boolean;
+  blockers: string[];
+  loan_id: string;
+  loan_reference: string;
+  borrower_id: string;
+  employee_no: string | null;
+  deduction_amount: number;
+  principal_amount: number;
+  total_installment: number;
+  effective_month: string;
+  latest_affordability: number | null;
+  daily_suggested_monthly_deduction: number | null;
+  daily_estimated_collection_months: number | null;
+  latest_monitor_date: string | null;
+  existing_mandate: boolean;
+  borrower_consent_required: boolean;
+  item_code_required: boolean;
+  reference_no_required: boolean;
+  provider_write_performed: false;
+  message: string;
+}
+
 export type CdasLoanLifecycleStatus =
   | "registration_pending"
   | "registration_failed"
