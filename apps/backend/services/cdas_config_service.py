@@ -74,9 +74,6 @@ def _validate_environment_base_url(environment: str, base_url: str) -> None:
             f"CDAS Test environment must use the official test URL {DEFAULT_TEST_BASE_URL}"
         )
 
-    # A URL string can vary while still reaching the same host (hostname case,
-    # explicit port, or a path). Live must never target the known Test host in
-    # any of those forms.
     base_host = (urlparse(base_url).hostname or "").lower()
     if environment == "live" and base_host == DEFAULT_TEST_HOST:
         raise ValueError("CDAS Live environment cannot use the CDAS test host")
@@ -252,9 +249,6 @@ def update_configuration(
         )
         db.add(row)
 
-    # Never carry an encrypted credential from Test into Live or vice versa.
-    # A new environment must either receive a new password explicitly or remain
-    # disabled with no stored password until one is supplied.
     encrypted_credentials = None if environment_changed else row.encrypted_credentials
     if clear_password:
         encrypted_credentials = None
@@ -268,16 +262,22 @@ def update_configuration(
             )
         raise ValueError("A CDAS password must be configured before the integration can be enabled")
 
+    # Preserve provider-specific operational settings (including the monthly
+    # auto-deduction policy) when credentials are edited. Older behavior
+    # replaced the complete JSON object and would silently disable automation.
+    configuration = dict(_configuration_values(row))
+    configuration.update(
+        {
+            "base_url": base_url,
+            "username": username,
+            "timeout_seconds": float(timeout_seconds),
+        }
+    )
     row.environment = environment
     row.is_enabled = enabled
-    row.configuration = {
-        "base_url": base_url,
-        "username": username,
-        "timeout_seconds": float(timeout_seconds),
-    }
+    row.configuration = configuration
     row.encrypted_credentials = encrypted_credentials
     row.configured_by_user_id = configured_by_user_id
-    # A credential/configuration change invalidates the previous connectivity result.
     row.last_test_status = None
     row.last_tested_at = None
 

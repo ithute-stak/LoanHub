@@ -21,6 +21,10 @@ from core.route_inspection import validate_http_route_contracts
 from database.config.config import settings
 from database.session import SessionLocal, get_db
 from utils.authContextMiddleware import AuthContextMiddleware
+from services.cdas_monthly_automation_scheduler import (
+    start_cdas_monthly_automation_scheduler,
+    stop_cdas_monthly_automation_scheduler,
+)
 from services.employer_group_service import ensure_central_work_groups
 from services.maturity_recovery_scheduler import (
     start_maturity_recovery_scheduler,
@@ -52,6 +56,7 @@ async def lifespan(_: FastAPI):
     treasury_started = False
     maturity_started = False
     webhook_started = False
+    cdas_automation_started = False
     _seed_central_work_groups()
     await manager.start()
     try:
@@ -67,6 +72,11 @@ async def lifespan(_: FastAPI):
             maturity_started = True
             await start_webhook_outbox_scheduler(10)
             webhook_started = True
+            # CDAS payroll automation polls only for the schedule boundary. It
+            # performs provider reads/writes solely from 06:00-06:59 on the
+            # 14th through 20th of each month in APP_TIMEZONE.
+            await start_cdas_monthly_automation_scheduler(60)
+            cdas_automation_started = True
             if settings.TREASURY_AUTO_SUBMIT_ENABLED:
                 await start_treasury_scheduler(settings.TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS)
                 treasury_started = True
@@ -74,6 +84,8 @@ async def lifespan(_: FastAPI):
     finally:
         if treasury_started:
             await stop_treasury_scheduler()
+        if cdas_automation_started:
+            await stop_cdas_monthly_automation_scheduler()
         if maturity_started:
             await stop_maturity_recovery_scheduler()
         if webhook_started:
