@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from routers.cdas_employee_verification import calculate_cdas_origination_plan
 from services.cdas_lifecycle_automation import (
     SETTLEMENT_REASON_CONSOLIDATION,
     SETTLEMENT_REASON_PAID_BY_EMPLOYEE,
@@ -60,6 +61,63 @@ def test_automatic_term_respects_provider_safety_limit():
 def test_next_effective_month_rolls_year():
     assert next_effective_month(datetime(2026, 11, 15).date()) == "2026-12"
     assert next_effective_month(datetime(2026, 12, 15).date()) == "2027-01"
+
+
+def test_origination_preview_uses_live_affordability_to_estimate_payroll_term():
+    plan = calculate_cdas_origination_plan(
+        total_repayable=Decimal("2500.00"),
+        affordability=Decimal("1000.00"),
+        planned_installment=Decimal("850.00"),
+        selected_term_count=3,
+        first_payment_date=date(2026, 10, 25),
+    )
+    assert plan["proposed_monthly_deduction"] == Decimal("1000.00")
+    assert plan["estimated_installments"] == 3
+    assert plan["final_installment"] == Decimal("500.00")
+    assert plan["estimated_settlement_date"] == date(2026, 12, 25)
+    assert plan["planned_installment_covered"] is True
+    assert plan["within_selected_term"] is True
+
+
+def test_origination_preview_caps_deduction_at_total_repayable():
+    plan = calculate_cdas_origination_plan(
+        total_repayable=Decimal("700.00"),
+        affordability=Decimal("2000.00"),
+        planned_installment=Decimal("700.00"),
+        selected_term_count=1,
+        first_payment_date=date(2026, 10, 31),
+    )
+    assert plan["proposed_monthly_deduction"] == Decimal("700.00")
+    assert plan["estimated_installments"] == 1
+    assert plan["final_installment"] == Decimal("700.00")
+    assert plan["estimated_settlement_date"] == date(2026, 10, 31)
+
+
+def test_origination_preview_keeps_zero_capacity_linkable_for_monitoring():
+    plan = calculate_cdas_origination_plan(
+        total_repayable=Decimal("3000.00"),
+        affordability=Decimal("0.00"),
+        planned_installment=Decimal("1000.00"),
+        selected_term_count=3,
+        first_payment_date=date(2026, 10, 25),
+    )
+    assert plan["status"] == "no_capacity"
+    assert plan["estimated_installments"] is None
+    assert plan["proposed_monthly_deduction"] == Decimal("0.00")
+
+
+def test_origination_preview_warns_when_capacity_extends_selected_term():
+    plan = calculate_cdas_origination_plan(
+        total_repayable=Decimal("5000.00"),
+        affordability=Decimal("600.00"),
+        planned_installment=Decimal("1000.00"),
+        selected_term_count=5,
+        first_payment_date=date(2026, 10, 25),
+    )
+    assert plan["estimated_installments"] == 9
+    assert plan["planned_installment_covered"] is False
+    assert plan["within_selected_term"] is False
+    assert plan["status"] == "longer_than_selected_term"
 
 
 def test_sub1000_modification_uses_only_incremental_affordability():
