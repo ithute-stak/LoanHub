@@ -65,15 +65,7 @@ def _eligible_profiles(db: Session, *, limit: int) -> list[CDASPayrollProfile]:
     return rows
 
 
-def _upsert_monitoring_opportunity(
-    db: Session,
-    *,
-    profile: CDASPayrollProfile,
-    affordability: float,
-    deductions: list[dict[str, Any]],
-    loan_intelligence: dict[str, Any],
-    local_date: date,
-) -> CdasBookingOpportunity:
+def _get_or_create_opportunity(db: Session, *, profile: CDASPayrollProfile) -> CdasBookingOpportunity:
     client_reference = f"borrower:{profile.borrower_id}"
     row = (
         db.query(CdasBookingOpportunity)
@@ -91,6 +83,19 @@ def _upsert_monitoring_opportunity(
             pipeline_stage="identified",
         )
         db.add(row)
+    return row
+
+
+def _upsert_monitoring_opportunity(
+    db: Session,
+    *,
+    profile: CDASPayrollProfile,
+    affordability: float,
+    deductions: list[dict[str, Any]],
+    loan_intelligence: dict[str, Any],
+    local_date: date,
+) -> CdasBookingOpportunity:
+    row = _get_or_create_opportunity(db, profile=profile)
 
     proposal = loan_intelligence.get("collection_proposal") or {}
     action = classify_daily_collection_action(
@@ -107,6 +112,8 @@ def _upsert_monitoring_opportunity(
     row.analysis_snapshot = {
         "source": "CDAS_DAILY_INTELLIGENCE",
         "local_date": local_date.isoformat(),
+        "last_check_date": local_date.isoformat(),
+        "last_check_status": "success",
         "identity_policy": "EXACT_NATIONAL_ID_VERIFIED_PROFILE_ONLY",
         "borrower_id": str(profile.borrower_id),
         "employee_no": profile.employee_number,
@@ -120,6 +127,34 @@ def _upsert_monitoring_opportunity(
         "provider_write_performed": False,
         "note": "Daily monitoring only. Any CDAS registration/modification/approval remains behind the official loan-linked lifecycle and borrower-consent controls.",
     }
+    return row
+
+
+def _record_failed_check(
+    db: Session,
+    *,
+    profile: CDASPayrollProfile,
+    local_date: date,
+    error: Exception,
+) -> CdasBookingOpportunity:
+    """Persist sanitized overnight check health without destroying the last good result."""
+    row = _get_or_create_opportunity(db, profile=profile)
+    snapshot = dict(row.analysis_snapshot or {})
+    snapshot.setdefault("source", "CDAS_DAILY_INTELLIGENCE")
+    snapshot.setdefault("identity_policy", "EXACT_NATIONAL_ID_VERIFIED_PROFILE_ONLY")
+    snapshot.setdefault("borrower_id", str(profile.borrower_id))
+    snapshot.setdefault("employee_no", profile.employee_number)
+    snapshot["last_check_date"] = local_date.isoformat()
+    snapshot["last_check_status"] = "failed"
+    snapshot["last_check_error"] = {
+        "provider": "CDAS",
+        "status_code": getattr(error, "status_code", None),
+        "message": str(getattr(error, "message", None) or "CDAS daily check failed")[:300],
+    }
+    snapshot["retry_policy"] = "NEXT_SCHEDULED_DAILY_RUN"
+    snapshot["provider_write_performed"] = False
+    row.analysis_snapshot = snapshot
+    row.status = "monitoring"
     return row
 
 
@@ -148,8 +183,14 @@ async def run_daily_cdas_intelligence(
     for company_id, company_profiles in by_company.items():
         try:
             client = get_company_cdas_client(db, company_id)
-        except Exception:
-            failures += len(company_profiles)
+        except Exception as exc:
+            for profile in company_profiles:
+                try:
+                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                failures += 1
             continue
 
         for profile in company_profiles:
@@ -180,11 +221,21 @@ async def run_daily_cdas_intelligence(
                     ready += 1
                 elif action == "MONITOR_NO_CAPACITY":
                     no_capacity += 1
-            except CdasError:
+            except CdasError as exc:
                 db.rollback()
+                try:
+                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    db.commit()
+                except Exception:
+                    db.rollback()
                 failures += 1
-            except Exception:
+            except Exception as exc:
                 db.rollback()
+                try:
+                    _record_failed_check(db, profile=profile, local_date=local_date, error=exc)
+                    db.commit()
+                except Exception:
+                    db.rollback()
                 failures += 1
 
     return {
