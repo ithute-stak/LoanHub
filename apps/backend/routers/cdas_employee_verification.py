@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal, ROUND_CEILING
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +37,13 @@ class CdasExactEmployeeVerificationRequest(BaseModel):
     employee_no: str = Field(min_length=1, max_length=100)
 
 
+class CdasOriginationPreviewRequest(BaseModel):
+    employee_no: str = Field(min_length=1, max_length=100)
+    total_repayable: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+    scheduled_installment: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+    requested_term: int = Field(gt=0, le=120)
+
+
 def _company_client_account(
     db: Session,
     *,
@@ -68,6 +77,19 @@ def _require_company_lending_member(context: TenantContext) -> None:
 
 def _identity_http_error(exc: CdasExactIdentityError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _add_months(anchor: date, months: int) -> date:
+    month_index = (anchor.month - 1) + months
+    year = anchor.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def _ceil_installments(total: Decimal, deduction: Decimal) -> int | None:
+    if deduction <= 0:
+        return None
+    return int((total / deduction).to_integral_value(rounding=ROUND_CEILING))
 
 
 async def _verify_resolved_employee(
@@ -202,3 +224,86 @@ async def verify_cdas_employee_for_borrower(
         resolved=resolved,
         employee_no=payload.employee_no,
     )
+
+
+@router.post("/borrowers/{borrower_id}/origination-preview")
+async def preview_cdas_for_new_loan(
+    borrower_id: UUID,
+    payload: CdasOriginationPreviewRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Verify a borrower's CDAS payroll identity and return a read-only loan preview.
+
+    The endpoint deliberately performs no deduction registration or lifecycle
+    mutation. It binds the verified employee number to the borrower, reads live
+    affordability and explains how the proposed LoanHub repayment compares with
+    available payroll capacity. The normal monthly automation remains responsible
+    for registering/reviewing/approving/activating a deduction after the loan is
+    actually originated.
+    """
+    _require_company_lending_member(context)
+    assert context.company_id is not None
+
+    borrower = db.query(Borrower).filter(Borrower.id == borrower_id).one_or_none()
+    if borrower is None:
+        raise HTTPException(status_code=404, detail="Borrower not found")
+    account = _company_client_account(db, company_id=context.company_id, borrower_id=borrower_id)
+    person = getattr(getattr(borrower, "user", None), "person", None)
+    if person is None or not str(getattr(person, "national_id", "") or "").strip():
+        raise HTTPException(status_code=422, detail="The LoanHub client must have a National ID before CDAS can be linked")
+
+    resolved = ResolvedCdasBorrower(borrower=borrower, account=account, person=person)
+    verification = await _verify_resolved_employee(
+        db,
+        context=context,
+        resolved=resolved,
+        employee_no=payload.employee_no,
+    )
+
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        affordability = Decimal(str(await client.affordability(payload.employee_no.strip()) or 0)).quantize(Decimal("0.01"))
+    except CdasError as exc:
+        status = exc.status_code if 400 <= exc.status_code <= 599 else 502
+        raise HTTPException(
+            status_code=status,
+            detail={"provider": "CDAS", "code": exc.status_code, "message": exc.message},
+        ) from exc
+
+    affordability = max(affordability, Decimal("0.00"))
+    total_repayable = Decimal(payload.total_repayable).quantize(Decimal("0.01"))
+    scheduled_installment = Decimal(payload.scheduled_installment).quantize(Decimal("0.01"))
+    usable_scheduled = min(scheduled_installment, affordability) if affordability > 0 else Decimal("0.00")
+    estimated_installments = _ceil_installments(total_repayable, usable_scheduled)
+    fastest_installments = _ceil_installments(total_repayable, affordability)
+    today = date.today()
+    estimated_settlement_month = (
+        _add_months(today, estimated_installments).strftime("%Y-%m") if estimated_installments else None
+    )
+    fastest_settlement_month = (
+        _add_months(today, fastest_installments).strftime("%Y-%m") if fastest_installments else None
+    )
+    fits_scheduled_installment = affordability >= scheduled_installment
+
+    return {
+        **verification,
+        "affordability": float(affordability),
+        "total_repayable": float(total_repayable),
+        "scheduled_installment": float(scheduled_installment),
+        "requested_term": payload.requested_term,
+        "fits_scheduled_installment": fits_scheduled_installment,
+        "payroll_shortfall": float(max(scheduled_installment - affordability, Decimal("0.00"))),
+        "remaining_affordability_after_scheduled": float(max(affordability - scheduled_installment, Decimal("0.00"))),
+        "effective_preview_deduction": float(usable_scheduled),
+        "estimated_installments_at_effective_deduction": estimated_installments,
+        "estimated_settlement_month": estimated_settlement_month,
+        "fastest_installments_at_full_affordability": fastest_installments,
+        "fastest_settlement_month": fastest_settlement_month,
+        "monitoring_required": affordability <= 0,
+        "automation_note": (
+            "No affordability is currently available. LoanHub will retain the verified CDAS employee number and the monthly CDAS automation can monitor for future capacity."
+            if affordability <= 0
+            else "This is a read-only origination preview. No CDAS deduction has been registered yet."
+        ),
+    }
