@@ -4,15 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.access_control import (
-    COLLECTIONS_ROLES,
-    FINANCE_ROLES,
-    LENDING_ROLES,
-    TenantContext,
-    get_tenant_context,
-    require_tenant_roles,
-)
-from database.models.enums import UserRole
+from core.access_control import LENDING_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.session import get_db
 from integrations.cdas import CdasError
 from services.cdas_analysis_history import save_or_get_analysis_record, serialize_analysis_record
@@ -31,13 +23,6 @@ from services.cdas_official_snapshot import normalize_official_cdas_snapshot
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Borrower Intelligence"])
 
-CDAS_INTELLIGENCE_ROLES = (
-    set(LENDING_ROLES)
-    | set(FINANCE_ROLES)
-    | set(COLLECTIONS_ROLES)
-    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR, UserRole.RISK_MANAGER}
-)
-
 
 class CdasBorrowerIntelligenceRequest(BaseModel):
     national_id: str = Field(min_length=1, max_length=100)
@@ -45,10 +30,10 @@ class CdasBorrowerIntelligenceRequest(BaseModel):
     own_deduction_status: int | None = Field(default=None, ge=1, le=10)
 
 
-def _require_reader(context: TenantContext) -> None:
+def _require_lending_member(context: TenantContext) -> None:
     if context.is_platform_admin or not context.company_id or not context.staff:
         raise HTTPException(status_code=403, detail="A company-scoped membership is required")
-    require_tenant_roles(context, CDAS_INTELLIGENCE_ROLES)
+    require_tenant_roles(context, LENDING_ROLES)
 
 
 def _identity_http_error(exc: CdasExactIdentityError) -> HTTPException:
@@ -83,12 +68,12 @@ async def run_cdas_borrower_intelligence(
 ):
     """Join live CDAS payroll capacity to LoanHub debt using exact National ID.
 
-    This endpoint is read/analysis oriented. It may establish the verified
-    EmployeeNo-to-borrower link, but it never registers, changes, approves or
-    settles a provider deduction. Those mutations remain behind the loan-linked
-    official lifecycle and borrower-consent controls.
+    This endpoint may establish the verified EmployeeNo-to-borrower link, so it
+    is limited to lending-authorized staff. It never registers, changes, approves
+    or settles a provider deduction; those mutations remain behind the official
+    loan-linked lifecycle and borrower-consent controls.
     """
-    _require_reader(context)
+    _require_lending_member(context)
     assert context.company_id is not None
 
     try:
