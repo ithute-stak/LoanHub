@@ -6,6 +6,7 @@ from datetime import date
 from sqlalchemy import text
 
 from database.session import SessionLocal
+from services.cdas_lifecycle_automation import run_monthly_cdas_lifecycle_automation
 from services.cdas_monthly_automation import is_monthly_automation_window, local_now, run_monthly_cdas_automation
 from services.cdas_sub1000_auto_modification import run_sub1000_auto_modifications
 
@@ -35,11 +36,15 @@ async def _run_once_if_due() -> None:
         else:
             acquired = True
 
-        # Per-borrower and per-deduction durable date markers make both stages
-        # idempotent even when a second process obtains the lock later in the
-        # same 06:00 hour after an interrupted run.
+        # The monthly 06:00 cycle is deliberately ordered:
+        # 1) register/approve/activate new eligible deductions;
+        # 2) increase eligible sub-M1,000 deductions;
+        # 3) reconcile LoanHub with the provider and settle zero-balance loans.
+        # Durable borrower/deduction/day markers plus the provider-write arming
+        # layer make retries idempotent and prevent blind duplicate writes.
         await run_monthly_cdas_automation(db, now=now, enforce_window=True)
         await run_sub1000_auto_modifications(db, now=now, enforce_window=True)
+        await run_monthly_cdas_lifecycle_automation(db, now=now, enforce_window=True)
         _last_run_date = now.date()
     finally:
         if acquired and db.get_bind().dialect.name == "postgresql":
