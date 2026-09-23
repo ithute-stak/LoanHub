@@ -70,6 +70,19 @@ class DirectLoanApplication(Base):
         index=True,
     )
     cdas_handoff_at = Column(DateTime, nullable=True, index=True)
+    # Per-loan CDAS collection choice captured during origination.  The field
+    # stays nullable so applications created before this feature retain the
+    # legacy employee-number automation behaviour, while new ORM-created
+    # applications default to an explicit opt-out until the checkbox is used.
+    cdas_collection_enabled = Column(Boolean, nullable=True, default=False, index=True)
+    cdas_employee_number = Column(String(100), nullable=True, index=True)
+    cdas_linked_at = Column(DateTime, nullable=True)
+    cdas_linked_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
 class CreditBlacklist(Base):
     __tablename__ = "credit_blacklist"
