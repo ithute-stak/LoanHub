@@ -10,11 +10,14 @@ from sqlalchemy.orm import Session
 
 from core.access_control import LENDING_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.borrower import Borrower
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.enums import LoanStatus
 from database.session import get_db
 from integrations.cdas import CdasError
+from services.cdas_collection_policy import cdas_payroll_timing
 from services.cdas_config_service import get_company_cdas_client
-from services.cdas_deduction_lifecycle import _utcnow, _value
+from services.cdas_deduction_lifecycle import _utcnow, _value, get_official_mandate_for_loan
 from services.cdas_exact_identity import (
     CdasExactIdentityError,
     ResolvedCdasBorrower,
@@ -26,6 +29,8 @@ from services.cdas_exact_identity import (
 
 
 router = APIRouter(prefix="/cdas", tags=["CDAS Employee Verification"])
+_ELIGIBLE_LOAN_STATUSES = {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}
+_MONEY_QUANTUM = Decimal("0.01")
 
 
 class CdasEmployeeVerificationRequest(BaseModel):
@@ -42,6 +47,13 @@ class CdasOriginationPreviewRequest(BaseModel):
     total_repayable: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
     scheduled_installment: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
     requested_term: int = Field(gt=0, le=120)
+
+
+def _money(value: object) -> Decimal:
+    try:
+        return Decimal(str(value or 0)).quantize(_MONEY_QUANTUM)
+    except Exception:
+        return Decimal("0.00")
 
 
 def _company_client_account(
@@ -90,6 +102,54 @@ def _ceil_installments(total: Decimal, deduction: Decimal) -> int | None:
     if deduction <= 0:
         return None
     return int((total / deduction).to_integral_value(rounding=ROUND_CEILING))
+
+
+def net_cdas_capacity(*, provider_affordability: object, pending_commitments: object) -> Decimal:
+    """Return capacity not already reserved by LoanHub but not yet visible to CDAS."""
+    provider = max(_money(provider_affordability), Decimal("0.00"))
+    reserved = max(_money(pending_commitments), Decimal("0.00"))
+    return max(provider - reserved, Decimal("0.00")).quantize(_MONEY_QUANTUM)
+
+
+def _pending_cdas_commitments(
+    db: Session,
+    *,
+    company_id: UUID,
+    borrower_id: UUID,
+) -> tuple[Decimal, list[dict[str, object]]]:
+    """Reserve explicit CDAS loans not yet reflected in provider affordability.
+
+    Once a loan has an official CDAS mandate, the provider's affordability is
+    expected to reflect it, so LoanHub must not subtract that loan a second time.
+    """
+    loans = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.company_id == company_id,
+            ClientCompanyLoan.borrower_id == borrower_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
+            ClientCompanyLoan.status.in_(tuple(_ELIGIBLE_LOAN_STATUSES)),
+            ClientCompanyLoan.balance > 0,
+        )
+        .all()
+    )
+    total = Decimal("0.00")
+    reservations: list[dict[str, object]] = []
+    for loan in loans:
+        if get_official_mandate_for_loan(db, company_id=company_id, loan_id=loan.id) is not None:
+            continue
+        commitment = min(max(_money(loan.installment_amount), Decimal("0.00")), max(_money(loan.balance), Decimal("0.00")))
+        if commitment <= 0:
+            continue
+        total += commitment
+        reservations.append(
+            {
+                "loan_id": str(loan.id),
+                "loan_reference": loan.loan_reference,
+                "reserved_installment": float(commitment),
+            }
+        )
+    return total.quantize(_MONEY_QUANTUM), reservations
 
 
 async def _verify_resolved_employee(
@@ -237,10 +297,10 @@ async def preview_cdas_for_new_loan(
 
     The endpoint deliberately performs no deduction registration or lifecycle
     mutation. It binds the verified employee number to the borrower, reads live
-    affordability and explains how the proposed LoanHub repayment compares with
-    available payroll capacity. The normal monthly automation remains responsible
-    for registering/reviewing/approving/activating a deduction after the loan is
-    actually originated.
+    affordability, subtracts LoanHub CDAS commitments that have not yet reached
+    the provider, and explains how the proposed repayment compares with the net
+    payroll capacity. The normal monthly automation remains responsible for the
+    actual provider lifecycle after the loan is originated.
     """
     _require_company_lending_member(context)
     assert context.company_id is not None
@@ -263,7 +323,7 @@ async def preview_cdas_for_new_loan(
 
     try:
         client = get_company_cdas_client(db, context.company_id)
-        affordability = Decimal(str(await client.affordability(payload.employee_no.strip()) or 0)).quantize(Decimal("0.01"))
+        provider_affordability = Decimal(str(await client.affordability(payload.employee_no.strip()) or 0)).quantize(_MONEY_QUANTUM)
     except CdasError as exc:
         status = exc.status_code if 400 <= exc.status_code <= 599 else 502
         raise HTTPException(
@@ -271,24 +331,44 @@ async def preview_cdas_for_new_loan(
             detail={"provider": "CDAS", "code": exc.status_code, "message": exc.message},
         ) from exc
 
-    affordability = max(affordability, Decimal("0.00"))
-    total_repayable = Decimal(payload.total_repayable).quantize(Decimal("0.01"))
-    scheduled_installment = Decimal(payload.scheduled_installment).quantize(Decimal("0.01"))
+    provider_affordability = max(provider_affordability, Decimal("0.00"))
+    pending_commitments, reservations = _pending_cdas_commitments(
+        db,
+        company_id=context.company_id,
+        borrower_id=borrower_id,
+    )
+    affordability = net_cdas_capacity(
+        provider_affordability=provider_affordability,
+        pending_commitments=pending_commitments,
+    )
+    total_repayable = Decimal(payload.total_repayable).quantize(_MONEY_QUANTUM)
+    scheduled_installment = Decimal(payload.scheduled_installment).quantize(_MONEY_QUANTUM)
     usable_scheduled = min(scheduled_installment, affordability) if affordability > 0 else Decimal("0.00")
     estimated_installments = _ceil_installments(total_repayable, usable_scheduled)
     fastest_installments = _ceil_installments(total_repayable, affordability)
-    today = date.today()
+
+    timing = cdas_payroll_timing(_utcnow())
+    effective_year, effective_month = [int(value) for value in timing["effective_month"].split("-")]
+    first_collection = date(effective_year, effective_month, 1)
     estimated_settlement_month = (
-        _add_months(today, estimated_installments).strftime("%Y-%m") if estimated_installments else None
+        _add_months(first_collection, max(estimated_installments - 1, 0)).strftime("%Y-%m")
+        if estimated_installments
+        else None
     )
     fastest_settlement_month = (
-        _add_months(today, fastest_installments).strftime("%Y-%m") if fastest_installments else None
+        _add_months(first_collection, max(fastest_installments - 1, 0)).strftime("%Y-%m")
+        if fastest_installments
+        else None
     )
     fits_scheduled_installment = affordability >= scheduled_installment
 
     return {
         **verification,
+        "provider_reported_affordability": float(provider_affordability),
+        "pending_loanhub_cdas_commitments": float(pending_commitments),
+        "pending_commitment_loans": reservations,
         "affordability": float(affordability),
+        "net_available_affordability": float(affordability),
         "total_repayable": float(total_repayable),
         "scheduled_installment": float(scheduled_installment),
         "requested_term": payload.requested_term,
@@ -300,10 +380,16 @@ async def preview_cdas_for_new_loan(
         "estimated_settlement_month": estimated_settlement_month,
         "fastest_installments_at_full_affordability": fastest_installments,
         "fastest_settlement_month": fastest_settlement_month,
+        "processing_window_start": timing["processing_window_start"],
+        "processing_window_end": timing["processing_window_end"],
+        "processing_time": timing["processing_time"],
+        "timezone": timing["timezone"],
+        "effective_month": timing["effective_month"],
+        "first_expected_collection_month": timing["first_expected_collection_month"],
         "monitoring_required": affordability <= 0,
         "automation_note": (
-            "No affordability is currently available. LoanHub will retain the verified CDAS employee number and the monthly CDAS automation can monitor for future capacity."
+            "No net payroll capacity is currently available after LoanHub pending CDAS commitments. The verified employee number is retained and monthly automation can monitor future capacity."
             if affordability <= 0
-            else "This is a read-only origination preview. No CDAS deduction has been registered yet."
+            else "This is a read-only origination preview using net CDAS capacity after LoanHub pending reservations. No CDAS deduction has been registered yet."
         ),
     }
