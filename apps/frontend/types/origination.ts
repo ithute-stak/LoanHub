@@ -244,6 +244,8 @@ export type OriginationApplication = {
   preferred_payment_day: number | null;
   first_payment_date: string | null;
   installment_due_dates: string[];
+  cdas_collection_enabled: boolean;
+  cdas_collection_plan: Record<string, unknown>;
   application_step: number;
   kyc_status: string | null;
   affordability_decision: string | null;
@@ -333,6 +335,7 @@ export type OriginationApplicationCreate = {
   term_count: number;
   purpose?: string | null;
   installment_due_dates: string[];
+  cdas_collection_enabled?: boolean;
 };
 
 export type ContractTemplateStyle = "loanhub_standard" | "filizwa_style";
