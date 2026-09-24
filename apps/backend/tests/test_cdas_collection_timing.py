@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from services.cdas_collection_policy import cdas_payroll_timing
+from services.cdas_collection_policy import build_cdas_collection_plan, cdas_payroll_timing
 
 
 MASERU = ZoneInfo("Africa/Maseru")
@@ -38,3 +38,19 @@ def test_during_final_processing_hour_keeps_current_month_window():
 
     assert timing["processing_window_start"] == "2026-09-14"
     assert timing["effective_month"] == "2026-10"
+
+
+def test_collection_plan_records_selection_and_timing_check_separately():
+    selected_at = datetime(2026, 9, 24, 10, 0, tzinfo=MASERU)
+    plan = build_cdas_collection_plan(
+        enabled=True,
+        installment_due_dates=[date(2026, 9, 30), date(2026, 10, 30)],
+        term_count=2,
+        selected_by_user_id=None,
+        selected_at=selected_at,
+    )
+
+    assert plan["selected_at"] == selected_at.isoformat()
+    assert plan["timing_checked_at"] == selected_at.isoformat()
+    assert plan["effective_month"] == "2026-11"
+    assert plan["first_expected_collection_month"] == "2026-11"
