@@ -23,6 +23,12 @@ from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASPayrollProfile
 from database.session import get_db
 from services.cdas_dashboard_kpis import build_company_cdas_dashboard_kpis
+from services.cdas_monthly_automation import (
+    AUTOMATION_SOURCE,
+    WINDOW_END_DAY,
+    WINDOW_HOUR,
+    WINDOW_START_DAY,
+)
 
 
 router = APIRouter(prefix="/cdas/daily-intelligence", tags=["CDAS Daily Intelligence"])
@@ -99,11 +105,17 @@ def get_company_cdas_dashboard_kpis(
 
 @router.get("/status")
 def get_daily_cdas_intelligence_status(
-    days: int = Query(default=7, ge=1, le=31),
+    days: int = Query(default=31, ge=1, le=93),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Summarize recent 03:45 CDAS monitoring outcomes from durable opportunity snapshots."""
+    """Compatibility status for the active 14th-20th 06:00 CDAS automation.
+
+    The historical 03:45 daily monitor is retired. This route remains so older
+    dashboards do not break, but its data now comes exclusively from durable
+    monthly-automation snapshots. New callers should use
+    `/cdas/monthly-automation/status` directly.
+    """
     company_id = _require_company(context)
     require_tenant_roles(context, _HEALTH_ROLES)
 
@@ -118,9 +130,10 @@ def get_daily_cdas_intelligence_status(
     by_date: dict[str, dict[str, int]] = {}
     latest_success_date: str | None = None
     latest_check_date: str | None = None
+    total_provider_writes = 0
     for row in rows:
         snapshot = dict(row.analysis_snapshot or {})
-        if snapshot.get("source") != "CDAS_DAILY_INTELLIGENCE":
+        if snapshot.get("source") != AUTOMATION_SOURCE:
             continue
         raw_date = snapshot.get("last_check_date") or snapshot.get("local_date")
         try:
@@ -132,37 +145,59 @@ def get_daily_cdas_intelligence_status(
         key = checked_date.isoformat()
         counters = by_date.setdefault(
             key,
-            {"checked": 0, "ready": 0, "no_capacity": 0, "failed": 0},
+            {
+                "checked": 0,
+                "ready": 0,
+                "activated": 0,
+                "no_capacity": 0,
+                "failed": 0,
+                "provider_writes": 0,
+            },
         )
         counters["checked"] += 1
         status = str(snapshot.get("last_check_status") or "success").lower()
         action = str(snapshot.get("recommended_action") or "")
-        if status == "failed":
+        activated = int(snapshot.get("activated") or 0)
+        provider_writes = int(snapshot.get("provider_writes") or 0)
+        counters["activated"] += activated
+        counters["ready"] += activated  # backwards-compatible alias for older dashboards
+        counters["provider_writes"] += provider_writes
+        total_provider_writes += provider_writes
+        if status in {"failed", "degraded"}:
             counters["failed"] += 1
-        elif action == "READY_FOR_COLLECTION_REVIEW":
-            counters["ready"] += 1
-        elif action == "MONITOR_NO_CAPACITY":
+        if action == "MONITOR_NO_CAPACITY":
             counters["no_capacity"] += 1
         if latest_check_date is None or key > latest_check_date:
             latest_check_date = key
         if status == "success" and (latest_success_date is None or key > latest_success_date):
             latest_success_date = key
 
-    today_counts = by_date.get(
-        today.isoformat(),
-        {"checked": 0, "ready": 0, "no_capacity": 0, "failed": 0},
-    )
-    if today_counts["checked"] == 0:
-        overall = "PENDING_OR_NO_ELIGIBLE_PROFILES"
-    elif today_counts["failed"] > 0:
+    empty_counts = {
+        "checked": 0,
+        "ready": 0,
+        "activated": 0,
+        "no_capacity": 0,
+        "failed": 0,
+        "provider_writes": 0,
+    }
+    today_counts = by_date.get(today.isoformat(), empty_counts)
+    latest_counts = by_date.get(latest_check_date, empty_counts) if latest_check_date else empty_counts
+    in_processing_window = WINDOW_START_DAY <= today.day <= WINDOW_END_DAY
+    if latest_counts["failed"] > 0:
         overall = "DEGRADED"
+    elif in_processing_window and today_counts["checked"] == 0:
+        overall = "PENDING_OR_NO_ELIGIBLE_PROFILES"
     else:
         overall = "HEALTHY"
 
     return {
         "date": today.isoformat(),
         "timezone": settings.APP_TIMEZONE,
-        "scheduled_time": "03:45",
+        "scheduled_time": f"{WINDOW_HOUR:02d}:00",
+        "window_start_day": WINDOW_START_DAY,
+        "window_end_day": WINDOW_END_DAY,
+        "schedule": f"{WINDOW_START_DAY}th-{WINDOW_END_DAY}th monthly",
+        "source": AUTOMATION_SOURCE,
         "status": overall,
         "today": today_counts,
         "latest_check_date": latest_check_date,
@@ -171,7 +206,9 @@ def get_daily_cdas_intelligence_status(
             {"date": key, **by_date[key]}
             for key in sorted(by_date.keys(), reverse=True)
         ],
-        "provider_writes": 0,
+        "provider_writes": total_provider_writes,
+        "legacy_daily_0345_enabled": False,
+        "canonical_status_endpoint": "/api/v1/cdas/monthly-automation/status",
     }
 
 
@@ -185,9 +222,9 @@ def get_registration_draft(
     """Build a server-validated CDAS registration draft for a ready exact-ID case.
 
     This endpoint never writes to CDAS. It re-validates the exact-ID payroll link,
-    the current LoanHub loan balance and the freshness of the daily affordability
-    result before returning values that the operator can review and submit through
-    the existing crash-safe registration endpoint.
+    the current LoanHub loan balance and the freshness of the historical daily
+    affordability result before returning values that the operator can review.
+    New automatic collection must use an explicitly CDAS-enabled loan.
     """
     company_id = _require_company(context)
     require_tenant_roles(context, _REGISTRATION_DRAFT_ROLES)
@@ -205,7 +242,7 @@ def get_registration_draft(
 
     snapshot = dict(opportunity.analysis_snapshot or {})
     if snapshot.get("source") != "CDAS_DAILY_INTELLIGENCE":
-        raise HTTPException(status_code=409, detail="This opportunity is not backed by daily CDAS intelligence")
+        raise HTTPException(status_code=409, detail="This opportunity is not backed by historical daily CDAS intelligence")
     if snapshot.get("identity_policy") != "EXACT_NATIONAL_ID_VERIFIED_PROFILE_ONLY":
         raise HTTPException(status_code=409, detail="Exact National ID verification is required")
     if str(snapshot.get("last_check_status") or "success").lower() != "success":
@@ -242,13 +279,14 @@ def get_registration_draft(
             ClientCompanyLoan.id == loan_id,
             ClientCompanyLoan.company_id == company_id,
             ClientCompanyLoan.borrower_id == borrower_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
             ClientCompanyLoan.status.in_(_ELIGIBLE_LOAN_STATUSES),
             ClientCompanyLoan.balance > 0,
         )
         .one_or_none()
     )
     if loan is None:
-        raise HTTPException(status_code=409, detail="The selected LoanHub loan is not eligible for CDAS collection")
+        raise HTTPException(status_code=409, detail="The selected LoanHub loan is not explicitly enabled and eligible for CDAS collection")
     if context.branch_id and loan.branch_id != context.branch_id:
         raise HTTPException(status_code=403, detail="The selected loan is outside the active branch")
 
