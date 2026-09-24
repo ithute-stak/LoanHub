@@ -12,6 +12,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+bash -n "$ROOT_DIR/scripts/deploy-production-manual.sh"
+grep -Fq 'REFUSING non-forward release' "$ROOT_DIR/scripts/deploy-production-manual.sh"
+grep -Fq 'LOANHUB_REQUIRED_ALEMBIC_REVISION' "$ROOT_DIR/scripts/deploy-production-manual.sh"
+grep -Fq 'run --rm --no-deps migrate' "$ROOT_DIR/scripts/deploy-production-manual.sh"
+
 cd "$ROOT_DIR/apps/backend"
 "$PYTHON_BIN" -m compileall -q .
 "$PYTHON_BIN" -m pytest -q \
