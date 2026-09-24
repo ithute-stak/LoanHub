@@ -12,8 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-bash -n "$ROOT_DIR/scripts/deploy-production-manual.sh"
-"$PYTHON_BIN" "$ROOT_DIR/scripts/check_production_deploy_guard.py"
+bash "$ROOT_DIR/scripts/test_production_deploy_guard.sh"
 
 cd "$ROOT_DIR/apps/backend"
 "$PYTHON_BIN" -m compileall -q .
