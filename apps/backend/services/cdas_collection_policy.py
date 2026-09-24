@@ -78,6 +78,11 @@ def build_cdas_collection_plan(
     Clients select only whether the loan is collected through CDAS. Provider
     fields such as ItemCode, LoanPolicy and DeductionID remain server/provider
     controlled and are deliberately excluded from this plan.
+
+    Payroll timing is refreshed every time the server rebuilds the plan. The
+    original selection timestamp remains separate from `timing_checked_at`, so
+    later application edits or approval can refresh the viable CDAS window
+    without rewriting when the borrower/loan was first routed to CDAS.
     """
     if not enabled:
         return {}
@@ -86,6 +91,7 @@ def build_cdas_collection_plan(
         value.isoformat() if isinstance(value, date) else str(value)
         for value in installment_due_dates
     ]
+    timing_checked_at = selected_at or datetime.now(timezone.utc)
     plan = {
         "method": COLLECTION_METHOD,
         "mode": COLLECTION_MODE,
@@ -94,8 +100,9 @@ def build_cdas_collection_plan(
         "installment_due_dates": normalized_dates,
         "first_payment_date": normalized_dates[0] if normalized_dates else None,
         "selected_by_user_id": str(selected_by_user_id) if selected_by_user_id else None,
+        "timing_checked_at": timing_checked_at.isoformat(),
+        **cdas_payroll_timing(timing_checked_at),
     }
     if selected_at is not None:
         plan["selected_at"] = selected_at.isoformat()
-        plan.update(cdas_payroll_timing(selected_at))
     return plan
