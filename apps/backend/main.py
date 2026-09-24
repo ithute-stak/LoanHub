@@ -21,6 +21,10 @@ from core.route_inspection import validate_http_route_contracts
 from database.config.config import settings
 from database.session import SessionLocal, get_db
 from utils.authContextMiddleware import AuthContextMiddleware
+from services.cdas_client_roster_sync_scheduler import (
+    start_cdas_client_roster_sync_scheduler,
+    stop_cdas_client_roster_sync_scheduler,
+)
 from services.cdas_monthly_automation_scheduler import (
     start_cdas_monthly_automation_scheduler,
     stop_cdas_monthly_automation_scheduler,
@@ -56,6 +60,7 @@ async def lifespan(_: FastAPI):
     treasury_started = False
     maturity_started = False
     webhook_started = False
+    cdas_roster_sync_started = False
     cdas_automation_started = False
     _seed_central_work_groups()
     await manager.start()
@@ -72,6 +77,11 @@ async def lifespan(_: FastAPI):
             maturity_started = True
             await start_webhook_outbox_scheduler(10)
             webhook_started = True
+            # Roster sync bootstraps each enabled company once immediately after
+            # deployment, then refreshes the provider roster once per day after
+            # 03:45 in APP_TIMEZONE. It is separate from deduction lifecycle work.
+            await start_cdas_client_roster_sync_scheduler(60)
+            cdas_roster_sync_started = True
             # CDAS payroll automation polls only for the schedule boundary. It
             # performs provider reads/writes solely from 06:00-06:59 on the
             # 14th through 20th of each month in APP_TIMEZONE.
@@ -86,6 +96,8 @@ async def lifespan(_: FastAPI):
             await stop_treasury_scheduler()
         if cdas_automation_started:
             await stop_cdas_monthly_automation_scheduler()
+        if cdas_roster_sync_started:
+            await stop_cdas_client_roster_sync_scheduler()
         if maturity_started:
             await stop_maturity_recovery_scheduler()
         if webhook_started:
