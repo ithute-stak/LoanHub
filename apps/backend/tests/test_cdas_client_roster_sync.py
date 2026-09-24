@@ -121,16 +121,16 @@ def test_failed_roster_backoff_is_persistent_and_reserves_user_requests():
     retry_not_before = _next_retry_at(now)
     budget_check_at = _next_budget_check_at(now)
 
-    assert ROSTER_FAILURE_BACKOFF == timedelta(hours=6)
+    assert ROSTER_FAILURE_BACKOFF == timedelta(hours=24)
     assert BUDGET_DEFER_BACKOFF == timedelta(hours=1)
     assert _retry_blocked({"retry_not_before": retry_not_before}, now)
     assert _retry_blocked(
         {"retry_not_before": retry_not_before},
-        now + timedelta(hours=5, minutes=59),
+        now + timedelta(hours=23, minutes=59),
     )
     assert not _retry_blocked(
         {"retry_not_before": retry_not_before},
-        now + timedelta(hours=6),
+        now + timedelta(hours=24),
     )
     assert datetime.fromisoformat(budget_check_at) == now + timedelta(hours=1)
-    assert BACKGROUND_MIN_REMAINING == 150
+    assert BACKGROUND_MIN_REMAINING == 200
