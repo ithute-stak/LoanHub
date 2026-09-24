@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import text
 
 from database.session import SessionLocal
-from services.cdas_client_roster_sync import run_cdas_client_roster_sync_cycle
+from services.cdas_client_roster_sync_guard import run_guarded_cdas_client_roster_sync_cycle
 
 
 _ADVISORY_LOCK_KEY = 604142345
@@ -46,7 +46,7 @@ async def _run_cycle_with_lock() -> list[dict[str, Any]]:
         else:
             acquired = True
 
-        return await run_cdas_client_roster_sync_cycle(db)
+        return await run_guarded_cdas_client_roster_sync_cycle(db)
     finally:
         if acquired and db.get_bind().dialect.name == "postgresql":
             try:
@@ -66,7 +66,8 @@ async def _scheduler_loop(interval_seconds: int) -> None:
         try:
             # The first pass runs immediately after deployment. Companies that
             # have never bootstrapped are imported at once; completed companies
-            # are touched only when the 03:45 daily boundary is due.
+            # are touched only when the 03:45 daily boundary is due. The guarded
+            # cycle persists its own per-company retry boundary and budget reserve.
             results = await _run_cycle_with_lock()
             wait_seconds = _retry_delay_seconds(results, interval_seconds)
         except asyncio.CancelledError:
