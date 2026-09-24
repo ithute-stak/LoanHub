@@ -1,9 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from services.cdas_collection_policy import AUTHORIZATION_BASIS, build_cdas_collection_plan
 from services.cdas_lifecycle_automation import (
     SETTLEMENT_REASON_CONSOLIDATION,
     SETTLEMENT_REASON_PAID_BY_EMPLOYEE,
@@ -27,6 +29,38 @@ def test_monthly_window_runs_only_14_to_20_at_0600():
     assert is_monthly_automation_window(datetime(2026, 9, 20, 6, 59, tzinfo=MASERU))
     assert not is_monthly_automation_window(datetime(2026, 9, 20, 7, 0, tzinfo=MASERU))
     assert not is_monthly_automation_window(datetime(2026, 9, 21, 6, 0, tzinfo=MASERU))
+
+
+def test_disabled_cdas_collection_has_no_persisted_plan():
+    assert build_cdas_collection_plan(
+        enabled=False,
+        installment_due_dates=[date(2026, 10, 31)],
+        term_count=1,
+        selected_by_user_id=UUID("11111111-1111-1111-1111-111111111111"),
+    ) == {}
+
+
+def test_enabled_cdas_collection_plan_records_only_server_owned_selection_data():
+    actor = UUID("11111111-1111-1111-1111-111111111111")
+    selected_at = datetime(2026, 9, 24, 8, 0, tzinfo=MASERU)
+    plan = build_cdas_collection_plan(
+        enabled=True,
+        installment_due_dates=[date(2026, 10, 31), date(2026, 11, 30)],
+        term_count=2,
+        selected_by_user_id=actor,
+        selected_at=selected_at,
+    )
+    assert plan["method"] == "cdas_payroll"
+    assert plan["mode"] == "automatic_monthly_payroll"
+    assert plan["authorization_basis"] == AUTHORIZATION_BASIS
+    assert plan["term_count"] == 2
+    assert plan["first_payment_date"] == "2026-10-31"
+    assert plan["installment_due_dates"] == ["2026-10-31", "2026-11-30"]
+    assert plan["selected_by_user_id"] == str(actor)
+    assert plan["selected_at"] == selected_at.isoformat()
+    assert "item_code" not in plan
+    assert "loan_policy" not in plan
+    assert "deduction_id" not in plan
 
 
 def test_positive_partial_affordability_reterms_current_balance():
