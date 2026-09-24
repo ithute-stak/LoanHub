@@ -59,9 +59,7 @@ jobs:
           context: apps/backend
           file: apps/backend/Dockerfile
           push: true
-          tags: |
-            ${{ env.BACKEND_IMAGE }}:${{ env.RELEASE_SHA }}
-            ${{ env.BACKEND_IMAGE }}:latest
+          tags: ${{ env.BACKEND_IMAGE }}:${{ env.RELEASE_SHA }}
 
       - name: Publish frontend image
         uses: docker/build-push-action@v6
@@ -71,11 +69,11 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=https://api.loanhub.co.ls/api/v1
-          tags: |
-            ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_SHA }}
-            ${{ env.FRONTEND_IMAGE }}:latest
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_SHA }}
 
       - name: Release summary
         run: |
+          echo "LoanHub images are published only; no VPS deployment is performed."
           echo "Backend: ${BACKEND_IMAGE}:${RELEASE_SHA}"
           echo "Frontend: ${FRONTEND_IMAGE}:${RELEASE_SHA}"
+          echo "Deploy manually from the production VPS only after this workflow is green."
