@@ -73,6 +73,41 @@ def upgrade() -> None:
         unique=False,
     )
 
+    # Existing CDAS mandates are already explicit collection instructions. Keep
+    # those loans enabled when introducing the safer opt-in default so a
+    # deployment does not silently stop lifecycle management for live mandates.
+    op.execute(
+        sa.text(
+            """
+            UPDATE client_company_loan AS loan
+            SET cdas_collection_enabled = TRUE,
+                cdas_collection_plan = jsonb_build_object(
+                    'method', 'cdas_payroll',
+                    'mode', 'automatic_monthly_payroll',
+                    'authorization_basis', 'EXISTING_CDAS_MANDATE_BACKFILL',
+                    'source', 'migration_e9x3y5z7a250'
+                )
+            WHERE EXISTS (
+                SELECT 1
+                FROM cdas_deduction_mandates AS mandate
+                WHERE mandate.loan_id = loan.id
+            )
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            UPDATE direct_loan_applications AS application
+            SET cdas_collection_enabled = TRUE,
+                cdas_collection_plan = loan.cdas_collection_plan
+            FROM client_company_loan AS loan
+            WHERE application.loan_id = loan.id
+              AND loan.cdas_collection_enabled = TRUE
+            """
+        )
+    )
+
 
 def downgrade() -> None:
     op.drop_index(LOAN_INDEX, table_name="client_company_loan")
