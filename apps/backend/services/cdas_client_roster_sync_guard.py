@@ -17,12 +17,12 @@ from services.cdas_client_roster_sync import (
 from services.cdas_request_budget import get_cdas_request_budget_status
 
 
-ROSTER_FAILURE_BACKOFF = timedelta(hours=6)
+ROSTER_FAILURE_BACKOFF = timedelta(hours=24)
 BUDGET_DEFER_BACKOFF = timedelta(hours=1)
 # Background roster discovery is useful, but staff-facing verification and
 # deduction actions are more important. Do not start an automated roster batch
 # once fewer than this many local request slots remain for the CDAS account.
-BACKGROUND_MIN_REMAINING = 150
+BACKGROUND_MIN_REMAINING = 200
 
 
 def _parse_retry_not_before(value: Any, now: datetime) -> datetime | None:
@@ -67,7 +67,7 @@ async def run_guarded_cdas_client_roster_sync_cycle(
     """Run roster work with persistent failure backoff and a request reserve.
 
     The 60-second scheduler is only a due-check heartbeat. Failed bootstraps are
-    persisted with a six-hour retry boundary so process restarts cannot recreate
+    persisted with a 24-hour retry boundary so process restarts cannot recreate
     the old every-minute request storm. Automated work is also deferred before
     it can consume the request slots reserved for staff-facing CDAS operations.
     """
