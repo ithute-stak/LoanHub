@@ -14,13 +14,11 @@ from services.cdas_client_roster_sync import (
 )
 from services.cdas_client_roster_sync_guard import (
     BACKGROUND_MIN_REMAINING,
+    BUDGET_DEFER_BACKOFF,
     ROSTER_FAILURE_BACKOFF,
+    _next_budget_check_at,
     _next_retry_at,
     _retry_blocked,
-)
-from services.cdas_client_roster_sync_scheduler import (
-    _FAILURE_RETRY_SECONDS,
-    _retry_delay_seconds,
 )
 
 
@@ -118,19 +116,13 @@ def test_daily_roster_refresh_becomes_due_at_0345_once_per_date():
     )
 
 
-def test_failed_roster_cycle_backs_off_instead_of_retrying_each_minute():
-    assert _retry_delay_seconds([], 60) == 60
-    assert _retry_delay_seconds([{"status": "success"}], 60) == 60
-    assert _retry_delay_seconds([{"status": "partial"}], 60) == 60
-    assert _retry_delay_seconds([{"status": "failed"}], 60) == _FAILURE_RETRY_SECONDS
-    assert _FAILURE_RETRY_SECONDS == 6 * 60 * 60
-
-
 def test_failed_roster_backoff_is_persistent_and_reserves_user_requests():
     now = datetime(2026, 9, 24, 18, 0, tzinfo=MASERU)
     retry_not_before = _next_retry_at(now)
+    budget_check_at = _next_budget_check_at(now)
 
     assert ROSTER_FAILURE_BACKOFF == timedelta(hours=6)
+    assert BUDGET_DEFER_BACKOFF == timedelta(hours=1)
     assert _retry_blocked({"retry_not_before": retry_not_before}, now)
     assert _retry_blocked(
         {"retry_not_before": retry_not_before},
@@ -140,4 +132,5 @@ def test_failed_roster_backoff_is_persistent_and_reserves_user_requests():
         {"retry_not_before": retry_not_before},
         now + timedelta(hours=6),
     )
+    assert datetime.fromisoformat(budget_check_at) == now + timedelta(hours=1)
     assert BACKGROUND_MIN_REMAINING == 150
