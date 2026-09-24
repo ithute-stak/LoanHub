@@ -14,7 +14,15 @@ export type CdasOriginationPreview = {
     joining_date: string | null;
     termination_date: string | null;
   };
+  provider_reported_affordability: number;
+  pending_loanhub_cdas_commitments: number;
+  pending_commitment_loans: Array<{
+    loan_id: string;
+    loan_reference: string;
+    reserved_installment: number;
+  }>;
   affordability: number;
+  net_available_affordability: number;
   total_repayable: number;
   scheduled_installment: number;
   requested_term: number;
@@ -26,6 +34,12 @@ export type CdasOriginationPreview = {
   estimated_settlement_month: string | null;
   fastest_installments_at_full_affordability: number | null;
   fastest_settlement_month: string | null;
+  processing_window_start: string;
+  processing_window_end: string;
+  processing_time: string;
+  timezone: string;
+  effective_month: string;
+  first_expected_collection_month: string;
   monitoring_required: boolean;
   automation_note: string;
 };
