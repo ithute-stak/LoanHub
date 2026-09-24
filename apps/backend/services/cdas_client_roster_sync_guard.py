@@ -18,6 +18,7 @@ from services.cdas_request_budget import get_cdas_request_budget_status
 
 
 ROSTER_FAILURE_BACKOFF = timedelta(hours=6)
+BUDGET_DEFER_BACKOFF = timedelta(hours=1)
 # Background roster discovery is useful, but staff-facing verification and
 # deduction actions are more important. Do not start an automated roster batch
 # once fewer than this many local request slots remain for the CDAS account.
@@ -44,6 +45,10 @@ def _retry_blocked(state: dict[str, Any], now: datetime) -> bool:
 
 def _next_retry_at(now: datetime) -> str:
     return (now + ROSTER_FAILURE_BACKOFF).isoformat()
+
+
+def _next_budget_check_at(now: datetime) -> str:
+    return (now + BUDGET_DEFER_BACKOFF).isoformat()
 
 
 def _due_mode(state: dict[str, Any], now: datetime) -> str | None:
@@ -86,6 +91,7 @@ async def run_guarded_cdas_client_roster_sync_cycle(
         )
         remaining = int(budget.get("remaining") or 0)
         if remaining < BACKGROUND_MIN_REMAINING:
+            retry_not_before = _next_budget_check_at(current)
             _write_roster_sync_state(
                 db,
                 row,
@@ -96,6 +102,7 @@ async def run_guarded_cdas_client_roster_sync_cycle(
                         "CDAS roster sync deferred to protect the daily request "
                         f"reserve ({remaining} requests remaining)"
                     ),
+                    "retry_not_before": retry_not_before,
                 },
             )
             results.append(
@@ -104,6 +111,7 @@ async def run_guarded_cdas_client_roster_sync_cycle(
                     "mode": mode,
                     "status": "deferred",
                     "remaining_requests": remaining,
+                    "retry_not_before": retry_not_before,
                 }
             )
             continue
