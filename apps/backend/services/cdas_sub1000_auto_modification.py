@@ -209,6 +209,8 @@ async def _modify_candidate(
         raise CdasLifecycleError(409, "Reconcile this CDAS deduction before automatic modification")
     if not state.deduction_id:
         raise CdasLifecycleError(409, "CDAS DeductionID is required before automatic modification")
+    if not loan.cdas_collection_enabled:
+        raise CdasLifecycleError(409, "The linked LoanHub loan is not selected for automatic CDAS collection")
     if loan.status not in _ELIGIBLE_LOAN_STATUSES:
         raise CdasLifecycleError(409, "The linked LoanHub loan is not eligible for automatic CDAS collection")
     if loan.repayment_type != RepaymentType.MONTHLY:
@@ -248,6 +250,7 @@ async def _modify_candidate(
         **request_payload,
         "Automation": True,
         "AuthorizationBasis": AUTOMATION_AUTHORIZATION_BASIS,
+        "LoanLevelCollectionSelected": True,
         "PreviousDeductionAmount": float(provider_amount),
         "TargetDeductionAmount": float(desired),
         "AdditionalAffordabilityRequired": float(increase),
@@ -347,6 +350,7 @@ async def process_company_sub1000_modifications(
             CdasOfficialMandateState.company_id == company_id,
             CDASDeductionMandate.company_id == company_id,
             ClientCompanyLoan.company_id == company_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
             CdasOfficialMandateState.lifecycle_status.in_(("approved", "active")),
             CdasOfficialMandateState.requires_reconciliation.is_(False),
             CdasOfficialMandateState.deduction_id.isnot(None),
