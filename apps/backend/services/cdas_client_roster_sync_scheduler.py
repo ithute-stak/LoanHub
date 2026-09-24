@@ -15,20 +15,6 @@ _scheduler_task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
 
 
-def _retry_delay_seconds(results: list[dict[str, Any]], interval_seconds: int) -> int:
-    """Return a safe delay after one scheduler cycle.
-
-    The scheduler normally wakes every minute only to check whether work is due.
-    A failed provider/bootstrap cycle must not be retried every minute because a
-    bootstrap can consume many CDAS requests in one pass. Back off for six hours
-    after a failure while keeping the normal lightweight due-check cadence for
-    successful/no-op cycles.
-    """
-    if any(str(result.get("status") or "").lower() == "failed" for result in results):
-        return max(interval_seconds, _FAILURE_RETRY_SECONDS)
-    return interval_seconds
-
-
 async def _run_cycle_with_lock() -> list[dict[str, Any]]:
     db = SessionLocal()
     acquired = False
@@ -67,15 +53,14 @@ async def _scheduler_loop(interval_seconds: int) -> None:
             # The first pass runs immediately after deployment. Companies that
             # have never bootstrapped are imported at once; completed companies
             # are touched only when the 03:45 daily boundary is due. The guarded
-            # cycle persists its own per-company retry boundary and budget reserve.
-            results = await _run_cycle_with_lock()
-            wait_seconds = _retry_delay_seconds(results, interval_seconds)
+            # cycle persists per-company retry boundaries and the request reserve,
+            # so a failed tenant cannot block other tenants or hammer CDAS.
+            await _run_cycle_with_lock()
         except asyncio.CancelledError:
             raise
         except Exception:
-            # A scheduler-level/provider failure also receives the long backoff.
-            # Retrying a potentially expensive bootstrap every minute can exhaust
-            # the shared CDAS daily request allowance without any user activity.
+            # Only a scheduler-level failure backs off the whole worker. Normal
+            # company/provider failures are isolated by the guarded cycle above.
             wait_seconds = max(interval_seconds, _FAILURE_RETRY_SECONDS)
         try:
             await asyncio.wait_for(_stop_event.wait(), timeout=wait_seconds)
