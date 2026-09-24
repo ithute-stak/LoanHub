@@ -261,6 +261,7 @@ class OriginationApplicationCreate(BaseModel):
     term_count: int = Field(gt=0, le=120)
     purpose: str | None = Field(default=None, max_length=5000)
     installment_due_dates: list[date] = Field(min_length=1, max_length=120)
+    cdas_collection_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_due_dates(self):
@@ -294,6 +295,7 @@ class OriginationApplicationUpdate(BaseModel):
     purpose: str | None = Field(default=None, max_length=5000)
     installment_due_dates: list[date] | None = Field(default=None, min_length=1, max_length=120)
     application_step: int | None = Field(default=None, ge=1, le=10)
+    cdas_collection_enabled: bool | None = None
 
 
 class AffordabilityCalculateRequest(BaseModel):
