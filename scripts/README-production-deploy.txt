@@ -1,0 +1,1 @@
+Production deploy safety is validated by test_production_deploy_guard.sh and check_production_deploy_guard.py. The deploy helper must remain forward-only, verify the live Alembic revision is present in the candidate image, propagate migration failures, and avoid replacing application containers before a successful migration.
