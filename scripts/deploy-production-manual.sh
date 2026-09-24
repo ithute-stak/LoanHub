@@ -148,10 +148,29 @@ echo "[LoanHub] Starting persistent database and cache"
 "${compose[@]}" up -d --no-build --pull never db redis
 wait_healthy db 45 2
 
-mapfile -t db_revisions < <(
+alembic_table=""
+if ! alembic_table="$(
   "${compose[@]}" exec -T db psql -Atq -U "$DB_USER" "$DB_NAME" \
-    -c "SELECT version_num FROM alembic_version ORDER BY version_num" < /dev/null 2>/dev/null || true
-)
+    -c "SELECT COALESCE(to_regclass('public.alembic_version')::text, '')" < /dev/null
+)"; then
+  echo "[LoanHub] Unable to inspect the live Alembic version table; refusing deployment." >&2
+  exit 1
+fi
+alembic_table="$(printf '%s' "$alembic_table" | tr -d '\r\n ')"
+
+db_revisions=()
+if [ "$alembic_table" = "alembic_version" ]; then
+  db_revision_output=""
+  if ! db_revision_output="$(
+    "${compose[@]}" exec -T db psql -Atq -U "$DB_USER" "$DB_NAME" \
+      -c "SELECT version_num FROM alembic_version ORDER BY version_num" < /dev/null
+  )"; then
+    echo "[LoanHub] Unable to read the live Alembic revisions; refusing deployment." >&2
+    exit 1
+  fi
+  mapfile -t db_revisions < <(printf '%s\n' "$db_revision_output" | sed '/^[[:space:]]*$/d')
+fi
+
 for db_revision in "${db_revisions[@]}"; do
   [ -n "$db_revision" ] || continue
   echo "[LoanHub] Verifying candidate contains current Alembic revision $db_revision"
