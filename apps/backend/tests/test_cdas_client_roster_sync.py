@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
@@ -11,6 +11,12 @@ from services.cdas_client_roster_sync import (
     _daily_due,
     _group_document_rows,
     parse_cdas_output_document,
+)
+from services.cdas_client_roster_sync_guard import (
+    BACKGROUND_MIN_REMAINING,
+    ROSTER_FAILURE_BACKOFF,
+    _next_retry_at,
+    _retry_blocked,
 )
 from services.cdas_client_roster_sync_scheduler import (
     _FAILURE_RETRY_SECONDS,
@@ -118,3 +124,20 @@ def test_failed_roster_cycle_backs_off_instead_of_retrying_each_minute():
     assert _retry_delay_seconds([{"status": "partial"}], 60) == 60
     assert _retry_delay_seconds([{"status": "failed"}], 60) == _FAILURE_RETRY_SECONDS
     assert _FAILURE_RETRY_SECONDS == 6 * 60 * 60
+
+
+def test_failed_roster_backoff_is_persistent_and_reserves_user_requests():
+    now = datetime(2026, 9, 24, 18, 0, tzinfo=MASERU)
+    retry_not_before = _next_retry_at(now)
+
+    assert ROSTER_FAILURE_BACKOFF == timedelta(hours=6)
+    assert _retry_blocked({"retry_not_before": retry_not_before}, now)
+    assert _retry_blocked(
+        {"retry_not_before": retry_not_before},
+        now + timedelta(hours=5, minutes=59),
+    )
+    assert not _retry_blocked(
+        {"retry_not_before": retry_not_before},
+        now + timedelta(hours=6),
+    )
+    assert BACKGROUND_MIN_REMAINING == 150
