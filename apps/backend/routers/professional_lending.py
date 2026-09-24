@@ -27,6 +27,7 @@ from database.models.company import LoanCompany
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.enums import LoanStatus, NotificationType, RiskLevel, UserRole
 from database.models.file_management import ManagedFile
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.loan_product import LoanProduct
 from database.models.notification import Notification
 from database.models.origination import AffordabilityAssessment
@@ -55,6 +56,7 @@ from database.schemas.professional_lending import (
     WallPostCreate,
 )
 from database.session import get_db
+from services.cdas_collection_policy import build_cdas_collection_plan
 from services.file_service import read_file_bytes
 from services.interest_calculation_service import calculate_loan_terms
 from services.loan_service import (
@@ -100,6 +102,25 @@ def _borrower_name(db: Session, borrower_id: UUID) -> str:
     if not row:
         return "Registered borrower"
     return " ".join(value for value in row if value).strip() or "Registered borrower"
+
+
+def _require_cdas_payroll_profile(db: Session, *, company_id: UUID, borrower_id: UUID) -> CDASPayrollProfile:
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.borrower_id == borrower_id,
+            CDASPayrollProfile.employee_number.isnot(None),
+            CDASPayrollProfile.employee_number != "",
+        )
+        .first()
+    )
+    if not profile:
+        raise HTTPException(
+            status_code=409,
+            detail="A stored CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
+        )
+    return profile
 
 
 def _application_payload(db: Session, application: DirectLoanApplication) -> dict:
@@ -239,6 +260,12 @@ def create_direct(
             status_code=409,
             detail="The borrower must be an active company client before an internal application is created",
         )
+    if payload.cdas_collection_enabled:
+        _require_cdas_payroll_profile(
+            db,
+            company_id=context.company_id,
+            borrower_id=payload.borrower_id,
+        )
     if payload.product_id:
         product = _company_product_or_404(
             db,
@@ -258,6 +285,7 @@ def create_direct(
         policy=policy,
     )
     warning = credit_check(payload.borrower_id, db, context)
+    now = datetime.now(timezone.utc)
     application = DirectLoanApplication(
         company_id=context.company_id,
         branch_id=payload.branch_id or client_account.branch_id or context.branch_id,
@@ -272,8 +300,16 @@ def create_direct(
         first_payment_date=payload.installment_due_dates[0],
         preferred_payment_day=None,
         installment_due_dates=[value.isoformat() for value in payload.installment_due_dates],
+        cdas_collection_enabled=payload.cdas_collection_enabled,
+        cdas_collection_plan=build_cdas_collection_plan(
+            enabled=payload.cdas_collection_enabled,
+            installment_due_dates=payload.installment_due_dates,
+            term_count=payload.term_count,
+            selected_by_user_id=context.user.id,
+            selected_at=now,
+        ),
         status="submitted",
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=now,
         affordability_snapshot={
             "monthly_income": str(borrower.monthly_income or 0),
             "existing_loan_total": str(borrower.existing_loan_total or 0),
@@ -384,6 +420,12 @@ def approve_direct(
                 status_code=409,
                 detail="A positive affordability assessment is required before approval",
             )
+    if application.cdas_collection_enabled:
+        _require_cdas_payroll_profile(
+            db,
+            company_id=context.company_id,
+            borrower_id=application.borrower_id,
+        )
 
     product_id = payload.product_id or application.product_id
     if not product_id:
@@ -460,6 +502,19 @@ def approve_direct(
     application.installment_due_dates = [value.isoformat() for value in payload.installment_due_dates]
     application.first_payment_date = payload.installment_due_dates[0]
     application.preferred_payment_day = None
+    if application.cdas_collection_enabled:
+        existing_plan = dict(application.cdas_collection_plan or {})
+        application.cdas_collection_plan = build_cdas_collection_plan(
+            enabled=True,
+            installment_due_dates=payload.installment_due_dates,
+            term_count=application.term_count,
+            selected_by_user_id=None,
+        )
+        application.cdas_collection_plan["selected_by_user_id"] = existing_plan.get("selected_by_user_id")
+        if existing_plan.get("selected_at"):
+            application.cdas_collection_plan["selected_at"] = existing_plan["selected_at"]
+    else:
+        application.cdas_collection_plan = {}
     calculation_breakdown["top_up"] = {
         "is_top_up": application.application_type == "top_up",
         "parent_loan_id": str(parent_loan.id) if parent_loan else None,
@@ -494,6 +549,8 @@ def approve_direct(
         calculation_breakdown=calculation_breakdown,
         first_payment_due=application.first_payment_date,
         preferred_payment_day=application.preferred_payment_day,
+        cdas_collection_enabled=bool(application.cdas_collection_enabled),
+        cdas_collection_plan=dict(application.cdas_collection_plan or {}),
         amount_paid=0,
         balance=total,
         status=LoanStatus.APPROVED,

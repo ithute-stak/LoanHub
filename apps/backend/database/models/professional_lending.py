@@ -47,6 +47,13 @@ class DirectLoanApplication(Base):
     top_up_exception_approved = Column(Boolean, nullable=False, default=False)
     top_up_exception_approved_at = Column(DateTime, nullable=True)
     top_up_exception_approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # CDAS collection is an explicit application choice, distinct from the
+    # borrower's reusable verified payroll profile. The plan is copied to the
+    # resulting loan on approval.
+    cdas_collection_enabled = Column(Boolean, nullable=False, default=False, index=True)
+    cdas_collection_plan = Column(JSONB, nullable=False, default=dict)
+
     # Optional provenance for drafts deliberately initiated from the CDAS
     # operations workspace. These fields are traceability only: they are not
     # affordability, pricing, approval or eligibility inputs.

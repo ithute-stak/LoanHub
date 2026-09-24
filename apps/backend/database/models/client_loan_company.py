@@ -61,6 +61,11 @@ class ClientCompanyLoan(Base):
     calculation_method = Column(String(40), nullable=False, default="micro_loan")
     calculation_breakdown = Column(JSONB, nullable=False, default=dict)
 
+    # CDAS is a loan-level collection method. A borrower may have a verified
+    # payroll profile without every one of their loans being collected via CDAS.
+    cdas_collection_enabled = Column(Boolean, nullable=False, default=False, index=True)
+    cdas_collection_plan = Column(JSONB, nullable=False, default=dict)
+
     approved_at = Column(DateTime, nullable=True)
     disbursed_at = Column(DateTime, nullable=True)
     first_payment_due = Column(Date, nullable=True)

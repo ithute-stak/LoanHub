@@ -23,6 +23,7 @@ from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.enums import LoanRequestStatus, LoanStatus, OfferStatus, UserRole
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.loan_product import LoanProduct
 from database.models.loan_offer import LoanOffer
 from database.models.loan_request import LoanRequest
@@ -47,6 +48,7 @@ from database.schemas.origination import (
     TopUpExceptionApproveRequest,
 )
 from database.session import get_db
+from services.cdas_collection_policy import build_cdas_collection_plan
 from services.contract_service import (
     contract_pdf_bytes,
     generate_contract,
@@ -121,6 +123,25 @@ def _application(
         raise HTTPException(status_code=404, detail="Origination application not found")
     assert_branch_scope(context, application.branch_id)
     return application
+
+
+def _require_cdas_payroll_profile(db: Session, *, company_id: UUID, borrower_id: UUID) -> CDASPayrollProfile:
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.borrower_id == borrower_id,
+            CDASPayrollProfile.employee_number.isnot(None),
+            CDASPayrollProfile.employee_number != "",
+        )
+        .first()
+    )
+    if not profile:
+        raise HTTPException(
+            status_code=409,
+            detail="A stored CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
+        )
+    return profile
 
 
 def _application_payload(db: Session, application: DirectLoanApplication) -> dict:
@@ -330,6 +351,14 @@ def create_application(
         preferred_payment_day=None,
         first_payment_date=payload.installment_due_dates[0],
         installment_due_dates=[value.isoformat() for value in payload.installment_due_dates],
+        cdas_collection_enabled=payload.cdas_collection_enabled,
+        cdas_collection_plan=build_cdas_collection_plan(
+            enabled=payload.cdas_collection_enabled,
+            installment_due_dates=payload.installment_due_dates,
+            term_count=payload.term_count,
+            selected_by_user_id=context.user.id,
+            selected_at=now,
+        ),
         application_step=1,
         status="draft",
         captured_by_user_id=context.user.id,
@@ -357,6 +386,8 @@ def update_application(
         raise HTTPException(status_code=409, detail="This application can no longer be edited")
     changes = payload.model_dump(exclude_unset=True)
     supplied_due_dates = changes.pop("installment_due_dates", None)
+    cdas_selection = changes.pop("cdas_collection_enabled", None)
+    was_cdas_enabled = bool(application.cdas_collection_enabled)
     final_term_count = int(changes.get("term_count", application.term_count))
     if supplied_due_dates is None:
         resolved_due_dates = list(application.installment_due_dates or [])
@@ -384,8 +415,6 @@ def update_application(
         )
         if not eligibility["loan"]:
             raise HTTPException(status_code=409, detail=eligibility["reason"])
-        # A top-up is a replacement facility. Never trust a client-supplied
-        # requested_amount because the current old-loan balance is authoritative.
         changes.pop("requested_amount", None)
         cash_requested = Decimal(
             changes.pop("top_up_cash_requested", application.top_up_cash_requested or 0)
@@ -410,6 +439,26 @@ def update_application(
         changes.pop("top_up_exception_reason", None)
     for key, value in changes.items():
         setattr(application, key, value)
+
+    if cdas_selection is not None:
+        application.cdas_collection_enabled = bool(cdas_selection)
+    if application.cdas_collection_enabled:
+        existing_plan = dict(application.cdas_collection_plan or {})
+        rebuilt_plan = build_cdas_collection_plan(
+            enabled=True,
+            installment_due_dates=application.installment_due_dates or [],
+            term_count=application.term_count,
+            selected_by_user_id=(context.user.id if cdas_selection is not None else None),
+            selected_at=(datetime.now(timezone.utc) if cdas_selection is True and not was_cdas_enabled else None),
+        )
+        if cdas_selection is None:
+            rebuilt_plan["selected_by_user_id"] = existing_plan.get("selected_by_user_id")
+        if existing_plan.get("selected_at") and "selected_at" not in rebuilt_plan:
+            rebuilt_plan["selected_at"] = existing_plan["selected_at"]
+        application.cdas_collection_plan = rebuilt_plan
+    else:
+        application.cdas_collection_plan = {}
+
     product = _product(db, company_id=context.company_id, product_id=application.product_id)
     if product:
         if not (Decimal(product.min_amount) <= Decimal(application.requested_amount) <= Decimal(product.max_amount)):
@@ -571,6 +620,12 @@ def submit_application(
     decision = assessment_effective_decision(assessment)
     if decision not in {"eligible", "conditionally_eligible"}:
         raise HTTPException(status_code=409, detail="A positive affordability assessment is required before submission")
+    if application.cdas_collection_enabled:
+        _require_cdas_payroll_profile(
+            db,
+            company_id=context.company_id,
+            borrower_id=application.borrower_id,
+        )
     application.status = "submitted"
     application.submitted_at = datetime.now(timezone.utc)
     application.application_step = 10
@@ -597,9 +652,6 @@ def create_contract(
         raise HTTPException(status_code=404, detail="Loan not found")
     assert_branch_scope(context, loan.branch_id)
 
-    # Older marketplace rows may still be marked pending even though both the
-    # borrower request and selected lender offer were accepted. Normalize that
-    # historical state before applying the contract gate.
     if loan.status == LoanStatus.PENDING and loan.loan_request_id and loan.loan_offer_id:
         online_request = db.get(LoanRequest, loan.loan_request_id)
         accepted_offer = db.get(LoanOffer, loan.loan_offer_id)

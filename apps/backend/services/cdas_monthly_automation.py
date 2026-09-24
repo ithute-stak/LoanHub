@@ -18,6 +18,7 @@ from database.models.lending_operations import CDASDeductionMandate, CDASPayroll
 from database.models.origination import OriginationIntegrationConfiguration
 from database.models.professional_lending import DirectLoanApplication
 from integrations.cdas import CdasClient, CdasError
+from services.cdas_collection_policy import AUTHORIZATION_BASIS as CDAS_COLLECTION_AUTHORIZATION_BASIS
 from services.cdas_config_service import CDAS_PROVIDER, get_company_cdas_client
 from services.cdas_crash_safe_lifecycle import perform_linked_action
 from services.cdas_deduction_lifecycle import (
@@ -37,7 +38,7 @@ from services.cdas_registration_workflow import _validate_employee_identity
 
 AUTOMATION_KEY = "monthly_auto_deductions"
 AUTOMATION_SOURCE = "CDAS_MONTHLY_AUTO_DEDUCTION"
-AUTOMATION_AUTHORIZATION_BASIS = "STORED_CDAS_EMPLOYEE_NUMBER_AGREEMENT"
+AUTOMATION_AUTHORIZATION_BASIS = CDAS_COLLECTION_AUTHORIZATION_BASIS
 WINDOW_START_DAY = 14
 WINDOW_END_DAY = 20
 WINDOW_HOUR = 6
@@ -135,6 +136,7 @@ def update_monthly_automation_configuration(
         "hour": WINDOW_HOUR,
         "timezone": settings.APP_TIMEZONE,
         "authorization_basis": AUTOMATION_AUTHORIZATION_BASIS,
+        "selection_scope": "loan",
     }
     row.configuration = root
     row.configured_by_user_id = configured_by_user_id
@@ -207,6 +209,8 @@ async def _register_automatic_deduction(
     affordability: Decimal,
     effective_month: str,
 ) -> dict[str, Any]:
+    if not loan.cdas_collection_enabled:
+        raise CdasLifecycleError(409, "This loan has not been explicitly selected for CDAS collection")
     if loan.status not in _ELIGIBLE_LOAN_STATUSES:
         raise CdasLifecycleError(409, "Only an active or defaulted loan can enter automatic CDAS collection")
     if loan.repayment_type != RepaymentType.MONTHLY:
@@ -247,7 +251,7 @@ async def _register_automatic_deduction(
         profile.verified_by_user_id = None
         profile.verification_reference = "CDAS_API_V1_5_AUTO"
         profile.verification_notes = (
-            "Identity matched against CDAS during automatic collection. Stored CDAS employee number is the company-configured agreement basis."
+            "Identity matched against CDAS during automatic collection for a loan explicitly selected for CDAS payroll collection."
         )
 
         duplicate_reference = (
@@ -321,6 +325,7 @@ async def _register_automatic_deduction(
         **provider_payload,
         "Automation": True,
         "AuthorizationBasis": AUTOMATION_AUTHORIZATION_BASIS,
+        "LoanLevelCollectionSelected": True,
         "AffordabilityAtDecision": float(_money(affordability)),
         "OutstandingBalanceAtDecision": float(balance),
     }
@@ -392,7 +397,7 @@ async def _advance_to_active(
             db,
             client=client,
             company_id=company_id,
-            actor_user_id=None,  # system actor; never impersonate a staff member
+            actor_user_id=None,
             state_id=state_id,
             request_type=request_type,
         )
@@ -454,6 +459,22 @@ async def process_company_monthly_automation(
     effective_month = next_effective_month(run_date)
 
     for profile in profiles:
+        loans = (
+            db.query(ClientCompanyLoan)
+            .filter(
+                ClientCompanyLoan.company_id == company_id,
+                ClientCompanyLoan.borrower_id == profile.borrower_id,
+                ClientCompanyLoan.cdas_collection_enabled.is_(True),
+                ClientCompanyLoan.status.in_(tuple(_ELIGIBLE_LOAN_STATUSES)),
+                ClientCompanyLoan.balance > 0,
+            )
+            .order_by(ClientCompanyLoan.is_overdue.desc(), ClientCompanyLoan.id.asc())
+            .all()
+        )
+        if not loans:
+            summary["skipped"] += 1
+            continue
+
         marker_reference = f"AUTO:{profile.borrower_id}:{run_date.isoformat()}"
         already_checked = (
             db.query(CdasBookingOpportunity.id)
@@ -471,6 +492,7 @@ async def process_company_monthly_automation(
         snapshot: dict[str, Any] = {
             "source": AUTOMATION_SOURCE,
             "authorization_basis": AUTOMATION_AUTHORIZATION_BASIS,
+            "selection_scope": "loan",
             "borrower_id": str(profile.borrower_id),
             "employee_no": str(profile.employee_number),
             "last_check_date": run_date.isoformat(),
@@ -491,17 +513,6 @@ async def process_company_monthly_automation(
 
             summary["positive_affordability"] += 1
             remaining = affordability
-            loans = (
-                db.query(ClientCompanyLoan)
-                .filter(
-                    ClientCompanyLoan.company_id == company_id,
-                    ClientCompanyLoan.borrower_id == profile.borrower_id,
-                    ClientCompanyLoan.status.in_(tuple(_ELIGIBLE_LOAN_STATUSES)),
-                    ClientCompanyLoan.balance > 0,
-                )
-                .order_by(ClientCompanyLoan.is_overdue.desc(), ClientCompanyLoan.id.asc())
-                .all()
-            )
             for loan in loans:
                 existing = get_official_mandate_for_loan(db, company_id=company_id, loan_id=loan.id)
                 if existing is not None:
@@ -561,8 +572,6 @@ async def process_company_monthly_automation(
                             "error": getattr(exc, "message", None) or str(exc),
                         }
                     )
-                    # Never continue the same borrower's write chain after an
-                    # ambiguous or failed provider mutation.
                     break
             snapshot["recommended_action"] = "AUTOMATIC_PROCESSING_COMPLETED"
             snapshot["remaining_affordability"] = float(remaining)

@@ -205,6 +205,7 @@ function OriginationWizard() {
   const [termCount, setTermCount] = useState(3);
   const [purpose, setPurpose] = useState("");
   const [installmentDueDates, setInstallmentDueDates] = useState<string[]>(() => resizeInstallmentDueDates([], 3));
+  const [cdasCollectionEnabled, setCdasCollectionEnabled] = useState(false);
   const [rate, setRate] = useState(20);
   const [processingFee, setProcessingFee] = useState(0);
 
@@ -326,6 +327,7 @@ function OriginationWizard() {
         setInstallmentDueDates(
           resizeInstallmentDueDates(workspace.application.installment_due_dates ?? [], workspace.application.term_count),
         );
+        setCdasCollectionEnabled(Boolean(workspace.application.cdas_collection_enabled));
         setRate(Number(workspace.application.interest_rate ?? 20));
         setAssessment(workspace.assessments[0] ?? null);
         setStep(Math.min(Math.max((workspace.application.application_step ?? 1) - 1, 0), steps.length - 1));
@@ -441,6 +443,7 @@ function OriginationWizard() {
         term_count: termCount,
         purpose: purpose.trim() || null,
         installment_due_dates: installmentDueDates,
+        cdas_collection_enabled: cdasCollectionEnabled,
         application_step: Math.max(application.application_step, step + 1),
       });
       setApplication(updated);
@@ -457,6 +460,7 @@ function OriginationWizard() {
       term_count: termCount,
       purpose: purpose.trim() || null,
       installment_due_dates: installmentDueDates,
+      cdas_collection_enabled: cdasCollectionEnabled,
     });
     setApplication(created);
     window.history.replaceState(null, "", `/company/origination/new?application=${created.id}`);
@@ -567,7 +571,7 @@ function OriginationWizard() {
                 </div>
                 {applicationType === "top_up" ? <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} /> : null}
                 <div className="grid gap-5 sm:grid-cols-2">
-                  <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); setCdasCollectionEnabled(false); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
                   <Field label="Loan product"><Select value={productId} onValueChange={chooseProduct}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · {interestMethodLabel(product.interest_method)} · {Number(product.interest_rate_percent)}%</SelectItem>)}</SelectContent></Select>{selectedProduct ? <p className="text-xs text-muted-foreground">Allowed {formatMoney(selectedProduct.min_amount)}–{formatMoney(selectedProduct.max_amount)} · {selectedProduct.min_term_months}–{selectedProduct.max_term_months} months</p> : null}</Field>
                   {applicationType === "new_loan" ? <NumberField label="Requested amount" value={requestedAmount} min={selectedProduct ? Number(selectedProduct.min_amount) : 1} max={selectedProduct ? Number(selectedProduct.max_amount) : undefined} onChange={setRequestedAmount} /> : <Field label="Total replacement facility"><Input value={formatMoney(topUpTotal)} disabled /><p className="text-xs text-muted-foreground">Old balance {formatMoney(topUpSettlement)} + extra cash {formatMoney(topUpCashRequested)}</p></Field>}
                   <NumberField label="Term in months" value={termCount} min={selectedProduct?.min_term_months ?? 1} max={selectedProduct?.max_term_months ?? 120} step="1" onChange={setTermCount} />
@@ -578,6 +582,10 @@ function OriginationWizard() {
                     value={installmentDueDates}
                     onChange={setInstallmentDueDates}
                   />
+                </div>
+                <div className="space-y-2 rounded-3xl border border-primary/20 bg-primary/5 p-4">
+                  <Check label="Collect this loan through CDAS payroll deduction" checked={cdasCollectionEnabled} onChange={setCdasCollectionEnabled} />
+                  <p className="px-1 text-xs text-muted-foreground">This is a loan-level collection choice. LoanHub will use the borrower&apos;s stored CDAS payroll profile and will block submission if no verified Employee No is available.</p>
                 </div>
                 <Field label="Loan purpose"><Textarea value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Describe exactly what the borrower needs the loan for" /></Field>
                 <MicroLoanPreview calculation={calculation} calculating={calculating} />
@@ -827,7 +835,7 @@ function AffordabilityStep({ calculation, assessment, totalExpenses, totalDebts,
 }
 
 function ReviewStep({ application, profile, assessment, calculation, product, totalExpenses, totalDebts }: { application: OriginationApplication | null; profile: FinancialProfile | null; assessment: AffordabilityAssessment | null; calculation: MicroLoanCalculation | null; product: LoanProduct | null; totalExpenses: number; totalDebts: number }) {
-  return <div className="space-y-6"><Alert><FileCheck2 className="h-4 w-4" /><AlertTitle>Submission creates a manager decision item</AlertTitle><AlertDescription>The loan is not created and no disbursement is recorded yet. A Branch Manager, Company Administrator or Company Owner must approve it. A signed contract is then required before Finance records money out.</AlertDescription></Alert><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Summary label="Applicant" value={profile?.identity.full_name ?? "Not selected"} /><Summary label="Product" value={product?.name ?? "Not selected"} /><Summary label="Application" value={application?.application_reference ?? "Draft not saved"} /><Summary label="KYC" value={titleCase(profile?.kyc?.status ?? "not started")} /><Summary label="Affordability" value={titleCase(assessment?.decision ?? "not calculated")} /><Summary label="Monthly instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} accent /><Summary label="Total expenses" value={formatMoney(totalExpenses)} /><Summary label="Debt instalments" value={formatMoney(totalDebts)} /><Summary label="First pay date" value={application?.first_payment_date ?? "Not saved"} /></div></div>;
+  return <div className="space-y-6"><Alert><FileCheck2 className="h-4 w-4" /><AlertTitle>Submission creates a manager decision item</AlertTitle><AlertDescription>The loan is not created and no disbursement is recorded yet. A Branch Manager, Company Administrator or Company Owner must approve it. A signed contract is then required before Finance records money out.</AlertDescription></Alert><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Summary label="Applicant" value={profile?.identity.full_name ?? "Not selected"} /><Summary label="Product" value={product?.name ?? "Not selected"} /><Summary label="Application" value={application?.application_reference ?? "Draft not saved"} /><Summary label="KYC" value={titleCase(profile?.kyc?.status ?? "not started")} /><Summary label="Affordability" value={titleCase(assessment?.decision ?? "not calculated")} /><Summary label="Monthly instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} accent /><Summary label="Total expenses" value={formatMoney(totalExpenses)} /><Summary label="Debt instalments" value={formatMoney(totalDebts)} /><Summary label="Collection method" value={application?.cdas_collection_enabled ? "CDAS payroll" : "Cash / Bank / Other"} /><Summary label="First pay date" value={application?.first_payment_date ?? "Not saved"} /></div></div>;
 }
 
 function stepDescription(step: number): string {
