@@ -12,6 +12,10 @@ from services.cdas_client_roster_sync import (
     _group_document_rows,
     parse_cdas_output_document,
 )
+from services.cdas_client_roster_sync_scheduler import (
+    _FAILURE_RETRY_SECONDS,
+    _retry_delay_seconds,
+)
 
 
 MASERU = ZoneInfo("Africa/Maseru")
@@ -106,3 +110,11 @@ def test_daily_roster_refresh_becomes_due_at_0345_once_per_date():
         {"last_scheduled_run_date": "2026-09-24"},
         datetime(2026, 9, 25, 3, 45, tzinfo=MASERU),
     )
+
+
+def test_failed_roster_cycle_backs_off_instead_of_retrying_each_minute():
+    assert _retry_delay_seconds([], 60) == 60
+    assert _retry_delay_seconds([{"status": "success"}], 60) == 60
+    assert _retry_delay_seconds([{"status": "partial"}], 60) == 60
+    assert _retry_delay_seconds([{"status": "failed"}], 60) == _FAILURE_RETRY_SECONDS
+    assert _FAILURE_RETRY_SECONDS == 6 * 60 * 60
