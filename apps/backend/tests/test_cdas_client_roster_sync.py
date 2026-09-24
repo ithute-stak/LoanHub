@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
@@ -11,6 +11,14 @@ from services.cdas_client_roster_sync import (
     _daily_due,
     _group_document_rows,
     parse_cdas_output_document,
+)
+from services.cdas_client_roster_sync_guard import (
+    BACKGROUND_MIN_REMAINING,
+    BUDGET_DEFER_BACKOFF,
+    ROSTER_FAILURE_BACKOFF,
+    _next_budget_check_at,
+    _next_retry_at,
+    _retry_blocked,
 )
 
 
@@ -106,3 +114,23 @@ def test_daily_roster_refresh_becomes_due_at_0345_once_per_date():
         {"last_scheduled_run_date": "2026-09-24"},
         datetime(2026, 9, 25, 3, 45, tzinfo=MASERU),
     )
+
+
+def test_failed_roster_backoff_is_persistent_and_reserves_user_requests():
+    now = datetime(2026, 9, 24, 18, 0, tzinfo=MASERU)
+    retry_not_before = _next_retry_at(now)
+    budget_check_at = _next_budget_check_at(now)
+
+    assert ROSTER_FAILURE_BACKOFF == timedelta(hours=24)
+    assert BUDGET_DEFER_BACKOFF == timedelta(hours=1)
+    assert _retry_blocked({"retry_not_before": retry_not_before}, now)
+    assert _retry_blocked(
+        {"retry_not_before": retry_not_before},
+        now + timedelta(hours=23, minutes=59),
+    )
+    assert not _retry_blocked(
+        {"retry_not_before": retry_not_before},
+        now + timedelta(hours=24),
+    )
+    assert datetime.fromisoformat(budget_check_at) == now + timedelta(hours=1)
+    assert BACKGROUND_MIN_REMAINING == 200
