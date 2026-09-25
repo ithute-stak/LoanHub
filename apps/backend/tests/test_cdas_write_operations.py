@@ -166,6 +166,15 @@ def test_state_changing_routes_require_management_confirmation_and_audit() -> No
     assert 'action="cdas.deduction.settle"' in source
 
 
+def test_lifecycle_route_accepts_only_supported_documented_codes() -> None:
+    source = ROUTER.read_text(encoding="utf-8")
+
+    assert "request_type: Literal[1, 3, 4, 6, 10]" in source
+    assert "loan_policy: Literal[1, 2]" in source
+    assert "request_type: int = Field(ge=1, le=10)" not in source
+    assert "loan_policy: int = Field(ge=0)" not in source
+
+
 def test_all_provider_mutations_explicitly_disable_automatic_session_replay() -> None:
     source = CLIENT.read_text(encoding="utf-8")
     methods = (
