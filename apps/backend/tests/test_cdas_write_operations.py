@@ -11,6 +11,7 @@ from integrations.cdas import CdasClient
 
 ROOT = Path(__file__).resolve().parents[3]
 ROUTER = ROOT / "apps" / "backend" / "routers" / "cdas_api.py"
+CLIENT = ROOT / "apps" / "backend" / "integrations" / "cdas.py"
 
 
 def make_client(handler) -> CdasClient:
@@ -163,3 +164,10 @@ def test_state_changing_routes_require_management_confirmation_and_audit() -> No
     assert 'action="cdas.deduction.lifecycle"' in source
     assert 'action="cdas.deduction.modify_active"' in source
     assert 'action="cdas.deduction.settle"' in source
+
+
+def test_all_provider_mutations_explicitly_disable_automatic_session_replay() -> None:
+    source = CLIENT.read_text(encoding="utf-8")
+
+    assert source.count("retry_expired_session=False") == 3
+    assert "A mutation must never be replayed automatically" in source
