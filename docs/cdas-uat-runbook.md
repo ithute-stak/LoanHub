@@ -32,7 +32,15 @@ Do not continue if the working tree contains unexpected source changes.
 
 The repository includes a safe local helper that creates an isolated UAT environment without storing CDAS provider credentials and never starts the maintenance worker.
 
-From the repository root:
+The normal path is now one command from the repository root:
+
+```bash
+bash scripts/cdas-uat-local.sh start
+```
+
+`start` performs the local tool/Docker preflight, creates the isolated environment and JWT keys when needed, builds and starts only the approved UAT services, waits for backend readiness, seeds the sandbox company/user/client fixtures, and prints final status.
+
+For troubleshooting or manual control, the individual commands remain available:
 
 ```bash
 bash scripts/cdas-uat-local.sh init
@@ -77,7 +85,7 @@ The generated `.env.cdas-uat` file is local-only and ignored by Git. The helper 
 
 ## Local sandbox login
 
-After `seed` completes, open `http://localhost:13000` and use the repository's sandbox-only account configured by the UAT helper:
+After `start` or `seed` completes, open `http://localhost:13000` and use the repository's sandbox-only account configured by the UAT helper:
 
 - Phone: `12345678`
 - Password: `1234567890`
