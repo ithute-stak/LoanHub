@@ -1,0 +1,37 @@
+name: Temporary CDAS reintegration cleanup
+
+on:
+  push:
+    branches:
+      - cdas-reintegration
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: cdas-reintegration
+          fetch-depth: 0
+      - name: Remove remaining legacy CDAS runtime surface
+        shell: bash
+        run: |
+          find apps/backend/services -maxdepth 1 -type f -name 'cdas_*.py' ! -name 'cdas_config_service.py' -delete
+          find apps/backend/routers -maxdepth 1 -type f -name 'cdas_*.py' ! -name 'cdas_api.py' -delete
+          find apps/backend/tests -maxdepth 1 -type f -name 'test_cdas_*.py' ! -name 'test_cdas_auth_session_negotiation.py' ! -name 'test_cdas_company_configuration.py' -delete
+          find apps/frontend -depth -iname '*cdas*' -exec rm -rf {} + || true
+          python -c "from pathlib import Path; p=Path('apps/backend/api/v1/router.py'); lines=p.read_text().splitlines(); p.write_text('\\n'.join(x for x in lines if not ('cdas_' in x.lower() and 'cdas_api' not in x.lower()))+'\\n')"
+          echo '--- Remaining CDAS references outside models/migrations/auth foundation ---'
+          git grep -n -i 'cdas' -- ':!apps/backend/database/models/**' ':!apps/backend/alembic/**' ':!apps/backend/integrations/cdas.py' ':!apps/backend/services/cdas_config_service.py' ':!apps/backend/routers/cdas_api.py' ':!apps/backend/tests/test_cdas_auth_session_negotiation.py' ':!apps/backend/tests/test_cdas_company_configuration.py' ':!docs/cdas-reintegration.md' || true
+      - name: Commit cleanup and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name 'LoanHub Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          rm -f .github/workflows/tmp-cdas-reintegration-cleanup.yml
+          git add -A
+          git commit -m 'refactor(cdas): remove legacy runtime surface'
+          git push origin HEAD:cdas-reintegration
