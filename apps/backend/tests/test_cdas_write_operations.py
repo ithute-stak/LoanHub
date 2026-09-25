@@ -168,6 +168,18 @@ def test_state_changing_routes_require_management_confirmation_and_audit() -> No
 
 def test_all_provider_mutations_explicitly_disable_automatic_session_replay() -> None:
     source = CLIENT.read_text(encoding="utf-8")
+    methods = (
+        "add_update_deduction",
+        "modify_active_deduction",
+        "settle_deduction",
+    )
 
-    assert source.count("retry_expired_session=False") == 3
+    for index, method in enumerate(methods):
+        start = source.index(f"    async def {method}(")
+        if index + 1 < len(methods):
+            end = source.index(f"    async def {methods[index + 1]}(", start)
+        else:
+            end = source.index("    async def get_document(", start)
+        assert "retry_expired_session=False" in source[start:end]
+
     assert "A mutation must never be replayed automatically" in source
