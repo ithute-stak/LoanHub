@@ -23,6 +23,14 @@ const BANK_OPTIONS = [
   { value: "NB", label: "NB — Nedbank Lesotho", branchCode: "390161", prefixes: "11 or 12" },
 ] as const;
 
+function accountDigits(value: string | null | undefined): string {
+  return String(value ?? "").replace(/\D/g, "").slice(0, 40);
+}
+
+function formatAccountNumber(value: string | null | undefined): string {
+  return accountDigits(value).replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
 function emptyBankAccount(borrowerName: string): BankAccountInput {
   return {
     account_holder: borrowerName.trim(),
@@ -115,14 +123,21 @@ export function ClientBankingRegistrationStep({
             <div className="space-y-2">
               <Label>Account number <span className="text-destructive">*</span></Label>
               <Input
-                className="h-11 font-mono"
+                className="h-11 font-mono text-[15px] tracking-wider tabular-nums"
                 inputMode="numeric"
                 autoComplete="off"
-                value={value.account_number ?? ""}
+                spellCheck={false}
+                aria-describedby="bank-account-number-help"
+                value={formatAccountNumber(value.account_number)}
                 placeholder={selectedBank ? `Starts with ${selectedBank.prefixes}` : "Select the bank first"}
-                onChange={(event) => update("account_number", event.target.value)}
+                onChange={(event) => {
+                  const digits = accountDigits(event.target.value);
+                  update("account_number", digits || null);
+                }}
               />
-              <p className="text-xs text-muted-foreground">The full account number is encrypted at rest.</p>
+              <p id="bank-account-number-help" className="text-xs leading-5 text-muted-foreground">
+                Digits are spaced automatically for easier reading, for example 6000 1234 5678. LoanHub stores the normalized account number encrypted at rest.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Account type</Label>
