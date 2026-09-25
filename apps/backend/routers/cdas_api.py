@@ -23,6 +23,7 @@ from services.cdas_config_service import (
     test_company_configuration,
     update_configuration,
 )
+from services.cdas_request_budget import get_cdas_request_budget_status
 
 router = APIRouter(prefix="/cdas", tags=["CDAS"])
 
@@ -203,6 +204,23 @@ async def test_cdas_configuration(
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
     return {"ok": True, "configuration": configuration}
+
+
+@router.get("/request-budget")
+def get_cdas_request_budget(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return LoanHub's local CDAS quota counter without contacting CDAS."""
+    _require_lending_user(context)
+    assert context.company_id is not None
+    row = get_configuration(db, context.company_id)
+    environment = str(row.environment or "test").strip().lower() if row else "test"
+    return get_cdas_request_budget_status(
+        db,
+        company_id=context.company_id,
+        environment=environment,
+    )
 
 
 @router.post("/employees/verify")
