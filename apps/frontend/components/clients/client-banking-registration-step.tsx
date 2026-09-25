@@ -165,8 +165,10 @@ export function ClientBankingRegistrationStep({
                 className="md:col-span-1 xl:col-span-2"
               >
                 <Input
+                  aria-label="Bank account number"
                   className="h-12 rounded-xl bg-background px-4 font-mono text-base font-bold tracking-[0.12em] tabular-nums shadow-sm sm:text-lg"
                   inputMode="numeric"
+                  enterKeyHint="next"
                   autoComplete="off"
                   spellCheck={false}
                   aria-describedby="bank-account-number-help"
@@ -187,6 +189,7 @@ export function ClientBankingRegistrationStep({
                   className="h-12 rounded-xl bg-background shadow-sm"
                   autoFocus
                   autoComplete="name"
+                  autoCapitalize="words"
                   value={value.account_holder}
                   onChange={(event) => update("account_holder", event.target.value)}
                 />
