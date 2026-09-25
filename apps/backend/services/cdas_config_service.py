@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from database.config.config import settings
 from database.models.origination import OriginationIntegrationConfiguration
 from integrations.cdas import CdasClient, CdasConfigurationError, CdasError
+from services.cdas_request_budget import consume_cdas_request_budget
 from services.crypto_service import decrypt_control_secret, encrypt_control_secret
 
 CDAS_PROVIDER = "cdas"
@@ -258,6 +259,10 @@ def _client_signature(row: OriginationIntegrationConfiguration) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
+def _request_guard(company_id: UUID, environment: str):
+    return lambda: consume_cdas_request_budget(company_id, environment)
+
+
 def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
     row = _configuration_row(db, company_id)
     credentials = _credentials_from_row(row, require_enabled=True)
@@ -272,6 +277,7 @@ def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
         username=credentials.username,
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
+        request_guard=_request_guard(company_id, credentials.environment),
     )
     _client_cache[key] = (signature, client)
     return client
@@ -286,6 +292,7 @@ async def test_company_configuration(db: Session, *, company_id: UUID) -> dict[s
         username=credentials.username,
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
+        request_guard=_request_guard(company_id, credentials.environment),
     )
     try:
         await client.check_connection()
