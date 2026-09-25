@@ -21,6 +21,26 @@ def test_deduction_operations_are_management_only_and_confirmed() -> None:
     assert "useEffect" not in source
 
 
+def test_operations_use_only_supported_documented_lifecycle_and_type_codes() -> None:
+    source = OPERATIONS.read_text(encoding="utf-8")
+
+    for entry in (
+        '[1, "Registration"]',
+        '[3, "Review"]',
+        '[4, "Approve"]',
+        '[6, "Cancel / Reject"]',
+        '[10, "Change / Update"]',
+    ):
+        assert entry in source
+
+    assert 'const LOAN_POLICY_TYPES = [' in source
+    assert '[1, "Loan"]' in source
+    assert '[2, "Policy"]' in source
+    assert "LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy." in source
+    assert "<Label>Loan / policy type</Label>" in source
+    assert "LOAN_POLICY_TYPES.map" in source
+
+
 def test_operations_preserve_documented_ambiguous_cancel_reject_code() -> None:
     source = OPERATIONS.read_text(encoding="utf-8")
 
@@ -35,7 +55,7 @@ def test_operations_preserve_documented_ambiguous_cancel_reject_code() -> None:
         assert reason in source
 
 
-def test_document_retrieval_is_manual_management_only() -> None:
+def test_document_retrieval_is_manual_management_only_and_downloadable() -> None:
     source = DOCUMENTS.read_text(encoding="utf-8")
 
     assert "COMPANY_MANAGEMENT_ROLES" in source
@@ -46,6 +66,12 @@ def test_document_retrieval_is_manual_management_only() -> None:
     assert "2 — Statement" in source
     assert "Reports not ready yet" in source
     assert "DocumentTye" in source
+    assert "function downloadDocument()" in source
+    assert "decodeDocument(document.Content)" in source
+    assert "URL.createObjectURL(blob)" in source
+    assert "anchor.download = document.FileName" in source
+    assert "Download provider file" in source
+    assert "could not be decoded for download" in source
 
 
 def test_settings_describe_full_manual_integration_without_background_polling() -> None:
