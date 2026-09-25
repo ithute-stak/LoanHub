@@ -43,7 +43,7 @@ class CdasDeductionRecord(_ProviderModel):
     EmployeeNo: str | None = None
     ItemCode: str | None = None
     ReferenceNo: str | None = None
-    DeductionStatus: int | None = None
+    DeductionStatus: int | str | None = None
     TotalInstallment: int | None = None
     DeductionAmount: Decimal | None = None
     PrincipalAmount: Decimal | None = None
