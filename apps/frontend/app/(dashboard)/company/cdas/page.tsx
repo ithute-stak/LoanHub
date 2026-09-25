@@ -8,6 +8,7 @@ import {
     ContactRound,
     FileDown,
     FileSearch,
+    Gauge,
     HandCoins,
     Loader2,
     Search,
@@ -43,6 +44,14 @@ type EmployeeLookupResponse = { ok: boolean; employee: CdasEmployee };
 type AffordabilityResponse = { ok: boolean; affordability: number };
 type DeductionsResponse = { ok: boolean; deductions: ProviderRecord[] };
 type ActiveDeductionResponse = { ok: boolean; deduction: ProviderRecord };
+type CdasRequestBudget = {
+    environment: string;
+    request_date: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    last_request_at: string | null;
+};
 
 const EMPLOYEE_DETAILS: Array<{ key: keyof CdasEmployee; label: string }> = [
     { key: "EmployeeNo", label: "Employee number" },
@@ -99,6 +108,8 @@ export default function CdasWorkspacePage() {
     const [allDeductions, setAllDeductions] = useState<ProviderRecord[] | null>(null);
     const [ownDeductions, setOwnDeductions] = useState<ProviderRecord[] | null>(null);
     const [activeDeduction, setActiveDeduction] = useState<ProviderRecord | null>(null);
+    const [requestBudget, setRequestBudget] = useState<CdasRequestBudget | null>(null);
+    const [budgetLoading, setBudgetLoading] = useState(false);
     const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +123,19 @@ export default function CdasWorkspacePage() {
         setOwnDeductions(null);
         setActiveDeduction(null);
         setError(null);
+    }
+
+    async function refreshRequestBudget() {
+        if (budgetLoading) return;
+        setBudgetLoading(true);
+        try {
+            const response = await api.get<CdasRequestBudget>("/cdas/request-budget");
+            setRequestBudget(response.data);
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "CDAS request allowance could not be loaded."));
+        } finally {
+            setBudgetLoading(false);
+        }
     }
 
     async function verifyEmployee(event: FormEvent<HTMLFormElement>) {
@@ -211,7 +235,19 @@ export default function CdasWorkspacePage() {
                             Nothing on this page runs in the background. State-changing deduction actions are separated into a management-only workspace with explicit confirmation and audit logging.
                         </p>
                     </div>
-                    <Badge>Manual requests only</Badge>
+                    <div className="flex min-w-56 flex-col items-start gap-2 lg:items-end">
+                        <Badge>Manual requests only</Badge>
+                        {requestBudget ? (
+                            <div className="rounded-xl border bg-muted/30 px-3 py-2 text-xs lg:text-right">
+                                <p className="font-black tabular-nums">{requestBudget.remaining} / {requestBudget.limit} requests remaining</p>
+                                <p className="mt-1 text-muted-foreground">{requestBudget.environment.toUpperCase()} · {requestBudget.request_date}</p>
+                            </div>
+                        ) : null}
+                        <Button type="button" size="sm" variant="outline" disabled={budgetLoading} onClick={() => void refreshRequestBudget()}>
+                            {budgetLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+                            {requestBudget ? "Refresh allowance" : "Check request allowance"}
+                        </Button>
+                    </div>
                 </div>
             </section>
 
@@ -413,7 +449,7 @@ export default function CdasWorkspacePage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Controlled CDAS usage</AlertTitle>
                 <AlertDescription>
-                    The provider documentation specifies a maximum of 400 requests per day per API user. LoanHub does not poll CDAS or run these reads automatically. Each lookup is initiated by a user action on this page.
+                    The provider documentation specifies a maximum of 400 requests per day per API user. LoanHub reserves a local allowance slot before every outbound CDAS HTTP request, including login and session refresh, and blocks locally at the limit. The allowance button above reads LoanHub only and does not contact CDAS.
                 </AlertDescription>
             </Alert>
         </div>
