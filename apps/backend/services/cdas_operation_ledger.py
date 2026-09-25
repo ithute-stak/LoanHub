@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasProviderOperation
-from integrations.cdas import CdasError
+from integrations.cdas import CdasClient, CdasError
 
 
 UNRESOLVED_OPERATION_STATES = {
@@ -22,6 +23,12 @@ UNRESOLVED_OPERATION_STATES = {
     "unknown_provider_state",
     "requires_reconciliation",
 }
+_RECONCILABLE_STATES = {
+    "acknowledged",
+    "unknown_provider_state",
+    "requires_reconciliation",
+}
+_LIFECYCLE_STATUS_BY_REQUEST = {1: 1, 3: 3, 4: 4, 6: 6, 10: 10}
 
 
 class CdasDuplicateOperationError(RuntimeError):
@@ -178,6 +185,25 @@ def mark_operation_unknown(
     db.refresh(operation)
 
 
+def mark_operation_requires_reconciliation(
+    db: Session,
+    operation: CdasProviderOperation,
+    *,
+    message: str,
+    reconciliation_snapshot: Any = None,
+) -> None:
+    operation.state = "requires_reconciliation"
+    operation.error_message = message
+    operation.requires_reconciliation = True
+    if reconciliation_snapshot is not None:
+        operation.response_snapshot = {
+            "mutation": operation.response_snapshot or {},
+            "reconciliation": reconciliation_snapshot,
+        }
+    db.commit()
+    db.refresh(operation)
+
+
 def mark_operation_confirmed(
     db: Session,
     operation: CdasProviderOperation,
@@ -260,6 +286,154 @@ async def execute_provider_operation(
         provider_status_code=200,
     )
     return result, operation
+
+
+def _first_value(source: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = source.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _normalized_text(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _same_money(left: Any, right: Any) -> bool:
+    if left in (None, ""):
+        return True
+    if right in (None, ""):
+        return False
+    try:
+        return Decimal(str(left)) == Decimal(str(right))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def _operation_target_deduction_id(operation: CdasProviderOperation) -> int | None:
+    response = operation.response_snapshot if isinstance(operation.response_snapshot, dict) else {}
+    request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
+    candidate = _first_value(response, "DeductionID", "deductionId", "deduction_id")
+    if candidate in (None, "", 0, "0"):
+        candidate = _first_value(request, "DeductionID", "deductionId", "deduction_id")
+    try:
+        return int(candidate) if candidate not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _deduction_matches(operation: CdasProviderOperation, record: dict[str, Any]) -> bool:
+    request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
+    target_id = _operation_target_deduction_id(operation)
+    record_id = _first_value(record, "DeductionID", "deductionId", "deduction_id")
+    if target_id is not None and record_id not in (None, ""):
+        try:
+            return int(record_id) == target_id
+        except (TypeError, ValueError):
+            return False
+
+    reference = _normalized_text(_first_value(request, "ReferenceNo", "referenceNo", "reference_no"))
+    record_reference = _normalized_text(_first_value(record, "ReferenceNo", "referenceNo", "reference_no"))
+    if reference:
+        return bool(record_reference and reference == record_reference)
+
+    item_code = _normalized_text(_first_value(request, "ItemCode", "itemCode", "item_code"))
+    record_item = _normalized_text(_first_value(record, "ItemCode", "itemCode", "item_code"))
+    return bool(item_code and record_item and item_code == record_item)
+
+
+def _modified_values_match(operation: CdasProviderOperation, record: dict[str, Any]) -> bool:
+    request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
+    if not _deduction_matches(operation, record):
+        return False
+    if not _same_money(request.get("DeductionAmount"), record.get("DeductionAmount")):
+        return False
+    if not _same_money(request.get("PrincipalAmount"), record.get("PrincipalAmount")):
+        return False
+    requested_installments = request.get("TotalInstallment")
+    returned_installments = record.get("TotalInstallment")
+    if requested_installments not in (None, "") and returned_installments not in (None, ""):
+        try:
+            if int(requested_installments) != int(returned_installments):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+async def reconcile_provider_operation(
+    db: Session,
+    *,
+    operation: CdasProviderOperation,
+    client: CdasClient,
+) -> tuple[bool, CdasProviderOperation]:
+    """Verify a mutation by reading CDAS state; this function never writes to CDAS."""
+
+    if operation.state == "confirmed":
+        return True, operation
+    if operation.state not in _RECONCILABLE_STATES:
+        raise ValueError(f"CDAS operation state {operation.state!r} is not reconcilable")
+    if not operation.employee_no:
+        mark_operation_requires_reconciliation(
+            db,
+            operation,
+            message="Operation has no employee number for provider reconciliation",
+        )
+        return False, operation
+
+    request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
+    mutation_snapshot = operation.response_snapshot if isinstance(operation.response_snapshot, dict) else {}
+
+    try:
+        if operation.operation_type == "deduction.modify_active":
+            record = await client.get_active_and_approved_deduction(operation.employee_no)
+            matched = _modified_values_match(operation, record)
+            reconciliation_snapshot: Any = record
+        else:
+            if operation.operation_type == "deduction.settle":
+                expected_status = 7
+            elif operation.operation_type.startswith("deduction.lifecycle."):
+                try:
+                    request_type = int(request.get("RequestType"))
+                except (TypeError, ValueError):
+                    request_type = -1
+                expected_status = _LIFECYCLE_STATUS_BY_REQUEST.get(request_type)
+                if expected_status is None:
+                    raise ValueError(f"Lifecycle request type {request_type!r} has no reconciliation mapping")
+            else:
+                raise ValueError(f"Unsupported CDAS operation type {operation.operation_type!r}")
+
+            records = await client.view_own_deductions(operation.employee_no, expected_status)
+            record = next((item for item in records if _deduction_matches(operation, item)), None)
+            matched = record is not None
+            reconciliation_snapshot = record if record is not None else records
+    except CdasError as exc:
+        mark_operation_requires_reconciliation(
+            db,
+            operation,
+            message=f"CDAS reconciliation read failed: {exc.message}",
+        )
+        raise
+
+    if matched:
+        mark_operation_confirmed(
+            db,
+            operation,
+            response_snapshot={
+                "mutation": mutation_snapshot,
+                "reconciliation": reconciliation_snapshot,
+            },
+        )
+        return True, operation
+
+    mark_operation_requires_reconciliation(
+        db,
+        operation,
+        message="CDAS read-back did not yet confirm the requested provider state",
+        reconciliation_snapshot=reconciliation_snapshot,
+    )
+    return False, operation
 
 
 def operation_summary(operation: CdasProviderOperation) -> dict[str, Any]:
