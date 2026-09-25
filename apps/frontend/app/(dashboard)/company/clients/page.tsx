@@ -1283,7 +1283,7 @@ export default function CompanyClientsPage() {
               </div>
 
               <ScrollArea className="min-h-0 flex-1">
-                <div className="space-y-5 p-4 sm:p-6 lg:p-7">
+                <div className="space-y-6 p-4 sm:p-6 lg:p-8">
                   {clientStepErrors.length > 0 && (
                     <Alert variant="destructive">
                       <TriangleAlert className="h-4 w-4" />
@@ -1550,7 +1550,7 @@ export default function CompanyClientsPage() {
           </div>
 
           <Separator />
-          <div className="flex shrink-0 flex-col gap-3 bg-muted/30 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-7">
+          <div className="flex shrink-0 flex-col gap-3 border-t border-border/60 bg-background/95 px-4 py-4 shadow-[0_-10px_30px_-24px_rgba(0,0,0,0.35)] backdrop-blur sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-7">
             <div className="min-w-0">
               <p className="text-sm font-bold">{activeClientStep.title}</p>
               <p className="text-xs leading-5 text-muted-foreground">
@@ -1670,12 +1670,12 @@ function Field({
   required?: boolean;
 }) {
   return (
-    <div className="space-y-2">
-      <div className="space-y-0.5">
-        <Label className="text-sm font-bold">
+    <div className="group rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5 transition-all duration-200 hover:border-border/80 hover:bg-muted/30 focus-within:border-primary/30 focus-within:bg-background focus-within:shadow-sm">
+      <div className="mb-2.5 space-y-1">
+        <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
           {label}{required ? <span className="ml-1 text-destructive">*</span> : null}
         </Label>
-        {description ? <p className="text-[11px] leading-4 text-muted-foreground">{description}</p> : null}
+        {description ? <p className="text-[11px] leading-4 text-muted-foreground/90">{description}</p> : null}
       </div>
       {children}
     </div>
@@ -1694,19 +1694,19 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <Card className="overflow-hidden rounded-3xl border-border/70 shadow-none">
-      <CardHeader className="border-b bg-muted/20 px-5 py-4 sm:px-6">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+    <Card className="overflow-hidden rounded-[28px] border border-border/60 bg-card/95 shadow-sm shadow-black/5">
+      <CardHeader className="border-b border-border/60 bg-gradient-to-r from-primary/[0.08] via-background to-emerald-500/[0.05] px-5 py-5 sm:px-6">
+        <div className="flex items-start gap-3.5">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary shadow-sm">
             <Icon className="h-5 w-5" />
           </div>
-          <div>
-            <CardTitle className="text-base">{title}</CardTitle>
-            <CardDescription className="mt-1">{description}</CardDescription>
+          <div className="min-w-0">
+            <CardTitle className="text-base font-black tracking-tight">{title}</CardTitle>
+            <CardDescription className="mt-1 max-w-3xl text-xs leading-5 sm:text-sm">{description}</CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 p-5 sm:p-6">{children}</CardContent>
+      <CardContent className="space-y-5 bg-gradient-to-b from-background to-muted/10 p-4 sm:p-6">{children}</CardContent>
     </Card>
   );
 }
