@@ -164,7 +164,7 @@ export default function CdasDocumentsPage() {
                 <Card>
                     <CardHeader>
                         <CardTitle>Retrieved document</CardTitle>
-                        <CardDescription>The provider's documented response key is spelled DocumentTye; LoanHub preserves it rather than silently renaming provider data.</CardDescription>
+                        <CardDescription>The provider&apos;s documented response key is spelled DocumentTye; LoanHub preserves it rather than silently renaming provider data.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
