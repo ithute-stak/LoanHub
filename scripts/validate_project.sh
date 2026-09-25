@@ -25,6 +25,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_global_sticky_filter_rollout_frontend.py \
   tests/test_hrms_native_module.py \
   tests/test_hrms_hybrid_navigation_frontend.py \
+  tests/test_company_workspace_navigation.py \
   tests/test_cdas_auth_session_negotiation.py \
   tests/test_cdas_company_configuration.py \
   tests/test_cdas_employee_verification.py \
