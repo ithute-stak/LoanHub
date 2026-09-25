@@ -36,6 +36,12 @@ function decodeDocument(content: string | number[]): Uint8Array {
     return bytes;
 }
 
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    return buffer;
+}
+
 export default function CdasDocumentsPage() {
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
@@ -71,7 +77,7 @@ export default function CdasDocumentsPage() {
         if (!document?.Content) return;
         try {
             const bytes = decodeDocument(document.Content);
-            const blob = new Blob([bytes], { type: "application/octet-stream" });
+            const blob = new Blob([copyToArrayBuffer(bytes)], { type: "application/octet-stream" });
             const url = URL.createObjectURL(blob);
             const anchor = window.document.createElement("a");
             anchor.href = url;
