@@ -32,6 +32,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_cdas_read_operations.py \
   tests/test_cdas_write_operations.py \
   tests/test_cdas_request_safety.py \
+  tests/test_cdas_operation_ledger.py \
   tests/test_cdas_phase2_frontend.py \
   tests/test_cdas_management_frontend.py \
   tests/test_cdas_uat_helper.py
