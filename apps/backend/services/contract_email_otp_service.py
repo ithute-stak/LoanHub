@@ -421,6 +421,26 @@ def verify_signing_code(
         raise HTTPException(status_code=410, detail="The signing code has expired. Request a new code.")
 
     data = dict(record.data or {})
+    challenge_contract_hash = str(data.get("contract_hash") or "")
+    current_contract_hash = str(contract.contract_hash or "")
+    if (
+        not challenge_contract_hash
+        or not current_contract_hash
+        or not hmac.compare_digest(challenge_contract_hash, current_contract_hash)
+    ):
+        record.status = "superseded"
+        record.is_archived = True
+        data.pop("otp_digest", None)
+        data["superseded_at"] = now.isoformat() + "Z"
+        data["superseded_reason"] = "contract_hash_changed"
+        record.data = data
+        db.add(record)
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="The contract changed after this signing code was sent. Review the current PDF and request a new code.",
+        )
+
     attempts = int(data.get("attempts", 0))
     if attempts >= MAX_ATTEMPTS:
         record.status = "locked"
