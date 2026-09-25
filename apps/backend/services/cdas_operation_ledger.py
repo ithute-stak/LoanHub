@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+import httpx
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasProviderOperation
+from integrations.cdas import CdasError
 
 
 UNRESOLVED_OPERATION_STATES = {
@@ -27,6 +30,13 @@ class CdasDuplicateOperationError(RuntimeError):
         super().__init__(
             f"An unresolved matching CDAS operation already exists ({operation.id}, {operation.state})"
         )
+
+
+class CdasTrackedProviderError(RuntimeError):
+    def __init__(self, provider_error: CdasError, operation: CdasProviderOperation) -> None:
+        self.provider_error = provider_error
+        self.operation = operation
+        super().__init__(provider_error.message)
 
 
 def _utcnow_naive() -> datetime:
@@ -184,6 +194,72 @@ def mark_operation_confirmed(
     operation.completed_at = now
     db.commit()
     db.refresh(operation)
+
+
+def _provider_error_snapshot(error: CdasError) -> dict[str, Any]:
+    details = error.details
+    if isinstance(details, dict):
+        return details
+    if details is None:
+        return {}
+    return {"raw": details}
+
+
+def is_ambiguous_write_error(error: CdasError) -> bool:
+    """True when the HTTP exchange may have reached CDAS without a response.
+
+    We deliberately inspect the preserved exception cause instead of treating all
+    provider 5xx responses as ambiguous. A real CDAS HTTP response is known;
+    connect/read/write/protocol failures can leave the mutation outcome unknown.
+    """
+
+    return isinstance(error.__cause__, httpx.RequestError)
+
+
+async def execute_provider_operation(
+    db: Session,
+    *,
+    company_id: UUID,
+    branch_id: UUID | None,
+    actor_user_id: UUID | None,
+    environment: str,
+    operation_type: str,
+    request_snapshot: dict[str, Any],
+    provider_call: Callable[[], Awaitable[dict[str, Any]]],
+) -> tuple[dict[str, Any], CdasProviderOperation]:
+    operation = begin_provider_operation(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        actor_user_id=actor_user_id,
+        environment=environment,
+        operation_type=operation_type,
+        request_snapshot=request_snapshot,
+    )
+    mark_operation_submitting(db, operation)
+
+    try:
+        result = await provider_call()
+    except CdasError as error:
+        if is_ambiguous_write_error(error):
+            mark_operation_unknown(db, operation, error_message=error.message)
+        else:
+            mark_operation_rejected(
+                db,
+                operation,
+                provider_status_code=error.status_code,
+                error_message=error.message,
+                response_snapshot=_provider_error_snapshot(error),
+            )
+        raise CdasTrackedProviderError(error, operation) from error
+
+    mark_operation_acknowledged(
+        db,
+        operation,
+        response_snapshot=result,
+        provider_status_code=200,
+    )
+    return result, operation
 
 
 def operation_summary(operation: CdasProviderOperation) -> dict[str, Any]:
