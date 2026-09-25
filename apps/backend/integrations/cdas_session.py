@@ -16,6 +16,10 @@ class CdasSharedSession:
     last_used_at: datetime
 
 
+class CdasSessionBrokerError(RuntimeError):
+    """Raised when cross-worker CDAS session coordination is unavailable."""
+
+
 class CdasSessionBroker(Protocol):
     """Cross-process session coordination contract used by the CDAS client."""
 
