@@ -29,6 +29,16 @@ def test_cdas_read_workspace_is_manual_and_uses_clean_api_routes() -> None:
     assert "400 requests per day per API user" in source
 
 
+def test_request_allowance_status_is_local_and_user_initiated() -> None:
+    source = CDAS_PAGE.read_text(encoding="utf-8")
+
+    assert 'api.get<CdasRequestBudget>("/cdas/request-budget")' in source
+    assert 'onClick={() => void refreshRequestBudget()}' in source
+    assert "Check request allowance" in source
+    assert "does not contact CDAS" in source
+    assert "useEffect" not in source
+
+
 def test_employee_details_remain_limited_to_documented_fields() -> None:
     source = CDAS_PAGE.read_text(encoding="utf-8")
 
