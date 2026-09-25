@@ -134,16 +134,11 @@ const companyNavigation: NavItem[] = [
         ],
     },
     {
-        label: "CDAS & payroll deductions",
-        href: "/company/cdas-booking/management-dashboard",
+        label: "CDAS Workspace",
+        href: "/company/cdas",
         icon: HandCoins,
-        activePaths: ["/company/cdas-booking"],
-        children: [
-            { label: "Management Dashboard", href: "/company/cdas-booking/management-dashboard", icon: LayoutDashboard },
-            { label: "Booking Centre", href: "/company/cdas-booking", icon: BookOpenCheck },
-            { label: "Verify Employee", href: "/company/cdas-booking/verify-employee", icon: ContactRound },
-            { label: "Official Loan Lifecycle", href: "/company/cdas-booking/lifecycle", icon: ShieldCheck },
-        ],
+        roles: LENDING_ROLES,
+        activePaths: ["/company/cdas"],
     },
     { label: "Calls & recordings", href: "/company/calls", icon: Phone, roles: LENDING_ROLES },
     {
