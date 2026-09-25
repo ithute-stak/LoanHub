@@ -16,6 +16,13 @@ type ClientBankingRegistrationStepProps = {
   onChange: (value: BankAccountInput | null) => void;
 };
 
+const BANK_OPTIONS = [
+  { value: "FNB", label: "FNB — First National Bank Lesotho", branchCode: "280061", prefixes: "6" },
+  { value: "PB", label: "PB — Lesotho PostBank", branchCode: "500100", prefixes: "10" },
+  { value: "STD", label: "STD — Standard Lesotho Bank", branchCode: "060667", prefixes: "90" },
+  { value: "NB", label: "NB — Nedbank Lesotho", branchCode: "390161", prefixes: "11 or 12" },
+] as const;
+
 function emptyBankAccount(borrowerName: string): BankAccountInput {
   return {
     account_holder: borrowerName.trim(),
@@ -43,10 +50,22 @@ export function ClientBankingRegistrationStep({
   onChange,
 }: ClientBankingRegistrationStepProps) {
   const enabled = Boolean(value);
+  const selectedBank = BANK_OPTIONS.find((bank) => bank.value === value?.bank_name) ?? null;
 
   function update<K extends keyof BankAccountInput>(key: K, nextValue: BankAccountInput[K]) {
     if (!value) return;
     onChange({ ...value, [key]: nextValue });
+  }
+
+  function selectBank(bankName: string) {
+    if (!value) return;
+    const bank = BANK_OPTIONS.find((option) => option.value === bankName);
+    onChange({
+      ...value,
+      bank_name: bankName,
+      branch_name: bank ? "Maseru Central" : null,
+      branch_code: bank?.branchCode ?? null,
+    });
   }
 
   return (
@@ -83,13 +102,15 @@ export function ClientBankingRegistrationStep({
               />
             </div>
             <div className="space-y-2">
-              <Label>Bank name <span className="text-destructive">*</span></Label>
-              <Input
-                className="h-11"
-                value={value.bank_name}
-                placeholder="e.g. Standard Lesotho Bank"
-                onChange={(event) => update("bank_name", event.target.value)}
-              />
+              <Label>Bank <span className="text-destructive">*</span></Label>
+              <Select value={value.bank_name || undefined} onValueChange={selectBank}>
+                <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select bank" /></SelectTrigger>
+                <SelectContent>
+                  {BANK_OPTIONS.map((bank) => (
+                    <SelectItem key={bank.value} value={bank.value}>{bank.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Account number <span className="text-destructive">*</span></Label>
@@ -98,6 +119,7 @@ export function ClientBankingRegistrationStep({
                 inputMode="numeric"
                 autoComplete="off"
                 value={value.account_number ?? ""}
+                placeholder={selectedBank ? `Starts with ${selectedBank.prefixes}` : "Select the bank first"}
                 onChange={(event) => update("account_number", event.target.value)}
               />
               <p className="text-xs text-muted-foreground">The full account number is encrypted at rest.</p>
@@ -123,22 +145,6 @@ export function ClientBankingRegistrationStep({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Branch name</Label>
-              <Input
-                className="h-11"
-                value={value.branch_name ?? ""}
-                onChange={(event) => update("branch_name", event.target.value || null)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Branch code</Label>
-              <Input
-                className="h-11"
-                value={value.branch_code ?? ""}
-                onChange={(event) => update("branch_code", event.target.value || null)}
-              />
-            </div>
             <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-background px-4 py-3 md:col-span-2 xl:col-span-2">
               <Checkbox
                 checked={value.salary_account}
@@ -150,6 +156,15 @@ export function ClientBankingRegistrationStep({
               </span>
             </label>
           </div>
+
+          {selectedBank ? (
+            <div className="rounded-2xl border bg-muted/15 p-4 text-sm">
+              <p className="font-black">LoanHub routing details</p>
+              <p className="mt-1 text-muted-foreground">
+                Maseru Central · branch code {selectedBank.branchCode} · accepted account prefix {selectedBank.prefixes}.
+              </p>
+            </div>
+          ) : null}
 
           <Alert>
             <ShieldCheck className="h-4 w-4" />
