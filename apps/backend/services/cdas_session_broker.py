@@ -5,6 +5,7 @@ import hashlib
 import json
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import AsyncIterator
 
 from redis.asyncio import Redis
@@ -78,8 +79,8 @@ class RedisCdasSessionBroker:
         return CdasSharedSession(
             token=str(payload["token"]),
             cookies={str(key): str(item) for key, item in dict(payload.get("cookies") or {}).items()},
-            obtained_at=__import__("datetime").datetime.fromisoformat(str(payload["obtained_at"])),
-            last_used_at=__import__("datetime").datetime.fromisoformat(str(payload["last_used_at"])),
+            obtained_at=datetime.fromisoformat(str(payload["obtained_at"])),
+            last_used_at=datetime.fromisoformat(str(payload["last_used_at"])),
         )
 
     async def load(self) -> CdasSharedSession | None:
