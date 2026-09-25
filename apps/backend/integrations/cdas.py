@@ -4,11 +4,21 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
 
 from database.config.config import settings
+from integrations.cdas_contracts import (
+    parse_money,
+    provider_money,
+    validate_deduction,
+    validate_deductions,
+    validate_document,
+    validate_employee,
+)
+from integrations.cdas_session import CdasSessionBroker, CdasSessionBrokerError, CdasSharedSession
 
 
 @dataclass(slots=True)
@@ -33,7 +43,7 @@ class _TokenState:
 
 
 class CdasClient:
-    """Small, request-driven CDAS client for the clean reintegration."""
+    """Request-driven CDAS client with optional cross-worker session coordination."""
 
     LOGIN_PATH = "/api/security/login"
     EMPLOYEE_DETAILS_PATH = "/api/employee/getDetails"
@@ -59,6 +69,7 @@ class CdasClient:
         timeout_seconds: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         request_guard: Callable[[], None] | None = None,
+        session_broker: CdasSessionBroker | None = None,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.username = username
@@ -66,6 +77,7 @@ class CdasClient:
         self.timeout_seconds = timeout_seconds or settings.CDAS_TIMEOUT_SECONDS
         self.transport = transport
         self.request_guard = request_guard
+        self.session_broker = session_broker
         self._token: _TokenState | None = None
         self._token_lock = asyncio.Lock()
         self._session_cookies = httpx.Cookies()
@@ -78,22 +90,80 @@ class CdasClient:
         if self.request_guard is not None:
             self.request_guard()
 
-    def _invalidate_session(self) -> None:
-        self._token = None
-        self._session_cookies = httpx.Cookies()
-
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
 
+    @classmethod
+    def _session_is_fresh(cls, session: CdasSharedSession) -> bool:
+        now = cls._now()
+        return (
+            now - session.obtained_at < cls._TOKEN_MAX_AGE
+            and now - session.last_used_at < cls._TOKEN_IDLE_AGE
+        )
+
     def _token_is_fresh(self) -> bool:
         if self._token is None:
             return False
-        now = self._now()
-        return (
-            now - self._token.obtained_at < self._TOKEN_MAX_AGE
-            and now - self._token.last_used_at < self._TOKEN_IDLE_AGE
+        return self._session_is_fresh(
+            CdasSharedSession(
+                token=self._token.value,
+                cookies={},
+                obtained_at=self._token.obtained_at,
+                last_used_at=self._token.last_used_at,
+            )
         )
+
+    def _shared_snapshot(self) -> CdasSharedSession | None:
+        if self._token is None:
+            return None
+        return CdasSharedSession(
+            token=self._token.value,
+            cookies={str(key): str(value) for key, value in self._session_cookies.items()},
+            obtained_at=self._token.obtained_at,
+            last_used_at=self._token.last_used_at,
+        )
+
+    def _apply_shared_session(self, session: CdasSharedSession) -> None:
+        self._token = _TokenState(session.token, session.obtained_at, session.last_used_at)
+        cookies = httpx.Cookies()
+        cookies.update(session.cookies)
+        self._session_cookies = cookies
+
+    async def _load_shared_token(self) -> str | None:
+        if self.session_broker is None:
+            return None
+        try:
+            session = await self.session_broker.load()
+        except CdasSessionBrokerError as exc:
+            raise CdasError(503, "CDAS shared session coordination is unavailable") from exc
+        if session is None or not self._session_is_fresh(session):
+            return None
+        self._apply_shared_session(session)
+        return session.token
+
+    async def _save_shared_session(self, *, strict: bool) -> None:
+        if self.session_broker is None:
+            return
+        snapshot = self._shared_snapshot()
+        if snapshot is None:
+            return
+        try:
+            await self.session_broker.save(snapshot)
+        except CdasSessionBrokerError as exc:
+            if strict:
+                raise CdasError(503, "CDAS shared session could not be persisted") from exc
+
+    async def _invalidate_session(self, *, clear_shared: bool) -> None:
+        self._token = None
+        self._session_cookies = httpx.Cookies()
+        if clear_shared and self.session_broker is not None:
+            try:
+                await self.session_broker.clear()
+            except CdasSessionBrokerError:
+                # A provider mutation is never replayed merely because cache
+                # cleanup failed. A later request will still be gated by Redis.
+                pass
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> Any:
@@ -102,11 +172,7 @@ class CdasClient:
         try:
             return response.json()
         except ValueError:
-            text = response.text.strip()
-            try:
-                return float(text)
-            except ValueError:
-                return text
+            return response.text.strip()
 
     @staticmethod
     def _message(payload: Any, fallback: str) -> str:
@@ -125,52 +191,84 @@ class CdasClient:
             raise CdasError(422, "Employee number is required")
         return normalized
 
+    @classmethod
+    def _json_payload(cls, value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return provider_money(value)
+        if isinstance(value, dict):
+            return {key: cls._json_payload(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._json_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return [cls._json_payload(item) for item in value]
+        return value
+
+    async def _perform_login(self) -> str:
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            transport=self.transport,
+            cookies=httpx.Cookies(),
+        ) as client:
+            try:
+                self._reserve_request()
+                response = await client.post(
+                    self.LOGIN_PATH,
+                    json={"Username": self.username, "Password": self.password},
+                )
+                cookies = httpx.Cookies()
+                cookies.update(client.cookies)
+            except httpx.RequestError as exc:
+                raise CdasError(503, "CDAS authentication service is unavailable") from exc
+
+        payload = self._decode_response(response)
+        if response.status_code >= 400:
+            raise CdasError(
+                response.status_code,
+                self._message(
+                    payload,
+                    f"CDAS authentication failed with status {response.status_code}",
+                ),
+                payload,
+            )
+        if not isinstance(payload, dict) or not payload.get("Authorization"):
+            raise CdasError(502, "CDAS authentication returned an invalid response")
+
+        token = str(payload["Authorization"]).strip()
+        if not token:
+            raise CdasError(502, "CDAS authentication returned an empty authorization token")
+
+        now = self._now()
+        self._session_cookies = cookies
+        self._token = _TokenState(token, now, now)
+        await self._save_shared_session(strict=True)
+        return token
+
     async def authenticate(self, *, force: bool = False) -> str:
         self._require_configuration()
         async with self._token_lock:
             if not force and self._token_is_fresh():
                 assert self._token is not None
-                self._token.last_used_at = self._now()
                 return self._token.value
 
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout_seconds,
-                transport=self.transport,
-                cookies=httpx.Cookies(),
-            ) as client:
-                try:
-                    self._reserve_request()
-                    response = await client.post(
-                        self.LOGIN_PATH,
-                        json={"Username": self.username, "Password": self.password},
-                    )
-                    cookies = httpx.Cookies()
-                    cookies.update(client.cookies)
-                except httpx.RequestError as exc:
-                    raise CdasError(503, "CDAS authentication service is unavailable") from exc
+            previous_token = self._token.value if self._token is not None else None
 
-            payload = self._decode_response(response)
-            if response.status_code >= 400:
-                raise CdasError(
-                    response.status_code,
-                    self._message(
-                        payload,
-                        f"CDAS authentication failed with status {response.status_code}",
-                    ),
-                    payload,
-                )
-            if not isinstance(payload, dict) or not payload.get("Authorization"):
-                raise CdasError(502, "CDAS authentication returned an invalid response")
+            if not force:
+                shared_token = await self._load_shared_token()
+                if shared_token:
+                    return shared_token
 
-            token = str(payload["Authorization"]).strip()
-            if not token:
-                raise CdasError(502, "CDAS authentication returned an empty authorization token")
+            if self.session_broker is None:
+                return await self._perform_login()
 
-            now = self._now()
-            self._session_cookies = cookies
-            self._token = _TokenState(token, now, now)
-            return token
+            try:
+                async with self.session_broker.login_lock():
+                    shared_token = await self._load_shared_token()
+                    if shared_token and (not force or shared_token != previous_token):
+                        return shared_token
+                    return await self._perform_login()
+            except CdasSessionBrokerError as exc:
+                raise CdasError(503, "CDAS shared login coordination is unavailable") from exc
 
     async def _post_authenticated(
         self,
@@ -192,7 +290,7 @@ class CdasClient:
                 self._reserve_request()
                 response = await client.post(
                     path,
-                    json=payload,
+                    json=self._json_payload(payload),
                     headers={header_name: token},
                 )
                 self._session_cookies.update(client.cookies)
@@ -208,9 +306,9 @@ class CdasClient:
                     header_name=header_name,
                     retry_expired_session=False,
                 )
-            # A mutation must never be replayed automatically. Clear local session
-            # state so the next explicit user action starts with a fresh login.
-            self._invalidate_session()
+            # A mutation must never be replayed automatically. Clear local/shared
+            # state so the next explicit action starts with a fresh login.
+            await self._invalidate_session(clear_shared=True)
 
         response_payload = self._decode_response(response)
         if response.status_code >= 400:
@@ -224,6 +322,7 @@ class CdasClient:
             )
         if self._token is not None:
             self._token.last_used_at = self._now()
+            await self._save_shared_session(strict=False)
         return response_payload
 
     async def get_employee_details(self, employee_no: str) -> dict[str, str | None]:
@@ -232,33 +331,22 @@ class CdasClient:
             self.EMPLOYEE_DETAILS_PATH,
             payload={"EmployeeNo": employee_no},
         )
-        if not isinstance(payload, dict) or not payload.get("EmployeeNo"):
-            raise CdasError(502, "CDAS employee lookup returned an invalid response", payload)
+        try:
+            return validate_employee(payload)
+        except ValueError as exc:
+            raise CdasError(502, str(exc), payload) from exc
 
-        fields = (
-            "EmployeeNo",
-            "Name",
-            "Surname",
-            "DOB",
-            "Department",
-            "JoiningDate",
-            "TerminationDate",
-        )
-        return {
-            field: str(payload[field]) if payload.get(field) is not None else None
-            for field in fields
-        }
-
-    async def check_affordability(self, employee_no: str) -> float:
+    async def check_affordability(self, employee_no: str) -> Decimal:
         employee_no = self._require_employee_number(employee_no)
         payload = await self._post_authenticated(
             self.AFFORDABILITY_PATH,
             payload={"EmployeeNo": employee_no},
             header_name="Token",
         )
-        if isinstance(payload, bool) or not isinstance(payload, (int, float)):
-            raise CdasError(502, "CDAS affordability check returned an invalid response", payload)
-        return float(payload)
+        try:
+            return parse_money(payload)
+        except ValueError as exc:
+            raise CdasError(502, "CDAS affordability check returned an invalid response", payload) from exc
 
     async def view_all_deductions(self, employee_no: str) -> list[dict[str, Any]]:
         employee_no = self._require_employee_number(employee_no)
@@ -267,9 +355,10 @@ class CdasClient:
             payload={"EmployeeNo": employee_no},
             header_name="Token",
         )
-        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
-            raise CdasError(502, "CDAS all-deductions lookup returned an invalid response", payload)
-        return payload
+        try:
+            return validate_deductions(payload)
+        except ValueError as exc:
+            raise CdasError(502, str(exc), payload) from exc
 
     async def view_own_deductions(
         self,
@@ -287,9 +376,10 @@ class CdasClient:
             },
             header_name="Token",
         )
-        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
-            raise CdasError(502, "CDAS own-deductions lookup returned an invalid response", payload)
-        return payload
+        try:
+            return validate_deductions(payload)
+        except ValueError as exc:
+            raise CdasError(502, str(exc), payload) from exc
 
     async def add_update_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         payload = await self._post_authenticated(
@@ -298,9 +388,10 @@ class CdasClient:
             header_name="Token",
             retry_expired_session=False,
         )
-        if not isinstance(payload, dict):
-            raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload)
-        return payload
+        try:
+            return validate_deduction(payload)
+        except ValueError as exc:
+            raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload) from exc
 
     async def get_active_and_approved_deduction(self, employee_no: str) -> dict[str, Any]:
         employee_no = self._require_employee_number(employee_no)
@@ -309,13 +400,14 @@ class CdasClient:
             payload={"EmployeeNo": employee_no},
             header_name="Token",
         )
-        if not isinstance(payload, dict):
+        try:
+            return validate_deduction(payload)
+        except ValueError as exc:
             raise CdasError(
                 502,
                 "CDAS active/approved deduction lookup returned an invalid response",
                 payload,
-            )
-        return payload
+            ) from exc
 
     async def modify_active_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         payload = await self._post_authenticated(
@@ -324,9 +416,10 @@ class CdasClient:
             header_name="Token",
             retry_expired_session=False,
         )
-        if not isinstance(payload, dict):
-            raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload)
-        return payload
+        try:
+            return validate_deduction(payload)
+        except ValueError as exc:
+            raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload) from exc
 
     async def settle_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         payload = await self._post_authenticated(
@@ -335,9 +428,10 @@ class CdasClient:
             header_name="Token",
             retry_expired_session=False,
         )
-        if not isinstance(payload, dict):
-            raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload)
-        return payload
+        try:
+            return validate_deduction(payload)
+        except ValueError as exc:
+            raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload) from exc
 
     async def get_document(self, *, year: int, month: int, document_type: int) -> dict[str, Any]:
         payload = await self._post_authenticated(
@@ -349,9 +443,10 @@ class CdasClient:
             },
             header_name="Token",
         )
-        if not isinstance(payload, dict):
-            raise CdasError(502, "CDAS document request returned an invalid response", payload)
-        return payload
+        try:
+            return validate_document(payload)
+        except ValueError as exc:
+            raise CdasError(502, "CDAS document request returned an invalid response", payload) from exc
 
     async def check_connection(self) -> None:
         await self.authenticate(force=True)
