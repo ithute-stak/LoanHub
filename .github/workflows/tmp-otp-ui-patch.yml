@@ -1,0 +1,96 @@
+name: Temporary contract OTP UI patch
+
+on:
+  push:
+    branches:
+      - feat/contract-otp-email-fallback
+    paths:
+      - .github/workflows/tmp-otp-ui-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/contract-otp-email-fallback
+
+      - name: Patch loan contract signing modal
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/frontend/app/(dashboard)/company/loans/page.tsx')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";\n',
+              'import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";\nimport {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";\n',
+              'OTP component import',
+          )
+
+          replace_once(
+              '    const [signatureMethod, setSignatureMethod] = useState("wet_ink");',
+              '    const [signatureMethod, setSignatureMethod] = useState<"wet_ink" | "electronic" | "email_otp">("wet_ink");',
+              'signature method state',
+          )
+
+          replace_once(
+              '''    function selectContract(contract: LoanContract) {\n        setSelectedContract(contract);\n        setBorrowerSignature(contract.borrower_signature_name ?? "");\n        setWitnessName(contract.witness_name ?? "");\n    }''',
+              '''    function selectContract(contract: LoanContract) {\n        setSelectedContract(contract);\n        setBorrowerSignature(contract.borrower_signature_name ?? "");\n        setWitnessName(contract.witness_name ?? "");\n        setSignatureMethod("wet_ink");\n    }''',
+              'select contract reset',
+          )
+
+          replace_once(
+              '        if (!selectedContract || borrowerSignature.trim().length < 2) return;',
+              '        if (!selectedContract || selectedContract.borrower_signed_at || signatureMethod === "email_otp" || borrowerSignature.trim().length < 2) return;',
+              'borrower sign guard',
+          )
+
+          replace_once(
+              '            const updated = await originationApi.companySign(selectedContract.id, signatureMethod);',
+              '            const updated = await originationApi.companySign(selectedContract.id, signatureMethod === "email_otp" ? "electronic" : signatureMethod);',
+              'company signature method',
+          )
+
+          replace_once(
+              '    async function regenerateContractPdf() {',
+              '''    async function refreshSelectedContractAfterOtp() {\n        if (!selectedContract) return;\n        try {\n            const rows = await originationApi.listContracts();\n            setContracts(rows);\n            const updated = rows.find((item) => item.id === selectedContract.id);\n            if (updated) setSelectedContract(updated);\n        } catch (error: unknown) {\n            toast.error(getErrorMessage(error, "The verified contract could not be refreshed."));\n        }\n    }\n\n    async function regenerateContractPdf() {''',
+              'OTP refresh function',
+          )
+
+          old_grid = '''                    <div className="grid gap-5 sm:grid-cols-2">\n                        <div className="space-y-2"><Label>Signature method</Label><Select value={signatureMethod}\n                                                                                          onValueChange={setSignatureMethod}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem\n                            value="wet_ink">Wet ink</SelectItem><SelectItem\n                            value="electronic">Electronic</SelectItem><SelectItem\n                            value="otp">OTP</SelectItem></SelectContent></Select></div>\n                        <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}\n                                                                                     onChange={(event) => setWitnessName(event.target.value)}/>\n                        </div>\n                        <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input\n                            value={borrowerSignature} onChange={(event) => setBorrowerSignature(event.target.value)}\n                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div>\n                    </div>'''
+
+          new_grid = '''                    <div className="grid gap-5 sm:grid-cols-2">\n                        <div className="space-y-2"><Label>Signature method</Label><Select value={signatureMethod}\n                                                                                          onValueChange={(value) => setSignatureMethod(value as "wet_ink" | "electronic" | "email_otp")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem\n                            value="wet_ink">Wet ink</SelectItem><SelectItem\n                            value="electronic">Electronic</SelectItem><SelectItem\n                            value="email_otp">Email + OTP</SelectItem></SelectContent></Select></div>\n                        {signatureMethod !== "email_otp" ? <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}\n                                                                                     onChange={(event) => setWitnessName(event.target.value)}/>\n                        </div> : null}\n                        {signatureMethod !== "email_otp" ? <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input\n                            value={borrowerSignature} onChange={(event) => setBorrowerSignature(event.target.value)}\n                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div> :\n                            <EmailOtpSigningPanel\n                                contract={selectedContract}\n                                borrowerEmail={clientByBorrower.get(selectedContract.borrower_id)?.email ?? null}\n                                disabled={Boolean(contractWorking)}\n                                onVerified={refreshSelectedContractAfterOtp}\n                            />}\n                    </div>'''
+          replace_once(old_grid, new_grid, 'signing modal fields')
+
+          replace_once(
+              '''{!selectedContract.borrower_signed_at ?\n                        <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower\n                            signed</LoadingButton> : null}''',
+              '''{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" ?\n                        <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower\n                            signed</LoadingButton> : null}''',
+              'borrower submit button',
+          )
+
+          path.write_text(text)
+          PY
+
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-otp-ui-patch.yml
+          git config user.name "LoanHub Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/frontend/app/'(dashboard)'/company/loans/page.tsx .github/workflows/tmp-otp-ui-patch.yml
+          git diff --cached --check
+          git commit -m "feat(contracts): wire Email OTP into loan signing modal"
+          git push origin HEAD:feat/contract-otp-email-fallback
