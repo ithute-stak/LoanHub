@@ -34,16 +34,18 @@ def _redis() -> Redis:
     return _redis_client
 
 
-def cdas_session_account_key(username: str, environment: str) -> str:
-    normalized = f"{environment.strip().lower()}\0{username.strip().casefold()}".encode("utf-8")
+def cdas_session_account_key(username: str, environment: str, generation: str = "") -> str:
+    normalized = (
+        f"{environment.strip().lower()}\0{username.strip().casefold()}\0{generation.strip()}"
+    ).encode("utf-8")
     return hashlib.sha256(normalized).hexdigest()
 
 
 class RedisCdasSessionBroker:
     """Encrypted cross-worker CDAS token/cookie store with a distributed login lock."""
 
-    def __init__(self, *, username: str, environment: str) -> None:
-        account_key = cdas_session_account_key(username, environment)
+    def __init__(self, *, username: str, environment: str, generation: str = "") -> None:
+        account_key = cdas_session_account_key(username, environment, generation)
         self._session_key = f"{_NAMESPACE}:{account_key}"
         self._lock_key = f"{self._session_key}:login-lock"
 
