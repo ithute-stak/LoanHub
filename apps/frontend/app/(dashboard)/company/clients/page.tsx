@@ -124,6 +124,8 @@ const emptyClient: AssistedCompanyClientCreate = {
   town_or_village: null,
   physical_address: null,
   employment_status: "employed",
+  employment_type: null,
+  cdas_employee_number: null,
   employer_name: null,
   employer_group_id: null,
   new_employer_group: null,
@@ -662,8 +664,14 @@ export default function CompanyClientsPage() {
     if (step === 2) {
       if (Number(clientForm.monthly_income ?? 0) < 0) errors.push("Monthly income cannot be negative.");
       const needsIncomeDay = ["employed", "self_employed", "pensioner"].includes(clientForm.employment_status);
+      if (clientForm.employment_status === "employed" && !clientForm.employment_type) {
+        errors.push("Select whether the borrower works for government, the private sector, an NGO or another employer.");
+      }
       if (clientForm.employment_status === "employed" && !clientForm.employer_group_id && !clientForm.new_employer_group) {
         errors.push("Select the borrower’s employer/work group or add a new group.");
+      }
+      if (clientForm.employment_status === "self_employed" && !String(clientForm.employment_type ?? "").trim()) {
+        errors.push("Enter the self-employed borrower’s work type or main business activity.");
       }
       if (needsIncomeDay && !clientForm.income_day) {
         errors.push("Enter the borrower’s normal income/pay day (1–31).");
@@ -837,8 +845,14 @@ export default function CompanyClientsPage() {
         nationality: optional(clientForm.nationality),
         town_or_village: optional(clientForm.town_or_village),
         physical_address: optional(clientForm.physical_address),
-        employer_name: optional(clientForm.employer_name),
-        job_title: optional(clientForm.job_title),
+        employment_type: optional(clientForm.employment_type),
+        cdas_employee_number: clientForm.employment_status === "employed" && clientForm.employment_type === "government"
+          ? optional(clientForm.cdas_employee_number)
+          : null,
+        employer_group_id: clientForm.employment_status === "employed" ? clientForm.employer_group_id : null,
+        new_employer_group: clientForm.employment_status === "employed" ? clientForm.new_employer_group : null,
+        employer_name: clientForm.employment_status === "employed" ? optional(clientForm.employer_name) : null,
+        job_title: ["employed", "self_employed"].includes(clientForm.employment_status) ? optional(clientForm.job_title) : null,
         salary_date: clientForm.income_day ? String(clientForm.income_day) : optional(clientForm.salary_date),
       });
       setClients((current) => [created, ...current]);
@@ -1170,7 +1184,7 @@ export default function CompanyClientsPage() {
         description="A guided five-step registration with automatic national-ID and existing-loan checks."
         banner="/loanhub-horizontal-logo.png"
         bannerAlt="LoanHub assisted borrower registration"
-        contentClassName="w-[calc(100%-0.75rem)] sm:max-w-6xl"
+        contentClassName="w-[calc(100%-0.75rem)] max-w-[calc(100%-0.75rem)] sm:w-[85vw] sm:max-w-[85vw]"
         bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <form onSubmit={submitClient} className="flex min-h-0 flex-1 flex-col">
@@ -1411,7 +1425,20 @@ export default function CompanyClientsPage() {
                     >
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         <Field label="Employment status" required>
-                          <Select value={clientForm.employment_status} onValueChange={(value) => updateClient("employment_status", value as AssistedCompanyClientCreate["employment_status"])}>
+                          <Select value={clientForm.employment_status} onValueChange={(value) => {
+                            const employmentStatus = value as AssistedCompanyClientCreate["employment_status"];
+                            setClientStepErrors([]);
+                            setClientForm((current) => ({
+                              ...current,
+                              employment_status: employmentStatus,
+                              employment_type: null,
+                              cdas_employee_number: null,
+                              employer_group_id: null,
+                              employer_name: null,
+                              new_employer_group: null,
+                              job_title: ["employed", "self_employed"].includes(employmentStatus) ? current.job_title : null,
+                            }));
+                          }}>
                             <SelectTrigger className="h-11 w-full"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {["employed", "self_employed", "unemployed", "student", "pensioner"].map((value) => <SelectItem key={value} value={value}>{titleCase(value)}</SelectItem>)}
@@ -1420,6 +1447,9 @@ export default function CompanyClientsPage() {
                         </Field>
                         <div className="md:col-span-2">
                           <EmployerGroupRegistrationField
+                            employmentStatus={clientForm.employment_status}
+                            employmentType={clientForm.employment_type}
+                            cdasEmployeeNumber={clientForm.cdas_employee_number}
                             employerGroupId={clientForm.employer_group_id}
                             employerName={clientForm.employer_name}
                             newEmployerGroup={clientForm.new_employer_group}
@@ -1430,9 +1460,11 @@ export default function CompanyClientsPage() {
                             }}
                           />
                         </div>
-                        <Field label="Job title">
-                          <Input className="h-11" value={clientForm.job_title ?? ""} onChange={(event) => updateClient("job_title", event.target.value)} />
-                        </Field>
+                        {["employed", "self_employed"].includes(clientForm.employment_status) ? (
+                          <Field label={clientForm.employment_status === "self_employed" ? "Role / trade" : "Job title"}>
+                            <Input className="h-11" value={clientForm.job_title ?? ""} onChange={(event) => updateClient("job_title", event.target.value)} />
+                          </Field>
+                        ) : null}
                         <Field label="Monthly income" description="Gross monthly income declared by the borrower.">
                           <Input className="h-11" type="number" min={0} step="0.01" inputMode="decimal" value={clientForm.monthly_income ?? ""} onChange={(event) => updateClient("monthly_income", event.target.value ? Number(event.target.value) : null)} />
                         </Field>
@@ -1492,7 +1524,16 @@ export default function CompanyClientsPage() {
                           </ReviewCard>
                           <ReviewCard icon={BriefcaseBusiness} title="Employment and affordability">
                             <ReviewItem label="Employment" value={titleCase(clientForm.employment_status)} />
-                            <ReviewItem label="Employer / work group" value={clientForm.new_employer_group ? `${clientForm.new_employer_group.code} — ${clientForm.new_employer_group.name}` : (clientForm.employer_name || "Not supplied")} />
+                            {clientForm.employment_status === "employed" ? (
+                              <>
+                                <ReviewItem label="Employment type" value={clientForm.employment_type ? titleCase(clientForm.employment_type) : "Not supplied"} />
+                                <ReviewItem label="Employer / work group" value={clientForm.new_employer_group ? `${clientForm.new_employer_group.code} — ${clientForm.new_employer_group.name}` : (clientForm.employer_name || "Not supplied")} />
+                                {clientForm.employment_type === "government" ? <ReviewItem label="Employee No." value={clientForm.cdas_employee_number || "Not supplied — CDAS cannot be enabled yet"} /> : null}
+                              </>
+                            ) : clientForm.employment_status === "self_employed" ? (
+                              <ReviewItem label="Work type" value={clientForm.employment_type || "Not supplied"} />
+                            ) : null}
+                            {["employed", "self_employed"].includes(clientForm.employment_status) ? <ReviewItem label="Job / role" value={clientForm.job_title || "Not supplied"} /> : null}
                             <ReviewItem label="Income / pay day" value={clientForm.income_day ? `Day ${clientForm.income_day} of each month` : "Not supplied"} />
                             <ReviewItem label="Monthly income" value={clientForm.monthly_income !== null ? formatMoney(clientForm.monthly_income) : "Not supplied"} />
                             <ReviewItem label="External loans" value={clientForm.external_debts.length > 0 ? `${clientForm.external_debts.length} tracked · ${formatMoney(externalDebtBalanceTotal)}` : "None recorded"} />

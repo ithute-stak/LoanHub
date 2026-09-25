@@ -16,6 +16,7 @@ from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.enums import LoanStatus, UserRole
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.origination import (
     BorrowerBankAccount,
     BorrowerDebtObligation,
@@ -40,6 +41,65 @@ def clean_optional(value: str | None) -> str | None:
         return None
     cleaned = str(value).strip()
     return cleaned or None
+
+
+def _employment_status_value(value) -> str:
+    return str(getattr(value, "value", value) or "").strip().lower()
+
+
+def _save_assisted_cdas_payroll_profile(
+    db: Session,
+    *,
+    borrower: Borrower,
+    company_id: UUID,
+    branch_id: UUID | None,
+    employee_number: str | None,
+    employer_group,
+) -> CDASPayrollProfile | None:
+    """Capture payroll identity for later CDAS verification without enabling CDAS on a loan."""
+    number = clean_optional(employee_number)
+    if not number:
+        return None
+    duplicate = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            func.lower(func.trim(CDASPayrollProfile.employee_number)) == number.casefold(),
+            CDASPayrollProfile.borrower_id != borrower.id,
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="This CDAS employee number is already linked to another borrower in the active company.")
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(CDASPayrollProfile.company_id == company_id, CDASPayrollProfile.borrower_id == borrower.id)
+        .first()
+    )
+    group_code = clean_optional(getattr(employer_group, "code", None))
+    group_name = clean_optional(getattr(employer_group, "name", None))
+    if profile is None:
+        profile = CDASPayrollProfile(
+            company_id=company_id, borrower_id=borrower.id, branch_id=branch_id, employee_number=number,
+            payroll_group=group_code, ministry_department=group_name, employment_status="active", verified=False,
+            verification_notes="Captured during assisted borrower registration; CDAS verification is required before deductions.",
+        )
+        db.add(profile)
+    else:
+        changed = (str(profile.employee_number or "").strip().casefold() != number.casefold() or (profile.payroll_group or None) != group_code or (profile.ministry_department or None) != group_name)
+        profile.branch_id = branch_id
+        profile.employee_number = number
+        profile.payroll_group = group_code
+        profile.ministry_department = group_name
+        profile.employment_status = "active"
+        if changed:
+            profile.verified = False
+            profile.verified_at = None
+            profile.verified_by_user_id = None
+            profile.verification_reference = None
+            profile.verification_notes = "Payroll identity updated during assisted borrower registration; CDAS re-verification is required."
+    db.flush()
+    return profile
 
 
 
@@ -548,6 +608,14 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
         db,
         company_id=context.company_id,
     )
+    employment_status_value = _employment_status_value(payload.employment_status)
+    is_employed = employment_status_value == "employed"
+    is_self_employed = employment_status_value == "self_employed"
+    employment_type = clean_optional(getattr(payload, "employment_type", None))
+    if is_employed and employment_type:
+        employment_type = employment_type.lower()
+    elif not is_self_employed:
+        employment_type = None
 
     existing_person = find_person_by_national_id(db, national_id)
     if existing_person is not None:
@@ -583,10 +651,14 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
                 detail="This borrower already has an account with the active company.",
             )
 
-        employer_group = resolve_employer_group(
-            db,
-            employer_group_id=payload.employer_group_id,
-            new_employer_group=payload.new_employer_group,
+        employer_group = (
+            resolve_employer_group(
+                db,
+                employer_group_id=payload.employer_group_id,
+                new_employer_group=payload.new_employer_group,
+            )
+            if is_employed
+            else None
         )
 
         borrower.consent_to_share_profile = bool(
@@ -596,12 +668,11 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
             borrower.consent_to_credit_checks or payload.consent_to_credit_checks
         )
         borrower.employment_status = payload.employment_status
+        borrower.employment_type = employment_type
         borrower.employer_group_id = employer_group.id if employer_group is not None else None
-        borrower.employer_name = (
-            employer_group.name if employer_group is not None else clean_optional(payload.employer_name)
-        )
+        borrower.employer_name = employer_group.name if employer_group is not None else None
         borrower.income_day = payload.income_day
-        borrower.job_title = clean_optional(payload.job_title)
+        borrower.job_title = clean_optional(payload.job_title) if (is_employed or is_self_employed) else None
         borrower.monthly_income = payload.monthly_income
         borrower.salary_date = (
             str(payload.income_day) if payload.income_day is not None else clean_optional(payload.salary_date)
@@ -622,6 +693,11 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
                 company_id=context.company_id,
                 bank_input=payload.bank_account,
             )
+            if is_employed and employment_type == "government":
+                _save_assisted_cdas_payroll_profile(
+                    db, borrower=borrower, company_id=context.company_id, branch_id=branch_id,
+                    employee_number=getattr(payload, "cdas_employee_number", None), employer_group=employer_group,
+                )
             return _create_company_borrower_account(
                 db,
                 borrower=borrower,
@@ -656,10 +732,14 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
         raise HTTPException(status_code=409, detail="Borrower passport already exists")
 
     try:
-        employer_group = resolve_employer_group(
-            db,
-            employer_group_id=payload.employer_group_id,
-            new_employer_group=payload.new_employer_group,
+        employer_group = (
+            resolve_employer_group(
+                db,
+                employer_group_id=payload.employer_group_id,
+                new_employer_group=payload.new_employer_group,
+            )
+            if is_employed
+            else None
         )
         user = User(
             email=email,
@@ -691,12 +771,11 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
         borrower = Borrower(
             user_id=user.id,
             employment_status=payload.employment_status,
+            employment_type=employment_type,
             employer_group_id=employer_group.id if employer_group is not None else None,
-            employer_name=(
-                employer_group.name if employer_group is not None else clean_optional(payload.employer_name)
-            ),
+            employer_name=employer_group.name if employer_group is not None else None,
             income_day=payload.income_day,
-            job_title=clean_optional(payload.job_title),
+            job_title=clean_optional(payload.job_title) if (is_employed or is_self_employed) else None,
             monthly_income=payload.monthly_income,
             salary_date=(
                 str(payload.income_day) if payload.income_day is not None else clean_optional(payload.salary_date)
@@ -723,6 +802,11 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
             company_id=context.company_id,
             bank_input=payload.bank_account,
         )
+        if is_employed and employment_type == "government":
+            _save_assisted_cdas_payroll_profile(
+                db, borrower=borrower, company_id=context.company_id, branch_id=branch_id,
+                employee_number=getattr(payload, "cdas_employee_number", None), employer_group=employer_group,
+            )
         return _create_company_borrower_account(
             db,
             borrower=borrower,
