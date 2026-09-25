@@ -124,9 +124,8 @@ def root():
 
 
 @app.get("/health", include_in_schema=False)
-@app.get("/health/ready", include_in_schema=False)
 def health(db: Session = Depends(get_db)):
-    """Report backend readiness after proving the database is reachable."""
+    """Report basic backend health after proving the database is reachable."""
     db.execute(text("SELECT 1"))
     return {"status": "healthy"}
 
