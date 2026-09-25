@@ -44,19 +44,21 @@ def test_employee_details_remain_limited_to_documented_fields() -> None:
         assert field in source
 
 
-def test_read_workspace_does_not_expose_provider_write_operations() -> None:
+def test_read_workspace_separates_state_changing_actions() -> None:
     source = CDAS_PAGE.read_text(encoding="utf-8")
 
-    for future_write_operation in (
+    for provider_write_path in (
         "/add-update-deduction",
         "/modify-active-deduction",
         "/settled-deduction",
         "/get_document",
     ):
-        assert future_write_operation not in source
+        assert provider_write_path not in source
 
-    assert "created, reviewed" in source
-    assert "settled by these read-only actions" in source
+    assert "/company/cdas/operations" in source
+    assert "/company/cdas/documents" in source
+    assert "COMPANY_MANAGEMENT_ROLES" in source
+    assert "explicit confirmation and audit logging" in source
 
 
 def test_retired_cdas_booking_routes_are_redirects_only() -> None:
