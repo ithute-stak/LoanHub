@@ -39,7 +39,11 @@ class CdasClient:
     AFFORDABILITY_PATH = "/api/employee/check-affordability"
     ALL_DEDUCTIONS_PATH = "/api/policy/view-all-deduction"
     OWN_DEDUCTIONS_PATH = "/api/policy/view-deduction"
+    ADD_UPDATE_DEDUCTION_PATH = "/api/policy/add-update-deduction"
     ACTIVE_APPROVED_DEDUCTION_PATH = "/api/policy/get-active-and-approved-deduction"
+    MODIFY_ACTIVE_DEDUCTION_PATH = "/api/policy/modify-active-deduction"
+    SETTLED_DEDUCTION_PATH = "/api/policy/settled-deduction"
+    DOCUMENT_PATH = "/api/policy/get_document"
 
     _TOKEN_MAX_AGE = timedelta(hours=7, minutes=50)
     _TOKEN_IDLE_AGE = timedelta(minutes=9)
@@ -264,6 +268,16 @@ class CdasClient:
             raise CdasError(502, "CDAS own-deductions lookup returned an invalid response", payload)
         return payload
 
+    async def add_update_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
+        payload = await self._post_authenticated(
+            self.ADD_UPDATE_DEDUCTION_PATH,
+            payload=request_payload,
+            header_name="Token",
+        )
+        if not isinstance(payload, dict):
+            raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload)
+        return payload
+
     async def get_active_and_approved_deduction(self, employee_no: str) -> dict[str, Any]:
         employee_no = self._require_employee_number(employee_no)
         payload = await self._post_authenticated(
@@ -277,6 +291,40 @@ class CdasClient:
                 "CDAS active/approved deduction lookup returned an invalid response",
                 payload,
             )
+        return payload
+
+    async def modify_active_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
+        payload = await self._post_authenticated(
+            self.MODIFY_ACTIVE_DEDUCTION_PATH,
+            payload=request_payload,
+            header_name="Token",
+        )
+        if not isinstance(payload, dict):
+            raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload)
+        return payload
+
+    async def settle_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
+        payload = await self._post_authenticated(
+            self.SETTLED_DEDUCTION_PATH,
+            payload=request_payload,
+            header_name="Token",
+        )
+        if not isinstance(payload, dict):
+            raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload)
+        return payload
+
+    async def get_document(self, *, year: int, month: int, document_type: int) -> dict[str, Any]:
+        payload = await self._post_authenticated(
+            self.DOCUMENT_PATH,
+            payload={
+                "Year": year,
+                "Month": month,
+                "DocumentType": document_type,
+            },
+            header_name="Token",
+        )
+        if not isinstance(payload, dict):
+            raise CdasError(502, "CDAS document request returned an invalid response", payload)
         return payload
 
     async def check_connection(self) -> None:
