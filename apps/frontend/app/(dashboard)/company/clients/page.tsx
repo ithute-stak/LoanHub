@@ -56,6 +56,7 @@ import { calculateLoan } from "@/api/loans";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { CompanyClientDirectoryWorkspace } from "@/components/clients/company-client-directory-workspace";
 import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";
+import { ClientBankingRegistrationStep } from "@/components/clients/client-banking-registration-step";
 import { EmployerGroupRegistrationField } from "@/components/clients/employer-group-registration-field";
 import {
   ExternalDebtRegistrationFields,
@@ -134,6 +135,7 @@ const emptyClient: AssistedCompanyClientCreate = {
   existing_loan_total: 0,
   consent_to_share_profile: false,
   consent_to_credit_checks: false,
+  bank_account: null,
   external_debts: [],
 };
 
@@ -167,6 +169,12 @@ const CLIENT_STEPS = [
     icon: BriefcaseBusiness,
   },
   {
+    title: "Banking details",
+    shortTitle: "Banking",
+    description: "Bank account and salary-payment details",
+    icon: Landmark,
+  },
+  {
     title: "Consent and review",
     shortTitle: "Review",
     description: "Confirm details and borrower consent",
@@ -174,7 +182,7 @@ const CLIENT_STEPS = [
   },
 ] as const;
 
-type ClientStep = 0 | 1 | 2 | 3;
+type ClientStep = 0 | 1 | 2 | 3 | 4;
 
 type DirectoryFilters = {
   loanStatus: string;
@@ -674,6 +682,31 @@ export default function CompanyClientsPage() {
     }
 
     if (step === 3) {
+      const bank = clientForm.bank_account;
+      if (bank) {
+        const accountNumber = String(bank.account_number ?? "").replace(/[\s/-]+/g, "");
+        const bankPrefixes: Record<string, string[]> = {
+          FNB: ["6"],
+          PB: ["10"],
+          STD: ["90"],
+          NB: ["11", "12"],
+        };
+        if (bank.account_holder.trim().length < 2) errors.push("Enter the bank account holder.");
+        if (!bank.bank_name.trim() || !bankPrefixes[bank.bank_name]) errors.push("Select a supported borrower bank.");
+        if (accountNumber.length < 4) {
+          errors.push("Enter a valid bank account number.");
+        } else if (!/^\d+$/.test(accountNumber)) {
+          errors.push("The bank account number must contain digits only.");
+        } else {
+          const prefixes = bankPrefixes[bank.bank_name] ?? [];
+          if (prefixes.length > 0 && !prefixes.some((prefix) => accountNumber.startsWith(prefix))) {
+            errors.push(`${bank.bank_name} account number must start with ${prefixes.join(" or ")}.`);
+          }
+        }
+      }
+    }
+
+    if (step === 4) {
       if (!clientForm.consent_to_credit_checks) {
         errors.push("Confirm the borrower’s consent to permitted credit checks.");
       }
@@ -732,7 +765,7 @@ export default function CompanyClientsPage() {
       return;
     }
 
-    const firstInvalidStep = ([0, 1, 2, 3] as ClientStep[]).find(
+    const firstInvalidStep = ([0, 1, 2, 3, 4] as ClientStep[]).find(
       (step) => validateClientStep(step).length > 0,
     );
     if (firstInvalidStep !== undefined) {
@@ -770,8 +803,29 @@ export default function CompanyClientsPage() {
         next_due_date: optional(debt.next_due_date),
         notes: optional(debt.notes),
       }));
+      const normalizedBankAccount = clientForm.bank_account
+        ? {
+            ...clientForm.bank_account,
+            account_holder: clientForm.bank_account.account_holder.trim(),
+            bank_name: clientForm.bank_account.bank_name.trim(),
+            branch_name: optional(clientForm.bank_account.branch_name),
+            branch_code: optional(clientForm.bank_account.branch_code),
+            account_type: String(clientForm.bank_account.account_type || "savings").trim().toLowerCase(),
+            currency: String(clientForm.bank_account.currency || "LSL").trim().toUpperCase(),
+            account_number: optional(clientForm.bank_account.account_number)?.replace(/[\s/-]+/g, "") ?? null,
+            verification_status: "unverified" as const,
+            verification_reference: null,
+            tokenized_card_provider: null,
+            tokenized_card_reference: null,
+            masked_card_number: null,
+            card_brand: null,
+            card_expiry_month: null,
+            card_expiry_year: null,
+          }
+        : null;
       const created = await openCompanyClientAccount({
         ...clientForm,
+        bank_account: normalizedBankAccount,
         external_debts: normalizedDebts,
         has_existing_loans: normalizedDebts.some((debt) => Number(debt.current_balance || 0) > 0) || Number(existingLoanCheck?.active_loan_count || 0) > 0,
         existing_loan_total: activeExternalDebtBalance(normalizedDebts),
@@ -1113,7 +1167,7 @@ export default function CompanyClientsPage() {
           if (!open) resetClientDialog();
         }}
         title="Open a borrower account"
-        description="A guided four-step registration with automatic national-ID and existing-loan checks."
+        description="A guided five-step registration with automatic national-ID and existing-loan checks."
         banner="/loanhub-horizontal-logo.png"
         bannerAlt="LoanHub assisted borrower registration"
         contentClassName="w-[calc(100%-0.75rem)] sm:max-w-6xl"
@@ -1206,6 +1260,7 @@ export default function CompanyClientsPage() {
                   <SummaryLine label="Borrower" value={[clientForm.first_name, clientForm.last_name].filter(Boolean).join(" ") || "Not entered"} />
                   <SummaryLine label="Identity" value={clientForm.national_id || clientForm.passport_number || "Not entered"} />
                   <SummaryLine label="Income" value={clientForm.monthly_income !== null ? formatMoney(clientForm.monthly_income) : "Not supplied"} />
+                  <SummaryLine label="Banking" value={clientForm.bank_account ? (clientForm.bank_account.bank_name || "Details in progress") : "Not supplied"} />
                   <SummaryLine label="Existing exposure" value={formatMoney(combinedExistingExposure)} />
                 </div>
               </div>
@@ -1402,6 +1457,20 @@ export default function CompanyClientsPage() {
                   )}
 
                   {clientStep === 3 && (
+                    <FormSection
+                      icon={Landmark}
+                      title="Banking details"
+                      description="Capture the borrower’s bank account for salary, payout and repayment workflows. The step may be skipped when banking information is not yet available."
+                    >
+                      <ClientBankingRegistrationStep
+                        value={clientForm.bank_account}
+                        borrowerName={[clientForm.first_name, clientForm.middle_name, clientForm.last_name].filter(Boolean).join(" ")}
+                        onChange={(value) => updateClient("bank_account", value)}
+                      />
+                    </FormSection>
+                  )}
+
+                  {clientStep === 4 && (
                     <div className="space-y-5">
                       <FormSection
                         icon={ClipboardCheck}
@@ -1429,6 +1498,13 @@ export default function CompanyClientsPage() {
                             <ReviewItem label="External loans" value={clientForm.external_debts.length > 0 ? `${clientForm.external_debts.length} tracked · ${formatMoney(externalDebtBalanceTotal)}` : "None recorded"} />
                             <ReviewItem label="Monthly debt commitment" value={formatMoney(externalDebtMonthlyCommitment)} />
                             <ReviewItem label="Total exposure" value={formatMoney(combinedExistingExposure)} />
+                          </ReviewCard>
+                          <ReviewCard icon={Landmark} title="Banking">
+                            <ReviewItem label="Bank" value={clientForm.bank_account?.bank_name || "Not supplied"} />
+                            <ReviewItem label="Account holder" value={clientForm.bank_account?.account_holder || "Not supplied"} />
+                            <ReviewItem label="Account" value={clientForm.bank_account?.account_number ? `••••${String(clientForm.bank_account.account_number).replace(/[\s/-]+/g, "").slice(-4)}` : "Not supplied"} />
+                            <ReviewItem label="Account type" value={clientForm.bank_account ? titleCase(clientForm.bank_account.account_type || "savings") : "Not supplied"} />
+                            <ReviewItem label="Salary account" value={clientForm.bank_account ? (clientForm.bank_account.salary_account ? "Yes" : "No") : "Not supplied"} />
                           </ReviewCard>
                           <ReviewCard icon={BadgeCheck} title="Account outcome">
                             <ReviewItem label="Registration" value={existingBorrowerFound ? "Link existing LoanHub borrower" : "Create a new borrower account"} />
