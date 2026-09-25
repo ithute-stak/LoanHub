@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 import pytest
 
 from integrations.cdas import CdasClient
+from integrations.cdas_contracts import CdasLifecyclePayload, CdasModifyActivePayload
 
 
 ROOT = Path(__file__).resolve().parents[3]
 ROUTER = ROOT / "apps" / "backend" / "routers" / "cdas_api.py"
 CLIENT = ROOT / "apps" / "backend" / "integrations" / "cdas.py"
+CONTRACTS = ROOT / "apps" / "backend" / "integrations" / "cdas_contracts.py"
 
 
 def make_client(handler) -> CdasClient:
@@ -166,13 +169,52 @@ def test_state_changing_routes_require_management_confirmation_and_audit() -> No
     assert 'action="cdas.deduction.settle"' in source
 
 
-def test_lifecycle_route_accepts_only_supported_documented_codes() -> None:
-    source = ROUTER.read_text(encoding="utf-8")
+def test_lifecycle_contract_accepts_only_supported_codes_and_uses_decimal_money() -> None:
+    route_source = ROUTER.read_text(encoding="utf-8")
+    contract_source = CONTRACTS.read_text(encoding="utf-8")
 
-    assert "request_type: Literal[1, 3, 4, 6, 10]" in source
-    assert "loan_policy: Literal[1, 2]" in source
-    assert "request_type: int = Field(ge=1, le=10)" not in source
-    assert "loan_policy: int = Field(ge=0)" not in source
+    payload = CdasLifecyclePayload(
+        request_type=1,
+        deduction_id=0,
+        employee_no=" EMP-900 ",
+        loan_policy=1,
+        item_code=" LOAN ",
+        deduction_amount="500.10",
+        total_installment=12,
+        principal_amount="6001.20",
+        effective_month="2026-10",
+        reference_no=" REF-900 ",
+    )
+
+    assert payload.deduction_amount == Decimal("500.10")
+    assert payload.principal_amount == Decimal("6001.20")
+    assert payload.provider_payload()["DeductionAmount"] == 500.1
+    assert payload.provider_payload()["PrincipalAmount"] == 6001.2
+    assert payload.ledger_payload()["DeductionAmount"] == "500.10"
+    assert payload.ledger_payload()["PrincipalAmount"] == "6001.20"
+    assert payload.provider_payload()["EmployeeNo"] == "EMP-900"
+
+    assert "request_type: Literal[1, 3, 4, 6, 10]" in contract_source
+    assert "loan_policy: Literal[1, 2]" in contract_source
+    assert "class CdasDeductionLifecycleRequest(CdasLifecyclePayload)" in route_source
+    assert "deduction_amount: float" not in route_source
+    assert "principal_amount: float" not in route_source
+
+
+def test_modify_contract_keeps_exact_money_until_provider_boundary() -> None:
+    payload = CdasModifyActivePayload(
+        employee_no="EMP-901",
+        item_code="LOAN",
+        total_installment=10,
+        deduction_amount="450.25",
+        principal_amount="4502.50",
+        deduction_id=91,
+        effective_date="2026-10-01",
+    )
+
+    assert payload.deduction_amount == Decimal("450.25")
+    assert payload.provider_payload()["DeductionAmount"] == 450.25
+    assert payload.ledger_payload()["PrincipalAmount"] == "4502.50"
 
 
 def test_all_provider_mutations_explicitly_disable_automatic_session_replay() -> None:
