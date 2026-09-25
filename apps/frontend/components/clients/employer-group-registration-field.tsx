@@ -142,6 +142,7 @@ export function EmployerGroupRegistrationField({
             cdas_employee_number: null,
           })}
           placeholder="e.g. Retail shop, construction, farming, consulting"
+          maxLength={50}
         />
       </div>
     );
