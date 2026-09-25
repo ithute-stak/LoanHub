@@ -52,6 +52,7 @@ import {
     installmentDueDatesComplete,
 } from "@/components/loans/installment-due-date-fields";
 import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";
+import {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";
 import {LoanPortfolioWorkspace} from "@/components/loans/loan-portfolio-workspace";
 import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
 import {Badge} from "@/components/ui/badge";
@@ -175,7 +176,7 @@ export default function CompanyLoansPage() {
     const [newContractStyle, setNewContractStyle] = useState<ContractTemplateStyle>("loanhub_standard");
     const [borrowerSignature, setBorrowerSignature] = useState("");
     const [witnessName, setWitnessName] = useState("");
-    const [signatureMethod, setSignatureMethod] = useState("wet_ink");
+    const [signatureMethod, setSignatureMethod] = useState<"wet_ink" | "electronic" | "email_otp">("wet_ink");
 
     const [borrowerLookupOpen, setBorrowerLookupOpen] = useState(false);
     const [borrowerQuery, setBorrowerQuery] = useState("");
@@ -554,6 +555,7 @@ export default function CompanyLoansPage() {
         setSelectedContract(contract);
         setBorrowerSignature(contract.borrower_signature_name ?? "");
         setWitnessName(contract.witness_name ?? "");
+        setSignatureMethod("wet_ink");
     }
 
     function replaceContract(updated: LoanContract) {
@@ -593,7 +595,7 @@ export default function CompanyLoansPage() {
 
     async function borrowerSign(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!selectedContract || borrowerSignature.trim().length < 2) return;
+        if (!selectedContract || selectedContract.borrower_signed_at || signatureMethod === "email_otp" || borrowerSignature.trim().length < 2) return;
         setContractWorking(selectedContract.id);
         try {
             const updated = await originationApi.borrowerSign(selectedContract.id, {
@@ -614,13 +616,25 @@ export default function CompanyLoansPage() {
         if (!selectedContract) return;
         setContractWorking(selectedContract.id);
         try {
-            const updated = await originationApi.companySign(selectedContract.id, signatureMethod);
+            const updated = await originationApi.companySign(selectedContract.id, signatureMethod === "email_otp" ? "electronic" : signatureMethod);
             replaceContract(updated);
             toast.success(updated.status === "signed" ? "Contract fully signed and locked" : "Company signature recorded");
         } catch (error: unknown) {
             toast.error(getErrorMessage(error, "Company signature could not be recorded."));
         } finally {
             setContractWorking(null);
+        }
+    }
+
+    async function refreshSelectedContractAfterOtp() {
+        if (!selectedContract) return;
+        try {
+            const rows = await originationApi.listContracts();
+            setContracts(rows);
+            const updated = rows.find((item) => item.id === selectedContract.id);
+            if (updated) setSelectedContract(updated);
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "The verified contract could not be refreshed."));
         }
     }
 
@@ -1091,16 +1105,22 @@ export default function CompanyLoansPage() {
                     have signed.</AlertDescription></Alert>
                     <div className="grid gap-5 sm:grid-cols-2">
                         <div className="space-y-2"><Label>Signature method</Label><Select value={signatureMethod}
-                                                                                          onValueChange={setSignatureMethod}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem
+                                                                                          onValueChange={(value) => setSignatureMethod(value as "wet_ink" | "electronic" | "email_otp")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem
                             value="wet_ink">Wet ink</SelectItem><SelectItem
                             value="electronic">Electronic</SelectItem><SelectItem
-                            value="otp">OTP</SelectItem></SelectContent></Select></div>
-                        <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}
+                            value="email_otp">Email + OTP</SelectItem></SelectContent></Select></div>
+                        {signatureMethod !== "email_otp" ? <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}
                                                                                      onChange={(event) => setWitnessName(event.target.value)}/>
-                        </div>
-                        <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input
+                        </div> : null}
+                        {signatureMethod !== "email_otp" ? <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input
                             value={borrowerSignature} onChange={(event) => setBorrowerSignature(event.target.value)}
-                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div>
+                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div> :
+                            <EmailOtpSigningPanel
+                                contract={selectedContract}
+                                borrowerEmail={clientByBorrower.get(selectedContract.borrower_id)?.email ?? null}
+                                disabled={Boolean(contractWorking)}
+                                onVerified={refreshSelectedContractAfterOtp}
+                            />}
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2"><Value label="Borrower"
                                                                       value={selectedContract.borrower_signed_at ? `Signed ${formatDate(selectedContract.borrower_signed_at)}` : "Pending signature"}/><Value
@@ -1113,7 +1133,7 @@ export default function CompanyLoansPage() {
                         className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" ?
                         <LoadingButton type="button" variant="outline" loading={contractWorking === selectedContract.id}
                                        onClick={() => void regenerateContractPdf()}><RefreshCcw className="h-4 w-4"/>Regenerate
-                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at ?
+                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" ?
                         <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower
                             signed</LoadingButton> : null}{!selectedContract.company_signed_at ?
                         <LoadingButton type="button" loading={contractWorking === selectedContract.id}
