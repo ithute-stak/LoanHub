@@ -26,6 +26,11 @@ const LIFECYCLE_TYPES = [
     [10, "Change / Update"],
 ] as const;
 
+const LOAN_POLICY_TYPES = [
+    [1, "Loan"],
+    [2, "Policy"],
+] as const;
+
 const SETTLEMENT_REASONS = [
     [1, "Policy Expired"],
     [2, "Paid By Employee"],
@@ -205,7 +210,7 @@ export default function CdasOperationsPage() {
                 <CardHeader>
                     <CardTitle>Add / update / review / approve / cancel</CardTitle>
                     <CardDescription>
-                        Uses the official add-update-deduction contract. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code.
+                        Uses the official add-update-deduction contract. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -219,7 +224,12 @@ export default function CdasOperationsPage() {
                             </div>
                             <div className="space-y-2"><Label>Deduction ID</Label><Input type="number" min={0} value={lifecycle.deduction_id} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_id: Number(e.target.value) }))} /></div>
                             <div className="space-y-2"><Label>Employee number</Label><Input value={lifecycle.employee_no} onChange={(e) => setLifecycle((v) => ({ ...v, employee_no: e.target.value }))} /></div>
-                            <div className="space-y-2"><Label>Loan policy</Label><Input type="number" min={0} value={lifecycle.loan_policy} onChange={(e) => setLifecycle((v) => ({ ...v, loan_policy: Number(e.target.value) }))} /></div>
+                            <div className="space-y-2">
+                                <Label>Loan / policy type</Label>
+                                <select value={lifecycle.loan_policy} onChange={(event) => setLifecycle((v) => ({ ...v, loan_policy: Number(event.target.value) }))} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                                    {LOAN_POLICY_TYPES.map(([value, label]) => <option key={value} value={value}>{value} — {label}</option>)}
+                                </select>
+                            </div>
                             <div className="space-y-2"><Label>Item code</Label><Input value={lifecycle.item_code} onChange={(e) => setLifecycle((v) => ({ ...v, item_code: e.target.value }))} /></div>
                             <div className="space-y-2"><Label>Deduction amount</Label><Input type="number" min={0} step="0.01" value={lifecycle.deduction_amount} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_amount: Number(e.target.value) }))} /></div>
                             <div className="space-y-2"><Label>Total instalments</Label><Input type="number" min={0} value={lifecycle.total_installment} onChange={(e) => setLifecycle((v) => ({ ...v, total_installment: Number(e.target.value) }))} /></div>
