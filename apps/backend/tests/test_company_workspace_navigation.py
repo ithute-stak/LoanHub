@@ -24,6 +24,17 @@ def test_company_navigation_groups_existing_authoritative_workspaces() -> None:
     assert 'href: "/company/documents?tab=reports"' in source
 
 
+def test_cdas_navigation_points_only_to_clean_workspace() -> None:
+    source = PORTAL_SHELL.read_text(encoding="utf-8")
+
+    assert 'label: "CDAS Workspace"' in source
+    assert 'href: "/company/cdas"' in source
+    assert "/company/cdas-booking" not in source
+    assert "Booking Centre" not in source
+    assert "Official Loan Lifecycle" not in source
+    assert "Management Dashboard" not in source
+
+
 def test_company_workspace_navigation_keeps_every_legacy_workflow_reachable() -> None:
     source = PORTAL_SHELL.read_text(encoding="utf-8")
 
@@ -35,6 +46,7 @@ def test_company_workspace_navigation_keeps_every_legacy_workflow_reachable() ->
         "/company/loans",
         "/company/lending-operations",
         "/company/products",
+        "/company/cdas",
         "/company/payments",
         "/company/cashier",
         "/company/payment-operations",
