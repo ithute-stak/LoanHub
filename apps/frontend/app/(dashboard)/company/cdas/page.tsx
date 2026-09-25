@@ -1,14 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import {
     AlertCircle,
     BadgeDollarSign,
     ContactRound,
+    FileDown,
     FileSearch,
     HandCoins,
     Loader2,
     Search,
+    ShieldAlert,
     ShieldCheck,
 } from "lucide-react";
 
@@ -19,6 +22,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { useTenant } from "@/provider/tenantProvider";
+import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
 
 type CdasEmployee = {
@@ -85,6 +90,8 @@ function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: 
 }
 
 export default function CdasWorkspacePage() {
+    const { activeRole } = useTenant();
+    const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [employeeNo, setEmployeeNo] = useState("");
     const [deductionStatus, setDeductionStatus] = useState(5);
     const [employee, setEmployee] = useState<CdasEmployee | null>(null);
@@ -194,20 +201,38 @@ export default function CdasWorkspacePage() {
             <section className="rounded-2xl border bg-card p-5 shadow-sm 2xl:rounded-3xl 2xl:p-7">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="max-w-4xl">
-                        <Badge variant="secondary" className="mb-3">CDAS reintegration · Read-only phases 2–4</Badge>
+                        <Badge variant="secondary" className="mb-3">Documented manual CDAS integration</Badge>
                         <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight sm:text-3xl">
                             <ShieldCheck className="h-7 w-7 text-primary" />
                             CDAS lending workspace
                         </h1>
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">
                             Perform deliberate employee, affordability and deduction lookups against CDAS.
-                            Nothing on this page runs in the background, and no deduction is created, reviewed,
-                            approved, changed, cancelled or settled by these read-only actions.
+                            Nothing on this page runs in the background. State-changing deduction actions are separated into a management-only workspace with explicit confirmation and audit logging.
                         </p>
                     </div>
                     <Badge>Manual requests only</Badge>
                 </div>
             </section>
+
+            {canManage && (
+                <div className="grid gap-4 md:grid-cols-2">
+                    <Card className="border-destructive/20">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base"><ShieldAlert className="h-5 w-5 text-destructive" /> Deduction operations</CardTitle>
+                            <CardDescription>Registration, review, approval/cancellation, active modification and settlement. Every write requires explicit confirmation.</CardDescription>
+                        </CardHeader>
+                        <CardContent><Button asChild variant="outline"><Link href="/company/cdas/operations">Open deduction operations</Link></Button></CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base"><FileDown className="h-5 w-5" /> Statements & transactions</CardTitle>
+                            <CardDescription>Manually retrieve the documented CDAS output file or statement for a selected month.</CardDescription>
+                        </CardHeader>
+                        <CardContent><Button asChild variant="outline"><Link href="/company/cdas/documents">Open document retrieval</Link></Button></CardContent>
+                    </Card>
+                </div>
+            )}
 
             <Card>
                 <CardHeader>
@@ -255,7 +280,7 @@ export default function CdasWorkspacePage() {
                         <CardTitle className="flex items-center gap-2">
                             <BadgeDollarSign className="h-5 w-5" /> Affordability
                         </CardTitle>
-                        <CardDescription>Phase 3 · Request the affordability amount for this employee.</CardDescription>
+                        <CardDescription>Request the affordability amount for this employee.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Button type="button" onClick={() => void checkAffordability()} disabled={busy || !normalizedEmployeeNo}>
@@ -276,7 +301,7 @@ export default function CdasWorkspacePage() {
                         <CardTitle className="flex items-center gap-2">
                             <HandCoins className="h-5 w-5" /> All third-party deductions
                         </CardTitle>
-                        <CardDescription>Phase 4 · View the employee's deductions across third parties.</CardDescription>
+                        <CardDescription>View the employee's deductions across third parties.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Button type="button" variant="outline" onClick={() => void viewAllDeductions()} disabled={busy || !normalizedEmployeeNo}>
@@ -303,7 +328,7 @@ export default function CdasWorkspacePage() {
                             <FileSearch className="h-5 w-5" /> Own deductions by status
                         </CardTitle>
                         <CardDescription>
-                            Phase 4 · View deductions belonging to the authenticated third party for a documented CDAS status code.
+                            View deductions belonging to the authenticated third party for a documented CDAS status code.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -342,7 +367,7 @@ export default function CdasWorkspacePage() {
                         <CardTitle className="flex items-center gap-2">
                             <ShieldCheck className="h-5 w-5" /> Active / approved deduction
                         </CardTitle>
-                        <CardDescription>Phase 4 · Fetch the active or approved deduction record documented by CDAS.</CardDescription>
+                        <CardDescription>Fetch the employee's active or approved deduction record documented by CDAS.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Button type="button" variant="outline" onClick={() => void viewActiveApprovedDeduction()} disabled={busy || !normalizedEmployeeNo}>
