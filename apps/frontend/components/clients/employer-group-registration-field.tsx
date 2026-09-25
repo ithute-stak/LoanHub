@@ -20,7 +20,7 @@ type Selection = {
 };
 
 type Props = {
-  employmentStatus: EmploymentStatus;
+  employmentStatus?: EmploymentStatus;
   employmentType?: string | null;
   cdasEmployeeNumber?: string | null;
   employerGroupId?: string | null;
@@ -59,6 +59,8 @@ export function EmployerGroupRegistrationField({
   const [groups, setGroups] = useState<EmployerGroup[]>([]);
   const [search, setSearch] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const resolvedEmploymentStatus = employmentStatus ?? "employed";
+  const enhancedEmploymentFlow = employmentStatus !== undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +83,7 @@ export function EmployerGroupRegistrationField({
   );
 
   useEffect(() => {
-    if (employmentStatus !== "employed") {
+    if (resolvedEmploymentStatus !== "employed") {
       setSearch("");
       return;
     }
@@ -94,7 +96,7 @@ export function EmployerGroupRegistrationField({
       return;
     }
     setSearch(employerName ?? "");
-  }, [employerName, employmentStatus, newEmployerGroup, selected]);
+  }, [employerName, newEmployerGroup, resolvedEmploymentStatus, selected]);
 
   const suggestions = useMemo(() => {
     const existing = groups.map((group) => ({
@@ -120,7 +122,7 @@ export function EmployerGroupRegistrationField({
     }];
   }, [groups, newEmployerGroup, search, selected]);
 
-  if (employmentStatus === "self_employed") {
+  if (resolvedEmploymentStatus === "self_employed") {
     return (
       <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
         <div className="mb-2.5 space-y-1">
@@ -148,7 +150,7 @@ export function EmployerGroupRegistrationField({
     );
   }
 
-  if (employmentStatus !== "employed") {
+  if (resolvedEmploymentStatus !== "employed") {
     return (
       <div className="rounded-2xl border border-dashed bg-muted/15 p-4 text-xs leading-5 text-muted-foreground">
         No employer or work-group details are required for this employment status.
@@ -156,55 +158,57 @@ export function EmployerGroupRegistrationField({
     );
   }
 
-  const governmentEmployee = employmentType === "government";
+  const governmentEmployee = enhancedEmploymentFlow && employmentType === "government";
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
-          <div className="mb-2.5 space-y-1">
-            <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
-              Employment type<span className="ml-1 text-destructive">*</span>
-            </Label>
-            <p className="text-[11px] leading-4 text-muted-foreground/90">
-              Government employment enables capture of the payroll identity used for CDAS verification.
-            </p>
-          </div>
-          <Select
-            value={employmentType ?? ""}
-            onValueChange={(value) => onChange({
-              employment_type: value,
-              cdas_employee_number: value === "government" ? cdasEmployeeNumber ?? null : null,
-            })}
-          >
-            <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select employment type" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="government">Government</SelectItem>
-              <SelectItem value="private">Private sector</SelectItem>
-              <SelectItem value="ngo">NGO / non-profit</SelectItem>
-              <SelectItem value="other">Other employer</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {governmentEmployee ? (
-          <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-3.5">
+      {enhancedEmploymentFlow ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
             <div className="mb-2.5 space-y-1">
-              <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">Employee No.</Label>
+              <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
+                Employment type<span className="ml-1 text-destructive">*</span>
+              </Label>
               <p className="text-[11px] leading-4 text-muted-foreground/90">
-                Optional at registration. This prepares an unverified CDAS payroll profile; CDAS is not selected automatically as the loan collection method.
+                Government employment enables capture of the payroll identity used for CDAS verification.
               </p>
             </div>
-            <Input
-              className="h-11"
-              value={cdasEmployeeNumber ?? ""}
-              onChange={(event) => onChange({ cdas_employee_number: event.target.value })}
-              placeholder="Government employee / payroll number"
-              autoComplete="off"
-            />
+            <Select
+              value={employmentType ?? ""}
+              onValueChange={(value) => onChange({
+                employment_type: value,
+                cdas_employee_number: value === "government" ? cdasEmployeeNumber ?? null : null,
+              })}
+            >
+              <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select employment type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="government">Government</SelectItem>
+                <SelectItem value="private">Private sector</SelectItem>
+                <SelectItem value="ngo">NGO / non-profit</SelectItem>
+                <SelectItem value="other">Other employer</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        ) : null}
-      </div>
+
+          {governmentEmployee ? (
+            <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-3.5">
+              <div className="mb-2.5 space-y-1">
+                <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">Employee No.</Label>
+                <p className="text-[11px] leading-4 text-muted-foreground/90">
+                  Optional at registration. This prepares an unverified CDAS payroll profile; CDAS is not selected automatically as the loan collection method.
+                </p>
+              </div>
+              <Input
+                className="h-11"
+                value={cdasEmployeeNumber ?? ""}
+                onChange={(event) => onChange({ cdas_employee_number: event.target.value })}
+                placeholder="Government employee / payroll number"
+                autoComplete="off"
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
         <div className="mb-2.5 space-y-1">
