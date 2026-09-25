@@ -1,27 +1,28 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.access_control import (
-    COLLECTIONS_ROLES,
     COMPANY_MANAGEMENT_ROLES,
-    FINANCE_ROLES,
     LENDING_ROLES,
     TenantContext,
     get_tenant_context,
     require_tenant_roles,
 )
-from database.models.enums import UserRole
-from database.models.lending_operations import CDASPayrollProfile
+from database.models.audit_log import AuditLog
+from database.models.cdas_official import CdasProviderOperation
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
-from services.cdas_analysis_history import (
-    save_or_get_analysis_record,
-    serialize_analysis_record,
+from integrations.cdas_contracts import (
+    CdasLifecyclePayload,
+    CdasModifyActivePayload,
+    CdasSettlementPayload,
 )
 from services.cdas_config_service import (
     configuration_summary,
@@ -30,28 +31,16 @@ from services.cdas_config_service import (
     test_company_configuration,
     update_configuration,
 )
-from services.cdas_official_snapshot import normalize_official_cdas_snapshot
+from services.cdas_operation_ledger import (
+    CdasDuplicateOperationError,
+    CdasTrackedProviderError,
+    execute_provider_operation,
+    operation_summary,
+    reconcile_provider_operation,
+)
 from services.cdas_request_budget import get_cdas_request_budget_status
 
-
-router = APIRouter(prefix="/cdas", tags=["CDAS Official API"])
-
-CDAS_READ_ROLES = (
-    set(LENDING_ROLES)
-    | set(FINANCE_ROLES)
-    | set(COLLECTIONS_ROLES)
-    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR, UserRole.RISK_MANAGER}
-)
-CDAS_DOCUMENT_ROLES = (
-    set(FINANCE_ROLES)
-    | set(COLLECTIONS_ROLES)
-    | {UserRole.COMPLIANCE_OFFICER, UserRole.AUDITOR}
-)
-CDAS_DEDUCTION_WRITE_ROLES = set(LENDING_ROLES)
-CDAS_SETTLEMENT_ROLES = set(LENDING_ROLES) | set(FINANCE_ROLES) | set(COLLECTIONS_ROLES)
-RAW_WRITE_DISABLED_MESSAGE = (
-    "Direct CDAS provider writes are disabled. Use the loan-linked CDAS lifecycle endpoints so the operation is tied to a LoanHub loan, validated, reconciled and audited."
-)
+router = APIRouter(prefix="/cdas", tags=["CDAS"])
 
 
 class CdasConfigurationUpdateRequest(BaseModel):
@@ -64,156 +53,189 @@ class CdasConfigurationUpdateRequest(BaseModel):
     timeout_seconds: float = Field(default=20.0, ge=1, le=120)
 
 
-class CdasRefreshRequest(BaseModel):
+class CdasEmployeeLookupRequest(BaseModel):
     employee_no: str = Field(min_length=1, max_length=100)
-    own_deduction_status: int | None = Field(default=None, ge=1, le=10)
 
 
-class CdasDeductionActionRequest(BaseModel):
-    request_type: Literal[1, 3, 4, 5, 6, 7, 8, 9, 10]
-    deduction_id: int = Field(default=0, ge=0)
-    employee_no: str = Field(min_length=1, max_length=100)
-    loan_policy: int = Field(default=0, ge=0)
-    item_code: str = Field(min_length=1, max_length=100)
-    deduction_amount: float = Field(ge=0)
-    total_installment: int = Field(default=0, ge=0)
-    principal_amount: float = Field(ge=0)
-    effective_month: str = Field(min_length=7, max_length=32)
-    reference_no: str = Field(min_length=1, max_length=200)
-
-    def to_cdas_payload(self) -> dict[str, Any]:
-        return {
-            "RequestType": self.request_type,
-            "DeductionID": self.deduction_id,
-            "EmployeeNo": self.employee_no,
-            "LoanPolicy": self.loan_policy,
-            "ItemCode": self.item_code,
-            "DeductionAmount": self.deduction_amount,
-            "TotalInstallment": self.total_installment,
-            "PrincipalAmount": self.principal_amount,
-            "EffectiveMonth": self.effective_month,
-            "ReferenceNo": self.reference_no,
-        }
+class CdasOwnDeductionLookupRequest(CdasEmployeeLookupRequest):
+    deduction_status: int = Field(ge=1, le=10)
 
 
-class CdasModifyActiveDeductionRequest(BaseModel):
-    employee_no: str = Field(min_length=1, max_length=100)
-    item_code: str = Field(min_length=1, max_length=100)
-    total_installment: int = Field(ge=0)
-    deduction_amount: float = Field(ge=0)
-    principal_amount: float = Field(ge=0)
-    deduction_id: int = Field(gt=0)
-    effective_date: str = Field(min_length=7, max_length=40)
-
-    def to_cdas_payload(self) -> dict[str, Any]:
-        return {
-            "EmployeeNo": self.employee_no,
-            "ItemCode": self.item_code,
-            "TotalInstallment": self.total_installment,
-            "DeductionAmount": self.deduction_amount,
-            "PrincipalAmount": self.principal_amount,
-            "DeductionID": self.deduction_id,
-            "EffectiveDate": self.effective_date,
-        }
+class CdasDeductionLifecycleRequest(CdasLifecyclePayload):
+    confirmed: bool = False
 
 
-class CdasSettleDeductionRequest(BaseModel):
-    item_code: str = Field(min_length=1, max_length=100)
-    deduction_id: int = Field(gt=0)
-    effective_date: str = Field(min_length=7, max_length=40)
-    employee_no: str = Field(min_length=1, max_length=100)
-    settlement_reason: int = Field(ge=1, le=4)
-
-    def to_cdas_payload(self) -> dict[str, Any]:
-        return {
-            "ItemCode": self.item_code,
-            "DeductionID": self.deduction_id,
-            "EffectiveDate": self.effective_date,
-            "EmployeeNo": self.employee_no,
-            "SettlementReason": self.settlement_reason,
-        }
+class CdasModifyActiveDeductionRequest(CdasModifyActivePayload):
+    confirmed: bool = False
 
 
-def _require_company_member(context: TenantContext) -> None:
-    if context.is_platform_admin or not context.company_id or not context.staff:
-        raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+class CdasSettleDeductionRequest(CdasSettlementPayload):
+    confirmed: bool = False
+
+
+class CdasDocumentRequest(BaseModel):
+    year: int = Field(ge=1, le=9999)
+    month: int = Field(ge=1, le=12)
+    document_type: int = Field(ge=1, le=2)
 
 
 def _require_company_manager(context: TenantContext) -> None:
-    _require_company_member(context)
+    if context.is_platform_admin or not context.company_id or not context.staff:
+        raise HTTPException(status_code=403, detail="A company-scoped membership is required")
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
 
 
-def _require_cdas_reader(context: TenantContext) -> None:
-    _require_company_member(context)
-    require_tenant_roles(context, CDAS_READ_ROLES)
+def _require_lending_user(context: TenantContext) -> None:
+    if context.is_platform_admin or not context.company_id or not context.staff:
+        raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+    require_tenant_roles(context, LENDING_ROLES)
 
 
-def _require_employee_scope(db: Session, context: TenantContext, employee_no: str) -> None:
-    """Prevent branch users from probing employee numbers outside their branch.
-
-    A manually-entered payroll profile is not enough. The employee number must
-    have been verified against the official CDAS employee endpoint for a borrower
-    in this active branch before low-level CDAS reads are allowed.
-    """
-    if not context.branch_id:
-        return
-    assert context.company_id is not None
-    profile = (
-        db.query(CDASPayrollProfile.id)
-        .filter(
-            CDASPayrollProfile.company_id == context.company_id,
-            CDASPayrollProfile.branch_id == context.branch_id,
-            CDASPayrollProfile.employee_number == employee_no.strip(),
-            CDASPayrollProfile.verified.is_(True),
-            CDASPayrollProfile.verification_reference == "CDAS_API_V1_5",
-        )
-        .first()
-    )
-    if profile is None:
+def _require_confirmed(confirmed: bool) -> None:
+    if not confirmed:
         raise HTTPException(
-            status_code=403,
-            detail="This employee number has not been officially verified for a borrower in the active branch",
+            status_code=409,
+            detail="Explicit confirmation is required for this CDAS state-changing action",
         )
 
 
-def _require_deduction_writer(context: TenantContext) -> None:
-    _require_company_member(context)
-    raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
-
-
-def _require_settlement_writer(context: TenantContext) -> None:
-    _require_company_member(context)
-    raise HTTPException(status_code=410, detail=RAW_WRITE_DISABLED_MESSAGE)
-
-
-def _company_client(db: Session, context: TenantContext) -> CdasClient:
-    _require_cdas_reader(context)
-    assert context.company_id is not None
-    try:
-        return get_company_cdas_client(db, context.company_id)
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-
-
-def _report_preparer(context: TenantContext) -> tuple[str, str]:
-    person = getattr(context.user, "person", None)
-    prepared_by = (
-        str(getattr(person, "full_name", "") or "").strip()
-        or str(context.user.email or "").strip()
-        or str(context.user.phone or "").strip()
-        or "Authorized company user"
-    )
-    role = getattr(context.role, "value", None) or str(context.role)
-    return prepared_by, str(role)
-
-
-def _cdas_http_error(exc: CdasError) -> HTTPException:
+def _cdas_http_error(exc: CdasError, *, operation: CdasProviderOperation | None = None) -> HTTPException:
     status = exc.status_code if 400 <= exc.status_code <= 599 else 502
+    detail: dict[str, Any] = {
+        "provider": "CDAS",
+        "code": exc.status_code,
+        "message": exc.message,
+    }
+    if operation is not None:
+        detail["operation"] = operation_summary(operation)
+    return HTTPException(status_code=status, detail=detail)
+
+
+def _duplicate_operation_error(exc: CdasDuplicateOperationError) -> HTTPException:
     return HTTPException(
-        status_code=status,
-        detail={"provider": "CDAS", "code": exc.status_code, "message": exc.message},
+        status_code=409,
+        detail={
+            "provider": "CDAS",
+            "code": "CDAS_DUPLICATE_UNRESOLVED_OPERATION",
+            "message": "An identical CDAS mutation is still unresolved. Reconcile it before submitting again.",
+            "operation": operation_summary(exc.operation),
+        },
     )
+
+
+def _company_cdas_environment(db: Session, company_id: UUID) -> str:
+    row = get_configuration(db, company_id)
+    return str(row.environment or "test").strip().lower() if row else "test"
+
+
+def _record_cdas_mutation_audit(
+    db: Session,
+    context: TenantContext,
+    *,
+    action: str,
+    request_data: dict[str, Any],
+    status: str,
+    provider_data: dict[str, Any],
+) -> None:
+    """Best-effort audit record; audit persistence must not repeat a provider mutation."""
+
+    try:
+        db.add(
+            AuditLog(
+                user_id=context.user.id,
+                company_id=context.company_id,
+                branch_id=context.branch_id,
+                action=action,
+                table_name="cdas",
+                entity_type="external_payroll_deduction",
+                description="User-initiated CDAS deduction operation",
+                actor_role=getattr(context.role, "value", str(context.role)),
+                severity="info" if status == "success" else "warning",
+                status=status,
+                event_data={
+                    "request": request_data,
+                    "provider": provider_data,
+                },
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+async def _execute_tracked_mutation(
+    *,
+    db: Session,
+    context: TenantContext,
+    client: CdasClient,
+    operation_type: str,
+    audit_action: str,
+    provider_request: dict[str, Any],
+    ledger_request: dict[str, Any],
+    provider_call: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    assert context.company_id is not None
+    environment = _company_cdas_environment(db, context.company_id)
+    try:
+        result, operation = await execute_provider_operation(
+            db,
+            company_id=context.company_id,
+            branch_id=context.branch_id,
+            actor_user_id=context.user.id,
+            environment=environment,
+            operation_type=operation_type,
+            request_snapshot=ledger_request,
+            provider_call=provider_call,
+        )
+    except CdasDuplicateOperationError as exc:
+        raise _duplicate_operation_error(exc) from exc
+    except CdasTrackedProviderError as exc:
+        _record_cdas_mutation_audit(
+            db,
+            context,
+            action=audit_action,
+            request_data=ledger_request,
+            status="failed",
+            provider_data={
+                "code": exc.provider_error.status_code,
+                "message": exc.provider_error.message,
+                "operation": operation_summary(exc.operation),
+            },
+        )
+        raise _cdas_http_error(exc.provider_error, operation=exc.operation) from exc
+
+    reconciled = False
+    try:
+        reconciled, operation = await reconcile_provider_operation(
+            db,
+            operation=operation,
+            client=client,
+        )
+    except CdasError:
+        # The provider already acknowledged the mutation. A failed read-back must
+        # never turn that into a retryable write failure; the ledger remains in a
+        # reconciliation-required state for a later explicit read-only check.
+        db.refresh(operation)
+
+    summary = operation_summary(operation)
+    _record_cdas_mutation_audit(
+        db,
+        context,
+        action=audit_action,
+        request_data=ledger_request,
+        status="success" if reconciled else "warning",
+        provider_data={
+            "response": result,
+            "operation": summary,
+            "reconciled": reconciled,
+        },
+    )
+    return {
+        "ok": True,
+        "deduction": result,
+        "reconciled": reconciled,
+        "operation": summary,
+    }
 
 
 @router.get("/configuration")
@@ -224,22 +246,6 @@ def get_cdas_configuration(
     _require_company_manager(context)
     assert context.company_id is not None
     return configuration_summary(get_configuration(db, context.company_id))
-
-
-@router.get("/request-budget")
-def get_cdas_request_budget(
-    context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
-):
-    _require_company_manager(context)
-    assert context.company_id is not None
-    row = get_configuration(db, context.company_id)
-    environment = str(row.environment or "test").strip().lower() if row else "test"
-    return get_cdas_request_budget_status(
-        db,
-        company_id=context.company_id,
-        environment=environment,
-    )
 
 
 @router.put("/configuration")
@@ -282,131 +288,190 @@ async def test_cdas_configuration(
     return {"ok": True, "configuration": configuration}
 
 
-@router.get("/employees/{employee_no}")
-async def get_cdas_employee(
-    employee_no: str,
+@router.get("/request-budget")
+def get_cdas_request_budget(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_cdas_reader(context)
-    _require_employee_scope(db, context, employee_no)
-    client = _company_client(db, context)
-    try:
-        return await client.employee_details(employee_no.strip())
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-
-
-@router.get("/employees/{employee_no}/affordability")
-async def get_cdas_affordability(
-    employee_no: str,
-    context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
-):
-    _require_cdas_reader(context)
-    _require_employee_scope(db, context, employee_no)
-    client = _company_client(db, context)
-    try:
-        amount = await client.affordability(employee_no.strip())
-        return {"employee_no": employee_no.strip(), "affordability": amount, "source": "CDAS_API"}
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-
-
-@router.get("/employees/{employee_no}/deductions")
-async def get_cdas_deductions(
-    employee_no: str,
-    own_only: bool = Query(default=False),
-    deduction_status: int | None = Query(default=None, ge=1, le=10),
-    context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
-):
-    _require_cdas_reader(context)
-    _require_employee_scope(db, context, employee_no)
-    client = _company_client(db, context)
-    employee_no = employee_no.strip()
-    try:
-        if own_only:
-            if deduction_status is None:
-                raise HTTPException(status_code=422, detail="deduction_status is required when own_only=true")
-            items = await client.own_deductions(employee_no, deduction_status)
-        else:
-            items = await client.all_deductions(employee_no)
-        return {"employee_no": employee_no, "items": items, "total": len(items), "source": "CDAS_API"}
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-
-
-@router.post("/refresh")
-async def refresh_cdas_employee_snapshot(
-    payload: CdasRefreshRequest,
-    context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
-):
-    _require_cdas_reader(context)
-    _require_employee_scope(db, context, payload.employee_no)
-    client = _company_client(db, context)
+    """Return LoanHub's local CDAS quota counter without contacting CDAS."""
+    _require_lending_user(context)
     assert context.company_id is not None
-    employee_no = payload.employee_no.strip()
-    try:
-        raw_snapshot = await client.refresh_employee_snapshot(
-            employee_no,
-            own_deduction_status=payload.own_deduction_status,
+    row = get_configuration(db, context.company_id)
+    environment = str(row.environment or "test").strip().lower() if row else "test"
+    return get_cdas_request_budget_status(db, company_id=context.company_id, environment=environment)
+
+
+@router.get("/operations")
+def list_cdas_operations(
+    state: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=200),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return the company's local CDAS mutation ledger without contacting CDAS."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    query = db.query(CdasProviderOperation).filter(CdasProviderOperation.company_id == context.company_id)
+    if state:
+        query = query.filter(CdasProviderOperation.state == state.strip().lower())
+    rows = query.order_by(CdasProviderOperation.created_at.desc()).limit(limit).all()
+    return {"items": [operation_summary(row) for row in rows], "count": len(rows)}
+
+
+@router.get("/operations/{operation_id}")
+def get_cdas_operation(
+    operation_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    row = db.query(CdasProviderOperation).filter(
+        CdasProviderOperation.id == operation_id,
+        CdasProviderOperation.company_id == context.company_id,
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="CDAS operation not found")
+    return operation_summary(row)
+
+
+@router.post("/operations/{operation_id}/reconcile")
+async def reconcile_cdas_operation(
+    operation_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read CDAS to reconcile one mutation; this endpoint never replays a write."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    operation = db.query(CdasProviderOperation).filter(
+        CdasProviderOperation.id == operation_id,
+        CdasProviderOperation.company_id == context.company_id,
+    ).one_or_none()
+    if operation is None:
+        raise HTTPException(status_code=404, detail="CDAS operation not found")
+
+    current_environment = _company_cdas_environment(db, context.company_id)
+    if operation.environment != current_environment:
+        raise HTTPException(
+            status_code=409,
+            detail="This CDAS operation belongs to a different provider environment",
         )
+
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        matched, operation = await reconcile_provider_operation(db, operation=operation, client=client)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
+        db.refresh(operation)
+        raise _cdas_http_error(exc, operation=operation) from exc
 
-    analysis = normalize_official_cdas_snapshot(
-        raw_snapshot,
-        own_deduction_status=payload.own_deduction_status,
-    )
-    profile = analysis.get("profile") or {}
-    prepared_by, prepared_by_role = _report_preparer(context)
-    record, created = save_or_get_analysis_record(
-        db,
-        company_id=context.company_id,
-        analyzed_by_user_id=context.user.id,
-        analyzed_by_name=prepared_by,
-        analyzed_by_role=prepared_by_role,
-        client_name=profile.get("full_name"),
-        client_reference=profile.get("employee_no") or employee_no,
-        analysis=analysis,
-    )
-    return {
-        "source": "CDAS_API",
-        "checked_at": raw_snapshot.get("checked_at"),
-        "snapshot": analysis,
-        "archive": {"created": created, "record": serialize_analysis_record(record)},
-    }
+    return {"ok": True, "reconciled": matched, "operation": operation_summary(operation)}
 
 
-@router.post("/deductions/actions")
-async def run_cdas_deduction_action(
-    payload: CdasDeductionActionRequest,
+@router.post("/employees/verify")
+async def verify_cdas_employee(
+    payload: CdasEmployeeLookupRequest,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_deduction_writer(context)
-    client = _company_client(db, context)
+    _require_lending_user(context)
+    assert context.company_id is not None
     try:
-        return await client.add_update_deduction(payload.to_cdas_payload())
+        client = get_company_cdas_client(db, context.company_id)
+        employee = await client.get_employee_details(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    return {"ok": True, "employee": employee}
 
 
-@router.get("/employees/{employee_no}/active-approved-deductions")
-async def get_active_and_approved_cdas_deductions(
-    employee_no: str,
+@router.post("/employees/affordability")
+async def check_cdas_affordability(
+    payload: CdasEmployeeLookupRequest,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_cdas_reader(context)
-    _require_employee_scope(db, context, employee_no)
-    client = _company_client(db, context)
+    _require_lending_user(context)
+    assert context.company_id is not None
     try:
-        return await client.active_and_approved_deductions(employee_no.strip())
+        client = get_company_cdas_client(db, context.company_id)
+        affordability = await client.check_affordability(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    return {"ok": True, "affordability": affordability}
+
+
+@router.post("/deductions/all")
+async def view_all_cdas_deductions(
+    payload: CdasEmployeeLookupRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        deductions = await client.view_all_deductions(payload.employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    return {"ok": True, "deductions": deductions}
+
+
+@router.post("/deductions/own")
+async def view_own_cdas_deductions(
+    payload: CdasOwnDeductionLookupRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        deductions = await client.view_own_deductions(payload.employee_no, payload.deduction_status)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    return {"ok": True, "deductions": deductions}
+
+
+@router.post("/deductions/active-approved")
+async def get_active_approved_cdas_deduction(
+    payload: CdasEmployeeLookupRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        deduction = await client.get_active_and_approved_deduction(payload.employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    return {"ok": True, "deduction": deduction}
+
+
+@router.post("/deductions/lifecycle")
+async def change_cdas_deduction_lifecycle(
+    payload: CdasDeductionLifecycleRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+    client = get_company_cdas_client(db, context.company_id)
+    provider_request = payload.provider_payload()
+    ledger_request = payload.ledger_payload()
+    return await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type=f"deduction.lifecycle.{payload.request_type}",
+        audit_action="cdas.deduction.lifecycle",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.add_update_deduction(provider_request),
+    )
 
 
 @router.post("/deductions/modify-active")
@@ -415,12 +480,22 @@ async def modify_active_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_deduction_writer(context)
-    client = _company_client(db, context)
-    try:
-        return await client.modify_active_deduction(payload.to_cdas_payload())
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+    client = get_company_cdas_client(db, context.company_id)
+    provider_request = payload.provider_payload()
+    ledger_request = payload.ledger_payload()
+    return await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type="deduction.modify_active",
+        audit_action="cdas.deduction.modify_active",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.modify_active_deduction(provider_request),
+    )
 
 
 @router.post("/deductions/settle")
@@ -429,26 +504,39 @@ async def settle_cdas_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_settlement_writer(context)
-    client = _company_client(db, context)
-    try:
-        return await client.settle_deduction(payload.to_cdas_payload())
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+    client = get_company_cdas_client(db, context.company_id)
+    provider_request = payload.provider_payload()
+    ledger_request = payload.ledger_payload()
+    return await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type="deduction.settle",
+        audit_action="cdas.deduction.settle",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.settle_deduction(provider_request),
+    )
 
 
-@router.get("/documents")
+@router.post("/documents")
 async def get_cdas_document(
-    year: int = Query(ge=2000, le=2200),
-    month: int = Query(ge=1, le=12),
-    document_type: int = Query(ge=1, le=2),
+    payload: CdasDocumentRequest,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    _require_company_member(context)
-    require_tenant_roles(context, CDAS_DOCUMENT_ROLES)
-    client = _company_client(db, context)
+    _require_company_manager(context)
+    assert context.company_id is not None
     try:
-        return await client.get_document(year=year, month=month, document_type=document_type)
+        client = get_company_cdas_client(db, context.company_id)
+        document = await client.get_document(
+            year=payload.year,
+            month=payload.month,
+            document_type=payload.document_type,
+        )
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    return {"ok": True, "document": document}

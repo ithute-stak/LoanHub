@@ -15,18 +15,18 @@ from integrations.cdas import CdasError
 
 
 CDAS_DAILY_REQUEST_LIMIT = 400
-_CADAS_TIMEZONE = ZoneInfo("Africa/Maseru")
+_CDAS_TIMEZONE = ZoneInfo("Africa/Maseru")
 _CDAS_PROVIDER = "cdas"
 
 
 def _local_now() -> datetime:
-    return datetime.now(_CADAS_TIMEZONE)
+    return datetime.now(_CDAS_TIMEZONE)
 
 
 def _budget_coordinates() -> tuple[object, datetime]:
     local_now = _local_now()
-    # LoanHub DateTime columns are timezone-naive; the date boundary is based on
-    # Lesotho local time because this integration is operated against CDAS there.
+    # LoanHub DateTime columns are timezone-naive; the request date is based on
+    # the Lesotho calendar day because the CDAS allowance is operated there.
     return local_now.date(), local_now.replace(tzinfo=None)
 
 
@@ -58,7 +58,7 @@ def consume_cdas_request_budget(company_id: UUID, environment: str) -> int:
     CDAS documents the allowance per active API user, not per LoanHub company.
     The reservation therefore keys on a one-way hash of username + environment.
     A failed network attempt is still counted because CDAS may have received it,
-    and undercounting is more dangerous than conservatively consuming one slot.
+    and conservative accounting is safer than exceeding the provider allowance.
     """
     environment = environment.strip().lower()
     request_date, now = _budget_coordinates()

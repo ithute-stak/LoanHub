@@ -1,23 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import {
-    CircleCheck,
-    CircleX,
-    KeyRound,
-    Loader2,
-    PlugZap,
-    RefreshCcw,
-    Save,
-    ServerCog,
-    ShieldCheck,
-} from "lucide-react";
+import { CircleCheck, CircleX, KeyRound, Loader2, PlugZap, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
@@ -37,15 +27,7 @@ type CdasConfiguration = {
     configured: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
-};
-
-type CdasRequestBudget = {
-    environment: CdasEnvironment;
-    request_date: string;
-    limit: number;
-    used: number;
-    remaining: number;
-    last_request_at: string | null;
+    reintegration_phase: "manual_documented_operations";
 };
 
 type CdasForm = {
@@ -58,23 +40,21 @@ type CdasForm = {
     timeout_seconds: number;
 };
 
-type Props = {
-    canManage: boolean;
-};
+type Props = { canManage: boolean };
 
-const CDAS_TEST_BASE_URL = "https://test-cdas-thirdpartyapi.sentraptt.com";
+const TEST_URL = "https://test-cdas-thirdpartyapi.sentraptt.com";
 
-const DEFAULT_FORM: CdasForm = {
+const EMPTY_FORM: CdasForm = {
     environment: "test",
     enabled: false,
-    base_url: CDAS_TEST_BASE_URL,
+    base_url: TEST_URL,
     username: "",
     password: "",
     clear_password: false,
     timeout_seconds: 20,
 };
 
-function formFromConfiguration(configuration: CdasConfiguration): CdasForm {
+function fromConfiguration(configuration: CdasConfiguration): CdasForm {
     return {
         environment: configuration.environment,
         enabled: configuration.enabled,
@@ -88,25 +68,11 @@ function formFromConfiguration(configuration: CdasConfiguration): CdasForm {
 
 export function CompanyCdasSettings({ canManage }: Props) {
     const [configuration, setConfiguration] = useState<CdasConfiguration | null>(null);
-    const [budget, setBudget] = useState<CdasRequestBudget | null>(null);
-    const [form, setForm] = useState<CdasForm>(DEFAULT_FORM);
+    const [form, setForm] = useState<CdasForm>(EMPTY_FORM);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
-
-    const environmentChanged = Boolean(
-        configuration && form.environment !== configuration.environment,
-    );
-
-    const refreshBudget = useCallback(async () => {
-        try {
-            const response = await api.get<CdasRequestBudget>("/cdas/request-budget");
-            setBudget(response.data);
-        } catch {
-            setBudget(null);
-        }
-    }, []);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -114,57 +80,33 @@ export function CompanyCdasSettings({ canManage }: Props) {
         try {
             const response = await api.get<CdasConfiguration>("/cdas/configuration");
             setConfiguration(response.data);
-            setForm(formFromConfiguration(response.data));
-            try {
-                const budgetResponse = await api.get<CdasRequestBudget>("/cdas/request-budget");
-                setBudget(budgetResponse.data);
-            } catch {
-                setBudget(null);
-            }
+            setForm(fromConfiguration(response.data));
         } catch (error: unknown) {
-            setLoadError(getErrorMessage(error, "CDAS configuration could not be loaded."));
+            setLoadError(getErrorMessage(error, "CDAS authentication configuration could not be loaded."));
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        const timer = window.setTimeout(() => void load(), 0);
-        return () => window.clearTimeout(timer);
+        void load();
     }, [load]);
 
     function changeEnvironment(environment: CdasEnvironment) {
-        setForm((current) => {
-            if (environment === current.environment) return current;
-            return {
-                ...current,
-                environment,
-                enabled: false,
-                base_url: environment === "test" ? CDAS_TEST_BASE_URL : "",
-                username: "",
-                password: "",
-                clear_password: false,
-            };
-        });
+        setForm((current) => ({
+            ...current,
+            environment,
+            enabled: false,
+            base_url: environment === "test" ? TEST_URL : "",
+            username: "",
+            password: "",
+            clear_password: false,
+        }));
     }
 
     async function save(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!canManage || saving) return;
-
-        if (!form.base_url.trim() || !form.username.trim()) {
-            toast.error("CDAS base URL and username are required.");
-            return;
-        }
-        if (
-            form.enabled &&
-            (!configuration?.password_configured || environmentChanged) &&
-            !form.password.trim()
-        ) {
-            toast.error("Enter the CDAS password for the selected environment before enabling the integration.");
-            return;
-        }
-
         setSaving(true);
         try {
             const response = await api.put<CdasConfiguration>("/cdas/configuration", {
@@ -177,11 +119,10 @@ export function CompanyCdasSettings({ canManage }: Props) {
                 timeout_seconds: Number(form.timeout_seconds),
             });
             setConfiguration(response.data);
-            setForm(formFromConfiguration(response.data));
-            await refreshBudget();
-            toast.success("CDAS company configuration saved.");
+            setForm(fromConfiguration(response.data));
+            toast.success("CDAS authentication configuration saved.");
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "CDAS configuration could not be saved."));
+            toast.error(getErrorMessage(error, "CDAS authentication configuration could not be saved."));
         } finally {
             setSaving(false);
         }
@@ -195,11 +136,10 @@ export function CompanyCdasSettings({ canManage }: Props) {
                 "/cdas/configuration/test",
             );
             setConfiguration(response.data.configuration);
-            setForm(formFromConfiguration(response.data.configuration));
-            await refreshBudget();
-            toast.success("CDAS connection verified successfully.");
+            setForm(fromConfiguration(response.data.configuration));
+            toast.success("CDAS login verified successfully.");
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "CDAS connection test failed."));
+            toast.error(getErrorMessage(error, "CDAS login test failed."));
             await load();
         } finally {
             setTesting(false);
@@ -209,8 +149,8 @@ export function CompanyCdasSettings({ canManage }: Props) {
     if (loading) {
         return (
             <Card>
-                <CardContent className="flex min-h-56 items-center justify-center gap-3 text-sm text-muted-foreground">
-                    <Loader2 className="h-5 w-5 animate-spin" /> Loading CDAS company configuration…
+                <CardContent className="flex min-h-48 items-center justify-center gap-3 text-sm text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" /> Loading CDAS authentication configuration…
                 </CardContent>
             </Card>
         );
@@ -220,7 +160,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
         return (
             <Alert variant="destructive">
                 <CircleX className="h-4 w-4" />
-                <AlertTitle>CDAS configuration unavailable</AlertTitle>
+                <AlertTitle>CDAS authentication unavailable</AlertTitle>
                 <AlertDescription className="space-y-3">
                     <p>{loadError}</p>
                     <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
@@ -238,20 +178,20 @@ export function CompanyCdasSettings({ canManage }: Props) {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                             <CardTitle className="flex items-center gap-2">
-                                <ServerCog className="h-5 w-5" /> CDAS integration
+                                <KeyRound className="h-5 w-5" /> CDAS authentication
                             </CardTitle>
                             <CardDescription className="mt-2 max-w-3xl">
-                                Configure the CDAS account for this company. Test and live credentials are stored separately from application deployment settings, and the password is encrypted before it is stored.
+                                Secure company-specific CDAS credentials. LoanHub uses this authentication foundation for deliberate, documented CDAS operations only. Employee, affordability, deduction and document requests are initiated by a user; no background CDAS crawling or automatic lifecycle processing is enabled.
                             </CardDescription>
                         </div>
                         <Badge variant={configuration?.enabled ? "default" : "secondary"}>
-                            {configuration?.enabled ? "Enabled" : "Disabled"}
+                            {configuration?.enabled ? "CDAS enabled" : "CDAS disabled"}
                         </Badge>
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <form className="space-y-6" onSubmit={save}>
-                        <div className="grid gap-5 md:grid-cols-2">
+                    <form className="space-y-5" onSubmit={save}>
+                        <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-2">
                                 <Label htmlFor="cdas-environment">Environment</Label>
                                 <select
@@ -259,18 +199,14 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     value={form.environment}
                                     disabled={!canManage || saving}
                                     onChange={(event) => changeEnvironment(event.target.value as CdasEnvironment)}
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                                 >
                                     <option value="test">Test</option>
                                     <option value="live">Live</option>
                                 </select>
-                                <p className="text-xs text-muted-foreground">
-                                    Changing environment disables CDAS and clears environment-specific credential fields so Test credentials cannot carry into Live.
-                                </p>
                             </div>
-
                             <div className="space-y-2">
-                                <Label htmlFor="cdas-timeout">Request timeout (seconds)</Label>
+                                <Label htmlFor="cdas-timeout">Timeout seconds</Label>
                                 <Input
                                     id="cdas-timeout"
                                     type="number"
@@ -278,129 +214,69 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     max={120}
                                     value={form.timeout_seconds}
                                     disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({
-                                        ...current,
-                                        timeout_seconds: Number(event.target.value),
-                                    }))}
+                                    onChange={(event) => setForm((current) => ({ ...current, timeout_seconds: Number(event.target.value) }))}
                                 />
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="cdas-base-url">CDAS base URL</Label>
+                            <Label htmlFor="cdas-base-url">Base URL</Label>
                             <Input
                                 id="cdas-base-url"
-                                type="url"
-                                autoComplete="off"
                                 value={form.base_url}
                                 disabled={!canManage || saving || form.environment === "test"}
                                 onChange={(event) => setForm((current) => ({ ...current, base_url: event.target.value }))}
-                                placeholder={form.environment === "live" ? "Enter the Live CDAS HTTPS URL" : CDAS_TEST_BASE_URL}
+                                placeholder="https://..."
                             />
-                            <p className="text-xs text-muted-foreground">
-                                {form.environment === "test"
-                                    ? "The Test environment is locked to the official CDAS Test URL."
-                                    : "Enter only the HTTPS Live URL supplied by CDAS. The known Test URL is rejected for Live."}
-                            </p>
                         </div>
 
-                        <div className="grid gap-5 md:grid-cols-2">
+                        <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-2">
                                 <Label htmlFor="cdas-username">Username</Label>
                                 <Input
                                     id="cdas-username"
-                                    autoComplete="off"
                                     value={form.username}
                                     disabled={!canManage || saving}
                                     onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
+                                    autoComplete="off"
                                 />
                             </div>
-
                             <div className="space-y-2">
                                 <Label htmlFor="cdas-password">Password</Label>
                                 <Input
                                     id="cdas-password"
                                     type="password"
-                                    autoComplete="new-password"
                                     value={form.password}
                                     disabled={!canManage || saving || form.clear_password}
                                     onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-                                    placeholder={configuration?.password_configured && !environmentChanged ? "Stored securely — enter only to replace" : "Enter CDAS password"}
+                                    placeholder={configuration?.password_configured ? "Leave blank to keep stored password" : "Enter CDAS password"}
+                                    autoComplete="new-password"
                                 />
-                                <p className="text-xs text-muted-foreground">
-                                    {configuration?.password_configured && !environmentChanged
-                                        ? "A password is stored for the saved environment. LoanHub never sends it back to the browser."
-                                        : environmentChanged
-                                            ? "Enter the password for the newly selected environment; the previous environment's password will not be reused."
-                                            : "No CDAS password is stored for this company yet."}
-                                </p>
                             </div>
                         </div>
 
-                        <div className="grid gap-3 rounded-2xl border bg-muted/20 p-4 sm:grid-cols-2">
-                            <label className="flex items-start gap-3 text-sm">
-                                <Checkbox
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 rounded-xl border p-3 text-sm font-medium">
+                                <input
+                                    type="checkbox"
                                     checked={form.enabled}
                                     disabled={!canManage || saving}
-                                    onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked === true }))}
+                                    onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
                                 />
-                                <span>
-                                    <span className="font-bold">Enable CDAS for this company</span>
-                                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                                        Official CDAS employee, affordability, deduction and document requests will use this account.
-                                    </span>
-                                </span>
+                                Enable CDAS
                             </label>
-
-                            <label className="flex items-start gap-3 text-sm">
-                                <Checkbox
+                            <label className="flex items-center gap-2 rounded-xl border p-3 text-sm font-medium">
+                                <input
+                                    type="checkbox"
                                     checked={form.clear_password}
-                                    disabled={!canManage || saving || !configuration?.password_configured || environmentChanged}
-                                    onCheckedChange={(checked) => setForm((current) => ({
-                                        ...current,
-                                        clear_password: checked === true,
-                                        password: checked === true ? "" : current.password,
-                                        enabled: checked === true ? false : current.enabled,
-                                    }))}
+                                    disabled={!canManage || saving || Boolean(form.password)}
+                                    onChange={(event) => setForm((current) => ({ ...current, clear_password: event.target.checked }))}
                                 />
-                                <span>
-                                    <span className="font-bold">Remove stored password</span>
-                                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                                        This disables the integration until a new password is saved.
-                                    </span>
-                                </span>
+                                Clear stored password
                             </label>
                         </div>
 
-                        {!canManage && (
-                            <Alert>
-                                <ShieldCheck className="h-4 w-4" />
-                                <AlertTitle>Read-only configuration</AlertTitle>
-                                <AlertDescription>Only a Company Owner or Company Admin can change or test CDAS credentials.</AlertDescription>
-                            </Alert>
-                        )}
-
-                        {environmentChanged && (
-                            <Alert>
-                                <ShieldCheck className="h-4 w-4" />
-                                <AlertTitle>Environment change requires new credentials</AlertTitle>
-                                <AlertDescription>
-                                    Save the URL, username and password for {form.environment === "live" ? "Live" : "Test"}. LoanHub will discard the password stored for the previous environment instead of carrying it across.
-                                </AlertDescription>
-                            </Alert>
-                        )}
-
-                        {form.environment === "live" && (
-                            <Alert>
-                                <PlugZap className="h-4 w-4" />
-                                <AlertTitle>Live CDAS selected</AlertTitle>
-                                <AlertDescription>
-                                    Confirm the live URL and credentials supplied by CDAS before enabling. LoanHub does not copy test credentials into the live environment automatically.
-                                </AlertDescription>
-                            </Alert>
-                        )}
-
-                        <div className="flex flex-wrap gap-3">
+                        <div className="flex flex-wrap gap-2">
                             <Button type="submit" disabled={!canManage || saving}>
                                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                                 Save configuration
@@ -408,97 +284,47 @@ export function CompanyCdasSettings({ canManage }: Props) {
                             <Button
                                 type="button"
                                 variant="outline"
-                                disabled={!canManage || testing || !configuration?.configured || environmentChanged}
+                                disabled={!canManage || testing || !configuration?.configured}
                                 onClick={() => void testConnection()}
                             >
                                 {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-                                Test saved connection
+                                Test login
+                            </Button>
+                            <Button asChild type="button" variant="outline">
+                                <Link href="/company/cdas"><ShieldCheck className="h-4 w-4" /> Open CDAS workspace</Link>
                             </Button>
                         </div>
                     </form>
                 </CardContent>
             </Card>
 
-            <div className="space-y-4">
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                            <KeyRound className="h-4 w-4" /> Credential status
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 text-sm">
-                        <StatusRow label="Environment" value={(configuration?.environment ?? "test").toUpperCase()} />
-                        <StatusRow label="URL & username" value={configuration?.base_url && configuration?.username ? "Configured" : "Incomplete"} />
-                        <StatusRow label="Password" value={configuration?.password_configured ? "Encrypted & stored" : "Not configured"} />
-                        <StatusRow label="Operational state" value={configuration?.enabled ? "Enabled" : "Disabled"} />
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                            <ServerCog className="h-4 w-4" /> Daily API budget
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 text-sm">
-                        {budget ? (
-                            <>
-                                <StatusRow label="Environment" value={budget.environment.toUpperCase()} />
-                                <StatusRow label="Used today" value={`${budget.used} / ${budget.limit}`} />
-                                <StatusRow label="Remaining" value={String(budget.remaining)} />
-                                <p className="text-xs leading-5 text-muted-foreground">
-                                    LoanHub reserves one slot immediately before every outbound CDAS HTTP request, including login and token refresh. The counter uses the Lesotho calendar date and is enforced across backend workers.
-                                </p>
-                                {budget.last_request_at && (
-                                    <p className="text-xs text-muted-foreground">
-                                        Last outbound request: {new Date(budget.last_request_at).toLocaleString()}
-                                    </p>
-                                )}
-                            </>
-                        ) : (
-                            <p className="text-xs leading-5 text-muted-foreground">
-                                Request-budget status is unavailable. Provider calls remain protected by the backend limit when the integration is configured.
-                            </p>
-                        )}
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                            {configuration?.last_test_status === "connected" ? (
-                                <CircleCheck className="h-4 w-4 text-emerald-600" />
-                            ) : (
-                                <PlugZap className="h-4 w-4" />
-                            )}
-                            Connection test
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
-                        <p className="font-bold">
-                            {configuration?.last_test_status === "connected"
-                                ? "Connection verified"
-                                : configuration?.last_test_status === "failed"
-                                    ? "Last test failed"
-                                    : "Not tested since last change"}
-                        </p>
-                        <p className="text-xs leading-5 text-muted-foreground">
-                            {configuration?.last_tested_at
-                                ? `Last tested ${new Date(configuration.last_tested_at).toLocaleString()}`
-                                : "Save the credentials, then use Test saved connection. The CDAS authorization token is never displayed."}
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
-        </div>
-    );
-}
-
-function StatusRow({ label, value }: { label: string; value: string }) {
-    return (
-        <div className="flex items-start justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="text-right font-bold">{value}</span>
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">Integration status</CardTitle>
+                    <CardDescription>Manual documented CDAS operations with no background provider polling.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Credential storage</span>
+                        <strong>{configuration?.password_configured ? "Configured" : "Not configured"}</strong>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Last login test</span>
+                        <strong>{configuration?.last_test_status ?? "Not tested"}</strong>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Tested at</span>
+                        <strong>{configuration?.last_tested_at ? new Date(configuration.last_tested_at).toLocaleString() : "—"}</strong>
+                    </div>
+                    <Alert>
+                        {configuration?.last_test_status === "connected" ? <CircleCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
+                        <AlertTitle>Authentication foundation</AlertTitle>
+                        <AlertDescription>
+                            A successful login test proves token acquisition only. Each employee, affordability, deduction or document operation remains a separate deliberate request in the CDAS workspace.
+                        </AlertDescription>
+                    </Alert>
+                </CardContent>
+            </Card>
         </div>
     );
 }

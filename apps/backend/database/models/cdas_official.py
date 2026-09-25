@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -141,3 +141,63 @@ class CdasApiRequestBudget(Base):
     request_date = Column(Date, nullable=False, index=True)
     request_count = Column(Integer, nullable=False, default=0)
     last_request_at = Column(DateTime, nullable=True)
+
+
+class CdasProviderOperation(Base):
+    """Durable state machine for every state-changing CDAS provider request.
+
+    The ledger is written before the provider call. Unresolved fingerprints are
+    unique so browser retries, double-clicks and concurrent workers cannot submit
+    the same mutation twice while its provider state is still uncertain.
+    """
+
+    __tablename__ = "cdas_provider_operations"
+    __table_args__ = (
+        Index(
+            "uq_cdas_provider_operation_unresolved_fingerprint",
+            "company_id",
+            "environment",
+            "fingerprint",
+            unique=True,
+            postgresql_where=text(
+                "state IN ('prepared','submitting','acknowledged','unknown_provider_state','requires_reconciliation')"
+            ),
+        ),
+        Index("ix_cdas_provider_operations_company_created", "company_id", "created_at"),
+    )
+
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("loan_companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    branch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("company_branches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    environment = Column(String(20), nullable=False, index=True)
+    operation_type = Column(String(80), nullable=False, index=True)
+    state = Column(String(40), nullable=False, default="prepared", index=True)
+    employee_no = Column(String(100), nullable=True, index=True)
+    deduction_id = Column(Integer, nullable=True, index=True)
+    reference_no = Column(String(200), nullable=True, index=True)
+    fingerprint = Column(String(64), nullable=False, index=True)
+    request_snapshot = Column(JSONB, nullable=False, default=dict)
+    response_snapshot = Column(JSONB, nullable=False, default=dict)
+    provider_status_code = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    reconciled_at = Column(DateTime, nullable=True)
+    requires_reconciliation = Column(Boolean, nullable=False, default=False, index=True)
+
+    actor = relationship("User", foreign_keys=[actor_user_id])

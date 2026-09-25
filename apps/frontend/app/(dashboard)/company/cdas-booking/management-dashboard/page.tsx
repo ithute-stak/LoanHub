@@ -1,5 +1,5 @@
-import { CdasManagementDashboardView } from "../CdasManagementDashboard";
+import { redirect } from "next/navigation";
 
-export default function CdasManagementDashboardPage() {
-  return <CdasManagementDashboardView />;
+export default function RetiredCdasManagementRoute() {
+    redirect("/company/cdas");
 }
