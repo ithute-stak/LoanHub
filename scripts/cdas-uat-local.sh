@@ -20,6 +20,26 @@ require_repo() {
   fi
 }
 
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Missing required command: $command_name" >&2
+    exit 1
+  fi
+}
+
+require_docker() {
+  require_command docker
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "Docker Compose v2 is required (docker compose)." >&2
+    exit 1
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker is installed but the Docker daemon is not available." >&2
+    exit 1
+  fi
+}
+
 require_uat_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
     echo "Missing $ENV_FILE. Run: bash scripts/cdas-uat-local.sh init" >&2
@@ -44,6 +64,7 @@ require_uat_env() {
 
 init_uat() {
   require_repo
+  require_command openssl
 
   if [[ -f "$ENV_FILE" ]]; then
     echo "$ENV_FILE already exists; leaving it unchanged."
@@ -127,6 +148,7 @@ EOF
 
 up_uat() {
   require_uat_env
+  require_docker
   cd "$ROOT_DIR"
   compose up -d --build db redis migrate backend frontend
   echo
@@ -137,14 +159,34 @@ up_uat() {
   echo "Maintenance worker was intentionally NOT started."
 }
 
+wait_for_backend() {
+  require_command curl
+  local attempt
+  echo "Waiting for LoanHub backend readiness..."
+  for attempt in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:18000/health/ready >/dev/null 2>&1; then
+      echo "LoanHub backend is ready."
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Backend did not become ready within 120 seconds." >&2
+  compose logs --tail=100 backend migrate >&2 || true
+  exit 1
+}
+
 seed_uat() {
   require_uat_env
+  require_docker
   cd "$ROOT_DIR"
   compose exec -u app backend python scripts/seed_sandbox.py
 }
 
 status_uat() {
   require_uat_env
+  require_docker
+  require_command curl
   cd "$ROOT_DIR"
   compose ps
   echo
@@ -152,14 +194,31 @@ status_uat() {
   echo
 }
 
+start_uat() {
+  require_repo
+  require_command openssl
+  require_command curl
+  require_docker
+  init_uat
+  up_uat
+  wait_for_backend
+  seed_uat
+  status_uat
+  echo
+  echo "CDAS UAT is ready at http://localhost:13000"
+  echo "Configure authorised CDAS TEST credentials through Company Settings before provider testing."
+}
+
 logs_uat() {
   require_uat_env
+  require_docker
   cd "$ROOT_DIR"
   compose logs --tail=200 backend frontend migrate
 }
 
 down_uat() {
   require_uat_env
+  require_docker
   cd "$ROOT_DIR"
   compose down
   echo "Stopped the isolated CDAS UAT stack. Volumes were preserved."
@@ -170,6 +229,7 @@ usage() {
 Usage: bash scripts/cdas-uat-local.sh <command>
 
 Commands:
+  start   Preflight, initialize, start, wait, seed and verify the local UAT stack
   init    Create isolated local UAT env and JWT keys without CDAS credentials
   up      Build/start db, redis, migrate, backend and frontend only
   seed    Seed the isolated LoanHub sandbox company/user/client fixtures
@@ -184,6 +244,7 @@ EOF
 }
 
 case "${1:-}" in
+  start) start_uat ;;
   init) init_uat ;;
   up) up_uat ;;
   seed) seed_uat ;;
