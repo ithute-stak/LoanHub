@@ -157,6 +157,8 @@ class AssistedCompanyClientCreate(BaseModel):
     physical_address: str | None = Field(default=None, max_length=500)
 
     employment_status: EmploymentStatus
+    employment_type: str | None = Field(default=None, max_length=50)
+    cdas_employee_number: str | None = Field(default=None, max_length=100)
     employer_name: str | None = Field(default=None, max_length=200)
     employer_group_id: UUID | None = None
     new_employer_group: EmployerGroupCreate | None = None

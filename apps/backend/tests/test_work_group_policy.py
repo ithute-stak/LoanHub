@@ -1,5 +1,4 @@
 import pytest
-from fastapi import HTTPException
 
 from database.models.employer_group import EmployerGroup
 from services.employer_group_service import (
@@ -82,12 +81,12 @@ def test_employer_group_code_normalizer_accepts_only_central_codes(code: str):
     assert normalize_employer_group_code(code) == code
 
 
-def test_arbitrary_employer_group_code_is_rejected():
-    with pytest.raises(HTTPException) as exc:
-        normalize_employer_group_code("ACME LTD")
-
-    assert exc.value.status_code == 422
-    assert "central work groups" in str(exc.value.detail)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("ACME LTD", "ACME LTD"), (" acme   ltd ", "ACME LTD"), ("Ministry-X", "MINISTRY-X")],
+)
+def test_custom_employer_group_code_is_normalized(raw: str, expected: str):
+    assert normalize_employer_group_code(raw) == expected
 
 
 def test_central_work_groups_are_seeded_exactly_once():

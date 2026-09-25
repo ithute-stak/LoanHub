@@ -142,6 +142,8 @@ export type AssistedCompanyClientCreate = {
     town_or_village?: string | null;
     physical_address?: string | null;
     employment_status: "employed" | "self_employed" | "unemployed" | "student" | "pensioner";
+    employment_type?: string | null;
+    cdas_employee_number?: string | null;
     employer_name?: string | null;
     employer_group_id?: string | null;
     new_employer_group?: EmployerGroupCreate | null;
