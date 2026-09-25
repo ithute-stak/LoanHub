@@ -32,10 +32,15 @@ class _TokenState:
 
 
 class CdasClient:
-    """Small CDAS client for phases 1-2 of the clean reintegration."""
+    """Small, request-driven CDAS client for the clean reintegration."""
 
     LOGIN_PATH = "/api/security/login"
     EMPLOYEE_DETAILS_PATH = "/api/employee/getDetails"
+    AFFORDABILITY_PATH = "/api/employee/check-affordability"
+    ALL_DEDUCTIONS_PATH = "/api/policy/view-all-deduction"
+    OWN_DEDUCTIONS_PATH = "/api/policy/view-deduction"
+    ACTIVE_APPROVED_DEDUCTION_PATH = "/api/policy/get-active-and-approved-deduction"
+
     _TOKEN_MAX_AGE = timedelta(hours=7, minutes=50)
     _TOKEN_IDLE_AGE = timedelta(minutes=9)
     _SESSION_EXPIRED_STATUS_CODES = {401, 402, 419}
@@ -94,6 +99,13 @@ class CdasClient:
             return "; ".join(str(item) for item in payload)
         return payload if isinstance(payload, str) and payload else fallback
 
+    @staticmethod
+    def _require_employee_number(employee_no: str) -> str:
+        normalized = employee_no.strip()
+        if not normalized:
+            raise CdasError(422, "Employee number is required")
+        return normalized
+
     async def authenticate(self, *, force: bool = False) -> str:
         self._require_configuration()
         async with self._token_lock:
@@ -145,6 +157,7 @@ class CdasClient:
         path: str,
         *,
         payload: dict[str, Any],
+        header_name: str = "Authorization",
         retry_expired_session: bool = True,
     ) -> Any:
         token = await self.authenticate()
@@ -159,7 +172,7 @@ class CdasClient:
                 response = await client.post(
                     path,
                     json=payload,
-                    headers={"Authorization": token},
+                    headers={header_name: token},
                 )
                 self._session_cookies.update(client.cookies)
             except httpx.RequestError as exc:
@@ -170,6 +183,7 @@ class CdasClient:
             return await self._post_authenticated(
                 path,
                 payload=payload,
+                header_name=header_name,
                 retry_expired_session=False,
             )
 
@@ -186,10 +200,7 @@ class CdasClient:
         return response_payload
 
     async def get_employee_details(self, employee_no: str) -> dict[str, str | None]:
-        employee_no = employee_no.strip()
-        if not employee_no:
-            raise CdasError(422, "Employee number is required")
-
+        employee_no = self._require_employee_number(employee_no)
         payload = await self._post_authenticated(
             self.EMPLOYEE_DETAILS_PATH,
             payload={"EmployeeNo": employee_no},
@@ -210,6 +221,63 @@ class CdasClient:
             field: str(payload[field]) if payload.get(field) is not None else None
             for field in fields
         }
+
+    async def check_affordability(self, employee_no: str) -> float:
+        employee_no = self._require_employee_number(employee_no)
+        payload = await self._post_authenticated(
+            self.AFFORDABILITY_PATH,
+            payload={"EmployeeNo": employee_no},
+            header_name="Token",
+        )
+        if isinstance(payload, bool) or not isinstance(payload, (int, float)):
+            raise CdasError(502, "CDAS affordability check returned an invalid response", payload)
+        return float(payload)
+
+    async def view_all_deductions(self, employee_no: str) -> list[dict[str, Any]]:
+        employee_no = self._require_employee_number(employee_no)
+        payload = await self._post_authenticated(
+            self.ALL_DEDUCTIONS_PATH,
+            payload={"EmployeeNo": employee_no},
+            header_name="Token",
+        )
+        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+            raise CdasError(502, "CDAS all-deductions lookup returned an invalid response", payload)
+        return payload
+
+    async def view_own_deductions(
+        self,
+        employee_no: str,
+        deduction_status: int,
+    ) -> list[dict[str, Any]]:
+        employee_no = self._require_employee_number(employee_no)
+        if deduction_status < 1 or deduction_status > 10:
+            raise CdasError(422, "Deduction status must be between 1 and 10")
+        payload = await self._post_authenticated(
+            self.OWN_DEDUCTIONS_PATH,
+            payload={
+                "EmployeeNo": employee_no,
+                "DeductionStatus": deduction_status,
+            },
+            header_name="Token",
+        )
+        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+            raise CdasError(502, "CDAS own-deductions lookup returned an invalid response", payload)
+        return payload
+
+    async def get_active_and_approved_deduction(self, employee_no: str) -> dict[str, Any]:
+        employee_no = self._require_employee_number(employee_no)
+        payload = await self._post_authenticated(
+            self.ACTIVE_APPROVED_DEDUCTION_PATH,
+            payload={"EmployeeNo": employee_no},
+            header_name="Token",
+        )
+        if not isinstance(payload, dict):
+            raise CdasError(
+                502,
+                "CDAS active/approved deduction lookup returned an invalid response",
+                payload,
+            )
+        return payload
 
     async def check_connection(self) -> None:
         await self.authenticate(force=True)
