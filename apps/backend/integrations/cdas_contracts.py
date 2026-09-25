@@ -142,16 +142,21 @@ class CdasSettlementPayload(BaseModel):
 
 def validate_employee(payload: Any) -> dict[str, Any]:
     try:
-        return CdasEmployeeRecord.model_validate(payload).model_dump(mode="json")
+        model = CdasEmployeeRecord.model_validate(payload)
     except ValidationError as exc:
         raise ValueError("CDAS employee response does not match the documented contract") from exc
+    fields = ("EmployeeNo", "Name", "Surname", "DOB", "Department", "JoiningDate", "TerminationDate")
+    return {name: getattr(model, name) for name in fields}
 
 
 def validate_deduction(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("CDAS deduction response is not an object")
     try:
-        return CdasDeductionRecord.model_validate(payload).model_dump(mode="json", exclude_none=False)
+        CdasDeductionRecord.model_validate(payload)
     except ValidationError as exc:
         raise ValueError("CDAS deduction response does not match the documented contract") from exc
+    return dict(payload)
 
 
 def validate_deductions(payload: Any) -> list[dict[str, Any]]:
@@ -161,7 +166,10 @@ def validate_deductions(payload: Any) -> list[dict[str, Any]]:
 
 
 def validate_document(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("CDAS document response is not an object")
     try:
-        return CdasDocumentRecord.model_validate(payload).model_dump(mode="json", exclude_none=False)
+        CdasDocumentRecord.model_validate(payload)
     except ValidationError as exc:
         raise ValueError("CDAS document response does not match the documented contract") from exc
+    return dict(payload)
