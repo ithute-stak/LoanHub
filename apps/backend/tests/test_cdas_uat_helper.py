@@ -35,6 +35,20 @@ def test_cdas_uat_helper_does_not_embed_provider_credentials() -> None:
     assert "CDAS provider credentials are NOT stored by this script." in source
 
 
+def test_cdas_uat_start_is_one_command_with_preflight_and_readiness_wait() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert "start_uat()" in source
+    assert "require_command openssl" in source
+    assert "require_command curl" in source
+    assert "require_docker" in source
+    assert "wait_for_backend" in source
+    assert "for attempt in $(seq 1 60)" in source
+    assert "seed_uat" in source
+    assert "status_uat" in source
+    assert "start) start_uat ;;" in source
+
+
 def test_cdas_uat_shutdown_preserves_volumes() -> None:
     source = HELPER.read_text(encoding="utf-8")
 
@@ -49,5 +63,6 @@ def test_uat_runbook_keeps_mutations_after_read_acceptance() -> None:
     read_gate = source.index("## Gate C: employee verification")
     mutation_gate = source.index("## Gate G: controlled deduction lifecycle")
     assert read_gate < mutation_gate
+    assert "bash scripts/cdas-uat-local.sh start" in source
     assert "must not automatically replay that write" in source
     assert "PR #78 must remain unmerged" in source
