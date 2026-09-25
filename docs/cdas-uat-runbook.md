@@ -28,6 +28,37 @@ git status
 
 Do not continue if the working tree contains unexpected source changes.
 
+## Quick start
+
+The repository includes a safe local helper that creates an isolated UAT environment without storing CDAS provider credentials and never starts the maintenance worker.
+
+From the repository root:
+
+```bash
+bash scripts/cdas-uat-local.sh init
+bash scripts/cdas-uat-local.sh up
+bash scripts/cdas-uat-local.sh seed
+bash scripts/cdas-uat-local.sh status
+```
+
+Expected local URLs:
+
+- LoanHub frontend: `http://localhost:13000`
+- LoanHub API: `http://localhost:18000/api/v1`
+- backend readiness: `http://localhost:18000/health/ready`
+
+To inspect recent application logs:
+
+```bash
+bash scripts/cdas-uat-local.sh logs
+```
+
+To stop the isolated UAT stack while preserving its database and Redis volumes:
+
+```bash
+bash scripts/cdas-uat-local.sh down
+```
+
 ## Safe local stack
 
 The repository root `compose.yaml` has production-oriented defaults, so CDAS UAT must override them and should start only:
@@ -40,13 +71,20 @@ The repository root `compose.yaml` has production-oriented defaults, so CDAS UAT
 
 Do not start the `maintenance` service for this acceptance run.
 
-Recommended local URLs:
+The helper uses the dedicated Compose project name `loanhub-cdas-uat` and the database `loanhub_cdas_uat` so its database and Redis volumes are isolated from other LoanHub stacks.
 
-- LoanHub frontend: `http://localhost:13000`
-- LoanHub API: `http://localhost:18000/api/v1`
-- backend readiness: `http://localhost:18000/health/ready`
+The generated `.env.cdas-uat` file is local-only and ignored by Git. The helper creates random local database/application secrets, preserves existing JWT keys when present, and does not write the CDAS API username or password into the file.
 
-Use a dedicated Compose project name such as `loanhub-cdas-uat` so its database and Redis volumes are isolated from other LoanHub stacks.
+## Local sandbox login
+
+After `seed` completes, open `http://localhost:13000` and use the repository's sandbox-only account configured by the UAT helper:
+
+- Phone: `12345678`
+- Password: `1234567890`
+
+Use the Company Owner role for management-only CDAS configuration and write-operation screens.
+
+These are local sandbox credentials only; they are not production LoanHub credentials.
 
 ## CDAS configuration
 
