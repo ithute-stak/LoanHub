@@ -28,6 +28,7 @@ type EmailOtpStatus = {
   contract_id: string;
   borrower_name: string;
   masked_email: string;
+  recipient_email_required: boolean;
   email_transport_ready: boolean;
   pending: boolean;
   expires_at: string | null;
@@ -66,6 +67,7 @@ export default function ContractsPage() {
   const [witnessName, setWitnessName] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [otpStatus, setOtpStatus] = useState<EmailOtpStatus | null>(null);
+  const [otpRecipientEmail, setOtpRecipientEmail] = useState("");
 
   const load = useCallback(async (preferredContractId?: string) => {
     setLoading((current) => current || contracts.length === 0);
@@ -100,6 +102,7 @@ export default function ContractsPage() {
     setSignatureMethod("wet_ink");
     setOtpCode("");
     setOtpStatus(null);
+    setOtpRecipientEmail(borrower.email ?? "");
   }
 
   async function refreshOtpStatus(contract: LoanContract) {
@@ -153,13 +156,23 @@ export default function ContractsPage() {
 
   async function requestEmailOtp() {
     if (!selected || selected.borrower_signed_at) return;
+    const recipientEmail = otpRecipientEmail.trim().toLowerCase();
+    const emailRequired = Boolean(otpStatus?.recipient_email_required && !otpStatus.pending);
+    if (emailRequired && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      toast.warning("Enter a valid borrower email address.");
+      return;
+    }
     setWorking(`otp-request:${selected.id}`);
     try {
-      const response = await api.post<EmailOtpRequest>(`/contract-signing/contracts/${selected.id}/email-otp/request`);
+      const response = await api.post<EmailOtpRequest>(
+        `/contract-signing/contracts/${selected.id}/email-otp/request`,
+        emailRequired ? { recipient_email: recipientEmail } : {},
+      );
       setOtpStatus({
         contract_id: response.data.contract_id,
         borrower_name: borrowerDetails(selected).name,
         masked_email: response.data.masked_email,
+        recipient_email_required: false,
         email_transport_ready: true,
         pending: true,
         expires_at: response.data.expires_at,
@@ -312,6 +325,7 @@ export default function ContractsPage() {
                       <LoadingButton type="button" variant="outline" loading={working === `otp-request:${selected.id}`} onClick={() => void requestEmailOtp()}>{otpStatus?.pending ? "Send new code" : "Send signing code"}</LoadingButton>
                     </div>
                     {otpStatus && !otpStatus.email_transport_ready ? <Alert variant="destructive"><AlertTitle>Email delivery is not configured</AlertTitle><AlertDescription>Configure the company Email integration or the production SMTP environment before using Email + OTP.</AlertDescription></Alert> : null}
+                    {otpStatus?.recipient_email_required && !otpStatus.pending ? <div className="space-y-2"><Label>Borrower email</Label><Input type="email" autoComplete="email" value={otpRecipientEmail} onChange={(event) => setOtpRecipientEmail(event.target.value)} placeholder="borrower@example.com" /><p className="text-xs leading-5 text-muted-foreground">LoanHub could not find an email on the client profile or contract. Confirm the address with the borrower and enter it for this signing request.</p></div> : null}
                     {otpStatus?.pending ? <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-2"><Label>Six-digit code</Label><Input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otpCode} onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" /><p className="text-xs text-muted-foreground">{otpStatus.attempts_remaining} attempt(s) remaining{otpStatus.expires_at ? ` · expires ${formatDate(otpStatus.expires_at)}` : ""}</p></div><LoadingButton type="button" loading={working === `otp-verify:${selected.id}`} onClick={() => void verifyEmailOtp()}>Verify & sign</LoadingButton></div> : null}
                   </div>
                 ) : (

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import smtplib
 import ssl
@@ -28,6 +29,7 @@ RECORD_TYPE = "email_otp_contract_signature"
 OTP_TTL_MINUTES = 10
 MAX_ATTEMPTS = 5
 RESEND_COOLDOWN_SECONDS = 60
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dataclass(frozen=True)
@@ -62,25 +64,50 @@ def mask_email(value: str) -> str:
     return f"{visible}{'*' * max(3, len(local) - 1)}@{domain}"
 
 
-def _borrower_identity(db: Session, contract: LoanContract) -> tuple[str, str]:
+def _normalise_email(value: Any) -> str | None:
+    email = str(value or "").strip().lower()
+    if not email or not _EMAIL_PATTERN.fullmatch(email):
+        return None
+    return email
+
+
+def _borrower_contact(db: Session, contract: LoanContract) -> tuple[str, str | None]:
     snapshot = contract.terms_snapshot if isinstance(contract.terms_snapshot, dict) else {}
     borrower_snapshot = snapshot.get("borrower") if isinstance(snapshot.get("borrower"), dict) else {}
     name = str((borrower_snapshot or {}).get("name") or "Borrower").strip() or "Borrower"
-    email = str((borrower_snapshot or {}).get("email") or "").strip().lower()
+    snapshot_email = _normalise_email((borrower_snapshot or {}).get("email"))
 
-    if not email:
-        borrower = db.get(Borrower, contract.borrower_id)
-        user = db.get(User, borrower.user_id) if borrower else None
-        email = str(user.email or "").strip().lower() if user else ""
-        if user and user.person and getattr(user.person, "full_name", None):
-            name = str(user.person.full_name).strip() or name
+    borrower = db.get(Borrower, contract.borrower_id)
+    user = db.get(User, borrower.user_id) if borrower else None
+    live_email = _normalise_email(user.email) if user else None
+    if user and user.person and getattr(user.person, "full_name", None):
+        name = str(user.person.full_name).strip() or name
 
-    if not email or "@" not in email:
+    # Prefer the current borrower profile so corrected contact data is used for
+    # delivery. The immutable contract snapshot remains a safe fallback for
+    # older contracts whose borrower profile cannot be loaded.
+    return name, live_email or snapshot_email
+
+
+def _recipient_for_request(
+    db: Session,
+    contract: LoanContract,
+    supplied_email: str | None,
+) -> tuple[str, str, str]:
+    borrower_name, borrower_email = _borrower_contact(db, contract)
+    if borrower_email:
+        return borrower_name, borrower_email, "borrower_profile"
+
+    fallback = _normalise_email(supplied_email)
+    if not fallback:
         raise HTTPException(
             status_code=409,
-            detail="The borrower must have a valid email address before Email + OTP signing can be used.",
+            detail=(
+                "No valid borrower email was found. Enter the borrower email address "
+                "before sending the Email + OTP signing code."
+            ),
         )
-    return name, email
+    return borrower_name, fallback, "operator_supplied"
 
 
 def _email_configuration(db: Session, company_id: Any) -> EmailTransport | None:
@@ -232,18 +259,24 @@ def _pending_session(db: Session, contract: LoanContract, *, lock: bool = False)
 
 
 def signing_status(db: Session, contract: LoanContract) -> dict[str, Any]:
-    name, email = _borrower_identity(db, contract)
+    name, email = _borrower_contact(db, contract)
     session = _pending_session(db, contract)
     now = _utcnow_naive()
     pending = bool(session and session.due_at and session.due_at > now)
+    session_data = dict(session.data or {}) if pending and session else {}
+    masked_email = str(session_data.get("masked_email") or "")
+    if not masked_email and email:
+        masked_email = mask_email(email)
+
     return {
         "contract_id": str(contract.id),
         "borrower_name": name,
-        "masked_email": mask_email(email),
+        "masked_email": masked_email,
+        "recipient_email_required": not bool(email) and not pending,
         "email_transport_ready": email_transport_ready(db, contract.company_id),
         "pending": pending,
         "expires_at": session.due_at.isoformat() + "Z" if pending and session and session.due_at else None,
-        "attempts_remaining": max(0, MAX_ATTEMPTS - int((session.data or {}).get("attempts", 0))) if pending and session else MAX_ATTEMPTS,
+        "attempts_remaining": max(0, MAX_ATTEMPTS - int(session_data.get("attempts", 0))) if pending else MAX_ATTEMPTS,
     }
 
 
@@ -252,13 +285,14 @@ def request_signing_code(
     *,
     contract: LoanContract,
     requested_by_user_id: Any,
+    recipient_email: str | None = None,
 ) -> dict[str, Any]:
     if contract.locked_at or contract.status == "signed":
         raise HTTPException(status_code=409, detail="The signed contract is locked.")
     if contract.borrower_signed_at:
         raise HTTPException(status_code=409, detail="The borrower has already signed this contract.")
 
-    borrower_name, recipient = _borrower_identity(db, contract)
+    borrower_name, recipient, recipient_source = _recipient_for_request(db, contract, recipient_email)
     transport = _email_configuration(db, contract.company_id)
     if transport is None:
         raise HTTPException(
@@ -309,6 +343,7 @@ def request_signing_code(
             "attempts": 0,
             "masked_email": mask_email(recipient),
             "email_hash": hashlib.sha256(recipient.encode("utf-8")).hexdigest(),
+            "recipient_source": recipient_source,
             "requested_at": now.isoformat() + "Z",
             "expires_at": expires_at.isoformat() + "Z",
             "requested_by_user_id": str(requested_by_user_id),
@@ -386,6 +421,26 @@ def verify_signing_code(
         raise HTTPException(status_code=410, detail="The signing code has expired. Request a new code.")
 
     data = dict(record.data or {})
+    challenge_contract_hash = str(data.get("contract_hash") or "")
+    current_contract_hash = str(contract.contract_hash or "")
+    if (
+        not challenge_contract_hash
+        or not current_contract_hash
+        or not hmac.compare_digest(challenge_contract_hash, current_contract_hash)
+    ):
+        record.status = "superseded"
+        record.is_archived = True
+        data.pop("otp_digest", None)
+        data["superseded_at"] = now.isoformat() + "Z"
+        data["superseded_reason"] = "contract_hash_changed"
+        record.data = data
+        db.add(record)
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="The contract changed after this signing code was sent. Review the current PDF and request a new code.",
+        )
+
     attempts = int(data.get("attempts", 0))
     if attempts >= MAX_ATTEMPTS:
         record.status = "locked"
@@ -413,7 +468,15 @@ def verify_signing_code(
             detail=f"The signing code is incorrect. {MAX_ATTEMPTS - attempts} attempt(s) remaining.",
         )
 
-    borrower_name, recipient = _borrower_identity(db, contract)
+    borrower_name, _ = _borrower_contact(db, contract)
+    verified_email_hash = str(data.get("email_hash") or "")
+    masked_email = str(data.get("masked_email") or "***")
+    if not verified_email_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="The signing challenge is missing its email evidence. Request a new signing code.",
+        )
+
     contract.borrower_signature_name = borrower_name
     contract.borrower_signature_method = "email_otp"
     contract.borrower_signed_at = datetime.now(timezone.utc)
@@ -424,7 +487,7 @@ def verify_signing_code(
     data["verified_at"] = now.isoformat() + "Z"
     data["verified_by_user_id"] = str(verified_by_user_id)
     data["signature_method"] = "email_otp"
-    data["verified_email_hash"] = hashlib.sha256(recipient.encode("utf-8")).hexdigest()
+    data["verified_email_hash"] = verified_email_hash
     data["evidence_hash"] = hashlib.sha256(
         f"{contract.id}:{contract.contract_hash}:{record.reference}:{data['verified_at']}".encode("utf-8")
     ).hexdigest()
@@ -448,6 +511,6 @@ def verify_signing_code(
         "contract_status": contract.status,
         "borrower_signed_at": contract.borrower_signed_at.isoformat() if contract.borrower_signed_at else None,
         "signature_method": "email_otp",
-        "masked_email": mask_email(recipient),
+        "masked_email": masked_email,
         "evidence_reference": record.reference,
     }
