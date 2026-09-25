@@ -36,6 +36,12 @@ CONTRACT_SIGNING_ROLES = LENDING_ROLES | COMPANY_MANAGEMENT_ROLES | {
 }
 
 
+class EmailOtpRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipient_email: str | None = Field(default=None, max_length=320)
+
+
 class EmailOtpVerifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -80,6 +86,7 @@ def email_otp_status(
 @router.post("/contracts/{contract_id}/email-otp/request")
 def request_email_otp(
     contract_id: UUID,
+    payload: EmailOtpRequest | None = None,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
@@ -89,6 +96,7 @@ def request_email_otp(
         db,
         contract=contract,
         requested_by_user_id=context.user.id,
+        recipient_email=(payload.recipient_email if payload else None),
     )
 
 
