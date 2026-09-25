@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Landmark, ShieldCheck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -52,6 +53,32 @@ function emptyBankAccount(borrowerName: string): BankAccountInput {
   };
 }
 
+function BankField({
+  label,
+  required = false,
+  hint,
+  children,
+  className = "",
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`rounded-2xl border border-border/60 bg-background p-3.5 shadow-sm transition-all duration-200 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 ${className}`}>
+      <div className="mb-2.5 space-y-1">
+        <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
+          {label}{required ? <span className="ml-1 text-destructive">*</span> : null}
+        </Label>
+        {hint ? <p className="text-[11px] leading-4 text-muted-foreground">{hint}</p> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function ClientBankingRegistrationStep({
   value,
   borrowerName,
@@ -78,124 +105,153 @@ export function ClientBankingRegistrationStep({
 
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border bg-muted/15 p-4 sm:p-5">
-        <div className="flex items-start gap-3">
-          <Checkbox
-            id="capture-borrower-banking"
-            checked={enabled}
-            onCheckedChange={(checked) => onChange(checked ? emptyBankAccount(borrowerName) : null)}
-          />
-          <div className="min-w-0">
-            <Label htmlFor="capture-borrower-banking" className="cursor-pointer font-black">
-              Capture banking details now
-            </Label>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              Banking details can be captured during registration or added later from the borrower profile.
-            </p>
-          </div>
-        </div>
-      </div>
+      <label
+        htmlFor="capture-borrower-banking"
+        className={`flex cursor-pointer items-start gap-4 rounded-3xl border p-4 transition-all duration-200 sm:p-5 ${
+          enabled
+            ? "border-primary/30 bg-gradient-to-br from-primary/10 via-background to-emerald-500/5 shadow-sm"
+            : "border-border/60 bg-muted/20 hover:border-primary/25 hover:bg-muted/30"
+        }`}
+      >
+        <span className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${enabled ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground shadow-sm"}`}>
+          <Landmark className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-black">Capture banking details now</span>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${enabled ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+              {enabled ? "Enabled" : "Optional"}
+            </span>
+          </span>
+          <span className="mt-1 block text-sm leading-5 text-muted-foreground">
+            Record the borrower’s payout or salary account now, or add it later from the borrower profile.
+          </span>
+        </span>
+        <Checkbox
+          id="capture-borrower-banking"
+          className="mt-2"
+          checked={enabled}
+          onCheckedChange={(checked) => onChange(checked ? emptyBankAccount(borrowerName) : null)}
+        />
+      </label>
 
       {value ? (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div className="space-y-2">
-              <Label>Account holder <span className="text-destructive">*</span></Label>
-              <Input
-                className="h-11"
-                autoFocus
-                autoComplete="name"
-                value={value.account_holder}
-                onChange={(event) => update("account_holder", event.target.value)}
-              />
+          <div className="rounded-3xl border border-border/60 bg-gradient-to-b from-card to-muted/10 p-4 shadow-sm sm:p-5">
+            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-base font-black tracking-tight">Primary bank account</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">Use the account exactly as it appears on the borrower’s bank records.</p>
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Secure banking profile</p>
             </div>
-            <div className="space-y-2">
-              <Label>Bank <span className="text-destructive">*</span></Label>
-              <Select value={value.bank_name || undefined} onValueChange={selectBank}>
-                <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select bank" /></SelectTrigger>
-                <SelectContent>
-                  {BANK_OPTIONS.map((bank) => (
-                    <SelectItem key={bank.value} value={bank.value}>{bank.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <BankField label="Bank" required hint="Select the borrower’s bank first.">
+                <Select value={value.bank_name || undefined} onValueChange={selectBank}>
+                  <SelectTrigger className="h-12 w-full rounded-xl bg-background shadow-sm"><SelectValue placeholder="Select bank" /></SelectTrigger>
+                  <SelectContent>
+                    {BANK_OPTIONS.map((bank) => (
+                      <SelectItem key={bank.value} value={bank.value}>{bank.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </BankField>
+
+              <BankField
+                label="Account number"
+                required
+                hint={selectedBank ? `Expected prefix: ${selectedBank.prefixes}` : "Select the bank to see the expected prefix."}
+                className="md:col-span-1 xl:col-span-2"
+              >
+                <Input
+                  className="h-12 rounded-xl bg-background px-4 font-mono text-base font-bold tracking-[0.12em] tabular-nums shadow-sm sm:text-lg"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="bank-account-number-help"
+                  value={formatAccountNumber(value.account_number)}
+                  placeholder={selectedBank ? `e.g. ${selectedBank.prefixes === "6" ? "6000 1234 5678" : `${selectedBank.prefixes.split(" ")[0]}00 1234 5678`}` : "0000 0000 0000"}
+                  onChange={(event) => {
+                    const digits = accountDigits(event.target.value);
+                    update("account_number", digits || null);
+                  }}
+                />
+                <p id="bank-account-number-help" className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                  Spaces are added automatically while typing. Only normalized digits are submitted to LoanHub.
+                </p>
+              </BankField>
+
+              <BankField label="Account holder" required hint="Name registered against this account.">
+                <Input
+                  className="h-12 rounded-xl bg-background shadow-sm"
+                  autoFocus
+                  autoComplete="name"
+                  value={value.account_holder}
+                  onChange={(event) => update("account_holder", event.target.value)}
+                />
+              </BankField>
+
+              <BankField label="Account type">
+                <Select value={value.account_type || "savings"} onValueChange={(nextValue) => update("account_type", nextValue)}>
+                  <SelectTrigger className="h-12 w-full rounded-xl bg-background shadow-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="savings">Savings</SelectItem>
+                    <SelectItem value="current">Current</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                  </SelectContent>
+                </Select>
+              </BankField>
+
+              <BankField label="Currency">
+                <Select value={value.currency || "LSL"} onValueChange={(nextValue) => update("currency", nextValue)}>
+                  <SelectTrigger className="h-12 w-full rounded-xl bg-background shadow-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LSL">LSL — Lesotho loti</SelectItem>
+                    <SelectItem value="ZAR">ZAR — South African rand</SelectItem>
+                  </SelectContent>
+                </Select>
+              </BankField>
             </div>
-            <div className="space-y-2">
-              <Label>Account number <span className="text-destructive">*</span></Label>
-              <Input
-                className="h-11 font-mono text-[15px] tracking-wider tabular-nums"
-                inputMode="numeric"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="bank-account-number-help"
-                value={formatAccountNumber(value.account_number)}
-                placeholder={selectedBank ? `Starts with ${selectedBank.prefixes}` : "Select the bank first"}
-                onChange={(event) => {
-                  const digits = accountDigits(event.target.value);
-                  update("account_number", digits || null);
-                }}
-              />
-              <p id="bank-account-number-help" className="text-xs leading-5 text-muted-foreground">
-                Digits are spaced automatically for easier reading, for example 6000 1234 5678. LoanHub stores the normalized account number encrypted at rest.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Account type</Label>
-              <Select value={value.account_type || "savings"} onValueChange={(nextValue) => update("account_type", nextValue)}>
-                <SelectTrigger className="h-11 w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="savings">Savings</SelectItem>
-                  <SelectItem value="current">Current</SelectItem>
-                  <SelectItem value="cheque">Cheque</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Currency</Label>
-              <Select value={value.currency || "LSL"} onValueChange={(nextValue) => update("currency", nextValue)}>
-                <SelectTrigger className="h-11 w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="LSL">LSL — Lesotho loti</SelectItem>
-                  <SelectItem value="ZAR">ZAR — South African rand</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-background px-4 py-3 md:col-span-2 xl:col-span-2">
+
+            <label className={`mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition ${value.salary_account ? "border-primary/30 bg-primary/5" : "border-border/60 bg-background hover:border-primary/25"}`}>
               <Checkbox
                 aria-label="Salary or primary income account"
+                className="mt-0.5"
                 checked={value.salary_account}
                 onCheckedChange={(checked) => update("salary_account", Boolean(checked))}
               />
-              <span>
-                <span className="block text-sm font-bold">Salary / primary income account (optional)</span>
-                <span className="block text-xs text-muted-foreground">Mark this when the borrower normally receives salary or primary income into this account.</span>
+              <span className="min-w-0">
+                <span className="block text-sm font-black">Salary / primary income account</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">Mark this when the borrower normally receives salary or primary income into this account.</span>
               </span>
             </label>
           </div>
 
           {selectedBank ? (
-            <div className="rounded-2xl border bg-muted/15 p-4 text-sm">
-              <p className="font-black">LoanHub routing details</p>
-              <p className="mt-1 text-muted-foreground">
-                Maseru Central · branch code {selectedBank.branchCode} · accepted account prefix {selectedBank.prefixes}.
-              </p>
+            <div className="grid gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm sm:grid-cols-3">
+              <div><p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Routing branch</p><p className="mt-1 font-black">Maseru Central</p></div>
+              <div><p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Branch code</p><p className="mt-1 font-mono font-black tabular-nums">{selectedBank.branchCode}</p></div>
+              <div><p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Account prefix</p><p className="mt-1 font-mono font-black tabular-nums">{selectedBank.prefixes}</p></div>
             </div>
           ) : null}
 
-          <Alert>
+          <Alert className="rounded-2xl border-emerald-500/20 bg-emerald-500/5">
             <ShieldCheck className="h-4 w-4" />
             <AlertTitle>Banking data protection</AlertTitle>
             <AlertDescription>
-              LoanHub stores the bank account number encrypted and exposes only masked/last-four details in normal client views. Registration captures the details as unverified; formal verification remains a separate lending/KYC control.
+              LoanHub stores the full account number encrypted and shows only masked or last-four details in normal client views. New banking details remain unverified until the formal KYC/verification step.
             </AlertDescription>
           </Alert>
         </>
       ) : (
-        <div className="flex min-h-36 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-6 text-center">
-          <Landmark className="mb-3 h-8 w-8 text-muted-foreground" />
+        <div className="flex min-h-40 flex-col items-center justify-center rounded-3xl border border-dashed border-border/70 bg-muted/10 p-6 text-center">
+          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+            <Landmark className="h-6 w-6" />
+          </span>
           <p className="font-black">No banking details captured</p>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            Continue without banking details, or enable banking capture above if the borrower has the information available.
+          <p className="mt-1 max-w-lg text-sm leading-5 text-muted-foreground">
+            The borrower can still be registered. Enable banking capture above when the account details are available.
           </p>
         </div>
       )}
