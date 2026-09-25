@@ -47,10 +47,10 @@ class CdasOwnDeductionLookupRequest(CdasEmployeeLookupRequest):
 
 
 class CdasDeductionLifecycleRequest(BaseModel):
-    request_type: int = Field(ge=1, le=10)
+    request_type: Literal[1, 3, 4, 6, 10]
     deduction_id: int = Field(ge=0)
     employee_no: str = Field(min_length=1, max_length=100)
-    loan_policy: int = Field(ge=0)
+    loan_policy: Literal[1, 2]
     item_code: str = Field(min_length=1, max_length=100)
     deduction_amount: float = Field(ge=0)
     total_installment: int = Field(ge=0)
