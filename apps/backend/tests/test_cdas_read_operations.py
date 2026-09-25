@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -33,7 +34,7 @@ async def test_affordability_uses_token_header_and_documented_contract() -> None
 
     affordability = await make_client(handler).check_affordability(" EMP-300 ")
 
-    assert affordability == 1875.5
+    assert affordability == Decimal("1875.5")
     assert observed == {
         "path": "/api/employee/check-affordability",
         "token": "token-123",
