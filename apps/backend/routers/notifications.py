@@ -11,7 +11,6 @@ from database.models.notification import Notification
 from database.models.user import User
 from database.schemas.notification import NotificationListRead, NotificationRead, NotificationUnreadCountRead
 from database.session import get_db
-from services.cdas_booking_monitor import generate_due_cdas_booking_alerts
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -48,7 +47,6 @@ def list_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    generate_due_cdas_booking_alerts(db, current_user)
     query = db.query(Notification).filter(Notification.user_id == current_user.id)
     if not include_archived:
         query = query.filter(Notification.is_archived.is_(False))
@@ -69,7 +67,6 @@ def list_notifications(
 
 @router.get("/unread-count", response_model=NotificationUnreadCountRead)
 def unread_count(include_routine: bool = False, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    generate_due_cdas_booking_alerts(db, current_user)
     query = db.query(func.count(Notification.id)).filter(Notification.user_id == current_user.id, Notification.is_read.is_(False), Notification.is_archived.is_(False))
     if not include_routine:
         query = query.filter(attention_notification_filter())
