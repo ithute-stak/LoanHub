@@ -181,7 +181,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                 <KeyRound className="h-5 w-5" /> CDAS authentication
                             </CardTitle>
                             <CardDescription className="mt-2 max-w-3xl">
-                                Authentication-only reintegration baseline. This screen stores encrypted company credentials and verifies POST /api/security/login only. No employee, affordability, deduction, document, booking, intelligence or background CDAS operation is enabled on this branch.
+                                Phase 1 remains the secure provider-login foundation. This screen stores encrypted company credentials and verifies POST /api/security/login. Phase 2 adds only deliberate employee verification in the CDAS workspace; affordability, deduction, document, booking, intelligence and background CDAS operations remain disabled.
                             </CardDescription>
                         </div>
                         <Badge variant={configuration?.enabled ? "default" : "secondary"}>
@@ -298,7 +298,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
             <Card>
                 <CardHeader>
                     <CardTitle className="text-base">Reintegration status</CardTitle>
-                    <CardDescription>Only the provider login foundation is retained.</CardDescription>
+                    <CardDescription>Authentication is the foundation used by the manual Phase 2 employee lookup.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
@@ -315,9 +315,9 @@ export function CompanyCdasSettings({ canManage }: Props) {
                     </div>
                     <Alert>
                         {configuration?.last_test_status === "connected" ? <CircleCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
-                        <AlertTitle>Authentication-only branch</AlertTitle>
+                        <AlertTitle>Phase 1 authentication</AlertTitle>
                         <AlertDescription>
-                            A successful test proves only that LoanHub can obtain a CDAS authorization token. No other CDAS provider action is available yet.
+                            A successful test proves that LoanHub can obtain a CDAS authorization token. Employee verification is a separate, manual Phase 2 action; no affordability or deduction operation is triggered by this test.
                         </AlertDescription>
                     </Alert>
                 </CardContent>
