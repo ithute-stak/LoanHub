@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -57,12 +58,14 @@ class CdasClient:
         password: str | None = None,
         timeout_seconds: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        request_guard: Callable[[], None] | None = None,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.username = username
         self.password = password
         self.timeout_seconds = timeout_seconds or settings.CDAS_TIMEOUT_SECONDS
         self.transport = transport
+        self.request_guard = request_guard
         self._token: _TokenState | None = None
         self._token_lock = asyncio.Lock()
         self._session_cookies = httpx.Cookies()
@@ -70,6 +73,14 @@ class CdasClient:
     def _require_configuration(self) -> None:
         if not self.base_url or not self.username or not self.password:
             raise CdasConfigurationError(503, "CDAS authentication credentials are incomplete")
+
+    def _reserve_request(self) -> None:
+        if self.request_guard is not None:
+            self.request_guard()
+
+    def _invalidate_session(self) -> None:
+        self._token = None
+        self._session_cookies = httpx.Cookies()
 
     @staticmethod
     def _now() -> datetime:
@@ -91,7 +102,11 @@ class CdasClient:
         try:
             return response.json()
         except ValueError:
-            return response.text.strip()
+            text = response.text.strip()
+            try:
+                return float(text)
+            except ValueError:
+                return text
 
     @staticmethod
     def _message(payload: Any, fallback: str) -> str:
@@ -125,6 +140,7 @@ class CdasClient:
                 cookies=httpx.Cookies(),
             ) as client:
                 try:
+                    self._reserve_request()
                     response = await client.post(
                         self.LOGIN_PATH,
                         json={"Username": self.username, "Password": self.password},
@@ -173,6 +189,7 @@ class CdasClient:
             cookies=self._session_cookies,
         ) as client:
             try:
+                self._reserve_request()
                 response = await client.post(
                     path,
                     json=payload,
@@ -182,14 +199,18 @@ class CdasClient:
             except httpx.RequestError as exc:
                 raise CdasError(503, "CDAS service is unavailable") from exc
 
-        if response.status_code in self._SESSION_EXPIRED_STATUS_CODES and retry_expired_session:
-            await self.authenticate(force=True)
-            return await self._post_authenticated(
-                path,
-                payload=payload,
-                header_name=header_name,
-                retry_expired_session=False,
-            )
+        if response.status_code in self._SESSION_EXPIRED_STATUS_CODES:
+            if retry_expired_session:
+                await self.authenticate(force=True)
+                return await self._post_authenticated(
+                    path,
+                    payload=payload,
+                    header_name=header_name,
+                    retry_expired_session=False,
+                )
+            # A mutation must never be replayed automatically. Clear local session
+            # state so the next explicit user action starts with a fresh login.
+            self._invalidate_session()
 
         response_payload = self._decode_response(response)
         if response.status_code >= 400:
@@ -201,6 +222,8 @@ class CdasClient:
                 ),
                 response_payload,
             )
+        if self._token is not None:
+            self._token.last_used_at = self._now()
         return response_payload
 
     async def get_employee_details(self, employee_no: str) -> dict[str, str | None]:
@@ -273,6 +296,7 @@ class CdasClient:
             self.ADD_UPDATE_DEDUCTION_PATH,
             payload=request_payload,
             header_name="Token",
+            retry_expired_session=False,
         )
         if not isinstance(payload, dict):
             raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload)
@@ -298,6 +322,7 @@ class CdasClient:
             self.MODIFY_ACTIVE_DEDUCTION_PATH,
             payload=request_payload,
             header_name="Token",
+            retry_expired_session=False,
         )
         if not isinstance(payload, dict):
             raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload)
@@ -308,6 +333,7 @@ class CdasClient:
             self.SETTLED_DEDUCTION_PATH,
             payload=request_payload,
             header_name="Token",
+            retry_expired_session=False,
         )
         if not isinstance(payload, dict):
             raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload)
