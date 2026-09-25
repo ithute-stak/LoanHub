@@ -16,6 +16,11 @@ from core.access_control import (
 from database.models.audit_log import AuditLog
 from database.session import get_db
 from integrations.cdas import CdasError
+from integrations.cdas_contracts import (
+    CdasLifecyclePayload,
+    CdasModifyActivePayload,
+    CdasSettlementPayload,
+)
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -46,37 +51,15 @@ class CdasOwnDeductionLookupRequest(CdasEmployeeLookupRequest):
     deduction_status: int = Field(ge=1, le=10)
 
 
-class CdasDeductionLifecycleRequest(BaseModel):
-    request_type: Literal[1, 3, 4, 6, 10]
-    deduction_id: int = Field(ge=0)
-    employee_no: str = Field(min_length=1, max_length=100)
-    loan_policy: Literal[1, 2]
-    item_code: str = Field(min_length=1, max_length=100)
-    deduction_amount: float = Field(ge=0)
-    total_installment: int = Field(ge=0)
-    principal_amount: float = Field(ge=0)
-    effective_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    reference_no: str = Field(min_length=1, max_length=200)
+class CdasDeductionLifecycleRequest(CdasLifecyclePayload):
     confirmed: bool = False
 
 
-class CdasModifyActiveDeductionRequest(BaseModel):
-    employee_no: str = Field(min_length=1, max_length=100)
-    item_code: str = Field(min_length=1, max_length=100)
-    total_installment: int = Field(gt=0)
-    deduction_amount: float = Field(gt=0)
-    principal_amount: float = Field(gt=0)
-    deduction_id: int = Field(ge=0)
-    effective_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+class CdasModifyActiveDeductionRequest(CdasModifyActivePayload):
     confirmed: bool = False
 
 
-class CdasSettleDeductionRequest(BaseModel):
-    item_code: str = Field(min_length=1, max_length=100)
-    deduction_id: int = Field(ge=0)
-    effective_date: str = Field(min_length=10, max_length=50)
-    employee_no: str = Field(min_length=1, max_length=100)
-    settlement_reason: int = Field(ge=1, le=4)
+class CdasSettleDeductionRequest(CdasSettlementPayload):
     confirmed: bool = False
 
 
@@ -316,18 +299,8 @@ async def change_cdas_deduction_lifecycle(
     _require_confirmed(payload.confirmed)
     assert context.company_id is not None
 
-    request_data = {
-        "RequestType": payload.request_type,
-        "DeductionID": payload.deduction_id,
-        "EmployeeNo": payload.employee_no.strip(),
-        "LoanPolicy": payload.loan_policy,
-        "ItemCode": payload.item_code.strip(),
-        "DeductionAmount": payload.deduction_amount,
-        "TotalInstallment": payload.total_installment,
-        "PrincipalAmount": payload.principal_amount,
-        "EffectiveMonth": payload.effective_month,
-        "ReferenceNo": payload.reference_no.strip(),
-    }
+    request_data = payload.provider_payload()
+    audit_data = payload.ledger_payload()
     try:
         client = get_company_cdas_client(db, context.company_id)
         result = await client.add_update_deduction(request_data)
@@ -336,7 +309,7 @@ async def change_cdas_deduction_lifecycle(
             db,
             context,
             action="cdas.deduction.lifecycle",
-            request_data=request_data,
+            request_data=audit_data,
             status="failed",
             provider_data={"code": exc.status_code, "message": exc.message},
         )
@@ -346,7 +319,7 @@ async def change_cdas_deduction_lifecycle(
         db,
         context,
         action="cdas.deduction.lifecycle",
-        request_data=request_data,
+        request_data=audit_data,
         status="success",
         provider_data=result,
     )
@@ -363,15 +336,8 @@ async def modify_active_cdas_deduction(
     _require_confirmed(payload.confirmed)
     assert context.company_id is not None
 
-    request_data = {
-        "EmployeeNo": payload.employee_no.strip(),
-        "ItemCode": payload.item_code.strip(),
-        "TotalInstallment": payload.total_installment,
-        "DeductionAmount": payload.deduction_amount,
-        "PrincipalAmount": payload.principal_amount,
-        "DeductionID": payload.deduction_id,
-        "EffectiveDate": payload.effective_date,
-    }
+    request_data = payload.provider_payload()
+    audit_data = payload.ledger_payload()
     try:
         client = get_company_cdas_client(db, context.company_id)
         result = await client.modify_active_deduction(request_data)
@@ -380,7 +346,7 @@ async def modify_active_cdas_deduction(
             db,
             context,
             action="cdas.deduction.modify_active",
-            request_data=request_data,
+            request_data=audit_data,
             status="failed",
             provider_data={"code": exc.status_code, "message": exc.message},
         )
@@ -390,7 +356,7 @@ async def modify_active_cdas_deduction(
         db,
         context,
         action="cdas.deduction.modify_active",
-        request_data=request_data,
+        request_data=audit_data,
         status="success",
         provider_data=result,
     )
@@ -407,13 +373,8 @@ async def settle_cdas_deduction(
     _require_confirmed(payload.confirmed)
     assert context.company_id is not None
 
-    request_data = {
-        "ItemCode": payload.item_code.strip(),
-        "DeductionID": payload.deduction_id,
-        "EffectiveDate": payload.effective_date.strip(),
-        "EmployeeNo": payload.employee_no.strip(),
-        "SettlementReason": payload.settlement_reason,
-    }
+    request_data = payload.provider_payload()
+    audit_data = payload.ledger_payload()
     try:
         client = get_company_cdas_client(db, context.company_id)
         result = await client.settle_deduction(request_data)
@@ -422,7 +383,7 @@ async def settle_cdas_deduction(
             db,
             context,
             action="cdas.deduction.settle",
-            request_data=request_data,
+            request_data=audit_data,
             status="failed",
             provider_data={"code": exc.status_code, "message": exc.message},
         )
@@ -432,7 +393,7 @@ async def settle_cdas_deduction(
         db,
         context,
         action="cdas.deduction.settle",
-        request_data=request_data,
+        request_data=audit_data,
         status="success",
         provider_data=result,
     )
