@@ -1,0 +1,86 @@
+name: Temporary OTP hardening patch
+
+on:
+  push:
+    branches:
+      - feat/contract-otp-email-fallback
+    paths:
+      - .github/workflows/tmp-otp-hardening-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/contract-otp-email-fallback
+
+      - name: Patch OTP contract binding and signing centre fallback
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          service_path = Path('apps/backend/services/contract_email_otp_service.py')
+          service = service_path.read_text()
+          service = replace_once(
+              service,
+              '''    data = dict(record.data or {})\n    attempts = int(data.get("attempts", 0))''',
+              '''    data = dict(record.data or {})\n    challenge_contract_hash = str(data.get("contract_hash") or "")\n    current_contract_hash = str(contract.contract_hash or "")\n    if (\n        not challenge_contract_hash\n        or not current_contract_hash\n        or not hmac.compare_digest(challenge_contract_hash, current_contract_hash)\n    ):\n        record.status = "superseded"\n        record.is_archived = True\n        data.pop("otp_digest", None)\n        data["superseded_at"] = now.isoformat() + "Z"\n        data["superseded_reason"] = "contract_hash_changed"\n        record.data = data\n        db.add(record)\n        db.commit()\n        raise HTTPException(\n            status_code=409,\n            detail="The contract changed after this signing code was sent. Review the current PDF and request a new code.",\n        )\n\n    attempts = int(data.get("attempts", 0))''',
+              'contract hash verification',
+          )
+          service_path.write_text(service)
+
+          page_path = Path('apps/frontend/app/(dashboard)/company/contracts/page.tsx')
+          page = page_path.read_text()
+          page = replace_once(
+              page,
+              '''  masked_email: string;\n  email_transport_ready: boolean;''',
+              '''  masked_email: string;\n  recipient_email_required: boolean;\n  email_transport_ready: boolean;''',
+              'status recipient field',
+          )
+          page = replace_once(
+              page,
+              '''  const [otpCode, setOtpCode] = useState("");\n  const [otpStatus, setOtpStatus] = useState<EmailOtpStatus | null>(null);''',
+              '''  const [otpCode, setOtpCode] = useState("");\n  const [otpStatus, setOtpStatus] = useState<EmailOtpStatus | null>(null);\n  const [otpRecipientEmail, setOtpRecipientEmail] = useState("");''',
+              'fallback email state',
+          )
+          page = replace_once(
+              page,
+              '''    setOtpCode("");\n    setOtpStatus(null);\n  }''',
+              '''    setOtpCode("");\n    setOtpStatus(null);\n    setOtpRecipientEmail(borrower.email ?? "");\n  }''',
+              'open contract fallback reset',
+          )
+
+          old_request = '''  async function requestEmailOtp() {\n    if (!selected || selected.borrower_signed_at) return;\n    setWorking(`otp-request:${selected.id}`);\n    try {\n      const response = await api.post<EmailOtpRequest>(`/contract-signing/contracts/${selected.id}/email-otp/request`);\n      setOtpStatus({\n        contract_id: response.data.contract_id,\n        borrower_name: borrowerDetails(selected).name,\n        masked_email: response.data.masked_email,\n        email_transport_ready: true,\n        pending: true,\n        expires_at: response.data.expires_at,\n        attempts_remaining: response.data.attempts_remaining,\n      });\n      toast.success("Signing code sent", {\n        description: `A one-time code was sent to ${response.data.masked_email}.`,\n      });\n    } catch (error: unknown) {\n      toast.error(getErrorMessage(error, "The signing code could not be sent."));\n    } finally {\n      setWorking(null);\n    }\n  }'''
+          new_request = '''  async function requestEmailOtp() {\n    if (!selected || selected.borrower_signed_at) return;\n    const recipientEmail = otpRecipientEmail.trim().toLowerCase();\n    const emailRequired = Boolean(otpStatus?.recipient_email_required && !otpStatus.pending);\n    if (emailRequired && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(recipientEmail)) {\n      toast.warning("Enter a valid borrower email address.");\n      return;\n    }\n    setWorking(`otp-request:${selected.id}`);\n    try {\n      const response = await api.post<EmailOtpRequest>(\n        `/contract-signing/contracts/${selected.id}/email-otp/request`,\n        emailRequired ? { recipient_email: recipientEmail } : {},\n      );\n      setOtpStatus({\n        contract_id: response.data.contract_id,\n        borrower_name: borrowerDetails(selected).name,\n        masked_email: response.data.masked_email,\n        recipient_email_required: false,\n        email_transport_ready: true,\n        pending: true,\n        expires_at: response.data.expires_at,\n        attempts_remaining: response.data.attempts_remaining,\n      });\n      toast.success("Signing code sent", {\n        description: `A one-time code was sent to ${response.data.masked_email}.`,\n      });\n    } catch (error: unknown) {\n      toast.error(getErrorMessage(error, "The signing code could not be sent."));\n    } finally {\n      setWorking(null);\n    }\n  }'''
+          page = replace_once(page, old_request, new_request, 'OTP request flow')
+
+          page = replace_once(
+              page,
+              '''                    {otpStatus && !otpStatus.email_transport_ready ? <Alert variant="destructive"><AlertTitle>Email delivery is not configured</AlertTitle><AlertDescription>Configure the company Email integration or the production SMTP environment before using Email + OTP.</AlertDescription></Alert> : null}\n                    {otpStatus?.pending ? <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-2"><Label>Six-digit code</Label>''',
+              '''                    {otpStatus && !otpStatus.email_transport_ready ? <Alert variant="destructive"><AlertTitle>Email delivery is not configured</AlertTitle><AlertDescription>Configure the company Email integration or the production SMTP environment before using Email + OTP.</AlertDescription></Alert> : null}\n                    {otpStatus?.recipient_email_required && !otpStatus.pending ? <div className="space-y-2"><Label>Borrower email</Label><Input type="email" autoComplete="email" value={otpRecipientEmail} onChange={(event) => setOtpRecipientEmail(event.target.value)} placeholder="borrower@example.com" /><p className="text-xs leading-5 text-muted-foreground">LoanHub could not find an email on the client profile or contract. Confirm the address with the borrower and enter it for this signing request.</p></div> : null}\n                    {otpStatus?.pending ? <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-2"><Label>Six-digit code</Label>''',
+              'OTP fallback input',
+          )
+          page_path.write_text(page)
+          PY
+
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-otp-hardening-patch.yml
+          git config user.name "LoanHub Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/backend/services/contract_email_otp_service.py apps/frontend/app/'(dashboard)'/company/contracts/page.tsx .github/workflows/tmp-otp-hardening-patch.yml
+          git diff --cached --check
+          git commit -m "fix(contracts): bind OTP to current contract and prompt for missing email"
+          git push origin HEAD:feat/contract-otp-email-fallback
