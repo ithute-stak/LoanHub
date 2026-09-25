@@ -1,0 +1,38 @@
+name: Temporary client banking validation patch
+
+on:
+  push:
+    branches:
+      - feat/client-registration-banking-step
+    paths:
+      - .github/workflows/tmp-client-banking-validation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/client-registration-banking-step
+
+      - name: Align registration with bank policy
+        shell: bash
+        run: |
+          python scripts/tmp_patch_client_banking_validation.py
+
+      - name: Commit patch and remove temporary helpers
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-client-banking-validation.yml
+          rm scripts/tmp_patch_client_banking_validation.py
+          git config user.name "LoanHub Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/frontend/app/'(dashboard)'/company/clients/page.tsx \
+            .github/workflows/tmp-client-banking-validation.yml \
+            scripts/tmp_patch_client_banking_validation.py
+          git diff --cached --check
+          git commit -m "fix(clients): validate assisted banking against bank policy"
+          git push origin HEAD:feat/client-registration-banking-step
