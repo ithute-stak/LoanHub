@@ -684,10 +684,25 @@ export default function CompanyClientsPage() {
     if (step === 3) {
       const bank = clientForm.bank_account;
       if (bank) {
-        const accountNumber = String(bank.account_number ?? "").replace(/\s+/g, "");
-        if (!bank.account_holder.trim()) errors.push("Enter the bank account holder.");
-        if (!bank.bank_name.trim()) errors.push("Enter the borrower’s bank name.");
-        if (accountNumber.length < 4) errors.push("Enter a valid bank account number.");
+        const accountNumber = String(bank.account_number ?? "").replace(/[\s/-]+/g, "");
+        const bankPrefixes: Record<string, string[]> = {
+          FNB: ["6"],
+          PB: ["10"],
+          STD: ["90"],
+          NB: ["11", "12"],
+        };
+        if (bank.account_holder.trim().length < 2) errors.push("Enter the bank account holder.");
+        if (!bank.bank_name.trim() || !bankPrefixes[bank.bank_name]) errors.push("Select a supported borrower bank.");
+        if (accountNumber.length < 4) {
+          errors.push("Enter a valid bank account number.");
+        } else if (!/^\d+$/.test(accountNumber)) {
+          errors.push("The bank account number must contain digits only.");
+        } else {
+          const prefixes = bankPrefixes[bank.bank_name] ?? [];
+          if (prefixes.length > 0 && !prefixes.some((prefix) => accountNumber.startsWith(prefix))) {
+            errors.push(`${bank.bank_name} account number must start with ${prefixes.join(" or ")}.`);
+          }
+        }
       }
     }
 
@@ -797,7 +812,7 @@ export default function CompanyClientsPage() {
             branch_code: optional(clientForm.bank_account.branch_code),
             account_type: String(clientForm.bank_account.account_type || "savings").trim().toLowerCase(),
             currency: String(clientForm.bank_account.currency || "LSL").trim().toUpperCase(),
-            account_number: optional(clientForm.bank_account.account_number)?.replace(/\s+/g, "") ?? null,
+            account_number: optional(clientForm.bank_account.account_number)?.replace(/[\s/-]+/g, "") ?? null,
             verification_status: "unverified" as const,
             verification_reference: null,
             tokenized_card_provider: null,
@@ -1487,7 +1502,7 @@ export default function CompanyClientsPage() {
                           <ReviewCard icon={Landmark} title="Banking">
                             <ReviewItem label="Bank" value={clientForm.bank_account?.bank_name || "Not supplied"} />
                             <ReviewItem label="Account holder" value={clientForm.bank_account?.account_holder || "Not supplied"} />
-                            <ReviewItem label="Account" value={clientForm.bank_account?.account_number ? `••••${String(clientForm.bank_account.account_number).replace(/\s+/g, "").slice(-4)}` : "Not supplied"} />
+                            <ReviewItem label="Account" value={clientForm.bank_account?.account_number ? `••••${String(clientForm.bank_account.account_number).replace(/[\s/-]+/g, "").slice(-4)}` : "Not supplied"} />
                             <ReviewItem label="Account type" value={clientForm.bank_account ? titleCase(clientForm.bank_account.account_type || "savings") : "Not supplied"} />
                             <ReviewItem label="Salary account" value={clientForm.bank_account ? (clientForm.bank_account.salary_account ? "Yes" : "No") : "Not supplied"} />
                           </ReviewCard>
