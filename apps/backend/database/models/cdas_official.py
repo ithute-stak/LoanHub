@@ -174,7 +174,7 @@ class CdasProviderOperation(Base):
     )
     branch_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("branches.id", ondelete="SET NULL"),
+        ForeignKey("company_branches.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
