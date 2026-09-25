@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { CircleCheck, CircleX, KeyRound, Loader2, PlugZap, RefreshCcw, Save } from "lucide-react";
+import { CircleCheck, CircleX, KeyRound, Loader2, PlugZap, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,7 @@ type CdasConfiguration = {
     configured: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
-    reintegration_phase: "authentication_only";
+    reintegration_phase: "manual_documented_operations";
 };
 
 type CdasForm = {
@@ -106,7 +107,6 @@ export function CompanyCdasSettings({ canManage }: Props) {
     async function save(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!canManage || saving) return;
-
         setSaving(true);
         try {
             const response = await api.put<CdasConfiguration>("/cdas/configuration", {
@@ -181,11 +181,11 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                 <KeyRound className="h-5 w-5" /> CDAS authentication
                             </CardTitle>
                             <CardDescription className="mt-2 max-w-3xl">
-                                Phase 1 remains the secure provider-login foundation. This screen stores encrypted company credentials and verifies POST /api/security/login. Phase 2 adds only deliberate employee verification in the CDAS workspace; affordability, deduction, document, booking, intelligence and background CDAS operations remain disabled.
+                                Secure company-specific CDAS credentials. LoanHub uses this authentication foundation for deliberate, documented CDAS operations only. Employee, affordability, deduction and document requests are initiated by a user; no background CDAS crawling or automatic lifecycle processing is enabled.
                             </CardDescription>
                         </div>
                         <Badge variant={configuration?.enabled ? "default" : "secondary"}>
-                            {configuration?.enabled ? "Authentication enabled" : "Authentication disabled"}
+                            {configuration?.enabled ? "CDAS enabled" : "CDAS disabled"}
                         </Badge>
                     </div>
                 </CardHeader>
@@ -263,7 +263,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     disabled={!canManage || saving}
                                     onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
                                 />
-                                Enable authentication
+                                Enable CDAS
                             </label>
                             <label className="flex items-center gap-2 rounded-xl border p-3 text-sm font-medium">
                                 <input
@@ -279,7 +279,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                         <div className="flex flex-wrap gap-2">
                             <Button type="submit" disabled={!canManage || saving}>
                                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                                Save authentication
+                                Save configuration
                             </Button>
                             <Button
                                 type="button"
@@ -290,6 +290,9 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                 {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
                                 Test login
                             </Button>
+                            <Button asChild type="button" variant="outline">
+                                <Link href="/company/cdas"><ShieldCheck className="h-4 w-4" /> Open CDAS workspace</Link>
+                            </Button>
                         </div>
                     </form>
                 </CardContent>
@@ -297,8 +300,8 @@ export function CompanyCdasSettings({ canManage }: Props) {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="text-base">Reintegration status</CardTitle>
-                    <CardDescription>Authentication is the foundation used by the manual Phase 2 employee lookup.</CardDescription>
+                    <CardTitle className="text-base">Integration status</CardTitle>
+                    <CardDescription>Manual documented CDAS operations with no background provider polling.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
@@ -315,9 +318,9 @@ export function CompanyCdasSettings({ canManage }: Props) {
                     </div>
                     <Alert>
                         {configuration?.last_test_status === "connected" ? <CircleCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
-                        <AlertTitle>Phase 1 authentication</AlertTitle>
+                        <AlertTitle>Authentication foundation</AlertTitle>
                         <AlertDescription>
-                            A successful test proves that LoanHub can obtain a CDAS authorization token. Employee verification is a separate, manual Phase 2 action; no affordability or deduction operation is triggered by this test.
+                            A successful login test proves token acquisition only. Each employee, affordability, deduction or document operation remains a separate deliberate request in the CDAS workspace.
                         </AlertDescription>
                     </Alert>
                 </CardContent>
