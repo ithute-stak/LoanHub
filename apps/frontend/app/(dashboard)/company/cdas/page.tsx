@@ -301,7 +301,7 @@ export default function CdasWorkspacePage() {
                         <CardTitle className="flex items-center gap-2">
                             <HandCoins className="h-5 w-5" /> All third-party deductions
                         </CardTitle>
-                        <CardDescription>View the employee's deductions across third parties.</CardDescription>
+                        <CardDescription>View the employee&apos;s deductions across third parties.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Button type="button" variant="outline" onClick={() => void viewAllDeductions()} disabled={busy || !normalizedEmployeeNo}>
@@ -367,7 +367,7 @@ export default function CdasWorkspacePage() {
                         <CardTitle className="flex items-center gap-2">
                             <ShieldCheck className="h-5 w-5" /> Active / approved deduction
                         </CardTitle>
-                        <CardDescription>Fetch the employee's active or approved deduction record documented by CDAS.</CardDescription>
+                        <CardDescription>Fetch the employee&apos;s active or approved deduction record documented by CDAS.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Button type="button" variant="outline" onClick={() => void viewActiveApprovedDeduction()} disabled={busy || !normalizedEmployeeNo}>
