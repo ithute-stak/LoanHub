@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 import pytest
 
 from integrations.cdas import CdasClient, CdasError
+from integrations.cdas_session import CdasSharedSession
 from services.cdas_request_budget import CDAS_DAILY_REQUEST_LIMIT, _account_key
 
 
@@ -15,13 +18,38 @@ ROUTER = ROOT / "apps" / "backend" / "routers" / "cdas_api.py"
 CONFIG_SERVICE = ROOT / "apps" / "backend" / "services" / "cdas_config_service.py"
 
 
-def make_client(handler, *, request_guard=None) -> CdasClient:
+class MemorySessionBroker:
+    def __init__(self) -> None:
+        self.session: CdasSharedSession | None = None
+        self.lock_entries = 0
+        self.saves = 0
+        self.clears = 0
+
+    async def load(self) -> CdasSharedSession | None:
+        return self.session
+
+    async def save(self, session: CdasSharedSession) -> None:
+        self.session = session
+        self.saves += 1
+
+    async def clear(self) -> None:
+        self.session = None
+        self.clears += 1
+
+    @asynccontextmanager
+    async def login_lock(self):
+        self.lock_entries += 1
+        yield
+
+
+def make_client(handler, *, request_guard=None, session_broker=None) -> CdasClient:
     return CdasClient(
         base_url="https://cdas.test",
         username="test-user",
         password="test-password",
         transport=httpx.MockTransport(handler),
         request_guard=request_guard,
+        session_broker=session_broker,
     )
 
 
@@ -51,11 +79,38 @@ async def test_request_guard_reserves_login_and_each_provider_http_call() -> Non
 
     client = make_client(handler, request_guard=reserve)
 
-    assert await client.check_affordability("EMP-1") == 1500.5
+    assert await client.check_affordability("EMP-1") == Decimal("1500.50")
     assert reservations == 2  # login + first provider read
 
-    assert await client.check_affordability("EMP-1") == 1500.5
+    assert await client.check_affordability("EMP-1") == Decimal("1500.50")
     assert reservations == 3  # cached token + second provider read only
+
+
+@pytest.mark.asyncio
+async def test_independent_clients_reuse_one_shared_session() -> None:
+    broker = MemorySessionBroker()
+    logins = 0
+    reads = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal logins, reads
+        if request.url.path == "/api/security/login":
+            logins += 1
+            return httpx.Response(200, json={"Authorization": "shared-token"})
+        assert request.url.path == "/api/employee/check-affordability"
+        reads += 1
+        return httpx.Response(200, content=b"875.25")
+
+    first = make_client(handler, session_broker=broker)
+    second = make_client(handler, session_broker=broker)
+
+    assert await first.check_affordability("EMP-1") == Decimal("875.25")
+    assert await second.check_affordability("EMP-2") == Decimal("875.25")
+
+    assert logins == 1
+    assert reads == 2
+    assert broker.lock_entries == 1
+    assert broker.saves >= 3  # login persistence + last-used refreshes
 
 
 @pytest.mark.asyncio
@@ -105,7 +160,7 @@ async def test_state_changing_request_is_not_replayed_after_inactive_session() -
     assert writes == 2
 
 
-def test_clean_company_client_wires_quota_guard_and_exposes_local_status_only() -> None:
+def test_clean_company_client_wires_quota_guard_shared_session_and_local_status() -> None:
     router_source = ROUTER.read_text(encoding="utf-8")
     config_source = CONFIG_SERVICE.read_text(encoding="utf-8")
 
@@ -114,3 +169,6 @@ def test_clean_company_client_wires_quota_guard_and_exposes_local_status_only() 
     assert '"Return LoanHub\'s local CDAS quota counter without contacting CDAS."' in router_source
     assert "consume_cdas_request_budget" in config_source
     assert "request_guard=_request_guard(company_id, credentials.environment)" in config_source
+    assert "RedisCdasSessionBroker" in config_source
+    assert "session_broker=_shared_session_broker(credentials, generation=signature)" in config_source
+    assert '"shared_session_enabled": bool(settings.REDIS_URL)' in config_source
