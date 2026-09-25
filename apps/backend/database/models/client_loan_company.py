@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -126,3 +128,32 @@ class ClientCompanyLoan(Base):
         cascade="all, delete-orphan",
         order_by="LoanRenewalCycle.cycle_number",
     )
+
+
+_TERMINAL_NON_OVERDUE_STATUSES = {
+    LoanStatus.COMPLETED,
+    LoanStatus.CANCELLED,
+    LoanStatus.REJECTED,
+}
+
+
+def loan_can_be_currently_overdue(*, balance, status: LoanStatus | str | None) -> bool:
+    """Return whether a loan is eligible to carry a *current* overdue flag.
+
+    Historical lateness remains in the installment/payment history. A settled
+    balance or terminal loan state can never represent current delinquency.
+    """
+
+    current_balance = Decimal(str(balance or 0))
+    try:
+        current_status = status if isinstance(status, LoanStatus) else LoanStatus(status)
+    except (TypeError, ValueError):
+        current_status = status
+    return current_balance > 0 and current_status not in _TERMINAL_NON_OVERDUE_STATUSES
+
+
+@event.listens_for(ClientCompanyLoan, "before_insert")
+@event.listens_for(ClientCompanyLoan, "before_update")
+def _clear_stale_current_overdue_flag(_mapper, _connection, loan: ClientCompanyLoan) -> None:
+    if not loan_can_be_currently_overdue(balance=loan.balance, status=loan.status):
+        loan.is_overdue = False
