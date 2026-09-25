@@ -1,0 +1,200 @@
+name: Temporary client banking step patch
+
+on:
+  push:
+    branches:
+      - feat/client-registration-banking-step
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/client-registration-banking-step
+          fetch-depth: 0
+
+      - name: Add fifth banking registration step
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/frontend/app/(dashboard)/company/clients/page.tsx")
+          text = path.read_text()
+
+          if 'shortTitle: "Banking"' in text and "ClientBankingRegistrationStep" in text:
+              print("Banking step already applied")
+              raise SystemExit(0)
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one match, found {count}: {old[:120]!r}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";\n',
+              'import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";\nimport { ClientBankingRegistrationStep } from "@/components/clients/client-banking-registration-step";\n',
+          )
+
+          replace_once(
+              '  consent_to_credit_checks: false,\n  external_debts: [],\n',
+              '  consent_to_credit_checks: false,\n  bank_account: null,\n  external_debts: [],\n',
+          )
+
+          replace_once(
+              '''  {
+    title: "Consent and review",
+    shortTitle: "Review",
+    description: "Confirm details and borrower consent",
+    icon: ClipboardCheck,
+  },
+] as const;
+
+type ClientStep = 0 | 1 | 2 | 3;''',
+              '''  {
+    title: "Banking details",
+    shortTitle: "Banking",
+    description: "Bank account and salary-payment details",
+    icon: Landmark,
+  },
+  {
+    title: "Consent and review",
+    shortTitle: "Review",
+    description: "Confirm details and borrower consent",
+    icon: ClipboardCheck,
+  },
+] as const;
+
+type ClientStep = 0 | 1 | 2 | 3 | 4;''',
+          )
+
+          replace_once(
+              '''    if (step === 3) {
+      if (!clientForm.consent_to_credit_checks) {
+        errors.push("Confirm the borrower’s consent to permitted credit checks.");
+      }
+      if (!clientForm.consent_to_share_profile) {
+        errors.push("Confirm the borrower’s consent to share the profile with this company.");
+      }
+      if (borrowerAlreadyLinked) errors.push("This borrower is already linked to the active company.");
+    }''',
+              '''    if (step === 3) {
+      const bank = clientForm.bank_account;
+      if (bank) {
+        const accountNumber = String(bank.account_number ?? "").replace(/\\s+/g, "");
+        if (!bank.account_holder.trim()) errors.push("Enter the bank account holder.");
+        if (!bank.bank_name.trim()) errors.push("Enter the borrower’s bank name.");
+        if (accountNumber.length < 4) errors.push("Enter a valid bank account number.");
+      }
+    }
+
+    if (step === 4) {
+      if (!clientForm.consent_to_credit_checks) {
+        errors.push("Confirm the borrower’s consent to permitted credit checks.");
+      }
+      if (!clientForm.consent_to_share_profile) {
+        errors.push("Confirm the borrower’s consent to share the profile with this company.");
+      }
+      if (borrowerAlreadyLinked) errors.push("This borrower is already linked to the active company.");
+    }''',
+          )
+
+          replace_once(
+              '    const firstInvalidStep = ([0, 1, 2, 3] as ClientStep[]).find(\n',
+              '    const firstInvalidStep = ([0, 1, 2, 3, 4] as ClientStep[]).find(\n',
+          )
+
+          replace_once(
+              '''      const created = await openCompanyClientAccount({
+        ...clientForm,
+        external_debts: normalizedDebts,''',
+              '''      const normalizedBankAccount = clientForm.bank_account
+        ? {
+            ...clientForm.bank_account,
+            account_holder: clientForm.bank_account.account_holder.trim(),
+            bank_name: clientForm.bank_account.bank_name.trim(),
+            branch_name: optional(clientForm.bank_account.branch_name),
+            branch_code: optional(clientForm.bank_account.branch_code),
+            account_type: String(clientForm.bank_account.account_type || "savings").trim().toLowerCase(),
+            currency: String(clientForm.bank_account.currency || "LSL").trim().toUpperCase(),
+            account_number: optional(clientForm.bank_account.account_number)?.replace(/\\s+/g, "") ?? null,
+            verification_status: "unverified" as const,
+            verification_reference: null,
+            tokenized_card_provider: null,
+            tokenized_card_reference: null,
+            masked_card_number: null,
+            card_brand: null,
+            card_expiry_month: null,
+            card_expiry_year: null,
+          }
+        : null;
+      const created = await openCompanyClientAccount({
+        ...clientForm,
+        bank_account: normalizedBankAccount,
+        external_debts: normalizedDebts,''',
+          )
+
+          replace_once(
+              '        description="A guided four-step registration with automatic national-ID and existing-loan checks."\n',
+              '        description="A guided five-step registration with automatic national-ID and existing-loan checks."\n',
+          )
+
+          replace_once(
+              '                  <SummaryLine label="Income" value={clientForm.monthly_income !== null ? formatMoney(clientForm.monthly_income) : "Not supplied"} />\n                  <SummaryLine label="Existing exposure" value={formatMoney(combinedExistingExposure)} />\n',
+              '                  <SummaryLine label="Income" value={clientForm.monthly_income !== null ? formatMoney(clientForm.monthly_income) : "Not supplied"} />\n                  <SummaryLine label="Banking" value={clientForm.bank_account ? (clientForm.bank_account.bank_name || "Details in progress") : "Not supplied"} />\n                  <SummaryLine label="Existing exposure" value={formatMoney(combinedExistingExposure)} />\n',
+          )
+
+          replace_once(
+              '''                  {clientStep === 3 && (
+                    <div className="space-y-5">''',
+              '''                  {clientStep === 3 && (
+                    <FormSection
+                      icon={Landmark}
+                      title="Banking details"
+                      description="Capture the borrower’s bank account for salary, payout and repayment workflows. The step may be skipped when banking information is not yet available."
+                    >
+                      <ClientBankingRegistrationStep
+                        value={clientForm.bank_account}
+                        borrowerName={[clientForm.first_name, clientForm.middle_name, clientForm.last_name].filter(Boolean).join(" ")}
+                        onChange={(value) => updateClient("bank_account", value)}
+                      />
+                    </FormSection>
+                  )}
+
+                  {clientStep === 4 && (
+                    <div className="space-y-5">''',
+          )
+
+          replace_once(
+              '''                          <ReviewCard icon={BadgeCheck} title="Account outcome">
+                            <ReviewItem label="Registration" value={existingBorrowerFound ? "Link existing LoanHub borrower" : "Create a new borrower account"} />''',
+              '''                          <ReviewCard icon={Landmark} title="Banking">
+                            <ReviewItem label="Bank" value={clientForm.bank_account?.bank_name || "Not supplied"} />
+                            <ReviewItem label="Account holder" value={clientForm.bank_account?.account_holder || "Not supplied"} />
+                            <ReviewItem label="Account" value={clientForm.bank_account?.account_number ? `••••${String(clientForm.bank_account.account_number).replace(/\\s+/g, "").slice(-4)}` : "Not supplied"} />
+                            <ReviewItem label="Account type" value={clientForm.bank_account ? titleCase(clientForm.bank_account.account_type || "savings") : "Not supplied"} />
+                            <ReviewItem label="Salary account" value={clientForm.bank_account ? (clientForm.bank_account.salary_account ? "Yes" : "No") : "Not supplied"} />
+                          </ReviewCard>
+                          <ReviewCard icon={BadgeCheck} title="Account outcome">
+                            <ReviewItem label="Registration" value={existingBorrowerFound ? "Link existing LoanHub borrower" : "Create a new borrower account"} />''',
+          )
+
+          path.write_text(text)
+          PY
+
+          git config user.name "LoanHub Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add 'apps/frontend/app/(dashboard)/company/clients/page.tsx'
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit"
+            exit 0
+          fi
+          git commit -m "feat(clients): add banking to assisted registration"
+          git push origin HEAD:feat/client-registration-banking-step
