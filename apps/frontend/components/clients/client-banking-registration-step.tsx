@@ -147,11 +147,12 @@ export function ClientBankingRegistrationStep({
             </div>
             <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-background px-4 py-3 md:col-span-2 xl:col-span-2">
               <Checkbox
+                aria-label="Salary or primary income account"
                 checked={value.salary_account}
                 onCheckedChange={(checked) => update("salary_account", Boolean(checked))}
               />
               <span>
-                <span className="block text-sm font-bold">Salary / primary income account</span>
+                <span className="block text-sm font-bold">Salary / primary income account (optional)</span>
                 <span className="block text-xs text-muted-foreground">Mark this when the borrower normally receives salary or primary income into this account.</span>
               </span>
             </label>
