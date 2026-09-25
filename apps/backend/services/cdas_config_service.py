@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session
 from database.config.config import settings
 from database.models.origination import OriginationIntegrationConfiguration
 from integrations.cdas import CdasClient, CdasConfigurationError, CdasError
+from integrations.cdas_session import CdasSessionBroker
 from services.cdas_request_budget import consume_cdas_request_budget
+from services.cdas_session_broker import RedisCdasSessionBroker
 from services.crypto_service import decrypt_control_secret, encrypt_control_secret
 
 CDAS_PROVIDER = "cdas"
@@ -123,6 +125,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
             "configured": False,
             "last_test_status": None,
             "last_tested_at": None,
+            "shared_session_enabled": bool(settings.REDIS_URL),
             "reintegration_phase": "manual_documented_operations",
         }
     cfg = _values(row)
@@ -141,6 +144,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
         "configured": bool(base_url and username and password_ok),
         "last_test_status": row.last_test_status,
         "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
+        "shared_session_enabled": bool(settings.REDIS_URL),
         "reintegration_phase": "manual_documented_operations",
     }
 
@@ -263,6 +267,20 @@ def _request_guard(company_id: UUID, environment: str):
     return lambda: consume_cdas_request_budget(company_id, environment)
 
 
+def _shared_session_broker(
+    credentials: CdasCompanyCredentials,
+    *,
+    generation: str,
+) -> CdasSessionBroker | None:
+    if not settings.REDIS_URL:
+        return None
+    return RedisCdasSessionBroker(
+        username=credentials.username,
+        environment=credentials.environment,
+        generation=generation,
+    )
+
+
 def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
     row = _configuration_row(db, company_id)
     credentials = _credentials_from_row(row, require_enabled=True)
@@ -278,6 +296,7 @@ def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
         request_guard=_request_guard(company_id, credentials.environment),
+        session_broker=_shared_session_broker(credentials, generation=signature),
     )
     _client_cache[key] = (signature, client)
     return client
@@ -287,12 +306,14 @@ async def test_company_configuration(db: Session, *, company_id: UUID) -> dict[s
     row = _configuration_row(db, company_id)
     credentials = _credentials_from_row(row, require_enabled=False)
     assert row is not None
+    signature = _client_signature(row)
     client = CdasClient(
         base_url=credentials.base_url,
         username=credentials.username,
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
         request_guard=_request_guard(company_id, credentials.environment),
+        session_broker=_shared_session_broker(credentials, generation=signature),
     )
     try:
         await client.check_connection()
