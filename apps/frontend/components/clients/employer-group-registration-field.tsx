@@ -46,6 +46,21 @@ function workGroupCode(name: string): string {
   return code || "WORK-GROUP";
 }
 
+function workGroupPlaceholder(employmentType?: string | null): string {
+  switch (employmentType) {
+    case "government":
+      return "Search L/GOV, LMPS, ministry, department…";
+    case "private":
+      return "Search company or employer group…";
+    case "ngo":
+      return "Search NGO or organisation…";
+    case "other":
+      return "Search employer or work group…";
+    default:
+      return "Choose employer sector first";
+  }
+}
+
 export function EmployerGroupRegistrationField({
   employmentStatus,
   employmentType,
@@ -102,7 +117,7 @@ export function EmployerGroupRegistrationField({
     const existing = groups.map((group) => ({
       value: group.id,
       label: display(group),
-      description: "Existing work group",
+      description: "Existing employer / work group",
       keywords: [group.code, group.name],
     }));
     const query = search.trim();
@@ -117,8 +132,8 @@ export function EmployerGroupRegistrationField({
     return [...existing, {
       value: `${CREATE_PREFIX}${query}`,
       label: `Add “${query}”`,
-      description: "Create this work group when the borrower account is opened",
-      keywords: [query, "add", "new", "work group"],
+      description: "Create this employer / work group when the borrower account is opened",
+      keywords: [query, "add", "new", "employer", "work group"],
     }];
   }, [groups, newEmployerGroup, search, selected]);
 
@@ -130,7 +145,7 @@ export function EmployerGroupRegistrationField({
             Work type / business activity<span className="ml-1 text-destructive">*</span>
           </Label>
           <p className="text-[11px] leading-4 text-muted-foreground/90">
-            Describe the borrower&apos;s trade, profession or main business activity. A work group is not required for self-employed clients.
+            Describe the borrower&apos;s trade, profession or main business activity. An employer / work group is not required for self-employed clients.
           </p>
         </div>
         <Input
@@ -159,40 +174,58 @@ export function EmployerGroupRegistrationField({
   }
 
   const governmentEmployee = enhancedEmploymentFlow && employmentType === "government";
+  const employerSectorChosen = !enhancedEmploymentFlow || Boolean(employmentType);
 
   return (
-    <div className="space-y-4">
+    <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-4">
       {enhancedEmploymentFlow ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
-            <div className="mb-2.5 space-y-1">
+        <div className="mb-4 space-y-1">
+          <Label className="text-sm font-black tracking-[0.01em] text-foreground/90">
+            Employer details
+          </Label>
+          <p className="text-[11px] leading-4 text-muted-foreground/90">
+            First classify the employer sector, then select the actual employer / work group. The sector is a category; the work group is the organisation that employs or pays the borrower.
+          </p>
+        </div>
+      ) : null}
+
+      {enhancedEmploymentFlow ? (
+        <div className={`grid gap-4 ${governmentEmployee ? "md:grid-cols-2" : "md:grid-cols-1"}`}>
+          <div className="space-y-2">
+            <div className="space-y-1">
               <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
-                Employment type<span className="ml-1 text-destructive">*</span>
+                Employer sector<span className="ml-1 text-destructive">*</span>
               </Label>
               <p className="text-[11px] leading-4 text-muted-foreground/90">
-                Government employment enables capture of the payroll identity used for CDAS verification.
+                Classify who employs the borrower. Government enables capture of the payroll identity used for CDAS verification.
               </p>
             </div>
             <Select
               value={employmentType ?? ""}
-              onValueChange={(value) => onChange({
-                employment_type: value,
-                cdas_employee_number: value === "government" ? cdasEmployeeNumber ?? null : null,
-              })}
+              onValueChange={(value) => {
+                setSearch("");
+                onChange({
+                  employment_type: value,
+                  cdas_employee_number: value === "government" ? cdasEmployeeNumber ?? null : null,
+                  employer_group_id: null,
+                  employer_name: null,
+                  new_employer_group: null,
+                });
+              }}
             >
-              <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select employment type" /></SelectTrigger>
+              <SelectTrigger className="h-11 w-full"><SelectValue placeholder="Select employer sector" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="government">Government</SelectItem>
-                <SelectItem value="private">Private sector</SelectItem>
+                <SelectItem value="private">Private company</SelectItem>
                 <SelectItem value="ngo">NGO / non-profit</SelectItem>
-                <SelectItem value="other">Other employer</SelectItem>
+                <SelectItem value="other">Other organisation</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           {governmentEmployee ? (
-            <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-3.5">
-              <div className="mb-2.5 space-y-1">
+            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/[0.04] p-3">
+              <div className="space-y-1">
                 <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">Employee No.</Label>
                 <p className="text-[11px] leading-4 text-muted-foreground/90">
                   Optional at registration. This prepares an unverified CDAS payroll profile; CDAS is not selected automatically as the loan collection method.
@@ -210,13 +243,15 @@ export function EmployerGroupRegistrationField({
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-border/50 bg-muted/[0.22] p-3.5">
+      <div className={enhancedEmploymentFlow ? "mt-4 border-t border-border/50 pt-4" : ""}>
         <div className="mb-2.5 space-y-1">
           <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">
-            Work group{required ? <span className="ml-1 text-destructive">*</span> : null}
+            Employer / work group{required ? <span className="ml-1 text-destructive">*</span> : null}
           </Label>
           <p className="text-[11px] leading-4 text-muted-foreground/90">
-            Search existing work groups. If the borrower&apos;s group is missing, type its name and choose the Add option in the popover.
+            {employerSectorChosen
+              ? "Select the actual organisation that employs or pays the borrower. Search the existing list, or type a missing employer and choose Add."
+              : "Choose the employer sector above first. The employer / work group search will then become available."}
           </p>
         </div>
         <SuggestionSearch
@@ -226,11 +261,13 @@ export function EmployerGroupRegistrationField({
             onChange({ employer_group_id: null, employer_name: value.trim() || null, new_employer_group: null });
           }}
           suggestions={suggestions}
-          placeholder="Search L/GOV, LMPS, ministry, company…"
-          emptyMessage="Type at least two characters to add a new work group."
-          suggestionLabel="Work groups"
+          placeholder={workGroupPlaceholder(employmentType)}
+          emptyMessage="Type at least two characters to add a new employer / work group."
+          suggestionLabel="Employers / work groups"
           maxSuggestions={14}
           showSuggestionsOnFocus
+          disabled={!employerSectorChosen}
+          persistOpenUntilSelection={!selected && !newEmployerGroup}
           onSuggestionSelect={(suggestion) => {
             if (suggestion.value.startsWith(CREATE_PREFIX)) {
               const name = suggestion.value.slice(CREATE_PREFIX.length).trim();
@@ -247,7 +284,7 @@ export function EmployerGroupRegistrationField({
         />
         {newEmployerGroup ? (
           <p className="mt-2 text-xs font-semibold text-primary">
-            New work group staged: {newEmployerGroup.code} — {newEmployerGroup.name}
+            New employer / work group staged: {newEmployerGroup.code} — {newEmployerGroup.name}
           </p>
         ) : null}
         {loadError ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{loadError}</p> : null}

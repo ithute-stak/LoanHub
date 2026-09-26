@@ -40,6 +40,7 @@ type SuggestionSearchProps = Omit<
   minimumCharacters?: number;
   showSuggestionsOnFocus?: boolean;
   clearable?: boolean;
+  persistOpenUntilSelection?: boolean;
   wrapperClassName?: string;
   onSuggestionSelect?: (suggestion: {
     value: string;
@@ -146,6 +147,7 @@ export function SuggestionSearch({
   minimumCharacters = 0,
   showSuggestionsOnFocus = true,
   clearable = true,
+  persistOpenUntilSelection = false,
   wrapperClassName,
   className,
   disabled,
@@ -279,7 +281,13 @@ export function SuggestionSearch({
       normalizeSearchText(value).length >= minimumCharacters);
 
   return (
-    <Popover open={shouldOpen} onOpenChange={setOpen}>
+    <Popover
+      open={shouldOpen}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && persistOpenUntilSelection) return;
+        setOpen(nextOpen);
+      }}
+    >
       <PopoverAnchor asChild>
         <div
           ref={anchorRef}
