@@ -3,9 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-from fastapi import HTTPException
-
 from services.collection_automation_service import DEFAULT_STRATEGY, _band, _priority
 
 
@@ -54,9 +51,10 @@ def test_recovery_engine_explicitly_detects_broken_promises_collection_paths_and
     assert '"recovery_contact_attempted"' in source
     assert 'CollectionWorkItem.status: "cancelled"' in source
     assert "run_scheduled_collection_automation" in source
+    assert "Treatment DPD bands must not overlap" in source
 
 
-def test_recovery_api_exposes_queue_policy_engine_and_legal_escalation():
+def test_recovery_api_exposes_queue_policy_engine_assignment_and_controlled_legal_escalation():
     source = (ROOT / "backend" / "routers" / "collection_automation.py").read_text(encoding="utf-8")
     router = (ROOT / "backend" / "api" / "v1" / "router.py").read_text(encoding="utf-8")
     assert 'APIRouter(prefix="/collections/automation"' in source
@@ -65,8 +63,12 @@ def test_recovery_api_exposes_queue_policy_engine_and_legal_escalation():
     assert '@router.get("/policy")' in source
     assert '@router.put("/policy")' in source
     assert '@router.get("/work-items")' in source
+    assert '@router.put("/work-items/{item_id}/assignment")' in source
+    assert "The selected assignee is not active staff in this company/branch" in source
     assert '@router.get("/cases/{case_id}/legal-readiness")' in source
     assert '@router.post("/cases/{case_id}/escalate-legal")' in source
+    assert "require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)" in source
+    assert 'activity_type="legal_handover"' in source
     assert "collection_automation.router" in router
 
 
@@ -81,10 +83,12 @@ def test_maintenance_worker_runs_automation_on_its_own_daily_schedule():
     assert "_seconds_until_next_collection_automation" in maintenance
 
 
-def test_collections_frontend_surfaces_queue_paths_legal_readiness_and_productivity():
+def test_collections_frontend_surfaces_strategy_queue_paths_legal_readiness_and_productivity():
     page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "collections" / "automation" / "page.tsx").read_text(encoding="utf-8")
     layout = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "collections" / "layout.tsx").read_text(encoding="utf-8")
     assert "Automated Collections & Recovery Engine" in page
+    assert "DPD treatment strategy" in page
+    assert "Save new version" in page
     assert "Prioritised collector queue" in page
     assert "Broken promises" in page
     assert "Legal readiness" in page
