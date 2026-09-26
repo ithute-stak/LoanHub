@@ -24,6 +24,9 @@ class DirectLoanApplication(Base):
     repayment_type = Column(String(30), nullable=False, default="monthly")
     purpose = Column(Text, nullable=True)
     status = Column(String(30), nullable=False, default="draft", index=True)
+    # New applications must pass the human underwriting/credit-committee gate.
+    # The migration preserves pre-existing applications as legacy exceptions.
+    credit_committee_required = Column(Boolean, nullable=False, default=True, index=True)
     affordability_snapshot = Column(JSONB, nullable=False, default=dict)
     credit_warning = Column(JSONB, nullable=False, default=dict)
     submitted_at = Column(DateTime, nullable=True)
