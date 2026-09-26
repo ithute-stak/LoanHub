@@ -12,6 +12,7 @@ from services.collection_automation_service import run_scheduled_collection_auto
 from services.collection_daily_reporting_service import run_missed_payment_reporting
 from services.maintenance_service import run_maintenance
 from services.nightly_service import run_midnight_reconciliation
+from services.portfolio_risk_service import run_scheduled_portfolio_risk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("loanhub.maintenance")
@@ -36,17 +37,15 @@ def _seconds_until_next_midnight() -> float:
 
 
 def _seconds_until_next_collection_automation() -> float:
-    return _seconds_until(
-        settings.COLLECTION_AUTOMATION_HOUR,
-        settings.COLLECTION_AUTOMATION_MINUTE,
-    )
+    return _seconds_until(settings.COLLECTION_AUTOMATION_HOUR, settings.COLLECTION_AUTOMATION_MINUTE)
 
 
 def _seconds_until_next_collection_report() -> float:
-    return _seconds_until(
-        settings.COLLECTION_DAILY_REPORT_HOUR,
-        settings.COLLECTION_DAILY_REPORT_MINUTE,
-    )
+    return _seconds_until(settings.COLLECTION_DAILY_REPORT_HOUR, settings.COLLECTION_DAILY_REPORT_MINUTE)
+
+
+def _seconds_until_next_portfolio_risk_snapshot() -> float:
+    return _seconds_until(settings.PORTFOLIO_RISK_SNAPSHOT_HOUR, settings.PORTFOLIO_RISK_SNAPSHOT_MINUTE)
 
 
 def main() -> None:
@@ -55,6 +54,7 @@ def main() -> None:
     last_midnight_date = None
     last_collection_automation_date = None
     last_collection_report_date = None
+    last_portfolio_risk_snapshot_date = None
 
     while True:
         db = SessionLocal()
@@ -94,18 +94,11 @@ def main() -> None:
                 finally:
                     nightly_db.close()
 
-        automation_due = (
-            local_now.hour,
-            local_now.minute,
-        ) >= (
+        automation_due = (local_now.hour, local_now.minute) >= (
             max(0, min(23, settings.COLLECTION_AUTOMATION_HOUR)),
             max(0, min(59, settings.COLLECTION_AUTOMATION_MINUTE)),
         )
-        if (
-            settings.COLLECTION_AUTOMATION_ENABLED
-            and last_collection_automation_date != local_now.date()
-            and automation_due
-        ):
+        if settings.COLLECTION_AUTOMATION_ENABLED and last_collection_automation_date != local_now.date() and automation_due:
             automation_db = SessionLocal()
             try:
                 outcome = run_scheduled_collection_automation(automation_db)
@@ -117,18 +110,11 @@ def main() -> None:
             finally:
                 automation_db.close()
 
-        collection_due = (
-            local_now.hour,
-            local_now.minute,
-        ) >= (
+        collection_due = (local_now.hour, local_now.minute) >= (
             max(0, min(23, settings.COLLECTION_DAILY_REPORT_HOUR)),
             max(0, min(59, settings.COLLECTION_DAILY_REPORT_MINUTE)),
         )
-        if (
-            settings.COLLECTION_DAILY_REPORT_ENABLED
-            and last_collection_report_date != local_now.date()
-            and collection_due
-        ):
+        if settings.COLLECTION_DAILY_REPORT_ENABLED and last_collection_report_date != local_now.date() and collection_due:
             collection_db = SessionLocal()
             try:
                 outcome = run_missed_payment_reporting(collection_db, local_date=local_now.date())
@@ -140,11 +126,28 @@ def main() -> None:
             finally:
                 collection_db.close()
 
+        risk_due = (local_now.hour, local_now.minute) >= (
+            max(0, min(23, settings.PORTFOLIO_RISK_SNAPSHOT_HOUR)),
+            max(0, min(59, settings.PORTFOLIO_RISK_SNAPSHOT_MINUTE)),
+        )
+        if settings.PORTFOLIO_RISK_SNAPSHOT_ENABLED and last_portfolio_risk_snapshot_date != local_now.date() and risk_due:
+            risk_db = SessionLocal()
+            try:
+                outcome = run_scheduled_portfolio_risk(risk_db, local_now.date())
+                logger.info("Portfolio risk snapshot outcome: %s", outcome)
+                last_portfolio_risk_snapshot_date = local_now.date()
+            except Exception:
+                risk_db.rollback()
+                logger.exception("Daily portfolio risk snapshot failed")
+            finally:
+                risk_db.close()
+
         time.sleep(min(
             interval,
             _seconds_until_next_midnight(),
             _seconds_until_next_collection_automation(),
             _seconds_until_next_collection_report(),
+            _seconds_until_next_portfolio_risk_snapshot(),
         ))
 
 
