@@ -15,6 +15,8 @@ from services.lelefa_managed_collections import (
 )
 
 
+EXPLICIT_COLLECTION_TEMPLATE_VERSION = "3.2-explicit-collection-cost-basis"
+
 _original_build_terms = _base.build_terms
 _original_contract_pdf = _base._contract_pdf
 _original_clause = _base._clause
@@ -41,10 +43,11 @@ def _company_collection_charge_policy(
 
 
 def build_terms(db: Session, loan: Any) -> dict[str, Any]:
-    """Freeze the collection-charge policy into a new contract.
+    """Freeze the collection-charge policy and legal wording into a new contract.
 
     Existing contracts are deliberately left untouched. This prevents a later company
-    setting from being injected into a legacy agreement that the borrower never signed.
+    setting or wording revision from being injected into an agreement the borrower did
+    not sign.
     """
     terms = _original_build_terms(db, loan)
     existing_contract = (
@@ -56,7 +59,7 @@ def build_terms(db: Session, loan: Any) -> dict[str, Any]:
         return terms
 
     terms = dict(terms)
-    terms["template_version"] = "3.1-collection-charge-controls"
+    terms["template_version"] = EXPLICIT_COLLECTION_TEMPLATE_VERSION
     terms["collection_charge"] = _company_collection_charge_policy(db, loan.company_id)
     return terms
 
@@ -68,9 +71,18 @@ def _collection_charge_cost_table(
     policy = normalize_collection_charge_policy(
         {"collection_charge": terms.get("collection_charge") or {}}
     )
-    if not policy["enabled"]:
+    template_version = str(terms.get("template_version") or "")
+    if not policy["enabled"] and template_version != EXPLICIT_COLLECTION_TEMPLATE_VERSION:
         return _original_cost_elements_table(terms, styles)
 
+    commission_disclosure = (
+        collection_charge_disclosure(policy)
+        if policy["enabled"]
+        else (
+            "No separate percentage-based or fixed collection commission is agreed under "
+            "this agreement. Clause 11 separately addresses lawful external recovery and legal costs."
+        )
+    )
     processing_fee = _base._as_decimal(terms.get("processing_fee"))
     total_fees = _base._as_decimal(terms.get("total_fees"))
     other_fees = max(total_fees - processing_fee, _base.Decimal("0"))
@@ -79,10 +91,7 @@ def _collection_charge_cost_table(
         ["2.2 Initiation / processing fee", _base._money(processing_fee)],
         ["2.3 Other service and schedule fees", _base._money(other_fees)],
         ["2.4 Taxes included in disclosed charges", _base._money(terms.get("tax_amount"))],
-        [
-            "2.5 Conditional collection / recovery charge",
-            collection_charge_disclosure(policy),
-        ],
+        ["2.5 Conditional collection commission", commission_disclosure],
         [
             "2.6 Total charge of credit [2.1 to 2.4]",
             _base._money(terms.get("total_cost_of_credit")),
@@ -121,21 +130,94 @@ def _collection_charge_cost_table(
     return table
 
 
+def _explicit_collection_clause(
+    styles: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[Any]:
+    """Render the signed contractual basis for collection and recovery costs.
+
+    The wording deliberately separates actual lawful external recovery costs from a
+    percentage/fixed collection commission. A configured commission is enforceable by
+    LoanHub only when it was frozen into and disclosed by the signed agreement.
+    """
+    elements = _original_clause(
+        "11",
+        "Default, debt collection and recovery costs",
+        (
+            "If the borrower fails to pay an amount when due, does not remedy the default "
+            "after any notice or opportunity required by applicable law, and the lender "
+            "engages a lawfully authorised debt collector, attorney or other external recovery "
+            "representative to recover amounts due under this agreement, the borrower expressly "
+            "agrees to pay the lawful and reasonable external debt-collection and recovery costs "
+            "actually incurred by the lender in recovering the debt, together with legal costs "
+            "recoverable under applicable law or a competent court order. This clause is the "
+            "parties' express contractual agreement that those qualifying recovery costs are for "
+            "the borrower's account. No collection or legal charge becomes due merely because an "
+            "instalment is late; every amount must be properly incurred or lawfully assessable, "
+            "separately itemised, and permitted by applicable law."
+        ),
+        styles,
+    )
+
+    if policy["enabled"]:
+        disclosure = collection_charge_disclosure(policy)
+        elements.extend(
+            _original_clause(
+                "11.1",
+                "Agreed collection commission after external referral",
+                (
+                    "In addition to the qualifying recovery costs described in clause 11, the "
+                    "borrower expressly agrees to pay the following collection commission if the "
+                    "stated arrears threshold is met and the account is actually referred for "
+                    f"external debt collection: {disclosure} This commission is conditional, is "
+                    "not part of the ordinary cost of credit or scheduled instalments, must be "
+                    "separately shown on the borrower's account, and is payable only to the extent "
+                    "permitted by applicable law."
+                ),
+                styles,
+            )
+        )
+    else:
+        elements.extend(
+            _original_clause(
+                "11.1",
+                "Separate collection commission",
+                (
+                    "No separate percentage-based or fixed collection commission is agreed under "
+                    "this agreement. Clause 11 still records the borrower's responsibility for "
+                    "lawful and reasonable external debt-collection, recovery and legal costs "
+                    "actually incurred or otherwise recoverable under applicable law."
+                ),
+                styles,
+            )
+        )
+    return elements
+
+
 def _collection_clause(
     number: str,
     heading: str,
     text: str,
     styles: dict[str, Any],
 ) -> list[Any]:
-    elements = _original_clause(number, heading, text, styles)
-    if number != "12":
-        return elements
-
     terms = _active_contract_terms.get()
+    template_version = str(terms.get("template_version") or "")
     policy = normalize_collection_charge_policy(
         {"collection_charge": terms.get("collection_charge") or {}}
     )
-    if not policy["enabled"]:
+
+    if template_version == EXPLICIT_COLLECTION_TEMPLATE_VERSION:
+        if number == "11":
+            return _explicit_collection_clause(styles, policy)
+        # The new template keeps all collection obligations under clause 11, so do
+        # not duplicate the legacy 12.1 collection paragraph after enforcement.
+        return _original_clause(number, heading, text, styles)
+
+    # Backward compatibility is intentional. Signed 3.0/3.1 contracts must render
+    # exactly the terms that existed when they were accepted; do not inject the new
+    # legal wording into historical agreements during PDF regeneration.
+    elements = _original_clause(number, heading, text, styles)
+    if number != "12" or not policy["enabled"]:
         return elements
 
     disclosure = collection_charge_disclosure(policy)
@@ -170,7 +252,7 @@ def _contract_pdf(db: Session, contract: LoanContract) -> bytes:
 
 
 # Keep the original rendering implementation intact while replacing only the narrow
-# extension points needed for the new signed collection-charge controls.
+# extension points needed for the signed collection-charge controls.
 _base.build_terms = build_terms
 _base._cost_elements_table = _collection_charge_cost_table
 _base._clause = _collection_clause
