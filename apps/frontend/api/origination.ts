@@ -119,12 +119,14 @@ export const originationApi = {
     loanId: string,
     witnessName?: string | null,
     templateStyle?: ContractTemplateStyle | null,
+    includeMandate = false,
   ): Promise<LoanContract> => {
     const resolvedTemplateStyle = templateStyle
       ?? (await loanSettingsApi.getSettings()).default_contract_template_style;
     return (await api.post<LoanContract>(`/origination/loans/${loanId}/contract`, {
       witness_name: witnessName ?? null,
       template_style: resolvedTemplateStyle,
+      include_mandate: includeMandate,
     })).data;
   },
 
