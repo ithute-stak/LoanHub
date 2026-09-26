@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -72,29 +73,23 @@ def test_historical_opening_accounting_posts_balanced_closed_period_entry(monkey
     credit_id = uuid4()
     captured: dict[str, object] = {}
 
-    class Account:
-        def __init__(self, account_id):
-            self.id = account_id
-
-    class Ledger:
-        business_date = date(2026, 9, 1)
-
-    class Source:
-        id = source_id
-        company_id = company_id
-        branch_id = branch_id
-        recorded_by_user_id = user_id
-        source_type = OpeningSourceType.OPENING_ADJUSTMENT
-        amount = Decimal("250.00")
-        description = "Historical cash float"
-        daily_ledger = Ledger()
+    source = SimpleNamespace(
+        id=source_id,
+        company_id=company_id,
+        branch_id=branch_id,
+        recorded_by_user_id=user_id,
+        source_type=OpeningSourceType.OPENING_ADJUSTMENT,
+        amount=Decimal("250.00"),
+        description="Historical cash float",
+        daily_ledger=SimpleNamespace(business_date=date(2026, 9, 1)),
+    )
 
     monkeypatch.setattr(service, "scope_key", lambda _company_id: ("company:test", None))
     monkeypatch.setattr(service, "ensure_chart", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         service,
         "account_by_code",
-        lambda _db, _key, code: Account(debit_id if code == "1000" else credit_id),
+        lambda _db, _key, code: SimpleNamespace(id=debit_id if code == "1000" else credit_id),
     )
 
     def capture_entry(_db, **kwargs):
@@ -103,7 +98,7 @@ def test_historical_opening_accounting_posts_balanced_closed_period_entry(monkey
 
     monkeypatch.setattr(service, "create_entry", capture_entry)
 
-    service._post_historical_opening_source_accounting(object(), Source())  # type: ignore[arg-type]
+    service._post_historical_opening_source_accounting(object(), source)  # type: ignore[arg-type]
 
     assert captured["allow_closed_period"] is True
     assert captured["entry_date"] == date(2026, 9, 1)
