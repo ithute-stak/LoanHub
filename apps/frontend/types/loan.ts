@@ -110,6 +110,10 @@ export type Loan = {
   branch_id: string | null;
   borrower_id: string;
   loan_reference: string;
+  folio_number: string;
+  folio_company_code: string;
+  folio_group_code: string;
+  folio_sequence: number;
   origination_channel: string;
   principal_amount: number;
   interest_rate: number;
