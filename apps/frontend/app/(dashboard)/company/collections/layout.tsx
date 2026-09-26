@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { Gavel, Handshake } from "lucide-react";
+import { Gavel, Handshake, Sparkles } from "lucide-react";
 
 const COLLECTION_WORKSPACES = [
   {
@@ -12,6 +12,13 @@ const COLLECTION_WORKSPACES = [
     description: "Arrears, promises, follow-ups and legal control",
     icon: Gavel,
     exact: true,
+  },
+  {
+    href: "/company/collections/automation",
+    label: "Automated recovery",
+    description: "DPD treatments, collector queues, broken promises and recovery routing",
+    icon: Sparkles,
+    exact: false,
   },
   {
     href: "/company/collections/lelefa",
@@ -30,9 +37,9 @@ export default function CollectionsLayout({ children }: { children: ReactNode })
       <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
         <div className="border-b bg-muted/30 px-4 py-3 sm:px-5">
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Collections command navigation</p>
-          <p className="mt-1 text-sm font-semibold text-foreground">Keep internal recovery and external Lelefa handover in one controlled workflow.</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">Keep internal recovery, automated treatment and external Lelefa handover in one controlled workflow.</p>
         </div>
-        <div className="grid gap-2 p-3 md:grid-cols-2">
+        <div className="grid gap-2 p-3 md:grid-cols-3">
           {COLLECTION_WORKSPACES.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
             const Icon = item.icon;
