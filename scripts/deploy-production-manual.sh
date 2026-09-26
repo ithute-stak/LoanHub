@@ -31,6 +31,15 @@ if [ -n "$current_release" ] && [[ ! "$current_release" =~ ^[0-9a-f]{40}$ ]]; th
   exit 1
 fi
 
+previous_retained_release=""
+if [ -f releases/previous.sha ]; then
+  previous_retained_release="$(tr -d '\r\n ' < releases/previous.sha)"
+fi
+if [ -n "$previous_retained_release" ] && [[ ! "$previous_retained_release" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Invalid previous production release marker: $previous_retained_release" >&2
+  exit 1
+fi
+
 api_get() {
   local url="$1"
   local -a headers=(
@@ -176,6 +185,19 @@ ensure_rollback_image() {
   echo "[LoanHub] Pulling rollback image $expected_ref before production cutover"
   docker pull "$expected_ref"
   docker image inspect "$expected_ref" >/dev/null
+}
+
+prune_superseded_rollback_release() {
+  local superseded="$1"
+  local retained="$2"
+
+  [ -n "$superseded" ] || return 0
+  [ "$superseded" != "$retained" ] || return 0
+  [ "$superseded" != "$RELEASE_SHA" ] || return 0
+
+  echo "[LoanHub] Removing superseded local rollback image tags for $superseded"
+  docker image rm "$BACKEND_IMAGE:$superseded" >/dev/null 2>&1 || true
+  docker image rm "$FRONTEND_IMAGE:$superseded" >/dev/null 2>&1 || true
 }
 
 rollback_armed=0
@@ -339,6 +361,10 @@ write_release_marker releases/current.sha "$RELEASE_SHA"
 rm -f releases/deploying.sha
 rollback_armed=0
 trap - ERR HUP INT TERM
+
+if [ -n "$current_release" ] && [ "$current_release" != "$RELEASE_SHA" ]; then
+  prune_superseded_rollback_release "$previous_retained_release" "$current_release"
+fi
 
 "${compose[@]}" ps
 printf '\n[LoanHub] Production is healthy on release %s\n' "$RELEASE_SHA"
