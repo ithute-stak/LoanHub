@@ -31,6 +31,7 @@ from routers import (
     credit_bureau_configuration,
     employees,
     employer_groups,
+    folio_book,
     hrms,
     institution_governance,
     expense_management,
@@ -82,11 +83,6 @@ from routers import (
 
 api_router = APIRouter()
 
-# The governance layer intentionally replaces a small set of legacy Document
-# Studio route contracts. Remove those route objects from the legacy router
-# before composition so FastAPI exposes exactly one handler per method/path.
-# The legacy Python functions remain importable and are reused internally by
-# the policy wrappers, so this does not duplicate business logic.
 _WORKSPACE_DOCUMENT_ROUTE_OVERRIDES = {
     ("GET", "/workspace-documents"),
     ("POST", "/workspace-documents"),
@@ -114,9 +110,6 @@ _legacy_workspace_documents_router = _without_workspace_document_overrides(
     workspace_documents.router
 )
 
-# Keep the complete API composition in one declarative registry. This avoids
-# recovery patches accidentally importing the same router twice or adding a
-# critical router after the aggregate router has already been mounted.
 _ROUTE_REGISTRY = (
     public_portal.router,
     auth.router,
@@ -158,6 +151,7 @@ _ROUTE_REGISTRY = (
     loan_offers.router,
     loan_products.router,
     loan_settings.router,
+    folio_book.router,
     loans.router,
     payments.router,
     loanhub_money.router,
@@ -181,9 +175,6 @@ _ROUTE_REGISTRY = (
     finance_config.router,
     platform_staff.router,
     platform_credit_bureau.router,
-    # This static route must precede the generic `/origination/integrations/{provider}`
-    # route so company users cannot reintroduce Experian credentials through the
-    # legacy tenant integration editor.
     platform_credit_bureau.company_guard_router,
     contract_email_otp.router,
     origination.router,
@@ -191,14 +182,9 @@ _ROUTE_REGISTRY = (
     credit_bureau.router,
     backdated_opening_adjustments.router,
     expense_management.router,
-    # Static folder/import routes must stay ahead of dynamic document IDs.
     workspace_document_organization.router,
-    # Governance owns canonical document read contracts so staff isolation,
-    # company-public work, and company-owner oversight are consistent.
     workspace_office_governance.office_router,
     workspace_office_governance.document_router,
-    # Ordinary company work is private until the staff member deliberately
-    # makes it Company public or shares it with named collaborators.
     workspace_creation_policy.router,
     _legacy_workspace_documents_router,
     workspace_spreadsheets.router,
