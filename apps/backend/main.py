@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 # This ensures contracts, loan documents, receipts and collection payloads bind
 # the permanent loan folio as part of their normal runtime behaviour.
 from services.folio_identity_integration import install_folio_identity_integration
+from core.credit_committee_integrity import install_credit_committee_integrity
 
 install_folio_identity_integration()
+install_credit_committee_integrity()
 
 from api.v1.router import api_router
 import core.audit_integrity  # noqa: F401 - seals immutable audit events
