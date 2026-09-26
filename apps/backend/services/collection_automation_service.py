@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from database.models.collection_automation import (
     CollectionTreatmentPolicy,
     CollectionWorkItem,
 )
+from database.models.company import LoanCompany
 from database.models.employer_payroll import EmployerPayrollAccount
 from database.models.lending_operations import (
     CDASDeductionMandate,
@@ -45,23 +47,36 @@ def _money(value: Any) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
 
-def get_or_create_policy(db: Session, context: TenantContext) -> CollectionTreatmentPolicy:
+def _get_or_create_policy(
+    db: Session,
+    *,
+    company_id: UUID,
+    configured_by_user_id: UUID | None,
+) -> CollectionTreatmentPolicy:
     row = db.query(CollectionTreatmentPolicy).filter(
-        CollectionTreatmentPolicy.company_id == context.company_id,
+        CollectionTreatmentPolicy.company_id == company_id,
         CollectionTreatmentPolicy.is_active.is_(True),
     ).order_by(CollectionTreatmentPolicy.version.desc()).first()
     if row:
         return row
     row = CollectionTreatmentPolicy(
-        company_id=context.company_id,
+        company_id=company_id,
         name="LoanHub default collections strategy",
         version=1,
         strategy=DEFAULT_STRATEGY,
-        configured_by_user_id=context.user.id,
+        configured_by_user_id=configured_by_user_id,
     )
     db.add(row)
     db.flush()
     return row
+
+
+def get_or_create_policy(db: Session, context: TenantContext) -> CollectionTreatmentPolicy:
+    return _get_or_create_policy(
+        db,
+        company_id=context.company_id,
+        configured_by_user_id=context.user.id,
+    )
 
 
 def update_policy(db: Session, context: TenantContext, strategy: dict[str, Any]) -> CollectionTreatmentPolicy:
@@ -73,6 +88,11 @@ def update_policy(db: Session, context: TenantContext, strategy: dict[str, Any])
                 raise HTTPException(status_code=422, detail=f"Each DPD band requires {key}")
         if int(band["min_dpd"]) < 1 or int(band["max_dpd"]) < int(band["min_dpd"]):
             raise HTTPException(status_code=422, detail="Invalid DPD range in treatment strategy")
+    ordered = sorted(strategy["bands"], key=lambda item: int(item["min_dpd"]))
+    for previous, current in zip(ordered, ordered[1:]):
+        if int(current["min_dpd"]) <= int(previous["max_dpd"]):
+            raise HTTPException(status_code=422, detail="Treatment DPD bands must not overlap")
+    strategy = {**strategy, "bands": ordered}
     current = get_or_create_policy(db, context)
     current.is_active = False
     row = CollectionTreatmentPolicy(
@@ -90,10 +110,14 @@ def update_policy(db: Session, context: TenantContext, strategy: dict[str, Any])
 
 
 def _band(strategy: dict[str, Any], dpd: int) -> dict[str, Any]:
-    for item in strategy.get("bands") or []:
+    bands = list(strategy.get("bands") or DEFAULT_STRATEGY["bands"])
+    bands.sort(key=lambda item: int(item.get("min_dpd", 0)))
+    for item in bands:
         if int(item.get("min_dpd", 0)) <= dpd <= int(item.get("max_dpd", 0)):
             return item
-    return DEFAULT_STRATEGY["bands"][-1]
+    if dpd < int(bands[0].get("min_dpd", 1)):
+        return bands[0]
+    return bands[-1]
 
 
 def _recovery_path(db: Session, case: CollectionCase, loan: ClientCompanyLoan, borrower: Borrower | None) -> str:
@@ -160,18 +184,47 @@ def _priority(case: CollectionCase, *, broken_promise: bool, recovery_path: str)
     return score.quantize(Decimal("0.001")), label
 
 
-def run_automation(db: Session, context: TenantContext) -> CollectionAutomationRun:
+def run_automation_for_company(
+    db: Session,
+    *,
+    company_id: UUID,
+    branch_id: UUID | None = None,
+    triggered_by_user_id: UUID | None = None,
+) -> CollectionAutomationRun:
     started = datetime.now(timezone.utc)
-    sync_overdue_collection_cases(db, context.company_id)
-    policy = get_or_create_policy(db, context)
+    sync_overdue_collection_cases(db, company_id)
+    policy = _get_or_create_policy(
+        db,
+        company_id=company_id,
+        configured_by_user_id=triggered_by_user_id,
+    )
     strategy = dict(policy.strategy or DEFAULT_STRATEGY)
     query = db.query(CollectionCase).filter(
-        CollectionCase.company_id == context.company_id,
+        CollectionCase.company_id == company_id,
         CollectionCase.status.notin_(["closed", "recovered", "written_off"]),
     )
-    if context.branch_id:
-        query = query.filter(CollectionCase.branch_id == context.branch_id)
+    if branch_id:
+        query = query.filter(CollectionCase.branch_id == branch_id)
     cases = query.all()
+    active_case_ids = {case.id for case in cases}
+
+    stale_query = db.query(CollectionWorkItem).filter(
+        CollectionWorkItem.company_id == company_id,
+        CollectionWorkItem.status.in_(["open", "in_progress"]),
+    )
+    if branch_id:
+        stale_query = stale_query.filter(CollectionWorkItem.branch_id == branch_id)
+    if active_case_ids:
+        stale_query = stale_query.filter(CollectionWorkItem.case_id.notin_(active_case_ids))
+    cancelled = stale_query.update(
+        {
+            CollectionWorkItem.status: "cancelled",
+            CollectionWorkItem.completion_notes: "Automatically cancelled because the collection case is no longer active.",
+            CollectionWorkItem.completed_at: datetime.now(timezone.utc),
+        },
+        synchronize_session=False,
+    )
+
     created = updated = broken_count = ready_count = 0
     path_counts: dict[str, int] = defaultdict(int)
     now = datetime.now(timezone.utc)
@@ -259,23 +312,64 @@ def run_automation(db: Session, context: TenantContext) -> CollectionAutomationR
 
     completed = datetime.now(timezone.utc)
     run = CollectionAutomationRun(
-        company_id=context.company_id,
-        branch_id=context.branch_id,
+        company_id=company_id,
+        branch_id=branch_id,
         run_reference=f"CAR-{completed:%Y%m%d%H%M%S}-{secrets.token_hex(3).upper()}",
         cases_checked=len(cases),
         work_items_created=created,
         work_items_updated=updated,
         broken_promises_detected=broken_count,
         legal_ready_cases=ready_count,
-        summary={"recovery_paths": dict(path_counts), "policy_version": policy.version},
+        summary={
+            "recovery_paths": dict(path_counts),
+            "policy_version": policy.version,
+            "stale_work_items_cancelled": int(cancelled or 0),
+        },
         started_at=started,
         completed_at=completed,
-        triggered_by_user_id=context.user.id,
+        triggered_by_user_id=triggered_by_user_id,
     )
     db.add(run)
     db.commit()
     db.refresh(run)
     return run
+
+
+def run_automation(db: Session, context: TenantContext) -> CollectionAutomationRun:
+    return run_automation_for_company(
+        db,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        triggered_by_user_id=context.user.id,
+    )
+
+
+def run_scheduled_collection_automation(db: Session) -> dict[str, Any]:
+    company_ids = [row[0] for row in db.query(LoanCompany.id).filter(LoanCompany.is_active.is_(True)).all()]
+    completed: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    for company_id in company_ids:
+        try:
+            run = run_automation_for_company(
+                db,
+                company_id=company_id,
+                branch_id=None,
+                triggered_by_user_id=None,
+            )
+            completed.append({
+                "company_id": str(company_id),
+                "run_reference": run.run_reference,
+                "cases_checked": run.cases_checked,
+                "work_items_created": run.work_items_created,
+            })
+        except Exception as exc:  # maintenance must continue with other tenants
+            db.rollback()
+            failures.append({"company_id": str(company_id), "error": str(exc)})
+    return {
+        "companies_checked": len(company_ids),
+        "completed": completed,
+        "failures": failures,
+    }
 
 
 def work_item_payload(db: Session, item: CollectionWorkItem) -> dict[str, Any]:
@@ -332,9 +426,9 @@ def dashboard(db: Session, context: TenantContext) -> dict[str, Any]:
     if context.branch_id:
         activity_query = activity_query.filter(CollectionCase.branch_id == context.branch_id)
     activities = activity_query.all()
-    productivity: dict[str, dict[str, Any]] = defaultdict(lambda: {"actions": 0, "promises": 0, "recovered": Decimal("0")})
+    productivity: dict[Any, dict[str, Any]] = defaultdict(lambda: {"actions": 0, "promises": 0, "recovered": Decimal("0")})
     for row in activities:
-        key = str(row.performed_by_user_id or "unassigned")
+        key = row.performed_by_user_id
         productivity[key]["actions"] += 1
         if row.activity_type == "promise_to_pay":
             productivity[key]["promises"] += 1
@@ -342,9 +436,9 @@ def dashboard(db: Session, context: TenantContext) -> dict[str, Any]:
             productivity[key]["recovered"] += _money(row.amount)
     people = []
     for user_id, values in productivity.items():
-        user = db.get(User, user_id) if user_id != "unassigned" else None
+        user = db.get(User, user_id) if user_id else None
         people.append({
-            "user_id": user_id if user else None,
+            "user_id": str(user_id) if user else None,
             "name": user.email if user else "Unassigned",
             "actions": values["actions"],
             "promises": values["promises"],
