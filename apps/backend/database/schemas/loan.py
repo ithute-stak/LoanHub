@@ -61,6 +61,10 @@ class LoanRead(BaseModel):
     branch_id: UUID | None
     borrower_id: UUID
     loan_reference: str
+    folio_number: str
+    folio_company_code: str
+    folio_group_code: str
+    folio_sequence: int
     origination_channel: str
     is_top_up: bool = False
     parent_loan_id: UUID | None = None
