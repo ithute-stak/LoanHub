@@ -7,6 +7,7 @@ import {
   Gavel,
   RefreshCcw,
   Route,
+  Save,
   ShieldAlert,
   Sparkles,
   TimerReset,
@@ -17,15 +18,28 @@ import {
   completeCollectionWorkItem,
   getCollectionAutomationDashboard,
   getCollectionLegalReadiness,
+  getCollectionTreatmentPolicy,
   runCollectionAutomation,
+  updateCollectionTreatmentPolicy,
   type CollectionAutomationDashboard,
+  type CollectionTreatmentPolicy,
   type CollectionWorkItem,
 } from "@/api/collectionAutomation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
+
+type EditableBand = {
+  min_dpd: number;
+  max_dpd: number;
+  stage: string;
+  action: string;
+  treatment: string;
+  due_hours: number;
+};
 
 function errorText(error: unknown) {
   if (typeof error === "object" && error && "response" in error) {
@@ -43,8 +57,21 @@ function priorityVariant(priority: string) {
   return "secondary" as const;
 }
 
+function editableBands(policy: CollectionTreatmentPolicy | null): EditableBand[] {
+  return (policy?.strategy.bands ?? []).map((band) => ({
+    min_dpd: Number(band.min_dpd),
+    max_dpd: Number(band.max_dpd),
+    stage: band.stage,
+    action: band.action,
+    treatment: band.treatment,
+    due_hours: Number(band.due_hours ?? 4),
+  }));
+}
+
 export default function CollectionAutomationPage() {
   const [data, setData] = useState<CollectionAutomationDashboard | null>(null);
+  const [policy, setPolicy] = useState<CollectionTreatmentPolicy | null>(null);
+  const [bands, setBands] = useState<EditableBand[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +81,13 @@ export default function CollectionAutomationPage() {
     setLoading(true);
     setError(null);
     try {
-      setData(await getCollectionAutomationDashboard());
+      const [dashboardResult, policyResult] = await Promise.all([
+        getCollectionAutomationDashboard(),
+        getCollectionTreatmentPolicy(),
+      ]);
+      setData(dashboardResult);
+      setPolicy(policyResult);
+      setBands(editableBands(policyResult));
     } catch (nextError) {
       setError(errorText(nextError));
     } finally {
@@ -77,6 +110,30 @@ export default function CollectionAutomationPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function savePolicy() {
+    if (!policy || !bands.length) return;
+    setBusy("policy");
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await updateCollectionTreatmentPolicy({
+        ...policy.strategy,
+        bands,
+      });
+      setPolicy(saved);
+      setBands(editableBands(saved));
+      setNotice(`Collections treatment policy saved as version ${saved.version}. The prior version remains in the audit history.`);
+    } catch (nextError) {
+      setError(errorText(nextError));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function updateBand(index: number, patch: Partial<EditableBand>) {
+    setBands((current) => current.map((band, bandIndex) => bandIndex === index ? { ...band, ...patch } : band));
   }
 
   async function complete(item: CollectionWorkItem) {
@@ -122,7 +179,7 @@ export default function CollectionAutomationPage() {
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight md:text-4xl">Prioritise the right recovery action</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground md:text-base">
-              Convert arrears into an actionable collector queue using DPD treatment bands, broken-promise detection, employer/CDAS recovery routing, legal-readiness controls and collector productivity evidence.
+              Convert arrears into an actionable collector queue using DPD treatment bands, broken-promise detection, employer/CDAS recovery routing, legal-readiness controls and collector productivity evidence. The maintenance worker refreshes the queue automatically every day.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -145,6 +202,39 @@ export default function CollectionAutomationPage() {
           <Card><CardHeader className="pb-2"><CardDescription>Total overdue exposure</CardDescription><CardTitle className="text-lg">{formatMoney(data.summary.total_overdue)}</CardTitle></CardHeader></Card>
         </section>
       ) : null}
+
+      <Card>
+        <CardHeader className="gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <CardTitle>DPD treatment strategy</CardTitle>
+            <CardDescription>Configure the action and service-level window for each delinquency band. Saving creates a new policy version instead of rewriting the previous control.</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            {policy ? <Badge variant="outline">Policy v{policy.version}</Badge> : null}
+            <Button onClick={() => void savePolicy()} disabled={!policy || busy === "policy"}><Save className="mr-2 h-4 w-4" /> {busy === "policy" ? "Saving..." : "Save new version"}</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto rounded-2xl border">
+            <Table>
+              <TableHeader><TableRow><TableHead>From DPD</TableHead><TableHead>To DPD</TableHead><TableHead>Stage</TableHead><TableHead>Action</TableHead><TableHead>Treatment code</TableHead><TableHead>Due within hours</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {bands.map((band, index) => (
+                  <TableRow key={`${band.treatment}-${index}`}>
+                    <TableCell><Input className="min-w-24" type="number" min={1} value={band.min_dpd} onChange={(event) => updateBand(index, { min_dpd: Number(event.target.value) })} /></TableCell>
+                    <TableCell><Input className="min-w-24" type="number" min={1} value={band.max_dpd} onChange={(event) => updateBand(index, { max_dpd: Number(event.target.value) })} /></TableCell>
+                    <TableCell><Input className="min-w-40" value={band.stage} onChange={(event) => updateBand(index, { stage: event.target.value })} /></TableCell>
+                    <TableCell><Input className="min-w-36" value={band.action} onChange={(event) => updateBand(index, { action: event.target.value })} /></TableCell>
+                    <TableCell><Input className="min-w-44 font-mono" value={band.treatment} onChange={(event) => updateBand(index, { treatment: event.target.value.toUpperCase() })} /></TableCell>
+                    <TableCell><Input className="min-w-28" type="number" min={0} value={band.due_hours} onChange={(event) => updateBand(index, { due_hours: Number(event.target.value) })} /></TableCell>
+                  </TableRow>
+                ))}
+                {!bands.length ? <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No treatment policy is loaded.</TableCell></TableRow> : null}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_340px]">
         <Card>
