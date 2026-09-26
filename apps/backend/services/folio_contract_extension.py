@@ -6,10 +6,12 @@ from typing import Any, Iterator
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+import routers.collections_recovery as _collections
 import services.contract_service as _contract
 import services.contract_service_base as _base
 import services.loan_document_service as _loan_documents
 import services.receipt_service as _receipts
+from database.models.client_loan_company import ClientCompanyLoan
 
 
 _original_build_terms = _base.build_terms
@@ -19,6 +21,7 @@ _original_loan_information_pdf = _loan_documents.generate_loan_information_pdf
 _original_repayment_schedule_pdf = _loan_documents.generate_repayment_schedule_pdf
 _original_payment_history_pdf = _loan_documents.generate_payment_history_pdf
 _original_receipt_pdf_bytes = _receipts._pdf_bytes
+_original_collection_case_payload = _collections._case_payload
 
 
 def build_terms(db: Session, loan: Any) -> dict[str, Any]:
@@ -110,6 +113,26 @@ def _receipt_pdf_bytes(db: Session, receipt: Any, payment: Any, loan: Any) -> by
         return _original_receipt_pdf_bytes(db, receipt, payment, loan)
 
 
+def _collection_case_payload(db: Session, case: Any) -> dict[str, Any]:
+    """Expose the folio in recovery searches while preserving the technical loan number."""
+    payload = _original_collection_case_payload(db, case)
+    loan_id = getattr(case, "loan_id", None)
+    loan = db.get(ClientCompanyLoan, loan_id) if loan_id else None
+    folio = str(getattr(loan, "folio_number", "") or "").strip()
+    loan_reference = str(payload.get("loan_reference") or "").strip()
+    payload["folio_number"] = folio or None
+    payload["folio_group_code"] = getattr(loan, "folio_group_code", None) if loan else None
+    payload["loan_reference_raw"] = loan_reference or None
+    # The existing collections workspace searches/displays loan_reference. Including the
+    # folio in that presentation field makes folio lookup work without changing case IDs,
+    # payment IDs or any authoritative technical loan relationship.
+    if folio and loan_reference:
+        payload["loan_reference"] = f"{folio} | {loan_reference}"
+    elif folio:
+        payload["loan_reference"] = folio
+    return payload
+
+
 # Contract generation in contract_service delegates into contract_service_base at runtime,
 # so replacing these shared extension points keeps one legal/document implementation while
 # making the immutable folio visible throughout LoanHub's loan-document family.
@@ -121,3 +144,4 @@ _loan_documents.generate_loan_information_pdf = generate_loan_information_pdf
 _loan_documents.generate_repayment_schedule_pdf = generate_repayment_schedule_pdf
 _loan_documents.generate_payment_history_pdf = generate_payment_history_pdf
 _receipts._pdf_bytes = _receipt_pdf_bytes
+_collections._case_payload = _collection_case_payload
