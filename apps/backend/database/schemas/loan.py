@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from database.models.enums import InstallmentStatus, LoanStatus, RepaymentType, RiskLevel
 
@@ -92,6 +92,18 @@ class LoanRead(BaseModel):
     renewal_stop_reason: str | None = None
     installments: list[RepaymentInstallmentRead] = []
     renewal_cycles: list[LoanRenewalCycleRead] = []
+
+    @model_validator(mode="after")
+    def normalize_current_overdue_state(self):
+        """Expose overdue only for live loans that still carry a balance.
+
+        Historical rows may retain an old database ``is_overdue`` flag after a
+        settlement/import. That history must not make a completed or zero-balance
+        facility look currently delinquent to API consumers.
+        """
+        if self.balance <= 0 or self.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+            self.is_overdue = False
+        return self
 
     model_config = {"from_attributes": True}
 

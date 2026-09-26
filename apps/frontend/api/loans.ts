@@ -19,16 +19,30 @@ import type {
   OverpaymentAction,
 } from "@/types/loan";
 
+function normalizeLoanCurrentState(loan: Loan): Loan {
+  const status = String(loan.status ?? "").toLowerCase();
+  const balance = Number(loan.balance ?? 0);
+  const hasOutstandingBalance = Number.isFinite(balance) && balance > 0;
+  const canBeCurrentlyOverdue = hasOutstandingBalance && (status === "active" || status === "defaulted");
+
+  if (loan.is_overdue && !canBeCurrentlyOverdue) {
+    return { ...loan, is_overdue: false };
+  }
+  return loan;
+}
+
 export async function listLoans(): Promise<Loan[]> {
-  return (await api.get<Loan[]>("/loans/")).data;
+  return (await api.get<Loan[]>("/loans/")).data.map(normalizeLoanCurrentState);
 }
 
 export async function getLoan(loanId: string): Promise<Loan> {
-  return (await api.get<Loan>(`/loans/${loanId}`)).data;
+  return normalizeLoanCurrentState((await api.get<Loan>(`/loans/${loanId}`)).data);
 }
 
 export async function getLoanByReference(loanReference: string): Promise<Loan> {
-  return (await api.get<Loan>(`/loans/by-reference/${encodeURIComponent(loanReference.trim().toUpperCase())}`)).data;
+  return normalizeLoanCurrentState(
+    (await api.get<Loan>(`/loans/by-reference/${encodeURIComponent(loanReference.trim().toUpperCase())}`)).data,
+  );
 }
 
 export type InstallmentDueDateAdjustmentPayload = {
@@ -42,9 +56,11 @@ export async function adjustInstallmentDueDate(
   installmentId: string,
   payload: InstallmentDueDateAdjustmentPayload,
 ): Promise<Loan> {
-  return (
-    await api.patch<Loan>(`/loans/${loanId}/installments/${installmentId}/due-date`, payload)
-  ).data;
+  return normalizeLoanCurrentState(
+    (
+      await api.patch<Loan>(`/loans/${loanId}/installments/${installmentId}/due-date`, payload)
+    ).data,
+  );
 }
 
 export type LoanCalculationPayload = {
