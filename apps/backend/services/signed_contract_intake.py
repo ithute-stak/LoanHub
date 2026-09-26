@@ -141,14 +141,16 @@ def load_client_identities(db: Session, context: TenantContext) -> dict[Any, Cli
     return identities
 
 
-def match_signed_contract(db: Session, context: TenantContext, extracted_text: str) -> ContractMatch:
+def match_against_identities(
+    identities: dict[Any, ClientIdentity],
+    extracted_text: str,
+) -> ContractMatch:
+    """Match only strong identifiers; names are deliberately not routing evidence."""
     searchable = _compact(extracted_text)
     if not searchable:
         return ContractMatch(None, None, None, "review", "No readable contract text was found", [])
 
-    identities = load_client_identities(db, context)
     account_evidence: dict[Any, set[str]] = {}
-
     for account_id, identity in identities.items():
         evidence: set[str] = set()
         if _contains_identifier(searchable, identity.national_id):
@@ -193,6 +195,10 @@ def match_signed_contract(db: Session, context: TenantContext, extracted_text: s
         "No strong client identifier matched; a name alone is never used for automatic filing",
         [],
     )
+
+
+def match_signed_contract(db: Session, context: TenantContext, extracted_text: str) -> ContractMatch:
+    return match_against_identities(load_client_identities(db, context), extracted_text)
 
 
 async def read_contract_upload(upload: UploadFile) -> tuple[bytes, str, str]:
