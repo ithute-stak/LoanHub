@@ -22,6 +22,13 @@ from database.models.employer_payroll import (  # noqa: F401,E402
     EmployerPayrollDeduction,
     EmployerPayrollEmployee,
 )
+from database.models.credit_committee import (  # noqa: F401,E402
+    CreditCommitteeCase,
+    CreditCommitteeCondition,
+    CreditCommitteeEvent,
+    CreditCommitteeVote,
+    UnderwritingAssessment,
+)
 
 
 config = context.config
