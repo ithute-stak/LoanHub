@@ -50,6 +50,11 @@ class EmployerPayrollEmployee(Base):
             "borrower_id",
             name="uq_employer_payroll_employee_company_account_borrower",
         ),
+        UniqueConstraint(
+            "employer_account_id",
+            "employee_number",
+            name="uq_employer_payroll_employee_account_number",
+        ),
     )
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
