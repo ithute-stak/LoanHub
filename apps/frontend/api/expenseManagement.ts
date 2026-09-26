@@ -5,6 +5,10 @@ import type {
   PaymentMethodOption, TreasuryDashboard, TreasuryDirection, TreasuryEntry, TreasuryEntryCreate,
   TreasurySettings, TreasurySettingsUpdate, TreasuryStatement,
 } from "@/types/expenseManagement";
+import type {
+  BackdatedOpeningAdjustmentCreate,
+  BackdatedOpeningAdjustmentResult,
+} from "@/types/backdatedOpeningAdjustment";
 
 function repeatedParams(name: string, values?: readonly string[]): URLSearchParams {
   const params = new URLSearchParams();
@@ -35,6 +39,10 @@ export const expenseManagementApi = {
     (await api.get<BranchDailyLedger>("/expense-management/days/current", { params: { branch_id: branchId || undefined, business_date: businessDate } })).data,
   createOpeningSource: async (payload: OpeningSourceCreate): Promise<OpeningSource> =>
     (await api.post<OpeningSource>("/expense-management/opening-sources", payload)).data,
+  createBackdatedOpeningAdjustment: async (
+    payload: BackdatedOpeningAdjustmentCreate,
+  ): Promise<BackdatedOpeningAdjustmentResult> =>
+    (await api.post<BackdatedOpeningAdjustmentResult>("/expense-management/opening-sources/backdated-adjustment", payload)).data,
   voidOpeningSource: async (sourceId: string, reason: string): Promise<OpeningSource> =>
     (await api.post<OpeningSource>(`/expense-management/opening-sources/${sourceId}/void`, { reason })).data,
   recordEntry: async (payload: TreasuryEntryCreate): Promise<TreasuryEntry> =>
