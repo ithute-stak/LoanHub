@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from core.access_control import (
@@ -16,7 +17,8 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.collection_automation import CollectionTreatmentPolicy, CollectionWorkItem
-from database.models.lending_operations import CollectionCase
+from database.models.company_staff import CompanyStaff
+from database.models.lending_operations import CollectionActivity, CollectionCase
 from database.session import get_db
 from services.collection_automation_service import (
     complete_work_item,
@@ -94,6 +96,20 @@ def _case_or_404(db: Session, context: TenantContext, case_id: UUID) -> Collecti
     return row
 
 
+def _assert_assignment_target(db: Session, context: TenantContext, user_id: UUID | None) -> None:
+    if user_id is None:
+        return
+    query = db.query(CompanyStaff.id).filter(
+        CompanyStaff.company_id == context.company_id,
+        CompanyStaff.user_id == user_id,
+        CompanyStaff.is_active.is_(True),
+    )
+    if context.branch_id:
+        query = query.filter(or_(CompanyStaff.branch_id == context.branch_id, CompanyStaff.branch_id.is_(None)))
+    if not query.first():
+        raise HTTPException(status_code=422, detail="The selected assignee is not active staff in this company/branch")
+
+
 @router.get("/dashboard")
 def collections_automation_dashboard(
     db: Session = Depends(get_db),
@@ -142,7 +158,7 @@ def put_collections_policy(
     context: TenantContext = Depends(get_user_context),
 ):
     _scope(context)
-    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | COLLECTIONS_ROLES)
+    require_tenant_roles(context, ACTION_ROLES)
     return _policy_payload(update_policy(db, context, payload.strategy))
 
 
@@ -177,6 +193,7 @@ def assign_collection_work_item(
     context: TenantContext = Depends(get_user_context),
 ):
     _scope(context)
+    _assert_assignment_target(db, context, payload.assigned_to_user_id)
     row = _work_item_or_404(db, context, item_id)
     row.assigned_to_user_id = payload.assigned_to_user_id
     case = _case_or_404(db, context, row.case_id)
@@ -222,20 +239,37 @@ def escalate_case_to_legal(
     _scope(context)
     case = _case_or_404(db, context, case_id)
     readiness = legal_readiness(db, case)
+    note = (payload.override_reason or "").strip()
     if not readiness["ready"]:
         if not payload.override_readiness:
             raise HTTPException(
                 status_code=409,
                 detail={"message": "Legal handover checklist is incomplete", "missing": readiness["missing"]},
             )
-        if len((payload.override_reason or "").strip()) < 10:
+        require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+        if len(note) < 10:
             raise HTTPException(status_code=422, detail="A detailed readiness-override reason is required")
+
+    now = datetime.now(timezone.utc)
     case.stage = "legal"
     case.status = "legal"
-    case.legal_handover_at = datetime.now(timezone.utc)
-    note = (payload.override_reason or "").strip()
+    case.legal_handover_at = now
     if note:
         case.notes = "\n\n".join(value for value in [case.notes, f"Legal readiness override: {note}"] if value)
+
+    db.add(CollectionActivity(
+        case_id=case.id,
+        company_id=case.company_id,
+        activity_type="legal_handover",
+        outcome="escalated",
+        notes=note or "Legal readiness checklist completed and case escalated.",
+        performed_by_user_id=context.user.id,
+        performed_at=now,
+        metadata_json={
+            "readiness": readiness,
+            "override_readiness": bool(payload.override_readiness and not readiness["ready"]),
+        },
+    ))
     db.commit()
     return {
         "case_id": str(case.id),
