@@ -72,17 +72,29 @@ export async function getFolioIntegrity(): Promise<FolioIntegrity> {
   return (await api.get<FolioIntegrity>("/folio-book/integrity")).data;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+}
+
 export async function downloadFolioBookCsv(groupCode?: string): Promise<void> {
   const response = await api.get<Blob>("/folio-book/export.csv", {
     params: groupCode ? { group_code: groupCode } : undefined,
     responseType: "blob",
   });
-  const url = URL.createObjectURL(response.data);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = groupCode ? `loanhub-folio-book-${groupCode}.csv` : "loanhub-folio-book.csv";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+  downloadBlob(
+    response.data,
+    groupCode ? `loanhub-folio-book-${groupCode}.csv` : "loanhub-folio-book.csv",
+  );
+}
+
+export async function downloadFolioBookPdf(): Promise<void> {
+  const response = await api.get<Blob>("/folio-book/export.pdf", { responseType: "blob" });
+  downloadBlob(response.data, "loanhub-folio-book.pdf");
 }
