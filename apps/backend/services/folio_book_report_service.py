@@ -6,6 +6,7 @@ from typing import Any
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
+from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
 from services.pdf_design_system import (
@@ -24,6 +25,7 @@ from services.pdf_design_system import (
 
 def build_folio_book_pdf(
     *,
+    db: Session,
     context: TenantContext,
     rows: list[dict[str, Any]],
     integrity: dict[str, Any],
@@ -115,7 +117,7 @@ def build_folio_book_pdf(
     return build_document(
         story=story,
         context=DocumentContext(
-            db=None,
+            db=db,
             company=context.company,
             title="Loan Folio Book",
             reference="Permanent loan sequence register",
