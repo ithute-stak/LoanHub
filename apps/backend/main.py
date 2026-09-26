@@ -6,6 +6,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+# Install folio document propagation before routers import document generators.
+# This ensures contracts, loan documents, receipts and collection payloads bind
+# the permanent loan folio as part of their normal runtime behaviour.
+from services.folio_identity_integration import install_folio_identity_integration
+
+install_folio_identity_integration()
+
 from api.v1.router import api_router
 import core.audit_integrity  # noqa: F401 - seals immutable audit events
 import core.transparency  # noqa: F401 - registers SQLAlchemy transparency listeners
