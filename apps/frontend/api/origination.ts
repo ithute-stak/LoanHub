@@ -119,14 +119,21 @@ export const originationApi = {
     loanId: string,
     witnessName?: string | null,
     templateStyle?: ContractTemplateStyle | null,
-    includeMandate = false,
+    includeMandate?: boolean,
   ): Promise<LoanContract> => {
     const resolvedTemplateStyle = templateStyle
       ?? (await loanSettingsApi.getSettings()).default_contract_template_style;
+    const resolvedIncludeMandate = includeMandate ?? (
+      typeof window !== "undefined"
+        ? window.confirm(
+          "Include debit-order mandate?\n\nSelect OK to append the Authority to Debit Account mandate for the borrower to sign. Select Cancel to generate the normal contract without the mandate.",
+        )
+        : false
+    );
     return (await api.post<LoanContract>(`/origination/loans/${loanId}/contract`, {
       witness_name: witnessName ?? null,
       template_style: resolvedTemplateStyle,
-      include_mandate: includeMandate,
+      include_mandate: resolvedIncludeMandate,
     })).data;
   },
 
