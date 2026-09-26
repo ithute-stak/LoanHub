@@ -426,6 +426,10 @@ class CompanyClientProfileStatsRead(BaseModel):
 
 class CompanyClientProfileLoanRead(BaseModel):
     id: UUID
+    folio_number: str
+    folio_company_code: str
+    folio_group_code: str
+    folio_sequence: int
     loan_reference: str
     status: str
     risk_level: str
@@ -471,6 +475,8 @@ class CompanyClientProfileRead(BaseModel):
 
 class CompanyClientLoanInsightRead(BaseModel):
     loan_id: UUID
+    folio_number: str
+    folio_group_code: str
     loan_reference: str
     client_account_id: UUID
     borrower_id: UUID
