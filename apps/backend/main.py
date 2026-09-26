@@ -142,6 +142,7 @@ _CRITICAL_API_ROUTES = {
     ("GET", "/api/v1/analytics/company"),
     ("GET", "/api/v1/analytics/platform"),
     ("GET", "/api/v1/analytics/borrower"),
+    ("GET", "/api/v1/folio-book"),
     ("POST", "/api/v1/loans/calculator"),
     ("GET", "/api/v1/system-updates/status"),
     ("POST", "/api/v1/system-updates/update"),
