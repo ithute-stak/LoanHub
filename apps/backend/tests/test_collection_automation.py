@@ -64,7 +64,9 @@ def test_recovery_api_exposes_queue_policy_engine_assignment_and_controlled_lega
     assert '@router.put("/policy")' in source
     assert '@router.get("/work-items")' in source
     assert '@router.put("/work-items/{item_id}/assignment")' in source
-    assert "The selected assignee is not active staff in this company/branch" in source
+    assert "The selected assignee is not active collections staff in this company/branch" in source
+    assert "Only the assigned collector or company management may complete this work item" in source
+    assert "Record the collection action in the recovery case before completing this automated work item" in source
     assert '@router.get("/cases/{case_id}/legal-readiness")' in source
     assert '@router.post("/cases/{case_id}/escalate-legal")' in source
     assert "require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)" in source
