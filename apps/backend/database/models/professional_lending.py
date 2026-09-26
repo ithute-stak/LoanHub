@@ -1,7 +1,13 @@
 from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
+
 from database.base import Base
+# DirectLoanApplication has foreign keys into the CDAS booking tables. Import
+# those models here so request paths that import this module directly (for
+# example company_clients) always register the target tables in Base.metadata
+# before SQLAlchemy needs to sort/flush the mapper graph.
+from database.models.cdas_booking import CdasAnalysisRecord, CdasBookingOpportunity  # noqa: F401
 
 class DirectLoanApplication(Base):
     __tablename__ = "direct_loan_applications"
