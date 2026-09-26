@@ -137,6 +137,109 @@ wait_healthy() {
   return 1
 }
 
+verify_public_endpoints() {
+  curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://api.loanhub.co.ls/health/ready >/dev/null
+  curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://loanhub.co.ls/ >/dev/null
+}
+
+write_release_marker() {
+  local path="$1"
+  local value="$2"
+  local temp="${path}.tmp.$$"
+  printf '%s\n' "$value" > "$temp"
+  mv -f "$temp" "$path"
+}
+
+ensure_rollback_image() {
+  local image="$1"
+  local release="$2"
+  local service="$3"
+  local expected_ref="${image}:${release}"
+  local container_id running_ref image_id
+
+  if docker image inspect "$expected_ref" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  container_id="$("${compose[@]}" ps -q "$service" 2>/dev/null || true)"
+  if [ -n "$container_id" ]; then
+    running_ref="$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
+    image_id="$(docker inspect -f '{{.Image}}' "$container_id" 2>/dev/null || true)"
+    if [ "$running_ref" = "$expected_ref" ] && [ -n "$image_id" ]; then
+      echo "[LoanHub] Preserving running $service image locally as rollback target $expected_ref"
+      docker image tag "$image_id" "$expected_ref"
+      docker image inspect "$expected_ref" >/dev/null
+      return 0
+    fi
+  fi
+
+  echo "[LoanHub] Pulling rollback image $expected_ref before production cutover"
+  docker pull "$expected_ref"
+  docker image inspect "$expected_ref" >/dev/null
+}
+
+rollback_armed=0
+rollback_release=""
+deployment_phase="preflight"
+
+handle_deployment_failure() {
+  local status="${1:-1}"
+  local location="${2:-unknown}"
+  local rollback_ok=1
+
+  trap - ERR HUP INT TERM
+  set +e
+
+  echo "[LoanHub] DEPLOYMENT FAILED during ${deployment_phase} (status=$status, location=$location)." >&2
+
+  if [ "$rollback_armed" -ne 1 ] || [ -z "$rollback_release" ]; then
+    echo "[LoanHub] Existing production containers were not replaced or no rollback release is available." >&2
+    exit "$status"
+  fi
+
+  rollback_armed=0
+  write_release_marker releases/last-failed.sha "$RELEASE_SHA" || true
+  rm -f releases/deploying.sha
+
+  echo "[LoanHub] Automatic application rollback starting: $RELEASE_SHA -> $rollback_release" >&2
+  export LOANHUB_IMAGE_TAG="$rollback_release"
+
+  "${compose[@]}" up -d --no-build --pull never --no-deps backend || rollback_ok=0
+  if [ "$rollback_ok" -eq 1 ]; then
+    wait_healthy backend 60 3 || rollback_ok=0
+  fi
+
+  "${compose[@]}" up -d --no-build --pull never --no-deps maintenance frontend || rollback_ok=0
+  if [ "$rollback_ok" -eq 1 ]; then
+    wait_healthy frontend 60 3 || rollback_ok=0
+  fi
+
+  if [ "$rollback_ok" -eq 1 ]; then
+    verify_public_endpoints || rollback_ok=0
+  fi
+
+  if [ "$rollback_ok" -eq 1 ]; then
+    write_release_marker releases/current.sha "$rollback_release" || rollback_ok=0
+  fi
+
+  if [ "$rollback_ok" -eq 1 ]; then
+    echo "[LoanHub] Automatic application rollback succeeded. Production remains on $rollback_release." >&2
+  else
+    echo "[LoanHub] CRITICAL: automatic rollback could not restore a healthy application release." >&2
+    echo "[LoanHub] Database backup remains available at: ${backup:-not-created}" >&2
+    echo "[LoanHub] Do not restore the database automatically; inspect migration compatibility and service logs first." >&2
+  fi
+
+  export LOANHUB_IMAGE_TAG="$RELEASE_SHA"
+  exit "$status"
+}
+
+handle_deployment_signal() {
+  local signal_name="$1"
+  local status="$2"
+  handle_deployment_failure "$status" "signal:${signal_name}"
+}
+
 echo "[LoanHub] Pulling immutable release $RELEASE_SHA"
 docker pull "$BACKEND_IMAGE:$RELEASE_SHA"
 docker pull "$FRONTEND_IMAGE:$RELEASE_SHA"
@@ -144,9 +247,19 @@ docker pull "$FRONTEND_IMAGE:$RELEASE_SHA"
 docker image inspect "$BACKEND_IMAGE:$RELEASE_SHA" >/dev/null
 docker image inspect "$FRONTEND_IMAGE:$RELEASE_SHA" >/dev/null
 
+if [ -n "$current_release" ] && [ "$current_release" != "$RELEASE_SHA" ]; then
+  echo "[LoanHub] Securing current release $current_release locally for automatic rollback"
+  ensure_rollback_image "$BACKEND_IMAGE" "$current_release" backend
+  ensure_rollback_image "$FRONTEND_IMAGE" "$current_release" frontend
+  rollback_release="$current_release"
+fi
+
 echo "[LoanHub] Starting persistent database and cache"
 "${compose[@]}" up -d --no-build --pull never db redis
 wait_healthy db 45 2
+
+echo "[LoanHub] Running candidate backend import smoke before database migration or application cutover"
+"${compose[@]}" run --rm --no-deps backend python -c 'import main; print("LoanHub backend import smoke passed")'
 
 alembic_table=""
 if ! alembic_table="$(
@@ -195,24 +308,41 @@ test -s "$backup"
 echo "[LoanHub] Applying Alembic migrations (fail-closed)"
 "${compose[@]}" run --rm --no-deps migrate
 
-echo "[LoanHub] Starting tested application images"
+if [ -n "$rollback_release" ]; then
+  echo "[LoanHub] Arming automatic application rollback to $rollback_release"
+  write_release_marker releases/deploying.sha "$RELEASE_SHA"
+  rollback_armed=1
+  trap 'handle_deployment_failure "$?" "$LINENO"' ERR
+  trap 'handle_deployment_signal HUP 129' HUP
+  trap 'handle_deployment_signal INT 130' INT
+  trap 'handle_deployment_signal TERM 143' TERM
+fi
+
+deployment_phase="backend cutover"
+echo "[LoanHub] Starting tested backend image"
 "${compose[@]}" up -d --no-build --pull never --no-deps backend
 wait_healthy backend
+
+deployment_phase="frontend and maintenance cutover"
 "${compose[@]}" up -d --no-build --pull never --no-deps maintenance frontend
 wait_healthy frontend
 
+deployment_phase="public endpoint verification"
 echo "[LoanHub] Verifying public endpoints"
-curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://api.loanhub.co.ls/health/ready >/dev/null
-curl --retry 20 --retry-delay 3 --retry-all-errors -fsS https://loanhub.co.ls/ >/dev/null
+verify_public_endpoints
 
+deployment_phase="release commit"
 if [ -n "$current_release" ] && [ "$current_release" != "$RELEASE_SHA" ]; then
-  printf '%s\n' "$current_release" > releases/previous.sha
+  write_release_marker releases/previous.sha "$current_release"
 fi
-printf '%s\n' "$RELEASE_SHA" > releases/current.sha
+write_release_marker releases/current.sha "$RELEASE_SHA"
+rm -f releases/deploying.sha
+rollback_armed=0
+trap - ERR HUP INT TERM
 
 "${compose[@]}" ps
 printf '\n[LoanHub] Production is healthy on release %s\n' "$RELEASE_SHA"
 printf '[LoanHub] Database backup: %s\n' "$backup"
 if [ -n "$current_release" ] && [ "$current_release" != "$RELEASE_SHA" ]; then
-  printf '[LoanHub] Previous release retained for rollback reference: %s\n' "$current_release"
+  printf '[LoanHub] Previous release retained locally and recorded for rollback: %s\n' "$current_release"
 fi
