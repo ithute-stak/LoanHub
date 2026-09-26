@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpenCheck, Building2, HandCoins } from "lucide-react";
+import { BookOpenCheck, Building2, Gavel, HandCoins } from "lucide-react";
 import type { ReactNode } from "react";
 
 export default function CompanyLoansLayout({ children }: { children: ReactNode }) {
@@ -14,6 +14,9 @@ export default function CompanyLoansLayout({ children }: { children: ReactNode }
         </Link>
         <Link href="/company/employer-payroll" className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-black text-primary hover:bg-primary/5">
           <Building2 className="h-4 w-4" /> Employer & payroll
+        </Link>
+        <Link href="/company/credit-committee" className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-black text-primary hover:bg-primary/5">
+          <Gavel className="h-4 w-4" /> Credit Committee
         </Link>
       </nav>
       {children}
