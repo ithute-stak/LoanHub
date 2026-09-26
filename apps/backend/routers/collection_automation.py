@@ -103,11 +103,31 @@ def _assert_assignment_target(db: Session, context: TenantContext, user_id: UUID
         CompanyStaff.company_id == context.company_id,
         CompanyStaff.user_id == user_id,
         CompanyStaff.is_active.is_(True),
+        CompanyStaff.role.in_(list(COLLECTIONS_ROLES)),
     )
     if context.branch_id:
         query = query.filter(or_(CompanyStaff.branch_id == context.branch_id, CompanyStaff.branch_id.is_(None)))
     if not query.first():
-        raise HTTPException(status_code=422, detail="The selected assignee is not active staff in this company/branch")
+        raise HTTPException(status_code=422, detail="The selected assignee is not active collections staff in this company/branch")
+
+
+def _assert_work_item_completion_evidence(db: Session, context: TenantContext, item: CollectionWorkItem) -> None:
+    if (
+        item.assigned_to_user_id
+        and item.assigned_to_user_id != context.user.id
+        and context.role not in COMPANY_MANAGEMENT_ROLES
+    ):
+        raise HTTPException(status_code=403, detail="Only the assigned collector or company management may complete this work item")
+    evidence = db.query(CollectionActivity.id).filter(
+        CollectionActivity.case_id == item.case_id,
+        CollectionActivity.company_id == context.company_id,
+        CollectionActivity.performed_at >= item.created_at,
+    ).first()
+    if not evidence:
+        raise HTTPException(
+            status_code=409,
+            detail="Record the collection action in the recovery case before completing this automated work item",
+        )
 
 
 @router.get("/dashboard")
@@ -211,7 +231,9 @@ def finish_collection_work_item(
     context: TenantContext = Depends(get_user_context),
 ):
     _scope(context)
-    return work_item_payload(db, complete_work_item(db, context, _work_item_or_404(db, context, item_id), payload.notes))
+    row = _work_item_or_404(db, context, item_id)
+    _assert_work_item_completion_evidence(db, context, row)
+    return work_item_payload(db, complete_work_item(db, context, row, payload.notes))
 
 
 @router.get("/cases/{case_id}/legal-readiness")
