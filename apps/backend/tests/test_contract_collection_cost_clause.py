@@ -35,7 +35,9 @@ def test_configured_collection_commission_has_specific_signed_contract_basis() -
     assert "borrower expressly agrees to pay the following collection commission" in source
     assert "account is actually referred for" in source
     assert "collection_charge_disclosure(policy)" in source
-    assert "must be separately shown on the borrower's account" in source
+    assert '"separately shown on the borrower\'s account' in source
+    assert "payable only to the extent" in source
+    assert "permitted by applicable law" in source
 
 
 def test_new_contract_discloses_when_no_separate_percentage_commission_is_agreed() -> None:
