@@ -689,6 +689,7 @@ def create_contract(
         requested_by_user_id=context.user.id,
         witness_name=payload.witness_name,
         template_style=payload.template_style,
+        include_mandate=payload.include_mandate,
     )
     return _contract_payload(contract)
 

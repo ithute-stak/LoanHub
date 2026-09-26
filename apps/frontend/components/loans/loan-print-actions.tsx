@@ -15,6 +15,7 @@ import { originationApi } from "@/api/origination";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CustomDialog } from "@/components/ui/custom-dialog";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,7 @@ export function LoanPrintActions({ loans }: { loans: Loan[] }) {
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contracts, setContracts] = useState<LoanContract[]>([]);
   const [workingLoanId, setWorkingLoanId] = useState<string | null>(null);
+  const [includeMandateByLoan, setIncludeMandateByLoan] = useState<Record<string, boolean>>({});
 
   const selectedBorrowerLoans = useMemo(() => {
     if (!selectedBorrower) return [];
@@ -139,7 +141,12 @@ export function LoanPrintActions({ loans }: { loans: Loan[] }) {
     try {
       let contract = contracts.find((item) => item.loan_id === loan.id);
       if (!contract) {
-        const created = await originationApi.generateContract(loan.id, null);
+        const created = await originationApi.generateContract(
+          loan.id,
+          null,
+          null,
+          Boolean(includeMandateByLoan[loan.id]),
+        );
         contract = created;
         setContracts((current) => [
           created,
@@ -269,6 +276,7 @@ export function LoanPrintActions({ loans }: { loans: Loan[] }) {
           if (!open) {
             setBorrowers([]);
             setSelectedBorrower(null);
+            setIncludeMandateByLoan({});
           }
         }}
         title="Find borrower and print contract"
@@ -337,28 +345,53 @@ export function LoanPrintActions({ loans }: { loans: Loan[] }) {
                     const contract = contracts.find((item) => item.loan_id === loan.id);
                     const canGenerate = CONTRACT_ELIGIBLE_STATUSES.has(loan.status);
                     const disabled = workingLoanId !== null || (!contract && !canGenerate);
+                    const includeMandate = Boolean(includeMandateByLoan[loan.id]);
                     return (
                       <div key={loan.id} className="flex flex-col gap-4 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <p className="font-mono text-xs font-black text-primary">{loan.loan_reference}</p>
                           <p className="mt-2 font-black">{formatMoney(loan.principal_amount)} · {titleCase(loan.status)}</p>
                           <p className="mt-1 text-xs text-muted-foreground">
                             {contract ? `Contract ${contract.contract_number} · ${titleCase(contract.status)}` : "No contract generated yet"}
                           </p>
+                          {!contract && canGenerate ? (
+                            <div className="mt-3 rounded-xl border bg-muted/20 p-3">
+                              <div className="flex items-start gap-3">
+                                <Checkbox
+                                  id={`include-mandate-${loan.id}`}
+                                  checked={includeMandate}
+                                  onCheckedChange={(checked) => setIncludeMandateByLoan((current) => ({
+                                    ...current,
+                                    [loan.id]: checked === true,
+                                  }))}
+                                />
+                                <div className="space-y-1">
+                                  <Label htmlFor={`include-mandate-${loan.id}`} className="cursor-pointer font-bold">
+                                    Include debit-order mandate
+                                  </Label>
+                                  <p className="text-xs leading-5 text-muted-foreground">
+                                    Optional. When checked, the Authority to Debit Account mandate is appended to this contract for the borrower to sign.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <LoadingButton
-                          loading={workingLoanId === loan.id}
-                          loadingText={contract ? "Opening..." : "Generating..."}
-                          disabled={disabled}
-                          onClick={() => void printContract(loan)}
-                          className="sm:min-w-44"
-                        >
-                          <Printer className="h-4 w-4" />
-                          {contract ? "Print contract" : "Generate & print"}
-                        </LoadingButton>
-                        {!contract && !canGenerate ? (
-                          <p className="text-xs text-amber-700 sm:max-w-48">A contract cannot be generated while the loan is {titleCase(loan.status)}.</p>
-                        ) : null}
+                        <div className="flex flex-col gap-2 sm:items-end">
+                          <LoadingButton
+                            loading={workingLoanId === loan.id}
+                            loadingText={contract ? "Opening..." : "Generating..."}
+                            disabled={disabled}
+                            onClick={() => void printContract(loan)}
+                            className="sm:min-w-44"
+                          >
+                            <Printer className="h-4 w-4" />
+                            {contract ? "Print contract" : "Generate & print"}
+                          </LoadingButton>
+                          {!contract && !canGenerate ? (
+                            <p className="text-xs text-amber-700 sm:max-w-48">A contract cannot be generated while the loan is {titleCase(loan.status)}.</p>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })}

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 import services.contract_service_base as _base
 from database.models.origination import LoanContract, OriginationIntegrationConfiguration
 from services.contract_service_base import *  # noqa: F401,F403
+from services.debit_order_mandate import build_debit_order_mandate
 from services.lelefa_managed_collections import (
     PROVIDER,
     collection_charge_disclosure,
@@ -19,11 +20,21 @@ EXPLICIT_COLLECTION_TEMPLATE_VERSION = "3.2-explicit-collection-cost-basis"
 
 _original_build_terms = _base.build_terms
 _original_contract_pdf = _base._contract_pdf
+_original_generate_contract = _base.generate_contract
 _original_clause = _base._clause
 _original_cost_elements_table = _base._cost_elements_table
+_original_simple_doc_template = _base.SimpleDocTemplate
 _active_contract_terms: ContextVar[dict[str, Any]] = ContextVar(
     "active_contract_terms",
     default={},
+)
+_active_contract_reference: ContextVar[str] = ContextVar(
+    "active_contract_reference",
+    default="",
+)
+_active_include_mandate: ContextVar[bool] = ContextVar(
+    "active_include_mandate",
+    default=False,
 )
 
 
@@ -43,11 +54,11 @@ def _company_collection_charge_policy(
 
 
 def build_terms(db: Session, loan: Any) -> dict[str, Any]:
-    """Freeze the collection-charge policy and legal wording into a new contract.
+    """Freeze the collection-charge policy and generation choices into a new contract.
 
     Existing contracts are deliberately left untouched. This prevents a later company
-    setting or wording revision from being injected into an agreement the borrower did
-    not sign.
+    setting, wording revision, or optional annexure choice from being injected into an
+    agreement the borrower did not generate and sign.
     """
     terms = _original_build_terms(db, loan)
     existing_contract = (
@@ -61,7 +72,31 @@ def build_terms(db: Session, loan: Any) -> dict[str, Any]:
     terms = dict(terms)
     terms["template_version"] = EXPLICIT_COLLECTION_TEMPLATE_VERSION
     terms["collection_charge"] = _company_collection_charge_policy(db, loan.company_id)
+    terms["include_mandate"] = bool(_active_include_mandate.get())
     return terms
+
+
+def generate_contract(
+    db: Session,
+    *,
+    loan: Any,
+    requested_by_user_id: Any,
+    witness_name: str | None = None,
+    template_style: str = _base.CONTRACT_STYLE_STANDARD,
+    include_mandate: bool = False,
+) -> LoanContract:
+    """Generate a contract while freezing the optional debit-order mandate choice."""
+    token = _active_include_mandate.set(bool(include_mandate))
+    try:
+        return _original_generate_contract(
+            db,
+            loan=loan,
+            requested_by_user_id=requested_by_user_id,
+            witness_name=witness_name,
+            template_style=template_style,
+        )
+    finally:
+        _active_include_mandate.reset(token)
 
 
 def _collection_charge_cost_table(
@@ -241,19 +276,41 @@ def _collection_clause(
     return elements
 
 
+class _MandateAwareSimpleDocTemplate(_original_simple_doc_template):
+    """Append the mandate page only when the frozen contract snapshot requires it."""
+
+    def build(self, flowables: list[Any], *args: Any, **kwargs: Any) -> Any:
+        terms = _active_contract_terms.get()
+        if bool(terms.get("include_mandate")):
+            bank = terms.get("bank_account") if isinstance(terms.get("bank_account"), dict) else None
+            account_number = _base._bank_account_number(bank)
+            flowables.extend(
+                build_debit_order_mandate(
+                    terms,
+                    agreement_reference=_active_contract_reference.get() or str(terms.get("loan_reference") or ""),
+                    account_number=account_number,
+                )
+            )
+        return super().build(flowables, *args, **kwargs)
+
+
 def _contract_pdf(db: Session, contract: LoanContract) -> bytes:
     token = _active_contract_terms.set(
         contract.terms_snapshot if isinstance(contract.terms_snapshot, dict) else {}
     )
+    reference_token = _active_contract_reference.set(str(contract.contract_number or ""))
     try:
         return _original_contract_pdf(db, contract)
     finally:
+        _active_contract_reference.reset(reference_token)
         _active_contract_terms.reset(token)
 
 
 # Keep the original rendering implementation intact while replacing only the narrow
-# extension points needed for the signed collection-charge controls.
+# extension points needed for collection-charge controls and the optional debit mandate.
 _base.build_terms = build_terms
+_base.generate_contract = generate_contract
 _base._cost_elements_table = _collection_charge_cost_table
 _base._clause = _collection_clause
+_base.SimpleDocTemplate = _MandateAwareSimpleDocTemplate
 _base._contract_pdf = _contract_pdf
