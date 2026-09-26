@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[3]
 MODEL = ROOT / "apps" / "backend" / "database" / "models" / "client_loan_company.py"
 SCHEMA = ROOT / "apps" / "backend" / "database" / "schemas" / "loan.py"
 MIGRATION = ROOT / "apps" / "backend" / "alembic" / "versions" / "f0l10a5e0001_add_loan_folio_sequence.py"
+FRONTEND_TYPE = ROOT / "apps" / "frontend" / "types" / "loan.ts"
 
 
 def test_batlokoa_and_ldf_folio_codes_match_sequence_book_format():
@@ -20,6 +21,7 @@ def test_other_companies_and_employers_get_deterministic_codes():
     assert company_folio_code("Lelefa Debt Collectors (Pty) Ltd") == "LDC"
     assert company_folio_code("Khanya Resources") == "KR"
     assert employer_folio_code(group_name="Lesotho Mounted Police Service") == "LMPS"
+    assert employer_folio_code(group_code="LMPS", group_name="Lesotho Mounted Police Service") == "LMPS"
     assert employer_folio_code() == "GEN"
 
 
@@ -41,11 +43,15 @@ def test_allocator_is_concurrency_safe_and_formats_five_digit_sequence():
     assert 'if getattr(target, "folio_number", None):' in source
 
 
-def test_loan_api_exposes_folio_and_migration_backfills_existing_loans():
+def test_loan_api_and_frontend_expose_folio_and_migration_backfills_existing_loans():
     schema = SCHEMA.read_text(encoding="utf-8")
     migration = MIGRATION.read_text(encoding="utf-8")
+    frontend_type = FRONTEND_TYPE.read_text(encoding="utf-8")
     assert "folio_number: str" in schema
     assert "folio_group_code: str" in schema
+    assert "folio_number: string;" in frontend_type
+    assert "folio_group_code: string;" in frontend_type
     assert "ORDER BY l.company_id, l.created_at, l.id" in migration
     assert "folio_number = :folio" in migration
+    assert 'down_revision = "a0o4q6s8t802"' in migration
     assert 'op.alter_column("client_company_loan", "folio_number"' in migration
