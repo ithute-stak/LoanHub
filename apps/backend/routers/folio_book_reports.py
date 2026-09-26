@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
+from database.models.client_loan_company import ClientCompanyLoan
 from database.session import get_db
 from routers.folio_book import _base_query, _integrity, _row
 from services.folio_book_report_service import build_folio_book_pdf
@@ -20,10 +21,8 @@ def export_folio_book_pdf(
 ):
     require_tenant_roles(context, COMPANY_ROLES)
     loans = _base_query(db, context).order_by(
-        # Attribute names are resolved from the already-scoped loan query.
-        # Ordering again in the report provides a deterministic permanent book.
-        "folio_group_code",
-        "folio_sequence",
+        ClientCompanyLoan.folio_group_code.asc(),
+        ClientCompanyLoan.folio_sequence.asc(),
     ).all()
     rows = [_row(item) for item in loans]
     content = build_folio_book_pdf(
