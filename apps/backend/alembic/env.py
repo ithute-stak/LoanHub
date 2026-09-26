@@ -32,6 +32,10 @@ from database.models.collection_automation import (  # noqa: F401,E402
     CollectionTreatmentPolicy,
     CollectionWorkItem,
 )
+from database.models.portfolio_risk import (  # noqa: F401,E402
+    PortfolioRiskRun,
+    PortfolioRiskSnapshot,
+)
 
 
 config = context.config
