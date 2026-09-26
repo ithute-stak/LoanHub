@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from services.collection_automation_service import DEFAULT_STRATEGY, _band, _priority
 
 
@@ -20,6 +23,7 @@ def test_default_treatment_strategy_covers_full_arrears_lifecycle():
     assert _band(DEFAULT_STRATEGY, 15)["treatment"] == "INTENSIVE_CONTACT"
     assert _band(DEFAULT_STRATEGY, 45)["treatment"] == "FORMAL_DEFAULT"
     assert _band(DEFAULT_STRATEGY, 90)["treatment"] == "LEGAL_READINESS"
+    assert _band(DEFAULT_STRATEGY, 0)["treatment"] == "EARLY_CONTACT"
 
 
 def test_broken_promise_increases_recovery_priority():
@@ -39,7 +43,7 @@ def test_collections_automation_schema_is_tenant_scoped_and_versioned():
     assert 'down_revision = "i3p4r5t6u701"' in versioning
 
 
-def test_recovery_engine_explicitly_detects_broken_promises_and_collection_paths():
+def test_recovery_engine_explicitly_detects_broken_promises_collection_paths_and_stale_work():
     source = (ROOT / "backend" / "services" / "collection_automation_service.py").read_text(encoding="utf-8")
     assert 'case.promise_status = "broken"' in source
     assert 'return "cdas_recovery" if active else "cdas_registration_review"' in source
@@ -48,6 +52,8 @@ def test_recovery_engine_explicitly_detects_broken_promises_and_collection_paths
     assert "legal_readiness" in source
     assert '"default_notice_recorded"' in source
     assert '"recovery_contact_attempted"' in source
+    assert 'CollectionWorkItem.status: "cancelled"' in source
+    assert "run_scheduled_collection_automation" in source
 
 
 def test_recovery_api_exposes_queue_policy_engine_and_legal_escalation():
@@ -56,10 +62,23 @@ def test_recovery_api_exposes_queue_policy_engine_and_legal_escalation():
     assert 'APIRouter(prefix="/collections/automation"' in source
     assert '@router.get("/dashboard")' in source
     assert '@router.post("/run")' in source
+    assert '@router.get("/policy")' in source
+    assert '@router.put("/policy")' in source
     assert '@router.get("/work-items")' in source
     assert '@router.get("/cases/{case_id}/legal-readiness")' in source
     assert '@router.post("/cases/{case_id}/escalate-legal")' in source
     assert "collection_automation.router" in router
+
+
+def test_maintenance_worker_runs_automation_on_its_own_daily_schedule():
+    config = (ROOT / "backend" / "database" / "config" / "config.py").read_text(encoding="utf-8")
+    maintenance = (ROOT / "backend" / "docker" / "maintenance.py").read_text(encoding="utf-8")
+    assert "COLLECTION_AUTOMATION_ENABLED: bool = True" in config
+    assert "COLLECTION_AUTOMATION_HOUR: int = 0" in config
+    assert "COLLECTION_AUTOMATION_MINUTE: int = 15" in config
+    assert "run_scheduled_collection_automation" in maintenance
+    assert "last_collection_automation_date" in maintenance
+    assert "_seconds_until_next_collection_automation" in maintenance
 
 
 def test_collections_frontend_surfaces_queue_paths_legal_readiness_and_productivity():
