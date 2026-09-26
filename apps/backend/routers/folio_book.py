@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 from collections import defaultdict
 from io import StringIO
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -13,6 +12,8 @@ from sqlalchemy.orm import Session, joinedload
 from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.enums import LoanStatus
+from database.models.person import Person
 from database.models.user import User
 from database.session import get_db
 
@@ -83,9 +84,7 @@ def _integrity(loans: list[ClientCompanyLoan]) -> dict:
         seen_numbers[loan.folio_number].append(str(loan.id))
         by_group[loan.folio_group_code].append(loan)
 
-    duplicate_numbers = {
-        number: ids for number, ids in seen_numbers.items() if len(ids) > 1
-    }
+    duplicate_numbers = {number: ids for number, ids in seen_numbers.items() if len(ids) > 1}
     groups = []
     total_gaps = 0
     for group_code, rows in sorted(by_group.items()):
@@ -121,6 +120,16 @@ def _integrity(loans: list[ClientCompanyLoan]) -> dict:
     }
 
 
+def _parse_status(value: str | None) -> LoanStatus | None:
+    if not value:
+        return None
+    try:
+        return LoanStatus(value.strip().lower())
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in LoanStatus)
+        raise HTTPException(status_code=422, detail=f"Loan status must be one of: {allowed}") from exc
+
+
 @router.get("")
 def folio_book(
     search: str | None = None,
@@ -135,19 +144,29 @@ def folio_book(
     query = _base_query(db, context)
     if group_code:
         query = query.filter(ClientCompanyLoan.folio_group_code == group_code.strip().upper())
-    if status:
-        query = query.filter(ClientCompanyLoan.status == status)
+    parsed_status = _parse_status(status)
+    if parsed_status:
+        query = query.filter(ClientCompanyLoan.status == parsed_status)
     if search:
         token = f"%{search.strip()}%"
-        query = query.join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id).join(
-            User, User.id == Borrower.user_id
-        ).filter(
-            or_(
-                ClientCompanyLoan.folio_number.ilike(token),
-                ClientCompanyLoan.loan_reference.ilike(token),
-                Borrower.employer_name.ilike(token),
-                User.email.ilike(token),
-                User.phone.ilike(token),
+        query = (
+            query.join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
+            .join(User, User.id == Borrower.user_id)
+            .outerjoin(Person, Person.user_id == User.id)
+            .filter(
+                or_(
+                    ClientCompanyLoan.folio_number.ilike(token),
+                    ClientCompanyLoan.loan_reference.ilike(token),
+                    ClientCompanyLoan.folio_group_code.ilike(token),
+                    Borrower.employer_name.ilike(token),
+                    User.email.ilike(token),
+                    User.phone.ilike(token),
+                    Person.first_name.ilike(token),
+                    Person.middle_name.ilike(token),
+                    Person.last_name.ilike(token),
+                    Person.national_id.ilike(token),
+                    Person.passport_number.ilike(token),
+                )
             )
         )
     total = query.count()
