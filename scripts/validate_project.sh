@@ -20,6 +20,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_backend_import_smoke.py \
   tests/test_direct_loan_cdas_metadata.py \
   tests/test_completed_loan_overdue_state.py \
+  tests/test_loan_folio_sequence.py \
   tests/test_assisted_employer_details_frontend.py \
   tests/test_contract_collection_cost_clause.py \
   tests/test_optional_contract_mandate.py \
