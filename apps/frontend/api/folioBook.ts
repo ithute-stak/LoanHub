@@ -54,6 +54,13 @@ export type FolioBookResponse = {
   integrity: FolioIntegrity;
 };
 
+export type BorrowerFolioHistory = {
+  borrower_id: string;
+  borrower_name: string;
+  loan_count: number;
+  folios: FolioBookRow[];
+};
+
 export async function getFolioBook(params?: {
   search?: string;
   group_code?: string;
@@ -66,6 +73,10 @@ export async function getFolioBook(params?: {
 
 export async function lookupFolio(folioNumber: string): Promise<FolioBookRow> {
   return (await api.get<FolioBookRow>(`/folio-book/lookup/${encodeURIComponent(folioNumber.trim().toUpperCase())}`)).data;
+}
+
+export async function getBorrowerFolioHistory(borrowerId: string): Promise<BorrowerFolioHistory> {
+  return (await api.get<BorrowerFolioHistory>(`/folio-book/borrowers/${encodeURIComponent(borrowerId)}`)).data;
 }
 
 export async function getFolioIntegrity(): Promise<FolioIntegrity> {
