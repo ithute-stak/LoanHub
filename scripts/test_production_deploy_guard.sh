@@ -22,5 +22,17 @@ grep -Fq 'export LOANHUB_IMAGE_TAG="$rollback_release"' "$DEPLOY_SCRIPT"
 grep -Fq 'Automatic application rollback succeeded' "$DEPLOY_SCRIPT"
 grep -Fq "trap 'handle_deployment_signal HUP 129' HUP" "$DEPLOY_SCRIPT"
 grep -Fq 'write_release_marker releases/current.sha "$RELEASE_SHA"' "$DEPLOY_SCRIPT"
+grep -Fq 'previous_retained_release="$(tr -d' "$DEPLOY_SCRIPT"
+grep -Fq 'prune_superseded_rollback_release "$previous_retained_release" "$current_release"' "$DEPLOY_SCRIPT"
+grep -Fq 'docker image rm "$BACKEND_IMAGE:$superseded"' "$DEPLOY_SCRIPT"
+grep -Fq 'docker image rm "$FRONTEND_IMAGE:$superseded"' "$DEPLOY_SCRIPT"
+
+previous_line="$(grep -n -F 'write_release_marker releases/previous.sha "$current_release"' "$DEPLOY_SCRIPT" | cut -d: -f1 | tail -1)"
+current_line="$(grep -n -F 'write_release_marker releases/current.sha "$RELEASE_SHA"' "$DEPLOY_SCRIPT" | cut -d: -f1 | tail -1)"
+prune_line="$(grep -n -F 'prune_superseded_rollback_release "$previous_retained_release" "$current_release"' "$DEPLOY_SCRIPT" | cut -d: -f1 | tail -1)"
+if [[ -z "$previous_line" || -z "$current_line" || -z "$prune_line" || "$prune_line" -le "$current_line" || "$current_line" -le "$previous_line" ]]; then
+  echo "Rollback image pruning must happen only after successful release markers are committed." >&2
+  exit 1
+fi
 
 printf 'Production deployment guard checks passed.\n'
