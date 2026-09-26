@@ -1,7 +1,7 @@
 """add immutable loan folio sequence
 
 Revision ID: f0l10a5e0001
-Revises: e9x3y5z7a250
+Revises: a0o4q6s8t802
 Create Date: 2026-09-26
 """
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 
 revision = "f0l10a5e0001"
-down_revision = "e9x3y5z7a250"
+down_revision = "a0o4q6s8t802"
 branch_labels = None
 depends_on = None
 
