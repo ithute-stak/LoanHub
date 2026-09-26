@@ -55,7 +55,12 @@ def _company_collection_charge_policy(
 
 
 def build_terms(db: Session, loan: Any) -> dict[str, Any]:
-    """Freeze collection policy and contract-generation choices into a new agreement."""
+    """Freeze collection policy and contract-generation choices into a new agreement.
+
+    Existing contracts are deliberately left untouched. This prevents a later company
+    setting, wording revision, or optional mandate choice from being injected into an
+    agreement that was already generated for the borrower.
+    """
     terms = _original_build_terms(db, loan)
     existing_contract = (
         db.query(LoanContract)
