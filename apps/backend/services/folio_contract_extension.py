@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 import services.contract_service as _contract
 import services.contract_service_base as _base
+import services.loan_document_service as _loan_documents
+import services.receipt_service as _receipts
 
 
 _original_build_terms = _base.build_terms
 _original_key_value_table = _base._key_value_table
 _original_draw_branding = _base._ContractCanvas._draw_branding
+_original_loan_information_pdf = _loan_documents.generate_loan_information_pdf
+_original_repayment_schedule_pdf = _loan_documents.generate_repayment_schedule_pdf
+_original_payment_history_pdf = _loan_documents.generate_payment_history_pdf
+_original_receipt_pdf_bytes = _receipts._pdf_bytes
 
 
 def build_terms(db: Session, loan: Any) -> dict[str, Any]:
@@ -58,10 +66,58 @@ def _draw_branding(self: Any, page_count: int) -> None:
     self.restoreState()
 
 
+@contextmanager
+def _folio_render_reference(loan: Any) -> Iterator[None]:
+    """Expose folio + technical loan reference to existing PDF renderers, render-only.
+
+    The SQLAlchemy value is changed with set_committed_value and restored immediately,
+    so generating a PDF never schedules a database update or changes the stored loan number.
+    """
+    if loan is None:
+        yield
+        return
+    original = str(getattr(loan, "loan_reference", "") or "").strip()
+    folio = str(getattr(loan, "folio_number", "") or "").strip()
+    if not folio or not original:
+        yield
+        return
+
+    combined = f"{folio} | Loan {original}"
+    set_committed_value(loan, "loan_reference", combined)
+    try:
+        yield
+    finally:
+        set_committed_value(loan, "loan_reference", original)
+
+
+def generate_loan_information_pdf(db: Session, loan: Any) -> bytes:
+    with _folio_render_reference(loan):
+        return _original_loan_information_pdf(db, loan)
+
+
+def generate_repayment_schedule_pdf(db: Session, loan: Any) -> bytes:
+    with _folio_render_reference(loan):
+        return _original_repayment_schedule_pdf(db, loan)
+
+
+def generate_payment_history_pdf(db: Session, loan: Any) -> bytes:
+    with _folio_render_reference(loan):
+        return _original_payment_history_pdf(db, loan)
+
+
+def _receipt_pdf_bytes(db: Session, receipt: Any, payment: Any, loan: Any) -> bytes:
+    with _folio_render_reference(loan):
+        return _original_receipt_pdf_bytes(db, receipt, payment, loan)
+
+
 # Contract generation in contract_service delegates into contract_service_base at runtime,
-# so replacing the shared extension points keeps one contract implementation and avoids
-# duplicating the legal document renderer.
+# so replacing these shared extension points keeps one legal/document implementation while
+# making the immutable folio visible throughout LoanHub's loan-document family.
 _base.build_terms = build_terms
 _contract.build_terms = build_terms
 _base._key_value_table = _key_value_table
 _base._ContractCanvas._draw_branding = _draw_branding
+_loan_documents.generate_loan_information_pdf = generate_loan_information_pdf
+_loan_documents.generate_repayment_schedule_pdf = generate_repayment_schedule_pdf
+_loan_documents.generate_payment_history_pdf = generate_payment_history_pdf
+_receipts._pdf_bytes = _receipt_pdf_bytes
