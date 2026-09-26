@@ -14,6 +14,14 @@ sys.path.append(
 from database.base import Base
 from database.config.config import settings
 from database.models import *  # noqa: F401,F403,E402
+# The payroll centre is intentionally a separate model module. Import it
+# explicitly so Alembic metadata validation sees the new operational tables.
+from database.models.employer_payroll import (  # noqa: F401,E402
+    EmployerPayrollAccount,
+    EmployerPayrollCycle,
+    EmployerPayrollDeduction,
+    EmployerPayrollEmployee,
+)
 
 
 config = context.config
