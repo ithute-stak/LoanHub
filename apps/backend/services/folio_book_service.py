@@ -38,8 +38,8 @@ def _expected_folio(loan: ClientCompanyLoan) -> str | None:
     return f"{loan.folio_company_code}-{loan.folio_group_code}-{int(loan.folio_sequence):05d}"
 
 
-def _loan_rows_query(db: Session, context: TenantContext):
-    query = (
+def _company_loans_query(db: Session, context: TenantContext):
+    return (
         db.query(ClientCompanyLoan)
         .options(
             joinedload(ClientCompanyLoan.company),
@@ -51,9 +51,6 @@ def _loan_rows_query(db: Session, context: TenantContext):
         )
         .filter(ClientCompanyLoan.company_id == context.company_id)
     )
-    if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
-        query = query.filter(ClientCompanyLoan.branch_id == context.branch_id)
-    return query
 
 
 def _borrower_values(loan: ClientCompanyLoan) -> tuple[str, str | None]:
@@ -107,23 +104,7 @@ def _row_payload(loan: ClientCompanyLoan) -> dict[str, Any]:
     }
 
 
-def build_folio_book(
-    db: Session,
-    *,
-    context: TenantContext,
-    filters: FolioBookFilters | None = None,
-    skip: int = 0,
-    limit: int = 500,
-) -> dict[str, Any]:
-    """Return a read-only, append-only view of the company's loan folio books.
-
-    Existing folios are never renumbered and sequence gaps are never recycled. A gap is
-    reported as an integrity observation only; the next number is always MAX(sequence)+1.
-    """
-    filters = filters or FolioBookFilters()
-    loans = _loan_rows_query(db, context).all()
-    rows = [_row_payload(loan) for loan in loans]
-
+def _annotate_integrity(rows: list[dict[str, Any]]) -> None:
     folio_counts = Counter(row["folio_number"] for row in rows if row["folio_number"])
     sequence_counts = Counter(
         (row["folio_group_code"], row["folio_sequence"])
@@ -137,11 +118,13 @@ def build_folio_book(
         if key[0] and key[1] > 0 and sequence_counts[key] > 1:
             row["integrity_issues"].append("duplicate_sequence")
 
+
+def _sequence_books(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[str(row["folio_group_code"] or "UNASSIGNED")].append(row)
 
-    sequence_books: list[dict[str, Any]] = []
+    books: list[dict[str, Any]] = []
     total_gap_count = 0
     for group_code, group_rows in sorted(groups.items()):
         sequences = sorted({int(row["folio_sequence"]) for row in group_rows if int(row["folio_sequence"]) > 0})
@@ -152,7 +135,7 @@ def build_folio_book(
         sample = group_rows[0]
         company_code = str(sample.get("folio_company_code") or "GEN")
         next_sequence = max_sequence + 1
-        sequence_books.append({
+        books.append({
             "group_code": group_code,
             "group_name": next((row.get("employer_group_name") for row in group_rows if row.get("employer_group_name")), None),
             "company_code": company_code,
@@ -165,14 +148,44 @@ def build_folio_book(
             "gaps": gaps[:_MAX_REPORTED_GAPS_PER_BOOK],
             "gaps_truncated": len(gaps) > _MAX_REPORTED_GAPS_PER_BOOK,
         })
+    return books, total_gap_count
+
+
+def build_folio_book(
+    db: Session,
+    *,
+    context: TenantContext,
+    filters: FolioBookFilters | None = None,
+    skip: int = 0,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Return a read-only, append-only view of the company's loan folio books.
+
+    Sequence integrity and the next number are calculated across the whole company, not
+    per branch. This is essential because a work group's sequence is company-wide. A
+    branch-scoped user still receives only rows from the active branch, but the next folio
+    can never collide with a higher sequence that happened to be issued at another branch.
+
+    Existing folios are never renumbered and sequence gaps are never recycled. A gap is
+    reported as an integrity observation only; the next number is always MAX(sequence)+1.
+    """
+    filters = filters or FolioBookFilters()
+    company_rows = [_row_payload(loan) for loan in _company_loans_query(db, context).all()]
+    _annotate_integrity(company_rows)
+    sequence_books, total_gap_count = _sequence_books(company_rows)
+
+    if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
+        visible_rows = [row for row in company_rows if row["branch_id"] == str(context.branch_id)]
+    else:
+        visible_rows = list(company_rows)
 
     search = (filters.search or "").strip().lower()
     group_filter = (filters.group_code or "").strip().upper()
     status_filter = (filters.status or "").strip().lower()
     branch_filter = str(filters.branch_id) if filters.branch_id else ""
 
-    filtered = []
-    for row in rows:
+    filtered: list[dict[str, Any]] = []
+    for row in visible_rows:
         if group_filter and str(row["folio_group_code"] or "").upper() != group_filter:
             continue
         if status_filter and str(row["status"] or "").lower() != status_filter:
@@ -208,10 +221,11 @@ def build_folio_book(
     total = len(filtered)
     page_rows = filtered[skip : skip + limit]
 
-    all_issues = Counter(issue for row in rows for issue in row["integrity_issues"])
+    all_issues = Counter(issue for row in company_rows for issue in row["integrity_issues"])
     return {
         "summary": {
-            "total_loans": len(rows),
+            "total_loans": len(company_rows),
+            "visible_loans": len(visible_rows),
             "sequence_book_count": len(sequence_books),
             "missing_folio_count": all_issues["missing_folio"],
             "invalid_format_count": all_issues["invalid_format"],
