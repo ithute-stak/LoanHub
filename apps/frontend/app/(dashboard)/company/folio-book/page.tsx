@@ -8,12 +8,14 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
+  FileText,
   RefreshCcw,
   Search,
 } from "lucide-react";
 
 import {
   downloadFolioBookCsv,
+  downloadFolioBookPdf,
   getFolioBook,
   type FolioBookResponse,
   type FolioBookRow,
@@ -49,7 +51,7 @@ export default function FolioBookPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,11 +84,20 @@ export default function FolioBookPage() {
   const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   async function exportCsv() {
-    setExporting(true);
+    setExporting("csv");
     try {
       await downloadFolioBookCsv(group === "all" ? undefined : group);
     } finally {
-      setExporting(false);
+      setExporting(null);
+    }
+  }
+
+  async function exportPdf() {
+    setExporting("pdf");
+    try {
+      await downloadFolioBookPdf();
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -107,8 +118,11 @@ export default function FolioBookPage() {
             <Button variant="outline" onClick={() => void load()} disabled={loading}>
               <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
             </Button>
-            <Button onClick={() => void exportCsv()} disabled={exporting}>
-              <Download className="mr-2 h-4 w-4" /> Export CSV
+            <Button variant="outline" onClick={() => void exportPdf()} disabled={exporting !== null}>
+              <FileText className="mr-2 h-4 w-4" /> {exporting === "pdf" ? "Building PDF..." : "Print PDF book"}
+            </Button>
+            <Button onClick={() => void exportCsv()} disabled={exporting !== null}>
+              <Download className="mr-2 h-4 w-4" /> {exporting === "csv" ? "Exporting..." : "Export CSV"}
             </Button>
           </div>
         </div>
@@ -141,7 +155,7 @@ export default function FolioBookPage() {
       <Card>
         <CardHeader>
           <CardTitle>Sequence books</CardTitle>
-          <CardDescription>The next folio is calculated independently for each work group.</CardDescription>
+          <CardDescription>The next folio is calculated independently for each work group. Gaps are highlighted for investigation; LoanHub never silently reuses an old sequence.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {(data?.integrity.groups ?? []).map((item) => (
@@ -167,13 +181,13 @@ export default function FolioBookPage() {
       <Card>
         <CardHeader>
           <CardTitle>Folio register</CardTitle>
-          <CardDescription>Search by folio, loan reference, borrower contact or employer.</CardDescription>
+          <CardDescription>Search by folio, loan reference, borrower name/ID/contact, employer or work group.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 lg:grid-cols-[1fr_220px_220px_auto]">
             <div className="relative">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search BFS-LMPS-00001, loan, employer..." className="pl-9" />
+              <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search BFS-LMPS-00001, borrower, ID, employer..." className="pl-9" />
             </div>
             <Select value={group} onValueChange={(value) => { setGroup(value); setPage(1); }}>
               <SelectTrigger><SelectValue placeholder="Work group" /></SelectTrigger>
@@ -193,7 +207,7 @@ export default function FolioBookPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Folio No.</TableHead><TableHead>Borrower</TableHead><TableHead>Loan</TableHead><TableHead>Work group</TableHead><TableHead>Principal</TableHead><TableHead>Balance</TableHead><TableHead>Status</TableHead><TableHead>Date</TableHead><TableHead className="text-right">Open</TableHead>
+                  <TableHead>Folio No.</TableHead><TableHead>Borrower</TableHead><TableHead>Loan</TableHead><TableHead>Work group</TableHead><TableHead>Principal</TableHead><TableHead>Balance</TableHead><TableHead>Status</TableHead><TableHead>Date</TableHead><TableHead className="text-right">History</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -207,7 +221,7 @@ export default function FolioBookPage() {
                     <TableCell>{formatMoney(row.balance)}</TableCell>
                     <TableCell>{loanStatus(row)}</TableCell>
                     <TableCell>{row.disbursed_at ? formatDate(row.disbursed_at) : row.approved_at ? formatDate(row.approved_at) : "—"}</TableCell>
-                    <TableCell className="text-right"><Button asChild size="sm" variant="ghost"><Link href={`/company/loans?folio=${encodeURIComponent(row.folio_number)}`}><ExternalLink className="mr-2 h-4 w-4" /> Loan</Link></Button></TableCell>
+                    <TableCell className="text-right"><Button asChild size="sm" variant="ghost"><Link href={`/company/borrowers/${row.borrower_id}`}><ExternalLink className="mr-2 h-4 w-4" /> Borrower</Link></Button></TableCell>
                   </TableRow>
                 ))}
                 {!loading && !data?.rows.length ? <TableRow><TableCell colSpan={9} className="h-28 text-center text-muted-foreground">No folio records match the current filters.</TableCell></TableRow> : null}
