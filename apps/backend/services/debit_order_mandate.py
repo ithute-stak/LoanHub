@@ -15,6 +15,7 @@ _BORDER = colors.HexColor("#8A94A6")
 _MUTED = colors.HexColor("#5B6472")
 _HEADING = colors.HexColor("#172033")
 _PALE = colors.HexColor("#F6F8FB")
+_HIGHLIGHT = colors.HexColor("#E9F7F5")
 
 
 def _text(value: Any, fallback: str = "________________") -> str:
@@ -34,6 +35,19 @@ def _date(value: Any, fallback: str = "________________") -> str:
     if not rendered:
         return fallback
     return escape(rendered[:10])
+
+
+def _payment_day(terms: Mapping[str, Any]) -> str:
+    preferred = str(terms.get("preferred_payment_day") or "").strip()
+    if preferred:
+        return escape(preferred)
+    first_due = str(terms.get("first_payment_due") or "").strip()
+    if len(first_due) >= 10:
+        try:
+            return str(int(first_due[8:10]))
+        except ValueError:
+            pass
+    return "____"
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -92,6 +106,14 @@ def _styles() -> dict[str, ParagraphStyle]:
             leading=8.5,
             textColor=colors.black,
         ),
+        "execution": ParagraphStyle(
+            "MandateExecution",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.4,
+            leading=9.4,
+            textColor=_HEADING,
+        ),
     }
 
 
@@ -123,11 +145,12 @@ def build_debit_order_mandate(
     agreement_reference: str,
     account_number: str | None,
 ) -> list[Any]:
-    """Build the optional Authority to Debit Account annexure.
+    """Build the optional Authority to Debit Account as an incorporated contract annexure.
 
-    The clauses intentionally follow the source mandate supplied for LoanHub. Values are
-    prefilled only where the immutable contract snapshot contains reliable data; signing
-    fields and unavailable provider/bank fields remain blank for completion by the parties.
+    The mandate retains the supplied authority, mandate, cancellation and assignment terms,
+    but it no longer has a second borrower signature block. When this annexure is present,
+    the final borrower signature on the credit agreement accepts and authorises it as part
+    of the same contract.
     """
     styles = _styles()
     borrower = terms.get("borrower") if isinstance(terms.get("borrower"), Mapping) else {}
@@ -138,7 +161,7 @@ def build_debit_order_mandate(
     borrower_address = _text(borrower.get("physical_address"))
     beneficiary_name = _text(company.get("name"))
     beneficiary_address = _text(company.get("address"))
-    payment_day = _text(terms.get("preferred_payment_day"), "____")
+    payment_day = _payment_day(terms)
     commencement_date = _date(terms.get("first_payment_due"), "____________")
 
     fields = [
@@ -149,7 +172,7 @@ def build_debit_order_mandate(
         ("Account number", _text(account_number)),
         ("Account type", _text(bank.get("account_type"))),
         ("Amount", _money(terms.get("installment_amount"))),
-        ("Date", "________________"),
+        ("Date", _date(terms.get("agreement_date"))),
         ("To: (name of beneficiary)", beneficiary_name),
         ("Beneficiary's address", beneficiary_address),
         ("Abbreviated name as it will appear on your bank statement", "________________"),
@@ -248,40 +271,46 @@ def build_debit_order_mandate(
         )
     )
 
-    signature = KeepTogether(
+    execution = KeepTogether(
         [
             Spacer(1, 3 * mm),
-            Paragraph(
-                "Signed at ______________________________ on this __________ day of ______________________________",
-                styles["body"],
-            ),
-            Spacer(1, 5 * mm),
-            Paragraph("____________________________________________", styles["body"]),
-            Paragraph("Signature as used for operating on the account", styles["small"]),
-            Spacer(1, 3 * mm),
-            Paragraph("____________________________________________", styles["body"]),
-            Paragraph("Assisted by", styles["small"]),
-            Spacer(1, 3 * mm),
-            Paragraph("FOR OFFICE USE", styles["section"]),
             Paragraph("D. AGREEMENT REFERENCE NUMBER", styles["section"]),
             Paragraph(
                 f"This agreement reference number is: <b>{_text(agreement_reference)}</b>",
                 styles["body"],
+            ),
+            Table(
+                [[Paragraph(
+                    "SINGLE SIGNATURE EXECUTION - The borrower does not sign this mandate page separately. "
+                    "The borrower signature in Annexure C - Acceptance and Signatures applies to this mandate "
+                    "and to the rest of the credit agreement as one contract.",
+                    styles["execution"],
+                )]],
+                colWidths=[174 * mm],
+                style=TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), _HIGHLIGHT),
+                    ("BOX", (0, 0), (-1, -1), 0.6, _BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]),
             ),
         ]
     )
 
     return [
         PageBreak(),
-        Paragraph("AUTHORITY TO DEBIT ACCOUNT", styles["title"]),
+        Paragraph("ANNEXURE B - AUTHORITY TO DEBIT ACCOUNT", styles["title"]),
         Paragraph(
-            "Optional debit-order mandate annexure. This annexure forms part of the contract only because "
-            "it was expressly selected during contract generation.",
+            "This Authority to Debit Account is incorporated into and forms part of this credit agreement. "
+            "It is accepted and authorised by the borrower's single signature in Annexure C - Acceptance and "
+            "Signatures. No second borrower signature is required on this mandate page in LoanHub.",
             styles["small"],
         ),
         Spacer(1, 2 * mm),
         _field_table(fields, styles),
         Spacer(1, 4 * mm),
         legal_table,
-        signature,
+        execution,
     ]
