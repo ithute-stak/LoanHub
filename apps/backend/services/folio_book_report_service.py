@@ -46,7 +46,11 @@ def build_folio_book_pdf(
         ("Sequence gaps", str(integrity.get("gap_count", 0)), "Investigate any gap", "green" if not integrity.get("gap_count") else "amber"),
     ], columns=4, styles=styles))
 
-    story.extend(section("Sequence control", "The next number shown below is informational. Loan creation remains the only authority that allocates a new folio, under the database concurrency lock.", styles=styles))
+    story.extend(section(
+        "Sequence control",
+        "The next number shown below is informational. Loan creation remains the only authority that allocates a new folio, under the database concurrency lock.",
+        styles=styles,
+    ))
     control_data = [["Work group", "Loans", "First", "Last", "Next folio", "Gaps"]]
     for item in integrity.get("groups") or []:
         control_data.append([
@@ -82,7 +86,11 @@ def build_folio_book_pdf(
         if not first_group:
             story.append(PageBreak())
         first_group = False
-        story.extend(section(f"{group_code} sequence book", f"{len(group_rows)} loan(s), ordered by permanent sequence number.", styles=styles))
+        story.extend(section(
+            f"{group_code} sequence book",
+            f"{len(group_rows)} loan(s), ordered by permanent sequence number.",
+            styles=styles,
+        ))
         data = [["Folio No.", "Borrower", "Loan Ref.", "Principal", "Balance", "Status"]]
         for row in sorted(group_rows, key=lambda item: int(item.get("sequence") or 0)):
             data.append([
@@ -93,7 +101,7 @@ def build_folio_book_pdf(
                 money_text(row.get("balance") or 0),
                 str(row.get("status") or ""),
             ])
-        table = Table(data, colWidths=[35*mm, 42*mm, 34*mm, 25*mm, 25*mm, 20*mm], repeatRows=1)
+        table = Table(data, colWidths=[34*mm, 38*mm, 30*mm, 23*mm, 23*mm, 20*mm], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
