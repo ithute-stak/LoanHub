@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import KeepTogether, PageBreak, Paragraph, Spacer, Table, TableStyle
@@ -18,7 +19,7 @@ _PALE = colors.HexColor("#F6F8FB")
 
 def _text(value: Any, fallback: str = "________________") -> str:
     rendered = str(value or "").strip()
-    return rendered or fallback
+    return escape(rendered) if rendered else fallback
 
 
 def _money(value: Any) -> str:
@@ -32,7 +33,7 @@ def _date(value: Any, fallback: str = "________________") -> str:
     rendered = str(value or "").strip()
     if not rendered:
         return fallback
-    return rendered[:10]
+    return escape(rendered[:10])
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -133,13 +134,12 @@ def build_debit_order_mandate(
     company = terms.get("company") if isinstance(terms.get("company"), Mapping) else {}
     bank = terms.get("bank_account") if isinstance(terms.get("bank_account"), Mapping) else {}
 
-    borrower_name = _text(bank.get("account_holder_name") or borrower.get("name"))
+    borrower_name = _text(bank.get("account_holder") or borrower.get("name"))
     borrower_address = _text(borrower.get("physical_address"))
     beneficiary_name = _text(company.get("name"))
     beneficiary_address = _text(company.get("address"))
     payment_day = _text(terms.get("preferred_payment_day"), "____")
     commencement_date = _date(terms.get("first_payment_due"), "____________")
-    repayment_type = str(terms.get("repayment_type") or "").strip().replace("_", " ")
 
     fields = [
         ("Given by (Name of account holder)", borrower_name),
@@ -189,8 +189,7 @@ def build_debit_order_mandate(
             "ii. monthly, bi-monthly, three monthly, six-monthly, annually, weekly, bi-weekly or once-off "
             "(delete which is not applicable), on or after the dates when the obligation in terms of the "
             "Agreement is due and the amount of each individual payment instruction may not be more or less "
-            "than the obligation due."
-            + (f" <b>LoanHub repayment frequency: {repayment_type}.</b>" if repayment_type else ""),
+            "than the obligation due.",
             styles["body"],
         ),
         Paragraph(
