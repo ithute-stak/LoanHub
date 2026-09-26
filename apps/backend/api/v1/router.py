@@ -8,6 +8,7 @@ from routers import (
     analytics,
     audit,
     auth,
+    backdated_opening_adjustments,
     billing,
     borrower,
     borrower_financial_command,
@@ -188,6 +189,7 @@ _ROUTE_REGISTRY = (
     origination.router,
     credit_bureau_configuration.router,
     credit_bureau.router,
+    backdated_opening_adjustments.router,
     expense_management.router,
     # Static folder/import routes must stay ahead of dynamic document IDs.
     workspace_document_organization.router,
