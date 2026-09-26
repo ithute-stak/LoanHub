@@ -75,6 +75,14 @@ def _collection_charge_cost_table(
     if not policy["enabled"] and template_version != EXPLICIT_COLLECTION_TEMPLATE_VERSION:
         return _original_cost_elements_table(terms, styles)
 
+    commission_disclosure = (
+        collection_charge_disclosure(policy)
+        if policy["enabled"]
+        else (
+            "No separate percentage-based or fixed collection commission is agreed under "
+            "this agreement. Clause 11 separately addresses lawful external recovery and legal costs."
+        )
+    )
     processing_fee = _base._as_decimal(terms.get("processing_fee"))
     total_fees = _base._as_decimal(terms.get("total_fees"))
     other_fees = max(total_fees - processing_fee, _base.Decimal("0"))
@@ -83,10 +91,7 @@ def _collection_charge_cost_table(
         ["2.2 Initiation / processing fee", _base._money(processing_fee)],
         ["2.3 Other service and schedule fees", _base._money(other_fees)],
         ["2.4 Taxes included in disclosed charges", _base._money(terms.get("tax_amount"))],
-        [
-            "2.5 Conditional collection commission",
-            collection_charge_disclosure(policy),
-        ],
+        ["2.5 Conditional collection commission", commission_disclosure],
         [
             "2.6 Total charge of credit [2.1 to 2.4]",
             _base._money(terms.get("total_cost_of_credit")),
