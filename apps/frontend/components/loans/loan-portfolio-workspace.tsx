@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import {useSearchParams} from "next/navigation";
 import {useEffect, useMemo, useState, type ReactNode} from "react";
 import {
     Banknote,
+    BookOpenCheck,
     ChevronLeft,
     ChevronRight,
     Eye,
@@ -72,6 +74,7 @@ type PortfolioFilters = {
     signatures: SignatureFilter;
     contractStyle: "all" | ContractTemplateStyle;
     channel: string;
+    folioGroup: string;
     repaymentType: string;
     calculationMethod: string;
     riskLevel: string;
@@ -135,6 +138,7 @@ const DEFAULT_FILTERS: PortfolioFilters = {
     signatures: "all",
     contractStyle: "all",
     channel: "all",
+    folioGroup: "all",
     repaymentType: "all",
     calculationMethod: "all",
     riskLevel: "all",
@@ -361,13 +365,22 @@ export function LoanPortfolioWorkspace({
     onOpenDisbursement: (loan: Loan) => void;
     onStartCall: (loan: Loan) => void;
 }) {
-    const [search, setSearch] = useState("");
+    const searchParams = useSearchParams();
+    const folioFromUrl = searchParams.get("folio")?.trim() ?? "";
+    const [search, setSearch] = useState(folioFromUrl);
     const [expanded, setExpanded] = useState(false);
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
     const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState<number>(15);
     const [branches, setBranches] = useState<Branch[]>([]);
+
+    useEffect(() => {
+        if (folioFromUrl) {
+            setSearch(folioFromUrl);
+            setPage(1);
+        }
+    }, [folioFromUrl]);
 
     useEffect(() => {
         let cancelled = false;
@@ -408,6 +421,10 @@ export function LoanPortfolioWorkspace({
             : 0;
         const searchText = [
             loan.id,
+            loan.folio_number,
+            loan.folio_company_code,
+            loan.folio_group_code,
+            String(loan.folio_sequence),
             loan.loan_reference,
             loan.borrower_id,
             loan.loan_request_id,
@@ -442,15 +459,16 @@ export function LoanPortfolioWorkspace({
     }), [branchById, clientByBorrower, contractByLoan, loans]);
 
     const suggestions = useMemo(() => rows.map(({loan, client, nextDueDate}) => ({
-        value: loan.loan_reference,
-        label: client?.full_name ? `${client.full_name} · ${loan.loan_reference}` : loan.loan_reference,
-        description: [titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
-        keywords: [loan.id, loan.borrower_id, client?.phone ?? "", client?.national_id ?? "", client?.employer_name ?? ""],
+        value: loan.folio_number,
+        label: client?.full_name ? `${client.full_name} · ${loan.folio_number}` : loan.folio_number,
+        description: [`Loan ${loan.loan_reference}`, titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
+        keywords: [loan.loan_reference, loan.folio_group_code, String(loan.folio_sequence), loan.id, loan.borrower_id, client?.phone ?? "", client?.national_id ?? "", client?.employer_name ?? ""],
     })), [rows]);
 
     const optionSets = useMemo(() => ({
         statuses: uniqueStrings(rows.map(({loan}) => loan.status)),
         channels: uniqueStrings(rows.map(({loan}) => loan.origination_channel)),
+        folioGroups: uniqueStrings(rows.map(({loan}) => loan.folio_group_code)),
         repaymentTypes: uniqueStrings(rows.map(({loan}) => loan.repayment_type)),
         calculationMethods: uniqueStrings(rows.map(({loan}) => String(loan.calculation_method))),
         riskLevels: uniqueStrings(rows.map(({loan}) => loan.risk_level)),
@@ -485,6 +503,7 @@ export function LoanPortfolioWorkspace({
 
                 if (filters.status !== "all" && loan.status !== filters.status) return false;
                 if (filters.channel !== "all" && loan.origination_channel !== filters.channel) return false;
+                if (filters.folioGroup !== "all" && loan.folio_group_code !== filters.folioGroup) return false;
                 if (filters.repaymentType !== "all" && loan.repayment_type !== filters.repaymentType) return false;
                 if (filters.calculationMethod !== "all" && String(loan.calculation_method) !== filters.calculationMethod) return false;
                 if (filters.riskLevel !== "all" && loan.risk_level !== filters.riskLevel) return false;
@@ -604,9 +623,9 @@ export function LoanPortfolioWorkspace({
         suggestions={suggestions}
         minimumCharacters={1}
         maxSuggestions={12}
-        placeholder="Loan, borrower, ID, phone, employer, branch, contract..."
-        suggestionLabel="Company loans"
-        emptyMessage="No loan matches that text."
+        placeholder="Folio, loan, borrower, ID, phone, employer, branch, contract..."
+        suggestionLabel="Company loans by folio"
+        emptyMessage="No loan or folio matches that text."
         wrapperClassName="w-full"
     />;
 
@@ -626,7 +645,7 @@ export function LoanPortfolioWorkspace({
                             <div className="min-w-0">
                                 <CardTitle className="text-lg font-black tracking-tight">Company loan portfolio</CardTitle>
                                 <CardDescription className="mt-1">
-                                    Search the portfolio or open the full workspace for advanced filtering and loan management.
+                                    Folio-first search across the loan book, with the original technical loan reference retained for reconciliation.
                                 </CardDescription>
                             </div>
                         </div>
@@ -637,8 +656,11 @@ export function LoanPortfolioWorkspace({
                             <Badge variant={overdueCount > 0 ? "destructive" : "outline"} className="rounded-full px-3">Overdue {overdueCount}</Badge>
                         </div>
                     </div>
-                    <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[38rem]">
+                    <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
                         {searchControl}
+                        <Button variant="outline" className="shrink-0 rounded-xl" asChild>
+                            <Link href="/company/folio-book"><BookOpenCheck className="size-4"/>Folio book</Link>
+                        </Button>
                         <Button className="shrink-0 rounded-xl" onClick={() => setExpanded(true)}>
                             <Maximize2 className="size-4"/>Workspace
                         </Button>
@@ -672,7 +694,7 @@ export function LoanPortfolioWorkspace({
                                 <div className="min-w-0">
                                     <DialogTitle className="text-xl font-black tracking-tight">Company loan portfolio</DialogTitle>
                                     <DialogDescription className="mt-0.5">
-                                        Search, filter and manage the full company loan book from one workspace.
+                                        Search by permanent folio or any borrower, contract, branch, payment or loan context.
                                     </DialogDescription>
                                 </div>
                             </div>
@@ -750,7 +772,8 @@ export function LoanPortfolioWorkspace({
                                 <FilterField label="Disbursement"><Select value={filters.disbursement} onValueChange={(value) => updateFilter("disbursement", value as PortfolioFilters["disbursement"])}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Any disbursement state</SelectItem><SelectItem value="disbursed">Disbursed</SelectItem><SelectItem value="not_disbursed">Not disbursed</SelectItem></SelectContent></Select></FilterField>
                             </FilterSection>
 
-                            <FilterSection title="Source, repayment & risk">
+                            <FilterSection title="Source, folio, repayment & risk">
+                                <FilterField label="Folio work group"><FilterSelect value={filters.folioGroup} allLabel="All folio groups" options={optionSets.folioGroups} rawLabels onValueChange={(value) => updateFilter("folioGroup", value)} /></FilterField>
                                 <FilterField label="Origination channel"><FilterSelect value={filters.channel} allLabel="All channels" options={optionSets.channels} onValueChange={(value) => updateFilter("channel", value)} /></FilterField>
                                 <FilterField label="Repayment type"><FilterSelect value={filters.repaymentType} allLabel="All repayment types" options={optionSets.repaymentTypes} onValueChange={(value) => updateFilter("repaymentType", value)} /></FilterField>
                                 <FilterField label="Interest method"><FilterSelect value={filters.calculationMethod} allLabel="All interest methods" options={optionSets.calculationMethods} labelFor={interestMethodLabel} onValueChange={(value) => updateFilter("calculationMethod", value)} /></FilterField>
@@ -802,10 +825,11 @@ export function LoanPortfolioWorkspace({
                             <div className="min-w-0">
                                 <p className="text-sm font-bold">{filteredRows.length} matching loans</p>
                                 <p className="truncate text-xs text-muted-foreground">
-                                    Filtered loan records with borrower, source, due-date, contract and balance context.
+                                    Folio-first loan records with borrower, source, due-date, contract and balance context.
                                 </p>
                             </div>
                             <div className="flex items-center gap-2">
+                                <Button size="sm" variant="outline" className="h-9 rounded-xl" asChild><Link href="/company/folio-book"><BookOpenCheck className="size-4"/>Folio book</Link></Button>
                                 <Label className="hidden text-xs text-muted-foreground sm:block">Rows per page</Label>
                                 <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
                                     <SelectTrigger className="h-9 w-[84px] rounded-xl"><SelectValue/></SelectTrigger>
@@ -925,10 +949,10 @@ function LoanTable({
         ? "min-w-0 overflow-x-auto [&_[data-slot=table-container]]:overflow-visible"
         : "h-full min-h-0 min-w-0 overflow-auto [&_[data-slot=table-container]]:overflow-visible"
     }>
-        <Table className={compact ? "min-w-[1040px]" : "min-w-[1340px] table-fixed"}>
+        <Table className={compact ? "min-w-[1100px]" : "min-w-[1380px] table-fixed"}>
             <TableHeader className={compact ? "bg-muted/20" : "sticky top-0 z-20 bg-background/95 shadow-[0_1px_0_hsl(var(--border))] backdrop-blur"}>
                 <TableRow className="hover:bg-transparent">
-                    <TableHead className={compact ? "min-w-[15rem] pl-4" : "w-[190px] pl-4"}>Loan</TableHead>
+                    <TableHead className={compact ? "min-w-[17rem] pl-4" : "w-[215px] pl-4"}>Folio / loan</TableHead>
                     {!compact ? <TableHead className="w-[170px]">Borrower</TableHead> : null}
                     {!compact ? <TableHead className="w-[135px]">Branch / channel</TableHead> : null}
                     <TableHead className={compact ? "text-right" : "w-[100px] text-right"}>Principal</TableHead>
@@ -949,7 +973,7 @@ function LoanTable({
                                 <SlidersHorizontal className="size-5 text-muted-foreground"/>
                             </div>
                             <p className="font-bold">No loans found</p>
-                            <p className="mt-1 text-sm text-muted-foreground">Adjust the search or filters to see more loan records.</p>
+                            <p className="mt-1 text-sm text-muted-foreground">Adjust the folio search or filters to see more loan records.</p>
                         </div>
                     </TableCell>
                 </TableRow> : rows.map((row) => {
@@ -958,18 +982,21 @@ function LoanTable({
                     const canPayout = canDisburse && loan.status === "approved" && (!signedContractRequired || contract?.status === "signed");
                     const blockedPayout = canDisburse && loan.status === "approved" && signedContractRequired && contract?.status !== "signed";
                     const safeProgress = Math.max(0, Math.min(100, progress));
+                    const operationalReference = loan.folio_number || loan.loan_reference;
 
                     return <TableRow key={loan.id} className="group hover:bg-muted/35">
                         <TableCell className="pl-4">
                             <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                    <p className="max-w-[180px] truncate font-mono text-[11px] font-black text-primary" title={loan.loan_reference}>{loan.loan_reference}</p>
+                                    <p className="max-w-[210px] truncate font-mono text-[12px] font-black text-primary" title={loan.folio_number}>{loan.folio_number}</p>
+                                    <Badge variant="outline" className="h-5 rounded-full px-1.5 text-[9px]">{loan.folio_group_code}</Badge>
                                     {loan.is_top_up ? <Badge variant="secondary" className="h-5 rounded-full px-1.5 text-[9px]">TOP-UP</Badge> : null}
                                 </div>
+                                <p className="mt-1 max-w-[220px] truncate font-mono text-[10px] text-muted-foreground" title={loan.loan_reference}>Loan {loan.loan_reference} · Seq {loan.folio_sequence}</p>
                                 {compact ? <>
-                                    <p className="mt-1 max-w-[220px] truncate text-xs font-semibold">{client?.full_name ?? "Borrower"}</p>
-                                    <p className="mt-0.5 max-w-[220px] truncate text-[10px] text-muted-foreground">{titleCase(loan.origination_channel)} · {interestMethodLabel(loan.calculation_method)}</p>
-                                </> : <p className="mt-1 max-w-[180px] truncate text-[10px] text-muted-foreground" title={loan.id}>{loan.id}</p>}
+                                    <p className="mt-1 max-w-[240px] truncate text-xs font-semibold">{client?.full_name ?? "Borrower"}</p>
+                                    <p className="mt-0.5 max-w-[240px] truncate text-[10px] text-muted-foreground">{titleCase(loan.origination_channel)} · {interestMethodLabel(loan.calculation_method)}</p>
+                                </> : <p className="mt-0.5 max-w-[210px] truncate text-[9px] text-muted-foreground" title={loan.id}>{loan.id}</p>}
                             </div>
                         </TableCell>
 
@@ -1022,24 +1049,24 @@ function LoanTable({
 
                         <TableCell className="pr-4">
                             <div className="flex justify-end gap-1">
-                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onOpenSchedule(loan)} title="View payment schedule" aria-label={`View schedule for ${loan.loan_reference}`}>
+                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onOpenSchedule(loan)} title={`View payment schedule for ${operationalReference}`} aria-label={`View schedule for ${operationalReference}`}>
                                     <Eye className="size-4"/>
                                 </Button>
-                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onOpenDocuments(loan)} title="Open loan documents" aria-label={`Open documents for ${loan.loan_reference}`}>
+                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onOpenDocuments(loan)} title={`Open loan documents for ${operationalReference}`} aria-label={`Open documents for ${operationalReference}`}>
                                     <FileText className="size-4"/>
                                 </Button>
-                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onStartCall(loan)} title="Call borrower" aria-label={`Call borrower for ${loan.loan_reference}`}>
+                                <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onStartCall(loan)} title={`Call borrower for ${operationalReference}`} aria-label={`Call borrower for ${operationalReference}`}>
                                     <Phone className="size-4"/>
                                 </Button>
                                 {canPay ? <Button size="icon-sm" className="rounded-lg" asChild>
-                                    <Link href={`/company/cashier?loan=${encodeURIComponent(loan.loan_reference)}`} title="Receive loan payment" aria-label={`Receive payment for ${loan.loan_reference}`}>
+                                    <Link href={`/company/cashier?loan=${encodeURIComponent(loan.loan_reference)}`} title={`Receive payment for ${operationalReference}`} aria-label={`Receive payment for ${operationalReference}`}>
                                         <HandCoins className="size-4"/>
                                     </Link>
                                 </Button> : null}
-                                {canPayout ? <Button size="icon-sm" className="rounded-lg" onClick={() => onOpenDisbursement(loan)} title="Disburse loan" aria-label={`Disburse ${loan.loan_reference}`}>
+                                {canPayout ? <Button size="icon-sm" className="rounded-lg" onClick={() => onOpenDisbursement(loan)} title={`Disburse ${operationalReference}`} aria-label={`Disburse ${operationalReference}`}>
                                     <Banknote className="size-4"/>
                                 </Button> : null}
-                                {blockedPayout ? <Button size="icon-sm" variant="outline" className="rounded-lg" disabled title="Generate and fully sign the contract before disbursement" aria-label={`Contract must be signed before disbursing ${loan.loan_reference}`}>
+                                {blockedPayout ? <Button size="icon-sm" variant="outline" className="rounded-lg" disabled title="Generate and fully sign the contract before disbursement" aria-label={`Contract must be signed before disbursing ${operationalReference}`}>
                                     <FileSignature className="size-4"/>
                                 </Button> : null}
                             </div>
