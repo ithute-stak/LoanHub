@@ -12,7 +12,12 @@ class CollectionTreatmentPolicy(Base):
 
     __tablename__ = "collection_treatment_policies"
     __table_args__ = (
-        UniqueConstraint("company_id", "name", name="uq_collection_treatment_policy_company_name"),
+        UniqueConstraint(
+            "company_id",
+            "name",
+            "version",
+            name="uq_collection_treatment_policy_company_name_version",
+        ),
     )
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -64,7 +69,7 @@ class CollectionWorkItem(Base):
 
 
 class CollectionAutomationRun(Base):
-    """Immutable-ish summary of one company recovery-engine execution."""
+    """Summary of one company recovery-engine execution."""
 
     __tablename__ = "collection_automation_runs"
 
