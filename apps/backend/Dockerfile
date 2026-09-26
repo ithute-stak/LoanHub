@@ -24,7 +24,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu libpq5 \
+    && apt-get install -y --no-install-recommends gosu libpq5 poppler-utils tesseract-ocr \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system app \
     && adduser --system --ingroup app --home /app app
