@@ -15,6 +15,7 @@ FOLIO_EXTENSION = ROOT / "apps" / "backend" / "services" / "folio_contract_exten
 FOLIO_PAGE = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "folio-book" / "page.tsx"
 FOLIO_API = ROOT / "apps" / "frontend" / "api" / "folioBook.ts"
 BORROWER_LOANS = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "borrower" / "loans" / "page.tsx"
+LOAN_PORTFOLIO = ROOT / "apps" / "frontend" / "components" / "loans" / "loan-portfolio-workspace.tsx"
 LEGACY_REGISTER_PAGE = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "legacy-cashout-register" / "page.tsx"
 
 
@@ -116,10 +117,11 @@ def test_folio_is_propagated_to_contracts_loan_pdfs_receipts_and_collections():
     assert 'payload["loan_reference"] = f"{folio} | {loan_reference}"' in extension
 
 
-def test_frontend_has_searchable_folio_book_and_borrower_folio_history():
+def test_frontend_has_searchable_folio_book_borrower_history_and_portfolio():
     page = FOLIO_PAGE.read_text(encoding="utf-8")
     api = FOLIO_API.read_text(encoding="utf-8")
     borrower = BORROWER_LOANS.read_text(encoding="utf-8")
+    portfolio = LOAN_PORTFOLIO.read_text(encoding="utf-8")
     legacy = LEGACY_REGISTER_PAGE.read_text(encoding="utf-8")
     assert "Loan Folio Book" in page
     assert "Permanent loan sequence book" in page
@@ -130,4 +132,10 @@ def test_frontend_has_searchable_folio_book_and_borrower_folio_history():
     assert '"/folio-book/export.csv"' in api
     assert "loan.folio_number" in borrower
     assert "selected.folio_number" in borrower
+    assert "loan.folio_number" in portfolio
+    assert "loan.folio_group_code" in portfolio
+    assert 'searchParams.get("folio")' in portfolio
+    assert 'href="/company/folio-book"' in portfolio
+    assert 'placeholder="Folio, loan, borrower, ID, phone, employer, branch, contract..."' in portfolio
+    assert '>Folio / loan</TableHead>' in portfolio
     assert "/company/folio-book" in legacy
