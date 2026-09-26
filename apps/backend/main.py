@@ -6,6 +6,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+# Install folio-aware contract identity hooks before API routers import contract
+# functions by value. This keeps the legal renderer single-sourced while making
+# the immutable loan folio visible on every newly generated agreement.
+import services.folio_contract_extension  # noqa: F401
 from api.v1.router import api_router
 import core.audit_integrity  # noqa: F401 - seals immutable audit events
 import core.transparency  # noqa: F401 - registers SQLAlchemy transparency listeners
