@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     MIDNIGHT_REPORTS_ENABLED: bool = True
     MIDNIGHT_REPORT_FORMATS: str = 'pdf,csv'
 
+    # Collections automation refreshes treatment queues before the daily
+    # missed-payment report so collectors start the day with current work.
+    COLLECTION_AUTOMATION_ENABLED: bool = True
+    COLLECTION_AUTOMATION_HOUR: int = 0
+    COLLECTION_AUTOMATION_MINUTE: int = 15
+
     # Collections report generated at/after 00:30 in APP_TIMEZONE.
     COLLECTION_DAILY_REPORT_ENABLED: bool = True
     COLLECTION_DAILY_REPORT_HOUR: int = 0
@@ -131,7 +137,6 @@ class Settings(BaseSettings):
     LOANHUB_LOGO_PATH: str = 'assets/loanhub-horizontal-logo.png'
     LOANHUB_APP_ICON_PATH: str = 'assets/loanhub-app-icon.png'
     DEVELOPER_LOGO_PATH: str = 'assets/ithute-solutions-developer-logo.png'
-    # Backward-compatible alias used by older report code.
     BRAND_NAME: str = 'Ithute Solutions'
     BRAND_LOGO_PATH: str = 'assets/ithute-solutions-developer-logo.png'
 

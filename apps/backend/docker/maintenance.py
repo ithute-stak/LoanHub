@@ -8,28 +8,21 @@ from zoneinfo import ZoneInfo
 from database.config.config import settings
 from database.session import SessionLocal
 from services.call_management_service import delete_expired_recordings
+from services.collection_automation_service import run_scheduled_collection_automation
+from services.collection_daily_reporting_service import run_missed_payment_reporting
 from services.maintenance_service import run_maintenance
 from services.nightly_service import run_midnight_reconciliation
-from services.collection_daily_reporting_service import run_missed_payment_reporting
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("loanhub.maintenance")
 
 
-def _seconds_until_next_midnight() -> float:
-    zone = ZoneInfo(settings.APP_TIMEZONE)
-    now = datetime.now(zone)
-    tomorrow = now.date() + timedelta(days=1)
-    next_midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=zone)
-    return max(1.0, (next_midnight - now).total_seconds())
-
-
-def _seconds_until_next_collection_report() -> float:
+def _seconds_until(hour: int, minute: int) -> float:
     zone = ZoneInfo(settings.APP_TIMEZONE)
     now = datetime.now(zone)
     target = now.replace(
-        hour=max(0, min(23, settings.COLLECTION_DAILY_REPORT_HOUR)),
-        minute=max(0, min(59, settings.COLLECTION_DAILY_REPORT_MINUTE)),
+        hour=max(0, min(23, hour)),
+        minute=max(0, min(59, minute)),
         second=0,
         microsecond=0,
     )
@@ -38,10 +31,29 @@ def _seconds_until_next_collection_report() -> float:
     return max(1.0, (target - now).total_seconds())
 
 
+def _seconds_until_next_midnight() -> float:
+    return _seconds_until(0, 0)
+
+
+def _seconds_until_next_collection_automation() -> float:
+    return _seconds_until(
+        settings.COLLECTION_AUTOMATION_HOUR,
+        settings.COLLECTION_AUTOMATION_MINUTE,
+    )
+
+
+def _seconds_until_next_collection_report() -> float:
+    return _seconds_until(
+        settings.COLLECTION_DAILY_REPORT_HOUR,
+        settings.COLLECTION_DAILY_REPORT_MINUTE,
+    )
+
+
 def main() -> None:
     interval = max(60, settings.MAINTENANCE_INTERVAL_SECONDS)
-    logger.info("Cash-only maintenance worker started; interval=%s; timezone=%s", interval, settings.APP_TIMEZONE)
+    logger.info("LoanHub maintenance worker started; interval=%s; timezone=%s", interval, settings.APP_TIMEZONE)
     last_midnight_date = None
+    last_collection_automation_date = None
     last_collection_report_date = None
 
     while True:
@@ -82,6 +94,29 @@ def main() -> None:
                 finally:
                     nightly_db.close()
 
+        automation_due = (
+            local_now.hour,
+            local_now.minute,
+        ) >= (
+            max(0, min(23, settings.COLLECTION_AUTOMATION_HOUR)),
+            max(0, min(59, settings.COLLECTION_AUTOMATION_MINUTE)),
+        )
+        if (
+            settings.COLLECTION_AUTOMATION_ENABLED
+            and last_collection_automation_date != local_now.date()
+            and automation_due
+        ):
+            automation_db = SessionLocal()
+            try:
+                outcome = run_scheduled_collection_automation(automation_db)
+                logger.info("Collections automation outcome: %s", outcome)
+                last_collection_automation_date = local_now.date()
+            except Exception:
+                automation_db.rollback()
+                logger.exception("Scheduled collections automation failed")
+            finally:
+                automation_db.close()
+
         collection_due = (
             local_now.hour,
             local_now.minute,
@@ -108,6 +143,7 @@ def main() -> None:
         time.sleep(min(
             interval,
             _seconds_until_next_midnight(),
+            _seconds_until_next_collection_automation(),
             _seconds_until_next_collection_report(),
         ))
 
