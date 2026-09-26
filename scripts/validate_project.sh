@@ -19,6 +19,8 @@ cd "$ROOT_DIR/apps/backend"
 "$PYTHON_BIN" -m pytest -q \
   tests/test_backend_import_smoke.py \
   tests/test_completed_loan_overdue_state.py \
+  tests/test_contract_collection_cost_clause.py \
+  tests/test_collection_charge_policy.py \
   tests/test_external_debt_tracking.py \
   tests/test_financial_and_tenant_invariants.py \
   tests/test_global_borrower_lookup_frontend.py \
