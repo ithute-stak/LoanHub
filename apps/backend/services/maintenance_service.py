@@ -112,6 +112,7 @@ def run_maintenance(db: Session) -> MaintenanceResult:
                     InstallmentStatus.PARTIALLY_PAID,
                 ]
             ),
+            RepaymentInstallment.paid_amount < RepaymentInstallment.total_due,
             RepaymentInstallment.due_date < today,
         )
         .all()
@@ -128,6 +129,7 @@ def run_maintenance(db: Session) -> MaintenanceResult:
             db.query(ClientCompanyLoan)
             .filter(
                 ClientCompanyLoan.id.in_(overdue_loan_ids),
+                ClientCompanyLoan.balance > 0,
                 ClientCompanyLoan.status.in_(
                     [LoanStatus.ACTIVE, LoanStatus.APPROVED]
                 ),
@@ -139,24 +141,26 @@ def run_maintenance(db: Session) -> MaintenanceResult:
             loan.is_overdue = True
     result.overdue_loans = len(overdue_loans)
 
-    completed_loans = (
+    # Current delinquency and historical delinquency are different concepts.
+    # A zero-balance loan is settled even if it was previously late. Reconcile
+    # all zero-balance rows, including records that are already COMPLETED but
+    # still carry a stale persisted is_overdue flag from an older payment path.
+    settled_loans = (
         db.query(ClientCompanyLoan)
-        .filter(
-            ClientCompanyLoan.balance <= 0,
-            ClientCompanyLoan.status.notin_(
-                [
-                    LoanStatus.COMPLETED,
-                    LoanStatus.CANCELLED,
-                    LoanStatus.REJECTED,
-                ]
-            ),
-        )
+        .filter(ClientCompanyLoan.balance <= 0)
         .all()
     )
-    for loan in completed_loans:
-        loan.status = LoanStatus.COMPLETED
+    completed_transitions = 0
+    for loan in settled_loans:
+        if loan.status not in {
+            LoanStatus.COMPLETED,
+            LoanStatus.CANCELLED,
+            LoanStatus.REJECTED,
+        }:
+            loan.status = LoanStatus.COMPLETED
+            completed_transitions += 1
         loan.is_overdue = False
-    result.completed_loans = len(completed_loans)
+    result.completed_loans = completed_transitions
 
     result.collection_reminders = process_collection_reminders(db, now=now)
     result.generated_reports = run_due_report_schedules(db)
