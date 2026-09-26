@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import HTTPException
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
@@ -113,6 +115,14 @@ def _require_disbursement_clearance(session: Session, loan: ClientCompanyLoan) -
         )
 
 
+def _normalize_condition_date(mapper, connection, target: CreditCommitteeCondition) -> None:  # noqa: ARG001
+    if isinstance(target.due_date, str):
+        try:
+            target.due_date = date.fromisoformat(target.due_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Credit-condition due date must use YYYY-MM-DD format") from exc
+
+
 def _before_flush(session: Session, flush_context, instances) -> None:  # noqa: ARG001
     # Enforce the governance boundary at the ORM transaction layer so no
     # alternate router/service can bypass committee approval or conditions.
@@ -141,4 +151,6 @@ def install_credit_committee_integrity() -> None:
     if _installed:
         return
     event.listen(Session, "before_flush", _before_flush)
+    event.listen(CreditCommitteeCondition, "before_insert", _normalize_condition_date)
+    event.listen(CreditCommitteeCondition, "before_update", _normalize_condition_date)
     _installed = True
