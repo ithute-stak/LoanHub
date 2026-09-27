@@ -41,6 +41,11 @@ from database.models.ai_intelligence import (  # noqa: F401,E402
     AIIntelligenceInsight,
     AIIntelligenceRun,
 )
+from database.models.predictive_intelligence import (  # noqa: F401,E402
+    PredictiveCashflowForecast,
+    PredictiveIntelligenceRun,
+    PredictiveLoanSignal,
+)
 
 
 config = context.config

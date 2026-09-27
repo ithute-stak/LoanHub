@@ -13,6 +13,7 @@ from services.collection_daily_reporting_service import run_missed_payment_repor
 from services.maintenance_service import run_maintenance
 from services.nightly_service import run_midnight_reconciliation
 from services.portfolio_risk_service import run_scheduled_portfolio_risk
+from services.predictive_intelligence_service import run_scheduled_predictive_intelligence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("loanhub.maintenance")
@@ -48,6 +49,10 @@ def _seconds_until_next_portfolio_risk_snapshot() -> float:
     return _seconds_until(settings.PORTFOLIO_RISK_SNAPSHOT_HOUR, settings.PORTFOLIO_RISK_SNAPSHOT_MINUTE)
 
 
+def _seconds_until_next_predictive_intelligence() -> float:
+    return _seconds_until(settings.PREDICTIVE_INTELLIGENCE_HOUR, settings.PREDICTIVE_INTELLIGENCE_MINUTE)
+
+
 def main() -> None:
     interval = max(60, settings.MAINTENANCE_INTERVAL_SECONDS)
     logger.info("LoanHub maintenance worker started; interval=%s; timezone=%s", interval, settings.APP_TIMEZONE)
@@ -55,6 +60,7 @@ def main() -> None:
     last_collection_automation_date = None
     last_collection_report_date = None
     last_portfolio_risk_snapshot_date = None
+    last_predictive_intelligence_date = None
 
     while True:
         db = SessionLocal()
@@ -142,12 +148,29 @@ def main() -> None:
             finally:
                 risk_db.close()
 
+        predictive_due = (local_now.hour, local_now.minute) >= (
+            max(0, min(23, settings.PREDICTIVE_INTELLIGENCE_HOUR)),
+            max(0, min(59, settings.PREDICTIVE_INTELLIGENCE_MINUTE)),
+        )
+        if settings.PREDICTIVE_INTELLIGENCE_ENABLED and last_predictive_intelligence_date != local_now.date() and predictive_due:
+            predictive_db = SessionLocal()
+            try:
+                outcome = run_scheduled_predictive_intelligence(predictive_db, local_now.date())
+                logger.info("Predictive intelligence outcome: %s", outcome)
+                last_predictive_intelligence_date = local_now.date()
+            except Exception:
+                predictive_db.rollback()
+                logger.exception("Daily predictive intelligence run failed")
+            finally:
+                predictive_db.close()
+
         time.sleep(min(
             interval,
             _seconds_until_next_midnight(),
             _seconds_until_next_collection_automation(),
             _seconds_until_next_collection_report(),
             _seconds_until_next_portfolio_risk_snapshot(),
+            _seconds_until_next_predictive_intelligence(),
         ))
 
 
