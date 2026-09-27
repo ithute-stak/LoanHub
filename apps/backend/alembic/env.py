@@ -36,6 +36,11 @@ from database.models.portfolio_risk import (  # noqa: F401,E402
     PortfolioRiskRun,
     PortfolioRiskSnapshot,
 )
+from database.models.ai_intelligence import (  # noqa: F401,E402
+    AIIntelligenceGuardrailEvent,
+    AIIntelligenceInsight,
+    AIIntelligenceRun,
+)
 
 
 config = context.config

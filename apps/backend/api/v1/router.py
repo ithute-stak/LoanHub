@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from routers import (
     account,
     accounting,
+    ai_intelligence,
     analytics,
     audit,
     auth,
@@ -124,6 +125,7 @@ _ROUTE_REGISTRY = (
     account.router,
     analytics.router,
     portfolio_risk.router,
+    ai_intelligence.router,
     lending_operations.router,
     credit_committee.router,
     cdas_api.router,
