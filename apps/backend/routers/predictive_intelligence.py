@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -124,7 +123,6 @@ def create_predictive_run(
         db,
         company_id=context.company_id,
         branch_id=branch,
-        as_of=date.today(),
         run_type="on_demand",
         triggered_by_user_id=context.user.id,
     )
