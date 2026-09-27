@@ -51,20 +51,36 @@ def test_phase_two_api_has_controlled_procurement_budget_and_audit_workflows():
     assert '@router.post("/procurement/{request_id}/submit")' in source
     assert '@router.post("/procurement/{request_id}/approve")' in source
     assert "Only submitted requests can be approved" in source
+    assert "A requester cannot approve their own procurement request" in source
     assert '@router.post("/budgets", status_code=201)' in source
     assert '@router.post("/budgets/{plan_id}/lines", status_code=201)' in source
     assert '@router.post("/budgets/{plan_id}/approve")' in source
     assert "Approved budgets are locked" in source
     assert "A budget must contain at least one line before approval" in source
+    assert "variance_to_budget" in source
     assert '@router.post("/audits", status_code=201)' in source
     assert '@router.post("/audits/{engagement_id}/findings", status_code=201)' in source
+    assert '@router.post("/findings/{finding_id}/remediate")' in source
+    assert '@router.post("/findings/{finding_id}/verify")' in source
+    assert "Finding requires remediation evidence before verification" in source
     assert '@router.post("/audits/{engagement_id}/close")' in source
     assert "Audit cannot close while findings remain open" in source
     assert "company_operations_phase2.router" in api_router
 
 
-def test_management_gate_is_required_for_material_approvals_and_closure():
+def test_management_and_branch_gates_protect_material_actions():
     source = (ROOT / "backend" / "routers" / "company_operations_phase2.py").read_text(encoding="utf-8")
     assert "COMPANY_MANAGEMENT_ROLES" in source
     assert "Company management approval is required" in source
-    assert source.count("_management(context)") >= 3
+    assert "def _branch(" in source
+    assert "Selected staff member is outside the active company/branch scope" in source
+    assert source.count("_management(context)") >= 4
+
+
+def test_phase_two_frontend_workspace_surfaces_native_controls():
+    page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "operations" / "controls" / "page.tsx").read_text(encoding="utf-8")
+    client = (ROOT / "frontend" / "api" / "companyOperationsPhase2.ts").read_text(encoding="utf-8")
+    assert "Procurement, budgeting and internal audit" in page
+    assert "Procurement approval queue" in page
+    assert '"/company-operations-phase2/overview"' in client
+    assert '"/company-operations-phase2/procurement"' in client
