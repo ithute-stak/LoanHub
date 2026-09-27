@@ -79,9 +79,12 @@ def test_complaints_have_sla_and_regulatory_attention_signals():
 def test_frontend_workspace_surfaces_all_four_native_registers():
     page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "operations" / "page.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend" / "api" / "companyOperations.ts").read_text(encoding="utf-8")
+    command = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "command-centre" / "page.tsx").read_text(encoding="utf-8")
     assert "Specialised Company Operations" in page
     assert "CRM relationship cases" in page
     assert "Collateral register" in page
     assert "Legal recovery matters" in page
     assert "Complaint cases" in page
     assert '"/company-operations/overview"' in client
+    assert 'href="/company/operations"' in command
+    assert "Specialised Operations" in command
