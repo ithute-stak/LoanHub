@@ -18,7 +18,7 @@ from services.credit_loss_provisioning_service import approve_and_post, generate
 
 router = APIRouter(prefix="/credit-loss-provisioning", tags=["Credit Loss Provisioning"])
 RUN_ROLES = FINANCE_ROLES | {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN, UserRole.RISK_MANAGER, UserRole.CREDIT_ANALYST, UserRole.BRANCH_MANAGER}
-APPROVAL_ROLES = {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN, UserRole.FINANCE_MANAGER, UserRole.RISK_MANAGER}
+APPROVAL_ROLES = FINANCE_ROLES | {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN, UserRole.RISK_MANAGER}
 
 
 class GenerateProvisionRequest(BaseModel):
