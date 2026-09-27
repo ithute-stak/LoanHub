@@ -10,13 +10,10 @@ class PredictiveIntelligenceRun(Base):
     """Auditable daily/on-demand forecast run for an existing loan portfolio."""
 
     __tablename__ = "predictive_intelligence_runs"
-    __table_args__ = (
-        UniqueConstraint("company_id", "as_of_date", "branch_scope_key", name="uq_predictive_run_company_date_scope"),
-    )
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
     branch_id = Column(UUID(as_uuid=True), ForeignKey("company_branches.id", ondelete="SET NULL"), nullable=True, index=True)
-    branch_scope_key = Column(String(40), nullable=False, default="ALL")
+    branch_scope_key = Column(String(40), nullable=False, default="ALL", index=True)
     as_of_date = Column(Date, nullable=False, index=True)
     source_snapshot_date = Column(Date, nullable=False, index=True)
     previous_snapshot_date = Column(Date, nullable=True, index=True)
