@@ -43,7 +43,7 @@ def upgrade() -> None:
         $$ LANGUAGE plpgsql;
         """
     )
-    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "complaint_cases"):
+    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "customer_complaint_cases"):
         op.execute(
             f"""
             CREATE TRIGGER trg_{table}_borrower_scope
@@ -74,7 +74,7 @@ def upgrade() -> None:
         $$ LANGUAGE plpgsql;
         """
     )
-    for table in ("crm_relationship_cases", "legal_recovery_matters", "complaint_cases"):
+    for table in ("crm_relationship_cases", "legal_recovery_matters", "customer_complaint_cases"):
         op.execute(
             f"""
             CREATE TRIGGER trg_{table}_assignee_scope
@@ -85,9 +85,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in ("crm_relationship_cases", "legal_recovery_matters", "complaint_cases"):
+    for table in ("crm_relationship_cases", "legal_recovery_matters", "customer_complaint_cases"):
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_assignee_scope ON {table};")
     op.execute("DROP FUNCTION IF EXISTS enforce_company_operation_assignee_scope();")
-    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "complaint_cases"):
+    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "customer_complaint_cases"):
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_borrower_scope ON {table};")
     op.execute("DROP FUNCTION IF EXISTS enforce_company_operation_borrower_scope();")
