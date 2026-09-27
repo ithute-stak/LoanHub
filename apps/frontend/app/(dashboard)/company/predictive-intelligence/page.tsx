@@ -78,6 +78,7 @@ export default function PredictiveIntelligencePage() {
   }
 
   const latest = overview?.latest_run;
+  const hasCollectionHistory = (overview?.cashflow?.[0]?.history_installment_count ?? 0) > 0;
 
   return (
     <div className="space-y-6 pb-12">
@@ -106,7 +107,7 @@ export default function PredictiveIntelligencePage() {
         <Card><CardHeader className="pb-2"><CardDescription>Possible PAR30 entry</CardDescription><CardTitle>{latest?.projected_par30_entry_count ?? 0}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>High / critical</CardDescription><CardTitle>{(latest?.high_count ?? 0) + (latest?.critical_count ?? 0)}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>High-risk exposure</CardDescription><CardTitle className="text-lg">{formatMoney(overview?.high_risk_exposure ?? 0)}</CardTitle></CardHeader></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Observed collection rate</CardDescription><CardTitle>{latest ? `${(latest.observed_collection_rate * 100).toFixed(1)}%` : "—"}</CardTitle></CardHeader></Card>
+        <Card><CardHeader className="pb-2"><CardDescription>Observed collection rate</CardDescription><CardTitle>{!latest ? "—" : hasCollectionHistory ? `${(latest.observed_collection_rate * 100).toFixed(1)}%` : "No history"}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Evidence date</CardDescription><CardTitle className="text-base">{latest?.source_snapshot_date ?? "Not run"}</CardTitle></CardHeader></Card>
       </section>
 
@@ -121,7 +122,11 @@ export default function PredictiveIntelligencePage() {
             <CardContent className="space-y-3">
               <div><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Contractual due</p><p className="text-xl font-black">{formatMoney(row.contractual_due)}</p></div>
               <div><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Evidence-adjusted collection outlook</p><p className="text-xl font-black text-primary">{formatMoney(row.expected_collection)}</p></div>
-              <p className="text-xs leading-5 text-muted-foreground">Based on the observed {Math.round(row.observed_collection_rate * 1000) / 10}% collection rate over {row.history_installment_count} historical installment(s). It is a forecast, not a guarantee.</p>
+              {row.history_installment_count > 0 ? (
+                <p className="text-xs leading-5 text-muted-foreground">Based on the observed {Math.round(row.observed_collection_rate * 1000) / 10}% collection rate over {row.history_installment_count} historical installment(s). It is a forecast, not a guarantee.</p>
+              ) : (
+                <p className="text-xs leading-5 text-muted-foreground">No repayment history was available in the 90-day lookback. LoanHub therefore shows contractual due as the outlook and marks confidence low instead of inventing a collection rate.</p>
+              )}
             </CardContent>
           </Card>
         ))}
