@@ -6,10 +6,12 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from database.config.config import settings
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.collection_automation import CollectionWorkItem
 from database.models.company import LoanCompany
@@ -49,6 +51,10 @@ def risk_band(score: Decimal | int | float) -> str:
     if value >= 20:
         return "watch"
     return "stable"
+
+
+def _local_today() -> date:
+    return datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date()
 
 
 def _previous_snapshot_date(db: Session, company_id: UUID, as_of: date) -> date | None:
@@ -281,8 +287,9 @@ def generate_predictive_run(
     run_type: str = "on_demand",
     triggered_by_user_id: UUID | None = None,
 ) -> PredictiveIntelligenceRun:
-    target = as_of or date.today()
-    if target != date.today():
+    local_today = _local_today()
+    target = as_of or local_today
+    if target != local_today:
         from fastapi import HTTPException
         raise HTTPException(status_code=422, detail="Predictive runs use today's stored/live portfolio state; historical forecasts are not reconstructed")
 
