@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     APP_TIMEZONE: str = 'Africa/Maseru'
     PUBLIC_APP_URL: str = 'http://localhost:3000'
 
-    # Public sandbox controls. These settings are inert unless SANDBOX_MODE is
-    # explicitly enabled on the isolated sandbox backend service.
     SANDBOX_MODE: bool = False
     SANDBOX_ROLE_SWITCH_ENABLED: bool = False
     SANDBOX_LOGIN_PHONE: str = '12345678'
@@ -55,14 +53,8 @@ class Settings(BaseSettings):
     IMPERSONATION_MAX_MINUTES: int = 30
 
     MARKETPLACE_DEFAULT_UNLOCK_FEE: float = 25.0
-
-    # CDAS credentials are company-owned configuration stored encrypted in
-    # PostgreSQL. Only the non-secret default request timeout remains global.
     CDAS_TIMEOUT_SECONDS: float = 20.0
 
-    # Compatibility cache only. LelefaPayGate operational configuration is
-    # loaded from PostgreSQL for each request and environment values are reset
-    # immediately after Settings is constructed.
     LELEFAPAYGATE_ENABLED: bool = False
     LELEFAPAYGATE_BASE_URL: str = 'http://169.255.58.185:8081/api/v1'
     LELEFAPAYGATE_API_KEY: Optional[str] = None
@@ -81,16 +73,19 @@ class Settings(BaseSettings):
     MIDNIGHT_REPORTS_ENABLED: bool = True
     MIDNIGHT_REPORT_FORMATS: str = 'pdf,csv'
 
-    # Collections automation refreshes treatment queues before the daily
-    # missed-payment report so collectors start the day with current work.
     COLLECTION_AUTOMATION_ENABLED: bool = True
     COLLECTION_AUTOMATION_HOUR: int = 0
     COLLECTION_AUTOMATION_MINUTE: int = 15
 
-    # Collections report generated at/after 00:30 in APP_TIMEZONE.
     COLLECTION_DAILY_REPORT_ENABLED: bool = True
     COLLECTION_DAILY_REPORT_HOUR: int = 0
     COLLECTION_DAILY_REPORT_MINUTE: int = 30
+
+    # Daily loan-level state is stored after collections automation/reporting so
+    # roll rates and cures are measured from evidence rather than reconstructed.
+    PORTFOLIO_RISK_SNAPSHOT_ENABLED: bool = True
+    PORTFOLIO_RISK_SNAPSHOT_HOUR: int = 0
+    PORTFOLIO_RISK_SNAPSHOT_MINUTE: int = 45
 
     TREASURY_AUTO_SUBMIT_ENABLED: bool = True
     TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS: int = 60
@@ -120,8 +115,6 @@ class Settings(BaseSettings):
     FILE_AUDIO_MAX_UPLOAD_MB: int = 20
     FILE_RETENTION_DAYS: int = 3650
 
-    # Controlled company calling. Keep disabled until a LiveKit/WebRTC/SIP
-    # deployment has been provisioned. Secrets are supplied only at runtime.
     CALL_MEDIA_PROVIDER: str = 'disabled'
     LIVEKIT_URL: Optional[str] = None
     LIVEKIT_API_KEY: Optional[str] = None
@@ -179,8 +172,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# LelefaPayGate is intentionally database-owned. Ignore any legacy environment
-# values that may still exist on a server until the first database sync runs.
 settings.LELEFAPAYGATE_ENABLED = False
 settings.LELEFAPAYGATE_BASE_URL = 'http://169.255.58.185:8081/api/v1'
 settings.LELEFAPAYGATE_API_KEY = None
