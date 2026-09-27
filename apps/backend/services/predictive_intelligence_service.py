@@ -184,7 +184,7 @@ def _cashflow_forecasts(
     history = history_query.all()
     history_due = sum((money(row.total_due) for row in history), Decimal("0.00"))
     history_paid = sum((min(money(row.paid_amount), money(row.total_due)) for row in history), Decimal("0.00"))
-    observed_rate = ratio(history_paid / history_due) if history_due > 0 else Decimal("1.0000")
+    observed_rate = ratio(history_paid / history_due) if history_due > 0 else Decimal("0.0000")
     history_count = len(history)
     if history_count >= 50:
         confidence = "high"
@@ -214,6 +214,11 @@ def _cashflow_forecasts(
             Decimal("0.00"),
         )
         expected = money(contractual * observed_rate) if history_due > 0 else money(contractual)
+        note = (
+            "Expected collection is contractual due multiplied by the observed lookback collection rate; it is not a guarantee."
+            if history_due > 0
+            else "No repayment history was available in the lookback window, so expected collection is shown as contractual due with low confidence."
+        )
         forecast = PredictiveCashflowForecast(
             run_id=run.id,
             company_id=company_id,
@@ -231,7 +236,7 @@ def _cashflow_forecasts(
                 "lookback_days": LOOKBACK_DAYS,
                 "historical_due": str(money(history_due)),
                 "historical_paid_against_due": str(money(history_paid)),
-                "note": "Expected collection is contractual due multiplied by the observed lookback collection rate; it is not a guarantee.",
+                "note": note,
             },
         )
         db.add(forecast)
