@@ -100,6 +100,82 @@ async def test_employee_lookup_reauthenticates_once_when_provider_session_expire
 
 
 @pytest.mark.asyncio
+async def test_employee_lookup_recovers_when_provider_reports_missing_authorization_token() -> None:
+    logins = 0
+    lookups = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal logins, lookups
+        if request.url.path == "/api/security/login":
+            logins += 1
+            return httpx.Response(200, json={"Authorization": f"token-{logins}"})
+
+        assert request.url.path == "/api/employee/getDetails"
+        lookups += 1
+        if lookups == 1:
+            assert request.headers.get("Authorization") == "token-1"
+            return httpx.Response(400, json={"message": "Authorization token is missing"})
+
+        assert request.headers.get("Authorization") == "token-2"
+        return httpx.Response(
+            200,
+            json={
+                "EmployeeNo": "0019336",
+                "Name": "Tebang",
+                "Surname": "Mosunkuthu",
+                "DOB": "1979-03-02",
+                "Department": "Ministry of Justice, Law and Constitutional Affairs",
+                "JoiningDate": "2000-10-01",
+                "TerminationDate": None,
+            },
+        )
+
+    client = CdasClient(
+        base_url="https://cdas.test",
+        username="test-user",
+        password="test-password",
+        transport=httpx.MockTransport(handler),
+    )
+
+    employee = await client.get_employee_details("0019336")
+
+    assert employee["EmployeeNo"] == "0019336"
+    assert logins == 2
+    assert lookups == 2
+
+
+@pytest.mark.asyncio
+async def test_deduction_write_is_not_replayed_when_provider_reports_missing_token() -> None:
+    logins = 0
+    mutations = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal logins, mutations
+        if request.url.path == "/api/security/login":
+            logins += 1
+            return httpx.Response(200, json={"Authorization": f"token-{logins}"})
+
+        assert request.url.path == "/api/policy/add-update-deduction"
+        mutations += 1
+        return httpx.Response(400, json={"message": "Authorization token is missing"})
+
+    client = CdasClient(
+        base_url="https://cdas.test",
+        username="test-user",
+        password="test-password",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(CdasError) as raised:
+        await client.add_update_deduction({"EmployeeNo": "0019336"})
+
+    assert raised.value.status_code == 400
+    assert raised.value.message == "Authorization token is missing"
+    assert logins == 1
+    assert mutations == 1
+
+
+@pytest.mark.asyncio
 async def test_employee_lookup_preserves_provider_not_found_error() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/security/login":
