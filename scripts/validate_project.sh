@@ -27,6 +27,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_credit_committee_source_safety.py \
   tests/test_collection_automation.py \
   tests/test_portfolio_risk_intelligence.py \
+  tests/test_reconciliation_engine.py \
   tests/test_ai_intelligence_centre.py \
   tests/test_predictive_intelligence.py \
   tests/test_credit_loss_provisioning.py \
