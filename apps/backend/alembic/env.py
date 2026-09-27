@@ -63,6 +63,14 @@ from database.models.company_operations_phase1 import (  # noqa: F401,E402
     CompanyOperationEvent,
     LegalRecoveryMatter,
 )
+from database.models.company_operations_phase2 import (  # noqa: F401,E402
+    CompanyBudgetLine,
+    CompanyBudgetPlan,
+    InternalAuditEngagement,
+    InternalAuditFinding,
+    ProcurementRequest,
+    ProcurementVendor,
+)
 
 
 config = context.config
