@@ -56,6 +56,13 @@ from database.models.credit_loss_provisioning import (  # noqa: F401,E402
     CreditLossProvisionPolicy,
     CreditLossProvisionRun,
 )
+from database.models.company_operations_phase1 import (  # noqa: F401,E402
+    CRMRelationshipCase,
+    CollateralAsset,
+    ComplaintCase,
+    CompanyOperationEvent,
+    LegalRecoveryMatter,
+)
 
 
 config = context.config
