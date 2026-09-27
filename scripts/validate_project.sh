@@ -32,6 +32,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_predictive_intelligence.py \
   tests/test_credit_loss_provisioning.py \
   tests/test_company_operations_phase1.py \
+  tests/test_company_operations_phase2.py \
   tests/test_assisted_employer_details_frontend.py \
   tests/test_contract_collection_cost_clause.py \
   tests/test_optional_contract_mandate.py \
