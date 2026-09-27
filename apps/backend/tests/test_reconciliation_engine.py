@@ -98,9 +98,10 @@ def test_reconciliation_api_and_ui_cover_operational_flow():
     page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "reconciliation" / "page.tsx").read_text(encoding="utf-8")
     detail = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "reconciliation" / "batches" / "[batchId]" / "page.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend" / "api" / "reconciliation.ts").read_text(encoding="utf-8")
+    payments_page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "payments" / "page.tsx").read_text(encoding="utf-8")
     assert 'APIRouter(prefix="/reconciliation"' in router
     assert '@router.get("/dashboard")' in router
-    assert '@router.post("/batches")' in router
+    assert '@router.post("/batches", status_code=201)' in router
     assert '@router.post("/batches/{batch_id}/import.csv")' in router
     assert '@router.post("/batches/{batch_id}/reconcile")' in router
     assert '@router.put("/batches/{batch_id}/lines/{line_id}/match")' in router
@@ -111,3 +112,4 @@ def test_reconciliation_api_and_ui_cover_operational_flow():
     assert "Manual matching requires the exact LoanHub payment ID" in detail
     assert "uploadReconciliationCsv" in client
     assert "requestReconciliationAdjustment" in client
+    assert "/company/reconciliation" in payments_page
