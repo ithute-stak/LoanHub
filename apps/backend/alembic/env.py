@@ -46,6 +46,11 @@ from database.models.predictive_intelligence import (  # noqa: F401,E402
     PredictiveIntelligenceRun,
     PredictiveLoanSignal,
 )
+from database.models.credit_loss_provisioning import (  # noqa: F401,E402
+    CreditLossProvisionLine,
+    CreditLossProvisionPolicy,
+    CreditLossProvisionRun,
+)
 
 
 config = context.config
