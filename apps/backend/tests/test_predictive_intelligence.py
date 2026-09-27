@@ -71,13 +71,24 @@ def test_predictive_engine_uses_stored_evidence_and_remains_advisory():
     assert "PaymentTransaction" not in source
 
 
+def test_predictive_runs_use_configured_loanhub_local_date():
+    source = (ROOT / "backend" / "services" / "predictive_intelligence_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "predictive_intelligence.py").read_text(encoding="utf-8")
+
+    assert "ZoneInfo(settings.APP_TIMEZONE)" in source
+    assert "local_today = _local_today()" in source
+    assert "date.today()" not in router
+
+
 def test_cashflow_forecast_is_evidence_adjusted_and_labels_no_history():
     source = (ROOT / "backend" / "services" / "predictive_intelligence_service.py").read_text(encoding="utf-8")
 
     assert "LOOKBACK_DAYS = 90" in source
     assert 'method = "historical_collection_rate" if history_due > 0 else "contractual_no_history"' in source
     assert "expected = money(contractual * observed_rate) if history_due > 0 else money(contractual)" in source
+    assert 'observed_rate = ratio(history_paid / history_due) if history_due > 0 else Decimal("0.0000")' in source
     assert "it is not a guarantee" in source.lower()
+    assert "No repayment history was available in the lookback window" in source
 
 
 def test_predictive_api_and_maintenance_are_company_scoped_and_scheduled_after_risk_snapshot():
@@ -106,5 +117,7 @@ def test_predictive_frontend_explains_forecast_limits():
     assert "not a calibrated default probability" in page
     assert "30-day stress scenario" in page
     assert "Evidence-adjusted collection outlook" in page
+    assert "No history" in page
+    assert "instead of inventing a collection rate" in page
     assert "runPredictiveIntelligence" in api
     assert "/company/predictive-intelligence" in command
