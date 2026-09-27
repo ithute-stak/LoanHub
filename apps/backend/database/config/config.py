@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     PORTFOLIO_RISK_SNAPSHOT_HOUR: int = 0
     PORTFOLIO_RISK_SNAPSHOT_MINUTE: int = 45
 
+    # Forecasts run after the daily portfolio snapshot so every signal has a
+    # stored evidence baseline rather than reconstructing history later.
+    PREDICTIVE_INTELLIGENCE_ENABLED: bool = True
+    PREDICTIVE_INTELLIGENCE_HOUR: int = 1
+    PREDICTIVE_INTELLIGENCE_MINUTE: int = 0
+
     TREASURY_AUTO_SUBMIT_ENABLED: bool = True
     TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS: int = 60
 
