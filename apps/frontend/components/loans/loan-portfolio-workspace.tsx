@@ -409,6 +409,9 @@ export function LoanPortfolioWorkspace({
         const searchText = [
             loan.id,
             loan.loan_reference,
+            loan.folio_number,
+            loan.folio_company_code,
+            loan.folio_group_code,
             loan.borrower_id,
             loan.loan_request_id,
             loan.loan_offer_id,
@@ -444,8 +447,8 @@ export function LoanPortfolioWorkspace({
     const suggestions = useMemo(() => rows.map(({loan, client, nextDueDate}) => ({
         value: loan.loan_reference,
         label: client?.full_name ? `${client.full_name} · ${loan.loan_reference}` : loan.loan_reference,
-        description: [titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
-        keywords: [loan.id, loan.borrower_id, client?.phone ?? "", client?.national_id ?? "", client?.employer_name ?? ""],
+        description: [loan.folio_number ? `Folio ${loan.folio_number}` : null, titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
+        keywords: [loan.id, loan.folio_number, loan.folio_group_code, loan.borrower_id, client?.phone ?? "", client?.national_id ?? "", client?.employer_name ?? ""],
     })), [rows]);
 
     const optionSets = useMemo(() => ({
@@ -604,7 +607,7 @@ export function LoanPortfolioWorkspace({
         suggestions={suggestions}
         minimumCharacters={1}
         maxSuggestions={12}
-        placeholder="Loan, borrower, ID, phone, employer, branch, contract..."
+        placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
         suggestionLabel="Company loans"
         emptyMessage="No loan matches that text."
         wrapperClassName="w-full"
@@ -925,10 +928,11 @@ function LoanTable({
         ? "min-w-0 overflow-x-auto [&_[data-slot=table-container]]:overflow-visible"
         : "h-full min-h-0 min-w-0 overflow-auto [&_[data-slot=table-container]]:overflow-visible"
     }>
-        <Table className={compact ? "min-w-[1040px]" : "min-w-[1340px] table-fixed"}>
+        <Table className={compact ? "min-w-[1160px]" : "min-w-[1480px] table-fixed"}>
             <TableHeader className={compact ? "bg-muted/20" : "sticky top-0 z-20 bg-background/95 shadow-[0_1px_0_hsl(var(--border))] backdrop-blur"}>
                 <TableRow className="hover:bg-transparent">
                     <TableHead className={compact ? "min-w-[15rem] pl-4" : "w-[190px] pl-4"}>Loan</TableHead>
+                    <TableHead className={compact ? "min-w-[9rem]" : "w-[145px]"}>Folio No.</TableHead>
                     {!compact ? <TableHead className="w-[170px]">Borrower</TableHead> : null}
                     {!compact ? <TableHead className="w-[135px]">Branch / channel</TableHead> : null}
                     <TableHead className={compact ? "text-right" : "w-[100px] text-right"}>Principal</TableHead>
@@ -943,7 +947,7 @@ function LoanTable({
             </TableHeader>
             <TableBody>
                 {rows.length === 0 ? <TableRow>
-                    <TableCell colSpan={compact ? 9 : 11} className="h-72 whitespace-normal text-center">
+                    <TableCell colSpan={compact ? 10 : 12} className="h-72 whitespace-normal text-center">
                         <div className="mx-auto flex max-w-sm flex-col items-center justify-center py-10">
                             <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
                                 <SlidersHorizontal className="size-5 text-muted-foreground"/>
@@ -971,6 +975,13 @@ function LoanTable({
                                     <p className="mt-0.5 max-w-[220px] truncate text-[10px] text-muted-foreground">{titleCase(loan.origination_channel)} · {interestMethodLabel(loan.calculation_method)}</p>
                                 </> : <p className="mt-1 max-w-[180px] truncate text-[10px] text-muted-foreground" title={loan.id}>{loan.id}</p>}
                             </div>
+                        </TableCell>
+
+                        <TableCell>
+                            {loan.folio_number ? <div className="min-w-0">
+                                <p className="max-w-[150px] truncate font-mono text-[11px] font-black text-foreground" title={loan.folio_number}>{loan.folio_number}</p>
+                                <p className="mt-1 text-[9px] text-muted-foreground">{loan.folio_group_code} · #{loan.folio_sequence}</p>
+                            </div> : <Badge variant="outline" className="rounded-full text-[9px] text-muted-foreground">Not assigned</Badge>}
                         </TableCell>
 
                         {!compact ? <TableCell>
