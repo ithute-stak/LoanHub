@@ -8,14 +8,16 @@ def test_phase_one_models_are_native_and_tenant_scoped():
     assert "class CRMRelationshipCase" in model
     assert "class CollateralAsset" in model
     assert "class LegalRecoveryMatter" in model
-    assert "class ComplaintCase" in model
+    assert "class CustomerComplaintCase" in model
+    assert 'ComplaintCase = CustomerComplaintCase' in model
     assert "class CompanyOperationEvent" in model
     assert "company_id" in model
     assert "branch_id" in model
     assert "uq_crm_relationship_case_company_reference" in model
     assert "uq_collateral_asset_company_reference" in model
     assert "uq_legal_recovery_matter_company_reference" in model
-    assert "uq_complaint_case_company_reference" in model
+    assert "uq_customer_complaint_case_company_reference" in model
+    assert '__tablename__ = "customer_complaint_cases"' in model
 
 
 def test_phase_one_migration_extends_current_reconciliation_head():
@@ -25,7 +27,7 @@ def test_phase_one_migration_extends_current_reconciliation_head():
     assert 'down_revision = "n8u9w0y1z201"' in migration
     assert 'revision = "q0w1y2a3b401"' in guards
     assert 'down_revision = "p9v0x1z2a301"' in guards
-    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "complaint_cases", "company_operation_events"):
+    for table in ("crm_relationship_cases", "collateral_assets", "legal_recovery_matters", "customer_complaint_cases", "company_operation_events"):
         assert f'"{table}"' in migration
 
 
@@ -39,6 +41,7 @@ def test_database_guards_block_cross_tenant_borrowers_and_assignees():
     assert "company_staff" in guards
     assert "staff.is_active IS TRUE" in guards
     assert "Assigned user is outside the active company/branch scope" in guards
+    assert "customer_complaint_cases" in guards
 
 
 def test_native_api_exposes_operational_workflows_and_guardrails():
