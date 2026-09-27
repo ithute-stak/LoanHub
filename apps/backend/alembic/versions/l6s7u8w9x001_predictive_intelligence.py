@@ -52,10 +52,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["branch_id"], ["company_branches.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["triggered_by_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("company_id", "as_of_date", "branch_scope_key", name="uq_predictive_run_company_date_scope"),
         sa.UniqueConstraint("run_reference"),
     )
-    for column in ("company_id", "branch_id", "as_of_date", "source_snapshot_date", "previous_snapshot_date", "run_reference", "run_type", "status"):
+    for column in ("company_id", "branch_id", "branch_scope_key", "as_of_date", "source_snapshot_date", "previous_snapshot_date", "run_reference", "run_type", "status"):
         op.create_index(f"ix_predictive_intelligence_runs_{column}", "predictive_intelligence_runs", [column])
 
     op.create_table(
