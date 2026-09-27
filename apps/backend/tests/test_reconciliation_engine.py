@@ -40,13 +40,13 @@ def test_source_fingerprint_is_stable_and_company_scoped():
 
 def test_schema_is_tenant_scoped_and_auditable():
     model = (ROOT / "backend" / "database" / "models" / "reconciliation.py").read_text(encoding="utf-8")
-    migration = (ROOT / "backend" / "alembic" / "versions" / "k5r6t7v8w901_reconciliation_engine.py").read_text(encoding="utf-8")
+    migration = (ROOT / "backend" / "alembic" / "versions" / "n8u9w0y1z201_reconciliation_engine.py").read_text(encoding="utf-8")
     assert "class ReconciliationBatch" in model
     assert "class ReconciliationLine" in model
     assert "class ReconciliationEvent" in model
     assert "uq_reconciliation_batch_company_reference" in model
     assert "uq_reconciliation_line_batch_source_key" in model
-    assert 'down_revision = "j4q5s6u7v801"' in migration
+    assert 'down_revision = "m7t8v9x0y101"' in migration
     assert "bank_statement" in migration
     assert "cdas_remittance" in migration
     assert "missing_source" in migration
