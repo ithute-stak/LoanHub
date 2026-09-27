@@ -36,6 +36,11 @@ from database.models.portfolio_risk import (  # noqa: F401,E402
     PortfolioRiskRun,
     PortfolioRiskSnapshot,
 )
+from database.models.reconciliation import (  # noqa: F401,E402
+    ReconciliationBatch,
+    ReconciliationEvent,
+    ReconciliationLine,
+)
 
 
 config = context.config
