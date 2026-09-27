@@ -107,12 +107,12 @@ class LegalRecoveryMatter(Base):
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
 
 
-class ComplaintCase(Base):
-    """Customer complaint with SLA, escalation and resolution evidence."""
+class CustomerComplaintCase(Base):
+    """Specialised customer complaint with SLA, escalation and resolution evidence."""
 
-    __tablename__ = "complaint_cases"
+    __tablename__ = "customer_complaint_cases"
     __table_args__ = (
-        UniqueConstraint("company_id", "reference", name="uq_complaint_case_company_reference"),
+        UniqueConstraint("company_id", "reference", name="uq_customer_complaint_case_company_reference"),
     )
 
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -140,6 +140,11 @@ class ComplaintCase(Base):
     borrower = relationship("Borrower")
     loan = relationship("ClientCompanyLoan")
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
+
+
+# Compatibility symbol used by the phase-one router.  The mapped class/table has a
+# unique name so it cannot collide with LoanHub's pre-existing complaint domain.
+ComplaintCase = CustomerComplaintCase
 
 
 class CompanyOperationEvent(Base):
