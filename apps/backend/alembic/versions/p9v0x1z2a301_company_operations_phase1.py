@@ -129,7 +129,7 @@ def upgrade() -> None:
         op.create_index(f"ix_legal_recovery_matters_{col}", "legal_recovery_matters", [col])
 
     op.create_table(
-        "complaint_cases",
+        "customer_complaint_cases",
         *_audit_columns(),
         sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("branch_id", postgresql.UUID(as_uuid=True), nullable=True),
@@ -158,10 +158,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["loan_id"], ["client_company_loan.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["assigned_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("company_id", "reference", name="uq_complaint_case_company_reference"),
+        sa.UniqueConstraint("company_id", "reference", name="uq_customer_complaint_case_company_reference"),
     )
     for col in ("company_id", "branch_id", "borrower_id", "loan_id", "reference", "category", "channel", "severity", "status", "assigned_user_id", "sla_due_at", "regulatory_reportable"):
-        op.create_index(f"ix_complaint_cases_{col}", "complaint_cases", [col])
+        op.create_index(f"ix_customer_complaint_cases_{col}", "customer_complaint_cases", [col])
 
     op.create_table(
         "company_operation_events",
@@ -184,7 +184,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("company_operation_events")
-    op.drop_table("complaint_cases")
+    op.drop_table("customer_complaint_cases")
     op.drop_table("legal_recovery_matters")
     op.drop_table("collateral_assets")
     op.drop_table("crm_relationship_cases")
