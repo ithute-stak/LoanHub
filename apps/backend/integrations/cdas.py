@@ -58,7 +58,20 @@ class CdasClient:
 
     _TOKEN_MAX_AGE = timedelta(hours=7, minutes=50)
     _TOKEN_IDLE_AGE = timedelta(minutes=9)
-    _SESSION_EXPIRED_STATUS_CODES = {401, 402, 419}
+    _SESSION_EXPIRED_STATUS_CODES = {401, 402, 403, 419}
+    _SESSION_AUTH_ERROR_MARKERS = (
+        "authorization token is missing",
+        "authorization token missing",
+        "authorization token has expired",
+        "authorization token expired",
+        "invalid authorization token",
+        "token is missing",
+        "token missing",
+        "token has expired",
+        "token expired",
+        "invalid token",
+        "unauthorized",
+    )
 
     def __init__(
         self,
@@ -184,6 +197,15 @@ class CdasClient:
             return "; ".join(str(item) for item in payload)
         return payload if isinstance(payload, str) and payload else fallback
 
+    @classmethod
+    def _is_session_auth_failure(cls, status_code: int, payload: Any) -> bool:
+        if status_code in cls._SESSION_EXPIRED_STATUS_CODES:
+            return True
+        if status_code < 400:
+            return False
+        message = cls._message(payload, "").strip().casefold()
+        return any(marker in message for marker in cls._SESSION_AUTH_ERROR_MARKERS)
+
     @staticmethod
     def _require_employee_number(employee_no: str) -> str:
         normalized = employee_no.strip()
@@ -297,7 +319,8 @@ class CdasClient:
             except httpx.RequestError as exc:
                 raise CdasError(503, "CDAS service is unavailable") from exc
 
-        if response.status_code in self._SESSION_EXPIRED_STATUS_CODES:
+        response_payload = self._decode_response(response)
+        if self._is_session_auth_failure(response.status_code, response_payload):
             if retry_expired_session:
                 await self.authenticate(force=True)
                 return await self._post_authenticated(
@@ -310,7 +333,6 @@ class CdasClient:
             # state so the next explicit action starts with a fresh login.
             await self._invalidate_session(clear_shared=True)
 
-        response_payload = self._decode_response(response)
         if response.status_code >= 400:
             raise CdasError(
                 response.status_code,
