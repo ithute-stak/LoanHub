@@ -97,15 +97,17 @@ def test_maker_checker_quorum_and_override_controls_are_enforced():
     assert "allow_override=context.role in COMPANY_MANAGEMENT_ROLES" in router
 
 
-def test_credit_conditions_block_approval_and_disbursement_at_transaction_boundary():
+def test_credit_committee_is_advisory_at_transaction_boundary():
     integrity = (ROOT / "backend" / "core" / "credit_committee_integrity.py").read_text(encoding="utf-8")
     main = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
 
-    assert '_open_condition_count(session, case.id, {"pre_contract"})' in integrity
-    assert '_open_condition_count(session, case.id, {"pre_contract", "pre_disbursement"})' in integrity
-    assert "Credit Committee approval is required before this application can be approved" in integrity
-    assert "Credit Committee pre-disbursement condition(s) remain unresolved" in integrity
-    assert 'event.listen(Session, "before_flush", _before_flush)' in integrity
+    assert "optional governance workflow" in integrity
+    assert "universal ORM transaction gate" in integrity
+    assert "Credit Committee approval is required before this application can be approved" not in integrity
+    assert "Credit Committee clearance is missing for this loan" not in integrity
+    assert 'event.listen(Session, "before_flush", _before_flush)' not in integrity
+    assert 'event.listen(CreditCommitteeCondition, "before_insert", _normalize_condition_date)' in integrity
+    assert 'event.listen(CreditCommitteeCondition, "before_update", _normalize_condition_date)' in integrity
     assert "install_credit_committee_integrity()" in main
 
 
