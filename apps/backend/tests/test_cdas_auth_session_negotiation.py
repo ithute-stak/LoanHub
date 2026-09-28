@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import httpx
 import pytest
 
@@ -104,7 +106,7 @@ async def test_read_only_lookup_can_negotiate_bearer_token_format():
         transport=httpx.MockTransport(handler),
     )
 
-    assert str(await client.check_affordability("EMP-1")) == "1500.50"
+    assert await client.check_affordability("EMP-1") == Decimal("1500.50")
     assert read_headers == [
         ("token-bearer", None),
         (None, "token-bearer"),
