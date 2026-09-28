@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from database.config.config import settings
 from database.models.origination import OriginationIntegrationConfiguration
-from integrations.cdas import CdasClient, CdasConfigurationError, CdasError
+from integrations.cdas import CdasConfigurationError, CdasError
+from integrations.cdas_compatible import CdasCompatibleClient as CdasClient
 from integrations.cdas_session import CdasSessionBroker
 from services.cdas_request_budget import consume_cdas_request_budget
 from services.cdas_session_broker import RedisCdasSessionBroker
