@@ -22,22 +22,25 @@ def test_internal_application_queue_surfaces_credit_committee_state() -> None:
     assert 'Rejected' in text
 
 
-def test_internal_application_queue_has_committee_actions() -> None:
+def test_internal_application_queue_has_optional_committee_actions() -> None:
     text = source()
     assert 'Send to Committee' in text
     assert 'View Committee Case' in text
     assert '/company/credit-committee/cases/' in text
+    assert 'Credit Committee review is optional' in text
 
 
-def test_final_loan_approval_is_visibly_gated_by_committee() -> None:
+def test_final_loan_approval_is_not_blocked_by_committee_state() -> None:
+    text = source()
+    assert 'if (!selected || !selectedProduct || !calculation) return;' in text
+    assert 'disabled={!selectedProduct || !calculation || calculating}' in text
+    assert '!selectedCommitteeApproved || !selectedProduct || !calculation || calculating' not in text
+    assert 'Credit Committee approval is required first' not in text
+    assert 'Final loan approval remains locked until Credit Committee approval' not in text
+
+
+def test_committee_outcome_remains_visible_for_governance() -> None:
     text = source()
     assert 'selectedCommitteeApproved' in text
-    assert '!selectedCommitteeApproved || !selectedProduct || !calculation || calculating' in text
-    assert 'Credit Committee approval is required first' in text
-    assert 'Final loan approval remains locked until Credit Committee approval' in text
-
-
-def test_conditional_approval_requires_pre_contract_conditions_resolved() -> None:
-    text = source()
-    assert 'condition.condition_type === "pre_contract"' in text
-    assert '["satisfied", "waived"].includes(condition.status)' in text
+    assert 'The committee recorded a rejection' in text
+    assert 'record the approval rationale if proceeding' in text
