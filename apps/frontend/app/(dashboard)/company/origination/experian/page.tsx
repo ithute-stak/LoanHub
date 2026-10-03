@@ -57,6 +57,7 @@ export default function ExperianCreditBureauPage() {
   const [address1, setAddress1] = useState("");
   const [address2, setAddress2] = useState("");
   const [enquiryPurpose, setEnquiryPurpose] = useState("12");
+  const [forceRefresh, setForceRefresh] = useState(false);
 
   const applyConfiguration = useCallback((row: ExperianCompanyConfiguration) => {
     setConfiguration(row);
@@ -163,6 +164,7 @@ export default function ExperianCreditBureauPage() {
         cs_data: true,
         cpa_plus_nlr_data: true,
         run_compuscore: true,
+        force_refresh: forceRefresh,
       });
       toast.success("Experian credit check completed", {
         description: row.score === null ? "The bureau response was stored and normalized." : `Score ${row.score}${row.risk_band ? ` · ${row.risk_band}` : ""}`,
@@ -172,6 +174,7 @@ export default function ExperianCreditBureauPage() {
       setPostalCode("");
       setAddress1("");
       setAddress2("");
+      setForceRefresh(false);
       await loadApplicationBureau(selectedApplicationId);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian credit check could not be completed."));
@@ -313,10 +316,16 @@ export default function ExperianCreditBureauPage() {
             <Field label="Consent reference"><Input value={consentReference} onChange={(event) => setConsentReference(event.target.value)} disabled={!canRun} placeholder="Form, OTP, file or audit reference" /></Field>
           </div>
 
-          <label className="flex items-start gap-3 rounded-2xl border p-4">
-            <Checkbox checked={consentConfirmed} onCheckedChange={(value) => setConsentConfirmed(value === true)} disabled={!canRun || !companyReady} />
-            <span><strong>Borrower consent confirmed for this credit application</strong><span className="mt-1 block text-xs text-muted-foreground">LoanHub stores the consent method/reference with the company-scoped bureau enquiry.</span></span>
-          </label>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <label className="flex items-start gap-3 rounded-2xl border p-4">
+              <Checkbox checked={consentConfirmed} onCheckedChange={(value) => setConsentConfirmed(value === true)} disabled={!canRun || !companyReady} />
+              <span><strong>Borrower consent confirmed for this credit application</strong><span className="mt-1 block text-xs text-muted-foreground">LoanHub stores the consent method/reference with the company-scoped bureau enquiry.</span></span>
+            </label>
+            <label className="flex items-start gap-3 rounded-2xl border p-4">
+              <Checkbox checked={forceRefresh} onCheckedChange={(value) => setForceRefresh(value === true)} disabled={!canRun || !companyReady} />
+              <span><strong>Force a new paid enquiry</strong><span className="mt-1 block text-xs text-muted-foreground">Leave off to reuse a successful report that is still within the company&apos;s maximum report age.</span></span>
+            </label>
+          </div>
 
           <LoadingButton loading={running} disabled={!canRun || !companyReady || !selectedApplicationId || !consentConfirmed || !postalCode.trim()} onClick={() => void runCreditCheck()}><Play className="h-4 w-4" />Run Experian credit check</LoadingButton>
         </CardContent>
