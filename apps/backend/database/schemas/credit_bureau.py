@@ -82,8 +82,7 @@ class ExperianConnectionTestResult(BaseModel):
     environment: str
     host: str
     status: Literal["connected"] = "connected"
-    token_type: str | None = None
-    expires_in: int | None = None
+    endpoint: str
 
 
 class ExperianEnquiryRequest(BaseModel):
