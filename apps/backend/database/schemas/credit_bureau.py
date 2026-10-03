@@ -105,6 +105,7 @@ class ExperianEnquiryRequest(BaseModel):
     directors: bool = False
     run_compuscore: bool = True
     run_codix: bool = False
+    force_refresh: bool = False
 
     @field_validator("consent_confirmed")
     @classmethod
