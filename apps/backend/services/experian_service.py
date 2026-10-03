@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import threading
-import time
-from copy import deepcopy
+import base64
+import io
+import zipfile
 from dataclasses import dataclass
 from typing import Any
+from xml.etree import ElementTree
 
 import httpx
 from sqlalchemy.orm import Session
@@ -15,13 +16,13 @@ from services.credential_service import decrypt_credential
 
 
 EXPERIAN_HOSTS = {
-    "sandbox": "https://sandbox-eu-api.experian.com",
-    "uat": "https://uat-eu-api.experian.com",
-    "production": "https://eu-api.experian.com",
+    "sandbox": "https://apis-uat.experian.co.ls:9443",
+    "uat": "https://apis-uat.experian.co.ls:9443",
+    "production": "https://apis.experian.co.ls:9443",
 }
-TOKEN_PATH = "/oauth2/v1/token"
-_TOKEN_CACHE: dict[str, tuple[str, float, str | None, int | None]] = {}
-_TOKEN_LOCK = threading.Lock()
+NORMAL_SEARCH_PATH = "/NormalSearchService"
+PING_PATH = "/PingServer/"
+PREVIOUS_ENQUIRY_PATH = "/EnqIdPrevEnqService"
 
 
 class ExperianConfigurationError(RuntimeError):
@@ -35,20 +36,19 @@ class ExperianRequestError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class ExperianToken:
-    access_token: str
-    token_type: str | None
-    expires_in: int | None
+class ExperianConnection:
     host: str
+    environment: str
 
 
 def default_experian_configuration() -> dict[str, Any]:
     """Safe defaults that do not guess a product-specific API contract."""
     return {
-        "region": "emea",
-        "product": "experian_one_customer_acquisition",
-        "bureau_endpoint_path": "",
-        "request_template": {},
+        "region": "lesotho",
+        "product": "normal_search_v2",
+        "origin": "LNHUB",
+        "origin_version": "1.0",
+        "dll_version": "1.0",
         "response_mapping": {},
         "max_report_age_hours": 24,
         "require_before_affordability": False,
@@ -71,8 +71,6 @@ def public_configuration(row: OriginationIntegrationConfiguration | None) -> dic
     for key in (
         "username",
         "password",
-        "client_id",
-        "client_secret",
         "access_token",
         "refresh_token",
         "api_base_url",
@@ -90,11 +88,11 @@ def _credentials(row: OriginationIntegrationConfiguration) -> dict[str, str]:
         raise ExperianConfigurationError("Stored Experian credentials are invalid") from error
     if not isinstance(parsed, dict):
         raise ExperianConfigurationError("Stored Experian credentials are invalid")
-    required = ("username", "password", "client_id", "client_secret")
+    required = ("username", "password")
     missing = [key for key in required if not str(parsed.get(key) or "").strip()]
     if missing:
         raise ExperianConfigurationError(
-            "Experian credentials are incomplete; Developer Portal username, password, Client ID and Client Secret are required"
+            "Experian username and password are required"
         )
     return {key: str(parsed[key]).strip() for key in required}
 
@@ -106,83 +104,37 @@ def _host(environment: str) -> str:
     return EXPERIAN_HOSTS[value]
 
 
-def _cache_key(row: OriginationIntegrationConfiguration, credentials: dict[str, str]) -> str:
-    return f"{row.id}:{row.environment}:{credentials['client_id']}:{credentials['username']}"
-
-
-def get_access_token(
-    row: OriginationIntegrationConfiguration,
+def test_connection(
+    row,
     *,
-    force_refresh: bool = False,
     timeout_seconds: float = 20.0,
-) -> ExperianToken:
-    credentials = _credentials(row)
+) -> dict[str, Any]:
     host = _host(row.environment)
-    key = _cache_key(row, credentials)
-    now = time.monotonic()
-
-    if not force_refresh:
-        with _TOKEN_LOCK:
-            cached = _TOKEN_CACHE.get(key)
-            if cached and cached[1] > now:
-                return ExperianToken(cached[0], cached[2], cached[3], host)
-
     try:
         with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
-            response = client.post(
-                f"{host}{TOKEN_PATH}",
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "Grant_type": "password",
-                },
-                json={
-                    "username": credentials["username"],
-                    "password": credentials["password"],
-                    "client_id": credentials["client_id"],
-                    "client_secret": credentials["client_secret"],
-                },
+            response = client.get(
+                f"{host}{PING_PATH}",
+                headers={"Accept": "application/json, text/plain, */*"},
             )
     except httpx.TimeoutException as error:
-        raise ExperianRequestError("Experian did not respond before the connection timeout", code="experian_timeout") from error
+        raise ExperianRequestError("Experian Lesotho ping timed out", code="experian_timeout") from error
     except httpx.HTTPError as error:
-        raise ExperianRequestError("LoanHub could not establish a secure connection to Experian", code="experian_connection_failed") from error
+        raise ExperianRequestError(
+            "LoanHub could not establish a secure connection to Experian Lesotho",
+            code="experian_connection_failed",
+        ) from error
 
     if response.status_code >= 400:
         raise ExperianRequestError(
-            "Experian rejected the authentication request. Check the environment and application credentials.",
-            code=f"experian_auth_{response.status_code}",
+            f"Experian Lesotho ping returned HTTP {response.status_code}",
+            code=f"experian_ping_{response.status_code}",
         )
-    try:
-        payload = response.json()
-    except ValueError as error:
-        raise ExperianRequestError("Experian returned an unreadable authentication response", code="experian_auth_invalid_response") from error
-
-    token = str(payload.get("access_token") or "").strip()
-    if not token:
-        raise ExperianRequestError("Experian authentication succeeded without an access token", code="experian_auth_missing_token")
-    try:
-        expires_in = int(payload.get("expires_in")) if payload.get("expires_in") is not None else None
-    except (TypeError, ValueError):
-        expires_in = None
-    token_type = str(payload.get("token_type") or "Bearer")
-    # Experian documents 30-minute sandbox tokens. Cache conservatively and
-    # refresh before expiry; no access/refresh token is persisted in LoanHub.
-    ttl = max(30, min((expires_in or 1800) - 90, 1620))
-    with _TOKEN_LOCK:
-        _TOKEN_CACHE[key] = (token, now + ttl, token_type, expires_in)
-    return ExperianToken(token, token_type, expires_in, host)
-
-
-def test_connection(row: OriginationIntegrationConfiguration) -> dict[str, Any]:
-    token = get_access_token(row, force_refresh=True)
     return {
         "provider": "experian",
         "environment": row.environment,
-        "host": token.host,
+        "host": host,
         "status": "connected",
-        "token_type": token.token_type,
-        "expires_in": token.expires_in,
+        "endpoint": f"{host}{NORMAL_SEARCH_PATH}",
     }
 
 
