@@ -193,9 +193,9 @@ export default function PlatformExperianConfigurationPage() {
               <Select value={environment} onValueChange={(value) => setEnvironment(value as typeof environment)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="sandbox">Sandbox · EMEA</SelectItem>
-                  <SelectItem value="uat">UAT · EMEA</SelectItem>
-                  <SelectItem value="production">Production · EMEA</SelectItem>
+                  <SelectItem value="sandbox">Sandbox alias · Lesotho UAT</SelectItem>
+                  <SelectItem value="uat">UAT · Lesotho</SelectItem>
+                  <SelectItem value="production">Production · Lesotho</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -214,7 +214,12 @@ export default function PlatformExperianConfigurationPage() {
             <CardDescription>LoanHub now uses the fixed Normal Search v0.5 REST endpoints from the supplied Experian Lesotho specification. Only the origin/version values and optional report mapping remain configurable.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-3">\n              <Field label="Origin"><Input maxLength={5} value={origin} onChange={(event) => setOrigin(event.target.value)} /></Field>\n              <Field label="Origin version"><Input maxLength={5} value={originVersion} onChange={(event) => setOriginVersion(event.target.value)} /></Field>\n              <Field label="DLL version"><Input maxLength={30} value={dllVersion} onChange={(event) => setDllVersion(event.target.value)} /></Field>\n            </div>\n            <Field label="Response mapping (JSON)">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Origin"><Input maxLength={5} value={origin} onChange={(event) => setOrigin(event.target.value)} /></Field>
+              <Field label="Origin version"><Input maxLength={5} value={originVersion} onChange={(event) => setOriginVersion(event.target.value)} /></Field>
+              <Field label="DLL version"><Input maxLength={30} value={dllVersion} onChange={(event) => setDllVersion(event.target.value)} /></Field>
+            </div>
+            <Field label="Response mapping (JSON)">
               <Textarea className="min-h-44 font-mono text-xs" value={responseMapping} onChange={(event) => setResponseMapping(event.target.value)} />
               <p className="text-xs text-muted-foreground">Map LoanHub fields such as <code>score</code>, <code>risk_band</code>, <code>monthly_commitments</code>, <code>total_balance</code>, <code>defaults_count</code> and <code>provider_reference</code> to dotted paths in the provider response.</p>
             </Field>
