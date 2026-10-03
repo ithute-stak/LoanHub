@@ -38,16 +38,16 @@ export type ExperianPlatformConfiguration = {
   configuration: {
     region?: string;
     product?: string;
-    bureau_endpoint_path?: string;
-    request_template?: Record<string, unknown>;
+    origin?: string;
+    origin_version?: string;
+    dll_version?: string;
     response_mapping?: Record<string, string>;
     [key: string]: unknown;
   };
   readiness: {
     credentials: boolean;
-    oauth_connected: boolean;
-    bureau_endpoint: boolean;
-    request_template: boolean;
+    connection_tested: boolean;
+    normal_search_contract: boolean;
     response_mapping: boolean;
     ready_for_company_use: boolean;
   };
@@ -61,8 +61,7 @@ export type ExperianConnectionTest = {
   environment: string;
   host: string;
   status: "connected";
-  token_type: string | null;
-  expires_in: number | null;
+  endpoint: string;
 };
 
 export type CreditBureauEnquiry = {
