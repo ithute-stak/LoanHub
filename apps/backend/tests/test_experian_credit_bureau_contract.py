@@ -100,23 +100,23 @@ def test_raw_bureau_response_is_encrypted_and_not_returned() -> None:
     assert "CreditBureauProviderPayload" not in serializer
     assert "raw_response_encrypted" not in serializer
     assert "decrypt_credential" in service
-    assert '"access_token"' in service
-    assert "_TOKEN_CACHE" in service
+    assert "raw_response_encrypted" not in serializer
     assert "access_token = Column" not in model
 
 
-def test_experian_oauth_is_locked_to_official_emea_hosts() -> None:
+def test_experian_is_locked_to_official_lesotho_normal_search_hosts() -> None:
     service = _read(ROOT / "services/experian_service.py")
 
-    assert '"sandbox": "https://sandbox-eu-api.experian.com"' in service
-    assert '"uat": "https://uat-eu-api.experian.com"' in service
-    assert '"production": "https://eu-api.experian.com"' in service
-    assert 'TOKEN_PATH = "/oauth2/v1/token"' in service
-    assert '"Grant_type": "password"' in service
-    assert '"client_id": credentials["client_id"]' in service
-    assert '"client_secret": credentials["client_secret"]' in service
-    assert 'if not path.startswith("/")' in service
-    assert '"://" in path' in service
+    assert '"sandbox": "https://apis-uat.experian.co.ls:9443"' in service
+    assert '"uat": "https://apis-uat.experian.co.ls:9443"' in service
+    assert '"production": "https://apis.experian.co.ls:9443"' in service
+    assert 'NORMAL_SEARCH_PATH = "/NormalSearchService"' in service
+    assert 'PING_PATH = "/PingServer/"' in service
+    assert 'PREVIOUS_ENQUIRY_PATH = "/EnqIdPrevEnqService"' in service
+    assert '"username": credentials["username"]' in service
+    assert '"password": credentials["password"]' in service
+    assert '"client_id"' not in service
+    assert '"client_secret"' not in service
 
 
 def test_bureau_enquiry_requires_explicit_consent_and_identity() -> None:
@@ -131,20 +131,23 @@ def test_bureau_enquiry_requires_explicit_consent_and_identity() -> None:
     assert '"consent_captured_at": now.isoformat()' in router
 
 
-def test_product_contract_is_platform_configurable_not_invented() -> None:
+def test_normal_search_contract_is_implemented_not_manually_reentered() -> None:
     service = _read(ROOT / "services/experian_service.py")
     platform_page = _read(FRONTEND_ROOT / "app/(dashboard)/superadmin/control/integrations/experian/page.tsx")
 
-    assert '"bureau_endpoint_path": ""' in service
-    assert '"request_template": {}' in service
+    assert '"product": "normal_search_v2"' in service
+    assert '"origin": "LNHUB"' in service
+    assert '"dll_version": "1.0"' in service
     assert '"response_mapping": {}' in service
-    assert "LoanHub deliberately does not guess" in platform_page
-    assert "Bureau endpoint path" in platform_page
-    assert "Experian request template (JSON)" in platform_page
-    assert "Response mapping (JSON)" in platform_page
+    assert "build_normal_search_payload" in service
+    assert '"searchCriteria": {' in service
+    assert '"clientConsent": "Y"' in service
+    assert "Experian Lesotho Normal Search contract" in platform_page
+    assert "Bureau endpoint path" not in platform_page
+    assert "Experian request template (JSON)" not in platform_page
 
 
-def test_frontend_places_oauth_only_in_platform_owner_workspace() -> None:
+def test_frontend_places_provider_credentials_only_in_platform_owner_workspace() -> None:
     company_layout = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/layout.tsx")
     company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
     platform_page = _read(FRONTEND_ROOT / "app/(dashboard)/superadmin/control/integrations/experian/page.tsx")
@@ -154,15 +157,15 @@ def test_frontend_places_oauth_only_in_platform_owner_workspace() -> None:
     assert "/company/origination/experian" in company_layout
     assert "Platform Owner" in company_page
     assert "Client Secret" not in company_page
-    assert "Developer Portal password" not in company_page
-    assert "Test OAuth connection" not in company_page
+    assert "Experian password" not in company_page
+    assert "Test connection" not in company_page
     assert "Run Experian credit check" in company_page
 
-    assert "Developer Portal username" in platform_page
-    assert "Developer Portal password" in platform_page
-    assert "Client ID" in platform_page
-    assert "Client Secret" in platform_page
-    assert "Test OAuth connection" in platform_page
+    assert "Experian username" in platform_page
+    assert "Experian password" in platform_page
+    assert "Client ID" not in platform_page
+    assert "Client Secret" not in platform_page
+    assert "Test connection" in platform_page
     assert "/superadmin/control/integrations/experian" in shell
     assert "/platform-owner/credit-bureau/experian/configuration" in api
     assert "/platform-owner/credit-bureau/experian/test-connection" in api
