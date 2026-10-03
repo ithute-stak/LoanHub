@@ -49,18 +49,18 @@ export default function PlatformExperianConfigurationPage() {
   const [enabled, setEnabled] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [endpointPath, setEndpointPath] = useState("");
-  const [requestTemplate, setRequestTemplate] = useState(EMPTY_JSON);
+  const [origin, setOrigin] = useState("LNHUB");
+  const [originVersion, setOriginVersion] = useState("1.0");
+  const [dllVersion, setDllVersion] = useState("1.0");
   const [responseMapping, setResponseMapping] = useState(EMPTY_JSON);
 
   const applyConfiguration = useCallback((row: ExperianPlatformConfiguration) => {
     setConfiguration(row);
     setEnvironment(row.environment === "uat" || row.environment === "production" ? row.environment : "sandbox");
     setEnabled(Boolean(row.is_enabled));
-    setEndpointPath(String(row.configuration.bureau_endpoint_path ?? ""));
-    setRequestTemplate(prettyJson(row.configuration.request_template ?? {}));
+    setOrigin(String(row.configuration.origin ?? "LNHUB"));
+    setOriginVersion(String(row.configuration.origin_version ?? "1.0"));
+    setDllVersion(String(row.configuration.dll_version ?? "1.0"));
     setResponseMapping(prettyJson(row.configuration.response_mapping ?? {}));
   }, []);
 
@@ -80,37 +80,33 @@ export default function PlatformExperianConfigurationPage() {
   async function saveConfiguration() {
     setSaving(true);
     try {
-      const template = parseObject(requestTemplate, "Request template");
       const mapping = parseObject(responseMapping, "Response mapping");
-      const credentialValues = [username, password, clientId, clientSecret].map((value) => value.trim());
+      const credentialValues = [username, password].map((value) => value.trim());
       const supplyingCredentials = credentialValues.some(Boolean);
       if (supplyingCredentials && credentialValues.some((value) => !value)) {
-        throw new Error("Enter Developer Portal username, password, Client ID and Client Secret together when adding or rotating credentials.");
+        throw new Error("Enter Experian username and password together when adding or rotating credentials.");
       }
 
       const updated = await platformCreditBureauApi.updateExperianConfiguration({
         environment,
         is_enabled: enabled,
         configuration: {
-          region: "emea",
-          product: "experian_one_customer_acquisition",
-          bureau_endpoint_path: endpointPath.trim(),
-          request_template: template,
+          region: "lesotho",
+          product: "normal_search_v2",
+          origin: origin.trim() || "LNHUB",
+          origin_version: originVersion.trim() || "1.0",
+          dll_version: dllVersion.trim() || "1.0",
           response_mapping: mapping,
         },
         credentials: supplyingCredentials
           ? {
               username: username.trim(),
               password,
-              client_id: clientId.trim(),
-              client_secret: clientSecret,
             }
           : null,
       });
       setUsername("");
       setPassword("");
-      setClientId("");
-      setClientSecret("");
       applyConfiguration(updated);
       toast.success("Platform Experian configuration saved", {
         description: supplyingCredentials
@@ -128,12 +124,12 @@ export default function PlatformExperianConfigurationPage() {
     setTesting(true);
     try {
       const result = await platformCreditBureauApi.testExperianConnection();
-      toast.success("Experian OAuth connection successful", {
-        description: `${result.environment.toUpperCase()} · ${result.host}${result.expires_in ? ` · token ${result.expires_in}s` : ""}`,
+      toast.success("Experian Lesotho connection successful", {
+        description: `${result.environment.toUpperCase()} · ${result.endpoint}`,
       });
       applyConfiguration(await platformCreditBureauApi.getExperianConfiguration());
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Experian OAuth connection test failed."));
+      toast.error(getErrorMessage(error, "Experian Lesotho connection test failed."));
       await load();
     } finally {
       setTesting(false);
@@ -166,15 +162,14 @@ export default function PlatformExperianConfigurationPage() {
         <ShieldCheck className="h-4 w-4" />
         <AlertTitle>Platform Owner controlled secret boundary</AlertTitle>
         <AlertDescription>
-          Developer Portal username/password, Client ID, Client Secret and the Experian product API mapping are stored at platform scope. Secrets are encrypted and are never returned to company workspaces or the browser after saving.
+          Experian Lesotho username/password and the Normal Search configuration are stored at platform scope. Secrets are encrypted and are never returned to company workspaces or the browser after saving.
         </AlertDescription>
       </Alert>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <ReadinessCard label="Credentials" ready={Boolean(readiness?.credentials)} />
-        <ReadinessCard label="OAuth test" ready={Boolean(readiness?.oauth_connected)} />
-        <ReadinessCard label="Endpoint" ready={Boolean(readiness?.bureau_endpoint)} />
-        <ReadinessCard label="Request JSON" ready={Boolean(readiness?.request_template)} />
+        <ReadinessCard label="Connection test" ready={Boolean(readiness?.connection_tested)} />
+        <ReadinessCard label="Normal Search v0.5" ready={Boolean(readiness?.normal_search_contract)} />
         <ReadinessCard label="Response map" ready={Boolean(readiness?.response_mapping)} />
         <ReadinessCard label="Company ready" ready={Boolean(readiness?.ready_for_company_use)} />
       </div>
@@ -183,15 +178,15 @@ export default function PlatformExperianConfigurationPage() {
         <Alert variant="destructive">
           <CircleAlert className="h-4 w-4" />
           <AlertTitle>Experian is not yet ready for lending companies</AlertTitle>
-          <AlertDescription>Complete all readiness items, pass the OAuth test, then enable the platform connection. Company Experian switches remain unavailable until this is ready.</AlertDescription>
+          <AlertDescription>Complete all readiness items, pass the Experian Lesotho connectivity test, then enable the platform connection. Company Experian switches remain unavailable until this is ready.</AlertDescription>
         </Alert>
       ) : null}
 
       <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
         <Card className="rounded-3xl">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" />OAuth credentials</CardTitle>
-            <CardDescription>Use the credentials from the Experian Developer Portal and My Apps. Leave all four fields blank to keep the existing encrypted credentials.</CardDescription>
+            <CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" />Experian Lesotho credentials</CardTitle>
+            <CardDescription>Use the Experian Lesotho Normal Search service username and password. Leave both blank to keep the existing encrypted credentials.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <Field label="Environment">
@@ -204,29 +199,22 @@ export default function PlatformExperianConfigurationPage() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Developer Portal username"><Input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian username"} /></Field>
-            <Field label="Developer Portal password"><Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian password"} /></Field>
-            <Field label="Client ID"><Input autoComplete="off" value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "My Apps → Client ID"} /></Field>
-            <Field label="Client Secret"><Input type="password" autoComplete="new-password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "My Apps → Client Secret"} /></Field>
+            <Field label="Experian username"><Input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian username"} /></Field>
+            <Field label="Experian password"><Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian password"} /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <StatusLine label="Stored credentials" value={configuration?.has_credentials ? "Configured" : "Missing"} good={Boolean(configuration?.has_credentials)} />
-              <StatusLine label="Latest OAuth test" value={configuration?.last_test_status ? titleCase(configuration.last_test_status) : "Not tested"} good={configuration?.last_test_status === "connected"} />
+              <StatusLine label="Latest connection test" value={configuration?.last_test_status ? titleCase(configuration.last_test_status) : "Not tested"} good={configuration?.last_test_status === "connected"} />
             </div>
           </CardContent>
         </Card>
 
         <Card className="rounded-3xl">
           <CardHeader>
-            <CardTitle>Experian product contract</CardTitle>
-            <CardDescription>Copy the exact endpoint and JSON contract from the Experian product attached to your app. LoanHub deliberately does not guess these fields.</CardDescription>
+            <CardTitle>Experian Lesotho Normal Search contract</CardTitle>
+            <CardDescription>LoanHub now uses the fixed Normal Search v0.5 REST endpoints from the supplied Experian Lesotho specification. Only the origin/version values and optional report mapping remain configurable.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <Field label="Bureau endpoint path"><Input value={endpointPath} onChange={(event) => setEndpointPath(event.target.value)} placeholder="/relative/path/from-experian-api-docs" /></Field>
-            <Field label="Experian request template (JSON)">
-              <Textarea className="min-h-52 font-mono text-xs" value={requestTemplate} onChange={(event) => setRequestTemplate(event.target.value)} />
-              <p className="text-xs text-muted-foreground">Use LoanHub placeholders such as <code>{"{{national_id}}"}</code>, <code>{"{{full_name}}"}</code>, <code>{"{{date_of_birth}}"}</code>, <code>{"{{phone}}"}</code>, <code>{"{{application_reference}}"}</code> and <code>{"{{requested_amount}}"}</code>.</p>
-            </Field>
-            <Field label="Response mapping (JSON)">
+            <div className="grid gap-4 sm:grid-cols-3">\n              <Field label="Origin"><Input maxLength={5} value={origin} onChange={(event) => setOrigin(event.target.value)} /></Field>\n              <Field label="Origin version"><Input maxLength={5} value={originVersion} onChange={(event) => setOriginVersion(event.target.value)} /></Field>\n              <Field label="DLL version"><Input maxLength={30} value={dllVersion} onChange={(event) => setDllVersion(event.target.value)} /></Field>\n            </div>\n            <Field label="Response mapping (JSON)">
               <Textarea className="min-h-44 font-mono text-xs" value={responseMapping} onChange={(event) => setResponseMapping(event.target.value)} />
               <p className="text-xs text-muted-foreground">Map LoanHub fields such as <code>score</code>, <code>risk_band</code>, <code>monthly_commitments</code>, <code>total_balance</code>, <code>defaults_count</code> and <code>provider_reference</code> to dotted paths in the provider response.</p>
             </Field>
@@ -242,7 +230,7 @@ export default function PlatformExperianConfigurationPage() {
           </label>
           <div className="flex flex-wrap gap-2">
             <LoadingButton loading={saving} onClick={() => void saveConfiguration()}><Save className="h-4 w-4" />Save configuration</LoadingButton>
-            <LoadingButton loading={testing} variant="outline" disabled={!configuration?.has_credentials} onClick={() => void testConnection()}><TestTube2 className="h-4 w-4" />Test OAuth connection</LoadingButton>
+            <LoadingButton loading={testing} variant="outline" disabled={!configuration?.has_credentials} onClick={() => void testConnection()}><TestTube2 className="h-4 w-4" />Test connection</LoadingButton>
           </div>
         </CardContent>
       </Card>
@@ -250,7 +238,7 @@ export default function PlatformExperianConfigurationPage() {
       <Alert>
         <BadgeCheck className="h-4 w-4" />
         <AlertTitle>Recommended first setup</AlertTitle>
-        <AlertDescription>Start in Sandbox. Save all four OAuth credentials, save the product endpoint/request/response mapping, run Test OAuth connection, then enable Experian. Only after that should lending companies enable Experian in their own Credit Origination settings.</AlertDescription>
+        <AlertDescription>Start in Sandbox. Save all four OAuth credentials, save the Normal Search settings, run Test connection, then enable Experian. Only after that should lending companies enable Experian in their own Credit Origination settings.</AlertDescription>
       </Alert>
     </main>
   );
