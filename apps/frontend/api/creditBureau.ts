@@ -44,6 +44,7 @@ export const creditBureauApi = {
       directors?: boolean;
       run_compuscore?: boolean;
       run_codix?: boolean;
+      force_refresh?: boolean;
     },
   ): Promise<CreditBureauEnquiry> =>
     (await api.post<CreditBureauEnquiry>(`/credit-bureau/applications/${applicationId}/experian`, payload)).data,
