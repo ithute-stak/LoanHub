@@ -226,7 +226,7 @@ export default function PlatformExperianConfigurationPage() {
         <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
           <label className="flex items-start gap-3">
             <Checkbox checked={enabled} onCheckedChange={(value) => setEnabled(value === true)} />
-            <span><strong>Enable Experian for LoanHub</strong><span className="mt-1 block max-w-2xl text-xs text-muted-foreground">Companies can only opt in after this central connection is enabled and fully ready. For initial setup, save Sandbox credentials and mapping first, test OAuth, then enable.</span></span>
+            <span><strong>Enable Experian for LoanHub</strong><span className="mt-1 block max-w-2xl text-xs text-muted-foreground">Companies can only opt in after this central connection is enabled and fully ready. For initial setup, save Lesotho UAT credentials and Normal Search settings first, test the connection, then enable.</span></span>
           </label>
           <div className="flex flex-wrap gap-2">
             <LoadingButton loading={saving} onClick={() => void saveConfiguration()}><Save className="h-4 w-4" />Save configuration</LoadingButton>
@@ -238,7 +238,7 @@ export default function PlatformExperianConfigurationPage() {
       <Alert>
         <BadgeCheck className="h-4 w-4" />
         <AlertTitle>Recommended first setup</AlertTitle>
-        <AlertDescription>Start in Sandbox. Save all four OAuth credentials, save the Normal Search settings, run Test connection, then enable Experian. Only after that should lending companies enable Experian in their own Credit Origination settings.</AlertDescription>
+        <AlertDescription>Start with Lesotho UAT. Save the Experian username/password and Normal Search settings, run Test connection, then enable Experian. Only after that should lending companies enable Experian in their own Credit Origination settings.</AlertDescription>
       </Alert>
     </main>
   );
