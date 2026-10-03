@@ -10,8 +10,6 @@ class ExperianCredentialsInput(BaseModel):
 
     username: str = Field(min_length=2, max_length=320)
     password: str = Field(min_length=1, max_length=1000)
-    client_id: str = Field(min_length=2, max_length=500)
-    client_secret: str = Field(min_length=1, max_length=1000)
 
 
 class ExperianConfigurationUpdate(BaseModel):
