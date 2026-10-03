@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -309,6 +309,26 @@ def run_experian_credit_check(
         raise HTTPException(status_code=409, detail="Record the borrower's National ID or passport before running Experian")
 
     now = datetime.now(timezone.utc)
+    company_policy = dict(company_integration.configuration or {})
+    max_report_age_hours = max(1, min(int(company_policy.get("max_report_age_hours") or 24), 720))
+    if not payload.force_refresh:
+        freshness_cutoff = now - timedelta(hours=max_report_age_hours)
+        reusable = (
+            db.query(CreditBureauEnquiry)
+            .filter(
+                CreditBureauEnquiry.company_id == context.company_id,
+                CreditBureauEnquiry.application_id == application.id,
+                CreditBureauEnquiry.borrower_id == application.borrower_id,
+                CreditBureauEnquiry.provider == "experian",
+                CreditBureauEnquiry.status == "completed",
+                CreditBureauEnquiry.completed_at.isnot(None),
+                CreditBureauEnquiry.completed_at >= freshness_cutoff,
+            )
+            .order_by(CreditBureauEnquiry.completed_at.desc())
+            .first()
+        )
+        if reusable:
+            return _enquiry_payload(reusable)
     consent_reference = (payload.consent_reference or "").strip() or None
     enquiry = CreditBureauEnquiry(
         company_id=context.company_id,
