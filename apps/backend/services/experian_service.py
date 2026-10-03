@@ -76,7 +76,7 @@ def public_configuration(row) -> dict[str, Any]:
     return result
 
 
-def _credentials(row: OriginationIntegrationConfiguration) -> dict[str, str]:
+def _credentials(row) -> dict[str, str]:
     if not row.encrypted_credentials:
         raise ExperianConfigurationError("Experian credentials have not been configured")
     try:
