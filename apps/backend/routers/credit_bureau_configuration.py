@@ -56,9 +56,10 @@ def _platform_ready_for_company_use(
         and platform.is_enabled
         and platform.encrypted_credentials
         and platform.last_test_status == "connected"
-        and str(configuration.get("bureau_endpoint_path") or "").strip()
-        and configuration.get("request_template")
-        and configuration.get("response_mapping")
+        and configuration.get("product") == "normal_search_v2"
+        and str(configuration.get("origin") or "").strip()
+        and str(configuration.get("dll_version") or "").strip()
+        and isinstance(configuration.get("response_mapping"), dict)
     )
 
 
