@@ -180,3 +180,32 @@ def test_decision_context_compares_bureau_and_declared_debt_without_overwriting_
     assert '"bureau_monthly_commitments"' in router
     assert '"variance"' in router
     assert "BorrowerDebtObligation(" not in router
+
+
+def test_fresh_reports_are_reused_unless_staff_explicitly_force_refresh() -> None:
+    schema = _read(ROOT / "database/schemas/credit_bureau.py")
+    router = _read(ROOT / "routers/credit_bureau.py")
+    company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
+
+    assert "force_refresh: bool = False" in schema
+    assert "max_report_age_hours" in router
+    assert "freshness_cutoff" in router
+    assert "if not payload.force_refresh:" in router
+    assert "return _enquiry_payload(reusable)" in router
+    assert "Force a new paid enquiry" in company_page
+    assert "maximum report age" in company_page.lower()
+
+
+def test_company_experian_policy_is_enforced_by_affordability_engine() -> None:
+    service = _read(ROOT / "services/origination_service.py")
+
+    assert "OriginationIntegrationConfiguration.provider == \"experian\"" in service
+    assert "CreditBureauEnquiry.provider == \"experian\"" in service
+    assert 'bureau_policy.get("require_before_affordability")' in service
+    assert 'bureau_policy.get("include_bureau_commitments_in_affordability")' in service
+    assert 'bureau_policy.get("bureau_debt_mode")' in service
+    assert 'bureau_policy.get("decline_below_score")' in service
+    assert 'bureau_policy.get("refer_below_score")' in service
+    assert 'bureau_policy.get("block_defaults")' in service
+    assert 'bureau_policy.get("require_identity_match")' in service
+    assert '"credit_bureau": {' in service
