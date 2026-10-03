@@ -114,6 +114,14 @@ class ExperianEnquiryRequest(BaseModel):
             raise ValueError("Borrower consent must be confirmed before a bureau enquiry")
         return value
 
+    @model_validator(mode="after")
+    def validate_data_dependencies(self):
+        if self.run_compuscore and (not self.cs_data or not self.cpa_plus_nlr_data):
+            raise ValueError("CompuScore requires both CS Data and CPA + NLR Data")
+        if self.run_codix and (not self.run_compuscore or not self.cs_data or not self.cpa_plus_nlr_data):
+            raise ValueError("Codix requires CompuScore, CS Data and CPA + NLR Data")
+        return self
+
 
 class ExperianConfigurationPreview(BaseModel):
     provider: Literal["experian"] = "experian"
