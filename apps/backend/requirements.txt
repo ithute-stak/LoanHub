@@ -10,7 +10,7 @@ passlib[bcrypt]>=1.7.4,<2.0
 # Passlib 1.7.4 reads bcrypt.__about__.__version__, which was removed in
 # bcrypt 4.1+. Pin the last fully compatible release until password hashing is
 # migrated away from Passlib.
-bcrypt==4.0.1
+bcrypt==4.3.0
 email-validator>=2.3.0,<3.0
 python-multipart>=0.0.32,<1.0
 cryptography>=50.0.0,<51
