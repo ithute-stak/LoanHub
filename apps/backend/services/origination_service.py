@@ -114,13 +114,21 @@ def borrower_identity(db: Session, borrower_id: UUID) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Borrower not found")
     borrower, user, person = row
+    gender_value = person.gender.value if person and person.gender and hasattr(person.gender, "value") else (str(person.gender) if person and person.gender else None)
     return {
         "borrower_id": borrower.id,
         "user_id": user.id,
         "full_name": person.full_name if person else "Registered borrower",
+        "first_name": person.first_name if person else None,
+        "middle_name": person.middle_name if person else None,
+        "last_name": person.last_name if person else None,
+        "gender": gender_value,
         "date_of_birth": person.date_of_birth if person else None,
         "national_id": person.national_id if person else None,
         "passport_number": person.passport_number if person else None,
+        "physical_address": person.physical_address if person else None,
+        "town_or_village": person.town_or_village if person else None,
+        "district": person.district if person else None,
         "phone": user.phone,
         "email": user.email,
     }
