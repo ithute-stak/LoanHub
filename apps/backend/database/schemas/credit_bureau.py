@@ -10,8 +10,6 @@ class ExperianCredentialsInput(BaseModel):
 
     username: str = Field(min_length=2, max_length=320)
     password: str = Field(min_length=1, max_length=1000)
-    client_id: str = Field(min_length=2, max_length=500)
-    client_secret: str = Field(min_length=1, max_length=1000)
 
 
 class ExperianConfigurationUpdate(BaseModel):
@@ -35,13 +33,16 @@ class ExperianConfigurationUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_product_configuration(self):
-        endpoint = str(self.configuration.get("bureau_endpoint_path") or "").strip()
-        if endpoint and (not endpoint.startswith("/") or endpoint.startswith("//") or "://" in endpoint or "\\" in endpoint):
-            raise ValueError("Experian bureau endpoint must be a relative API path")
-        request_template = self.configuration.get("request_template", {})
+        origin = str(self.configuration.get("origin") or "LNHUB").strip()
+        if not origin or len(origin) > 5:
+            raise ValueError("Experian origin must contain 1 to 5 characters")
+        origin_version = str(self.configuration.get("origin_version") or "1.0").strip()
+        if not origin_version or len(origin_version) > 5:
+            raise ValueError("Experian origin_version must contain 1 to 5 characters")
+        dll_version = str(self.configuration.get("dll_version") or "1.0").strip()
+        if not dll_version or len(dll_version) > 30:
+            raise ValueError("Experian dll_version must contain 1 to 30 characters")
         response_mapping = self.configuration.get("response_mapping", {})
-        if not isinstance(request_template, dict):
-            raise ValueError("Experian request_template must be a JSON object")
         if not isinstance(response_mapping, dict):
             raise ValueError("Experian response_mapping must be a JSON object")
         return self
@@ -81,8 +82,7 @@ class ExperianConnectionTestResult(BaseModel):
     environment: str
     host: str
     status: Literal["connected"] = "connected"
-    token_type: str | None = None
-    expires_in: int | None = None
+    endpoint: str
 
 
 class ExperianEnquiryRequest(BaseModel):
@@ -92,6 +92,20 @@ class ExperianEnquiryRequest(BaseModel):
     consent_method: Literal["written", "electronic", "recorded", "other"]
     consent_reference: str | None = Field(default=None, max_length=200)
     permissible_purpose: Literal["credit_application"] = "credit_application"
+    enquiry_purpose: int = Field(default=12, ge=1, le=19)
+    result_type: Literal["JSON", "XML"] = "JSON"
+    address1: str | None = Field(default=None, max_length=25)
+    address2: str | None = Field(default=None, max_length=25)
+    address3: str | None = Field(default=None, max_length=25)
+    address4: str | None = Field(default=None, max_length=25)
+    postal_code: str = Field(min_length=1, max_length=5)
+    cs_data: bool = True
+    cpa_plus_nlr_data: bool = True
+    deeds: bool = False
+    directors: bool = False
+    run_compuscore: bool = True
+    run_codix: bool = False
+    force_refresh: bool = False
 
     @field_validator("consent_confirmed")
     @classmethod
@@ -99,6 +113,14 @@ class ExperianEnquiryRequest(BaseModel):
         if not value:
             raise ValueError("Borrower consent must be confirmed before a bureau enquiry")
         return value
+
+    @model_validator(mode="after")
+    def validate_data_dependencies(self):
+        if self.run_compuscore and (not self.cs_data or not self.cpa_plus_nlr_data):
+            raise ValueError("CompuScore requires both CS Data and CPA + NLR Data")
+        if self.run_codix and (not self.run_compuscore or not self.cs_data or not self.cpa_plus_nlr_data):
+            raise ValueError("Codix requires CompuScore, CS Data and CPA + NLR Data")
+        return self
 
 
 class ExperianConfigurationPreview(BaseModel):
