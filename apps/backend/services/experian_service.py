@@ -9,9 +9,6 @@ from typing import Any
 from xml.etree import ElementTree
 
 import httpx
-from sqlalchemy.orm import Session
-
-from database.models.origination import OriginationIntegrationConfiguration
 from services.credential_service import decrypt_credential
 
 
@@ -42,7 +39,7 @@ class ExperianConnection:
 
 
 def default_experian_configuration() -> dict[str, Any]:
-    """Safe defaults that do not guess a product-specific API contract."""
+    """Normal Search v0.5 defaults from the supplied Experian Lesotho guide."""
     return {
         "region": "lesotho",
         "product": "normal_search_v2",
@@ -61,7 +58,7 @@ def default_experian_configuration() -> dict[str, Any]:
     }
 
 
-def public_configuration(row: OriginationIntegrationConfiguration | None) -> dict[str, Any]:
+def public_configuration(row) -> dict[str, Any]:
     if not row:
         return default_experian_configuration()
     result = default_experian_configuration()
