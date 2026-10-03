@@ -99,7 +99,7 @@ def _platform_integration(db: Session) -> PlatformCreditBureauConfiguration:
     if row.last_test_status != "connected":
         raise HTTPException(
             status_code=409,
-            detail="The platform Experian connection has not passed its latest OAuth test",
+            detail="The platform Experian connection has not passed its latest connectivity test",
         )
     return row
 
@@ -196,7 +196,7 @@ def test_experian_connection_from_company(
     require_tenant_roles(context, BUREAU_VIEW_ROLES)
     raise HTTPException(
         status_code=403,
-        detail="Experian OAuth testing is controlled by the LoanHub Platform Owner under API & integrations",
+        detail="Experian connectivity testing is controlled by the LoanHub Platform Owner under API & integrations",
     )
 
 
@@ -327,6 +327,16 @@ def run_experian_credit_check(
                 "consent_reference": consent_reference,
                 "consent_captured_at": now.isoformat(),
                 "connection_scope": "platform",
+                "enquiry_purpose": payload.enquiry_purpose,
+                "result_type": payload.result_type,
+                "requested_blocks": {
+                    "cs_data": payload.cs_data,
+                    "cpa_plus_nlr_data": payload.cpa_plus_nlr_data,
+                    "deeds": payload.deeds,
+                    "directors": payload.directors,
+                    "run_compuscore": payload.run_compuscore,
+                    "run_codix": payload.run_codix,
+                },
             }
         },
         response_data={},
@@ -337,6 +347,8 @@ def run_experian_credit_check(
     db.commit()
     db.refresh(enquiry)
 
+    gender_value = str(identity.get("gender") or "").strip().lower()
+    gender = "M" if gender_value in {"m", "male", "gender.male"} else "F" if gender_value in {"f", "female", "gender.female"} else None
     provider_context = {
         "borrower_id": str(application.borrower_id),
         "application_id": str(application.id),
@@ -345,13 +357,31 @@ def run_experian_credit_check(
         "term_count": int(application.term_count or 0),
         "purpose": application.purpose,
         "full_name": identity.get("full_name"),
+        "forename": identity.get("first_name"),
+        "forename2": identity.get("middle_name"),
+        "forename3": "",
+        "surname": identity.get("last_name"),
+        "gender": gender,
         "national_id": identity.get("national_id"),
         "passport_number": identity.get("passport_number"),
         "date_of_birth": identity.get("date_of_birth").isoformat() if identity.get("date_of_birth") else None,
-        "phone": identity.get("phone"),
-        "email": identity.get("email"),
+        "address1": payload.address1 or identity.get("physical_address"),
+        "address2": payload.address2 or identity.get("town_or_village") or identity.get("district"),
+        "address3": payload.address3 or "",
+        "address4": payload.address4 or "",
+        "postal_code": payload.postal_code,
+        "cell_tel_no": identity.get("phone"),
         "permissible_purpose": payload.permissible_purpose,
         "consent_reference": consent_reference,
+        "enquiry_purpose": payload.enquiry_purpose,
+        "result_type": payload.result_type,
+        "cs_data": payload.cs_data,
+        "cpa_plus_nlr_data": payload.cpa_plus_nlr_data,
+        "deeds": payload.deeds,
+        "directors": payload.directors,
+        "run_compuscore": payload.run_compuscore,
+        "run_codix": payload.run_codix,
+        "address_mandatory": True,
     }
 
     try:
