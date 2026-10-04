@@ -1,6 +1,8 @@
-# CDAS reintegration branch
+# CDAS reintegration — Third Party API v1.5
 
-This branch rebuilds LoanHub's CDAS integration from the official third-party API contract, while deliberately excluding the failed autonomous/background integration model.
+LoanHub's CDAS integration is aligned to the DataNet CDAS Third Party API reference document version 1.5 (February 2024), while deliberately excluding the failed autonomous/background integration model.
+
+The backend exposes the documented v1.5 reference codes locally at `GET /cdas/reference-data`. This endpoint never contacts CDAS and is intended to prevent UI/backend code tables from drifting away from the provider contract.
 
 ## Implemented manual CDAS capabilities
 
