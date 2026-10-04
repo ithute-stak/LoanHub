@@ -44,6 +44,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_external_debt_tracking.py \
   tests/test_experian_credit_bureau_contract.py \
   tests/test_experian_service.py \
+  tests/test_credit_bureau_policy_service.py \
   tests/test_financial_and_tenant_invariants.py \
   tests/test_global_borrower_lookup_frontend.py \
   tests/test_global_borrower_history_print_frontend.py \
