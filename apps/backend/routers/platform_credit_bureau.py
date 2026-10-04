@@ -52,6 +52,11 @@ def reject_company_experian_provider_credentials(
     )
 
 
+def _public_environment(value: str | None) -> str:
+    normalized = str(value or "sandbox").strip().lower()
+    return "live" if normalized in {"live", "production"} else "sandbox"
+
+
 def _get_row(db: Session) -> PlatformCreditBureauConfiguration | None:
     return (
         db.query(PlatformCreditBureauConfiguration)
@@ -71,7 +76,7 @@ def _read(row: PlatformCreditBureauConfiguration | None) -> dict:
     return {
         "provider": "experian",
         "scope": "platform",
-        "environment": row.environment if row else "sandbox",
+        "environment": _public_environment(row.environment if row else "sandbox"),
         "is_enabled": bool(row.is_enabled) if row else False,
         "has_credentials": bool(row and row.encrypted_credentials),
         "last_test_status": row.last_test_status if row else None,
@@ -123,7 +128,7 @@ def update_platform_experian_configuration(
             db.flush()
 
         before = _read(row)
-        environment_changed = row.environment != payload.environment
+        environment_changed = _public_environment(row.environment) != payload.environment
         credentials_changed = payload.credentials is not None
 
         row.environment = payload.environment
