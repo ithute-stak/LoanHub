@@ -18,10 +18,14 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.audit_log import AuditLog
-from database.models.cdas_official import CdasProviderOperation
+from database.models.cdas_official import (
+    CdasOfficialMandateEvent,
+    CdasOfficialMandateState,
+    CdasProviderOperation,
+)
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus
-from database.models.lending_operations import CDASPayrollProfile
+from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
 from database.models.professional_lending import DirectLoanApplication
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
@@ -79,6 +83,11 @@ class CdasModifyActiveDeductionRequest(CdasModifyActivePayload):
 
 class CdasSettleDeductionRequest(CdasSettlementPayload):
     confirmed: bool = False
+
+
+class CdasLoanRegistrationConfirmRequest(BaseModel):
+    confirmed: bool = False
+    borrower_consent: bool = False
 
 
 class CdasDocumentRequest(BaseModel):
@@ -319,26 +328,17 @@ def get_cdas_request_budget(
     return get_cdas_request_budget_status(db, company_id=context.company_id, environment=environment)
 
 
-@router.get("/loans/{loan_id}/registration-draft")
-def get_cdas_loan_registration_draft(
+def _loan_registration_context(
+    db: Session,
+    *,
+    company_id: UUID,
     loan_id: UUID,
-    context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
-):
-    """Build a local CDAS Registration payload for an approved LoanHub loan.
-
-    This endpoint performs no provider request and never creates a deduction.
-    A company manager must still explicitly confirm the mutation in the CDAS
-    operations workspace.
-    """
-    _require_company_manager(context)
-    assert context.company_id is not None
-
+) -> tuple[ClientCompanyLoan, CDASPayrollProfile | None, dict[str, Any] | None, list[str], str]:
     loan = (
         db.query(ClientCompanyLoan)
         .filter(
             ClientCompanyLoan.id == loan_id,
-            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.company_id == company_id,
         )
         .first()
     )
@@ -354,7 +354,7 @@ def get_cdas_loan_registration_draft(
     profile = (
         db.query(CDASPayrollProfile)
         .filter(
-            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.company_id == company_id,
             CDASPayrollProfile.borrower_id == loan.borrower_id,
         )
         .first()
@@ -364,7 +364,7 @@ def get_cdas_loan_registration_draft(
     elif not profile.verified:
         reasons.append("The borrower CDAS payroll profile has not been verified")
 
-    config = get_configuration(db, context.company_id)
+    config = get_configuration(db, company_id)
     config_values = dict(config.configuration or {}) if config and isinstance(config.configuration, dict) else {}
     item_code = str(config_values.get("item_code") or "").strip()
     if not item_code:
@@ -377,19 +377,65 @@ def get_cdas_loan_registration_draft(
     if not effective_month:
         reasons.append("The loan does not have a CDAS effective month")
 
-    payload = None
+    provider_payload = None
     if not reasons and profile:
-        payload = {
-            "request_type": 1,
-            "deduction_id": 0,
-            "employee_no": profile.employee_number,
-            "loan_policy": 1,
-            "item_code": item_code,
-            "deduction_amount": str(loan.installment_amount or 0),
-            "total_installment": int(loan.repayment_period or 0),
-            "principal_amount": str(loan.principal_amount or 0),
-            "effective_month": effective_month,
-            "reference_no": loan.loan_reference,
+        provider_payload = CdasLifecyclePayload(
+            request_type=1,
+            deduction_id=0,
+            employee_no=profile.employee_number,
+            loan_policy=1,
+            item_code=item_code,
+            deduction_amount=loan.installment_amount or 0,
+            total_installment=int(loan.repayment_period or 0),
+            principal_amount=loan.principal_amount or 0,
+            effective_month=effective_month,
+            reference_no=loan.loan_reference,
+        ).provider_payload()
+
+    return loan, profile, provider_payload, reasons, effective_month
+
+
+def _first_provider_int(payload: Any, *keys: str) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, "", 0, "0"):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+@router.get("/loans/{loan_id}/registration-draft")
+def get_cdas_loan_registration_draft(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Build a local CDAS Registration payload without contacting CDAS."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+
+    loan, _, provider_payload, reasons, _ = _loan_registration_context(
+        db,
+        company_id=context.company_id,
+        loan_id=loan_id,
+    )
+    registration = None
+    if provider_payload:
+        registration = {
+            "request_type": int(provider_payload["RequestType"]),
+            "deduction_id": int(provider_payload["DeductionID"]),
+            "employee_no": provider_payload["EmployeeNo"],
+            "loan_policy": int(provider_payload["LoanPolicy"]),
+            "item_code": provider_payload["ItemCode"],
+            "deduction_amount": str(provider_payload["DeductionAmount"]),
+            "total_installment": int(provider_payload["TotalInstallment"]),
+            "principal_amount": str(provider_payload["PrincipalAmount"]),
+            "effective_month": provider_payload["EffectiveMonth"],
+            "reference_no": provider_payload["ReferenceNo"],
         }
 
     return {
@@ -397,8 +443,206 @@ def get_cdas_loan_registration_draft(
         "loan_reference": loan.loan_reference,
         "ready": not reasons,
         "reasons": reasons,
-        "registration": payload,
+        "registration": registration,
         "provider_request_sent": False,
+    }
+
+
+@router.post("/loans/{loan_id}/register")
+async def register_cdas_deduction_for_loan(
+    loan_id: UUID,
+    payload: CdasLoanRegistrationConfirmRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Register a confirmed LoanHub loan with CDAS and persist the provider link."""
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    if not payload.borrower_consent:
+        raise HTTPException(
+            status_code=409,
+            detail="Confirm the borrower's payroll-deduction consent before CDAS registration",
+        )
+    assert context.company_id is not None
+
+    loan, profile, provider_request, reasons, effective_month = _loan_registration_context(
+        db,
+        company_id=context.company_id,
+        loan_id=loan_id,
+    )
+    if reasons or not profile or not provider_request:
+        raise HTTPException(status_code=409, detail=" ".join(reasons) or "Loan is not ready for CDAS registration")
+
+    existing_mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan.id,
+        )
+        .first()
+    )
+    mandate = existing_mandate or CDASDeductionMandate(
+        company_id=context.company_id,
+        branch_id=loan.branch_id,
+        borrower_id=loan.borrower_id,
+        loan_id=loan.id,
+        payroll_profile_id=profile.id,
+        mandate_number=f"CDAS-{loan.loan_reference}"[:80],
+        employee_number=profile.employee_number,
+        monthly_deduction=loan.installment_amount or 0,
+        start_date=loan.first_payment_due,
+        end_date=None,
+        expected_installments=int(loan.repayment_period or 0),
+        deductions_received=0,
+        total_expected=loan.total_repayable or 0,
+        total_received=0,
+        status="draft",
+        borrower_consent=True,
+        created_by_user_id=context.user.id,
+    )
+    if existing_mandate is None:
+        db.add(mandate)
+        db.flush()
+    else:
+        mandate.payroll_profile_id = profile.id
+        mandate.employee_number = profile.employee_number
+        mandate.monthly_deduction = loan.installment_amount or 0
+        mandate.start_date = loan.first_payment_due
+        mandate.expected_installments = int(loan.repayment_period or 0)
+        mandate.total_expected = loan.total_repayable or 0
+        mandate.borrower_consent = True
+
+    environment = _company_cdas_environment(db, context.company_id)
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(CdasOfficialMandateState.mandate_id == mandate.id)
+        .first()
+    )
+    if state is None:
+        state = CdasOfficialMandateState(
+            company_id=context.company_id,
+            mandate_id=mandate.id,
+            application_id=loan.direct_application_id,
+            environment=environment,
+            deduction_id=None,
+            item_code=str(provider_request["ItemCode"]),
+            reference_no=str(provider_request["ReferenceNo"]),
+            loan_policy=int(provider_request["LoanPolicy"]),
+            principal_amount=loan.principal_amount or 0,
+            effective_month=effective_month,
+            cdas_status=None,
+            lifecycle_status="registration_pending",
+            requires_reconciliation=False,
+            last_provider_response={},
+        )
+        db.add(state)
+    else:
+        if state.deduction_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This loan is already linked to a CDAS DeductionID; use lifecycle management instead of registering it again",
+            )
+        state.environment = environment
+        state.item_code = str(provider_request["ItemCode"])
+        state.reference_no = str(provider_request["ReferenceNo"])
+        state.principal_amount = loan.principal_amount or 0
+        state.effective_month = effective_month
+    mandate.status = "submitted"
+    mandate.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    db.refresh(mandate)
+    db.refresh(state)
+
+    client = get_company_cdas_client(db, context.company_id)
+    ledger_request = CdasLifecyclePayload(
+        request_type=1,
+        deduction_id=0,
+        employee_no=str(provider_request["EmployeeNo"]),
+        loan_policy=1,
+        item_code=str(provider_request["ItemCode"]),
+        deduction_amount=provider_request["DeductionAmount"],
+        total_installment=int(provider_request["TotalInstallment"]),
+        principal_amount=provider_request["PrincipalAmount"],
+        effective_month=str(provider_request["EffectiveMonth"]),
+        reference_no=str(provider_request["ReferenceNo"]),
+    ).ledger_payload()
+
+    try:
+        mutation = await _execute_tracked_mutation(
+            db=db,
+            context=context,
+            client=client,
+            operation_type="deduction.lifecycle.1",
+            audit_action="cdas.loan.registration",
+            provider_request=provider_request,
+            ledger_request=ledger_request,
+            provider_call=lambda: client.add_update_deduction(provider_request),
+        )
+    except HTTPException as exc:
+        state.lifecycle_status = "registration_failed"
+        state.last_error = str(exc.detail)
+        state.requires_reconciliation = bool(
+            isinstance(exc.detail, dict)
+            and isinstance(exc.detail.get("operation"), dict)
+            and exc.detail["operation"].get("requires_reconciliation")
+        )
+        state.last_synced_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        raise
+
+    provider_response = dict(mutation.get("deduction") or {})
+    operation = dict(mutation.get("operation") or {})
+    operation_response = operation.get("response_snapshot")
+    deduction_id = _first_provider_int(provider_response, "DeductionID", "deductionId", "deduction_id")
+    if deduction_id is None and isinstance(operation_response, dict):
+        deduction_id = _first_provider_int(operation_response, "DeductionID", "deductionId", "deduction_id")
+        if deduction_id is None:
+            deduction_id = _first_provider_int(
+                operation_response.get("reconciliation"),
+                "DeductionID",
+                "deductionId",
+                "deduction_id",
+            )
+
+    provider_status = _first_provider_int(provider_response, "DeductionStatus", "deductionStatus", "deduction_status")
+    reconciled = bool(mutation.get("reconciled"))
+
+    state.deduction_id = deduction_id
+    state.cdas_status = provider_status or (1 if reconciled else None)
+    state.lifecycle_status = "registered" if reconciled else "registration_pending"
+    state.last_request_type = 1
+    state.requires_reconciliation = not reconciled
+    state.last_provider_response = provider_response
+    state.last_error = None
+    state.last_synced_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if reconciled:
+        state.registered_at = state.last_synced_at
+        mandate.status = "registered"
+    mandate.external_reference = str(deduction_id) if deduction_id is not None else mandate.external_reference
+
+    event = CdasOfficialMandateEvent(
+        company_id=context.company_id,
+        state_id=state.id,
+        actor_user_id=context.user.id,
+        event_type="registration",
+        request_type=1,
+        request_snapshot=ledger_request,
+        response_snapshot=provider_response,
+        provider_status_code=operation.get("provider_status_code"),
+        success=True,
+        message="CDAS registration confirmed" if reconciled else "CDAS registration submitted; reconciliation is still required",
+        occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(state)
+
+    return {
+        **mutation,
+        "mandate_id": str(mandate.id),
+        "official_state_id": str(state.id),
+        "deduction_id": state.deduction_id,
+        "lifecycle_status": state.lifecycle_status,
     }
 
 
