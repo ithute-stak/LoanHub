@@ -80,7 +80,7 @@ def company_experian_preview(
         "platform": {
             "configured": bool(platform),
             "is_enabled": bool(platform.is_enabled) if platform else False,
-            "environment": platform.environment if platform else None,
+            "environment": ("live" if str(platform.environment).lower() in {"live", "production"} else "sandbox") if platform else None,
             "has_credentials": bool(platform and platform.encrypted_credentials),
             "last_test_status": platform.last_test_status if platform else None,
             "last_tested_at": platform.last_tested_at if platform else None,
