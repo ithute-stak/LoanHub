@@ -129,7 +129,7 @@ jobs:
       - name: Build polyglot worker images
         run: |
           set -euo pipefail
-          docker build -t loanhub-rust-compute-ci:${{ github.sha }} services/compute-rust
+          docker build -f services/compute-rust/Dockerfile -t loanhub-rust-compute-ci:${{ github.sha }} services
           docker build -t loanhub-go-worker-ci:${{ github.sha }} services/worker-go
           docker build -t loanhub-java-worker-ci:${{ github.sha }} services/worker-java
 
