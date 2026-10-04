@@ -45,7 +45,7 @@ export default function PlatformExperianConfigurationPage() {
   const [testing, setTesting] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianPlatformConfiguration | null>(null);
 
-  const [environment, setEnvironment] = useState<"sandbox" | "uat" | "production">("sandbox");
+  const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [enabled, setEnabled] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -56,7 +56,7 @@ export default function PlatformExperianConfigurationPage() {
 
   const applyConfiguration = useCallback((row: ExperianPlatformConfiguration) => {
     setConfiguration(row);
-    setEnvironment(row.environment === "uat" || row.environment === "production" ? row.environment : "sandbox");
+    setEnvironment(row.environment === "live" || row.environment === "production" ? "live" : "sandbox");
     setEnabled(Boolean(row.is_enabled));
     setOrigin(String(row.configuration.origin ?? "LNHUB"));
     setOriginVersion(String(row.configuration.origin_version ?? "1.0"));
@@ -148,7 +148,7 @@ export default function PlatformExperianConfigurationPage() {
             <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Platform configuration · Credit bureau</p>
             <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Experian platform connection</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Configure LoanHub&apos;s single Experian connection once for the platform. Lending companies can opt in and choose their credit policy, but they cannot view or replace these provider credentials.
+              Configure LoanHub&apos;s single Experian connection once for the platform and switch this module between Sandbox and Live. Lending companies can opt in and choose their credit policy, but they cannot view or replace these provider credentials.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -186,16 +186,15 @@ export default function PlatformExperianConfigurationPage() {
         <Card className="rounded-3xl">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" />Experian Lesotho credentials</CardTitle>
-            <CardDescription>Use the Experian Lesotho Normal Search service username and password. Leave both blank to keep the existing encrypted credentials.</CardDescription>
+<CardDescription>Choose Sandbox while testing and Live only when production credentials are ready. Changing mode requires a fresh connection test before companies can use Experian again.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <Field label="Environment">
               <Select value={environment} onValueChange={(value) => setEnvironment(value as typeof environment)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="sandbox">Sandbox alias · Lesotho UAT</SelectItem>
-                  <SelectItem value="uat">UAT · Lesotho</SelectItem>
-                  <SelectItem value="production">Production · Lesotho</SelectItem>
+                  <SelectItem value="sandbox">Sandbox · Experian Lesotho UAT</SelectItem>
+                  <SelectItem value="live">Live · Experian Lesotho production</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -231,7 +230,7 @@ export default function PlatformExperianConfigurationPage() {
         <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
           <label className="flex items-start gap-3">
             <Checkbox checked={enabled} onCheckedChange={(value) => setEnabled(value === true)} />
-            <span><strong>Enable Experian for LoanHub</strong><span className="mt-1 block max-w-2xl text-xs text-muted-foreground">Companies can only opt in after this central connection is enabled and fully ready. For initial setup, save Lesotho UAT credentials and Normal Search settings first, test the connection, then enable.</span></span>
+            <span><strong>Enable Experian for LoanHub</strong><span className="mt-1 block max-w-2xl text-xs text-muted-foreground">Companies can only opt in after this central connection is enabled and fully ready. For initial setup, keep this module in Sandbox, save the test credentials and Normal Search settings, test the connection, then enable. Switch to Live only when production credentials are ready.</span></span>
           </label>
           <div className="flex flex-wrap gap-2">
             <LoadingButton loading={saving} onClick={() => void saveConfiguration()}><Save className="h-4 w-4" />Save configuration</LoadingButton>
@@ -243,7 +242,7 @@ export default function PlatformExperianConfigurationPage() {
       <Alert>
         <BadgeCheck className="h-4 w-4" />
         <AlertTitle>Recommended first setup</AlertTitle>
-        <AlertDescription>Start with Lesotho UAT. Save the Experian username/password and Normal Search settings, run Test connection, then enable Experian. Only after that should lending companies enable Experian in their own Credit Origination settings.</AlertDescription>
+        <AlertDescription>Start in Sandbox. Save the Experian test username/password and Normal Search settings, run Test connection, then enable Experian. When production credentials are issued, switch to Live, save the Live credentials, test again, and only then enable company use.</AlertDescription>
       </Alert>
     </main>
   );
