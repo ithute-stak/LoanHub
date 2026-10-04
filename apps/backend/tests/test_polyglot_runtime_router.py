@@ -21,3 +21,19 @@ def test_platform_runtime_status_is_admin_only_and_explains_authority() -> None:
 
     assert "LOANHUB_RUST_COMPUTE_URL: http://rust-compute:8082" in compose
     assert "LOANHUB_GO_WORKER_URL: http://go-worker:8081" in compose
+
+
+def test_platform_runtime_monitor_surfaces_worker_health_and_fallbacks() -> None:
+    page = ROOT.parents[1].joinpath(
+        "apps/frontend/app/(dashboard)/superadmin/runtime/page.tsx"
+    ).read_text(encoding="utf-8")
+    dashboard = ROOT.parents[1].joinpath(
+        "apps/frontend/app/(dashboard)/superadmin/page.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "Polyglot work-sharing monitor" in page
+    assert 'api.get<RuntimeStatus>("/runtime/workers/status")' in page
+    assert "Circuit open" in page
+    assert "Parity mismatches" in page
+    assert "Python fallback" in page
+    assert 'href="/superadmin/runtime"' in dashboard
