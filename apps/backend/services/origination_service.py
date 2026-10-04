@@ -29,6 +29,11 @@ from database.models.professional_lending import CreditBlacklist, DirectLoanAppl
 from database.models.repayment import RepaymentInstallment
 from database.models.user import User
 from database.schemas.origination import FinancialProfileUpdate, OriginationPolicyUpdate
+from services.credit_bureau_policy_service import (
+    assert_experian_requirement,
+    company_experian_policy,
+    latest_fresh_experian_enquiry,
+)
 from services.company_client_service import (
     normalized_monthly_debt_installment,
     sync_borrower_external_debt_summary,
@@ -114,13 +119,21 @@ def borrower_identity(db: Session, borrower_id: UUID) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Borrower not found")
     borrower, user, person = row
+    gender_value = person.gender.value if person and person.gender and hasattr(person.gender, "value") else (str(person.gender) if person and person.gender else None)
     return {
         "borrower_id": borrower.id,
         "user_id": user.id,
         "full_name": person.full_name if person else "Registered borrower",
+        "first_name": person.first_name if person else None,
+        "middle_name": person.middle_name if person else None,
+        "last_name": person.last_name if person else None,
+        "gender": gender_value,
         "date_of_birth": person.date_of_birth if person else None,
         "national_id": person.national_id if person else None,
         "passport_number": person.passport_number if person else None,
+        "physical_address": person.physical_address if person else None,
+        "town_or_village": person.town_or_village if person else None,
+        "district": person.district if person else None,
         "phone": user.phone,
         "email": user.email,
     }
@@ -797,6 +810,40 @@ def calculate_affordability(
     verified_income = money(totals["verified_income"])
     household_expenses = money(totals["household_expenses"])
     debt_installments = money(totals["existing_debt_installments"])
+
+    bureau_policy_row, bureau_policy = company_experian_policy(db, company_id)
+    latest_bureau = None
+    bureau_normalized: dict = {}
+    if bureau_policy_row and bureau_policy_row.is_enabled:
+        latest_bureau = assert_experian_requirement(
+            db,
+            application=application,
+            stage="affordability",
+        )
+        if not latest_bureau:
+            latest_bureau = latest_fresh_experian_enquiry(
+                db,
+                company_id=company_id,
+                application_id=application.id,
+                borrower_id=borrower_id,
+                max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
+            )
+        if latest_bureau:
+            response_data = dict(latest_bureau.response_data or {})
+            normalized = response_data.get("normalized")
+            bureau_normalized = dict(normalized) if isinstance(normalized, dict) else {}
+
+    bureau_fresh = latest_bureau is not None
+    bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
+    if bureau_fresh and bureau_policy.get("include_bureau_commitments_in_affordability"):
+        debt_mode = str(bureau_policy.get("bureau_debt_mode") or "max")
+        if debt_mode == "bureau_only":
+            debt_installments = bureau_monthly_commitments
+        elif debt_mode == "declared_plus_bureau":
+            debt_installments = money(debt_installments + bureau_monthly_commitments)
+        else:
+            debt_installments = max(debt_installments, bureau_monthly_commitments)
+
     dependants = int((kyc or {}).get("dependants") or 0)
     dependant_total = money(Decimal(dependants) * Decimal(policy.dependant_allowance or 0))
     buffer_amount = money(policy.living_expense_buffer)
@@ -842,6 +889,27 @@ def calculate_affordability(
     if kyc and (kyc.get("politically_exposed") or kyc.get("adverse_media_hit")):
         referral = True
         reasons.append({"severity": "warning", "code": "enhanced_due_diligence", "message": "Enhanced due diligence is required."})
+
+    if bureau_policy_row and bureau_policy_row.is_enabled and bureau_fresh and latest_bureau:
+            score = latest_bureau.score
+            decline_below = bureau_policy.get("decline_below_score")
+            refer_below = bureau_policy.get("refer_below_score")
+            if decline_below is not None and score is not None and score < int(decline_below):
+                blocking = True
+                reasons.append({"severity": "error", "code": "bureau_score_decline", "message": "Experian score is below the configured decline threshold."})
+            elif refer_below is not None and score is not None and score < int(refer_below):
+                referral = True
+                reasons.append({"severity": "warning", "code": "bureau_score_refer", "message": "Experian score is below the configured referral threshold."})
+            elif score is not None:
+                reasons.append({"severity": "pass", "code": "bureau_score_ok", "message": "Experian score meets the configured threshold."})
+
+            if bureau_policy.get("block_defaults") and int(bureau_normalized.get("defaults_count") or 0) > 0:
+                blocking = True
+                reasons.append({"severity": "error", "code": "bureau_defaults", "message": "Experian reports one or more defaults and company policy blocks approval."})
+
+            if bureau_policy.get("require_identity_match") and bureau_normalized.get("identity_match") is not True:
+                blocking = True
+                reasons.append({"severity": "error", "code": "bureau_identity_mismatch", "message": "Experian identity matching did not pass company policy."})
 
     blacklist = db.query(CreditBlacklist).filter(CreditBlacklist.borrower_id == borrower_id, CreditBlacklist.is_active.is_(True)).first()
     if blacklist and not policy.allow_blacklisted:
@@ -901,6 +969,15 @@ def calculate_affordability(
             "kyc": kyc,
             "employment": employment,
             "totals": totals,
+            "credit_bureau": {
+                "enabled": bool(bureau_policy_row),
+                "fresh": bureau_fresh,
+                "enquiry_id": str(latest_bureau.id) if latest_bureau else None,
+                "score": latest_bureau.score if latest_bureau else None,
+                "risk_grade": latest_bureau.risk_grade if latest_bureau else None,
+                "monthly_commitments": str(bureau_monthly_commitments),
+                "policy": bureau_policy,
+            },
             "policy": serialize(policy),
             "proposal": {
                 "principal": principal,

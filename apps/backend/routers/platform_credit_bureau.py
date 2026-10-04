@@ -62,9 +62,12 @@ def _get_row(db: Session) -> PlatformCreditBureauConfiguration | None:
 
 def _read(row: PlatformCreditBureauConfiguration | None) -> dict:
     configuration = public_configuration(row)
-    endpoint_ready = bool(str(configuration.get("bureau_endpoint_path") or "").strip())
-    request_ready = bool(configuration.get("request_template"))
-    mapping_ready = bool(configuration.get("response_mapping"))
+    contract_ready = (
+        configuration.get("product") == "normal_search_v2"
+        and bool(str(configuration.get("origin") or "").strip())
+        and bool(str(configuration.get("dll_version") or "").strip())
+    )
+    mapping_ready = isinstance(configuration.get("response_mapping"), dict)
     return {
         "provider": "experian",
         "scope": "platform",
@@ -76,17 +79,15 @@ def _read(row: PlatformCreditBureauConfiguration | None) -> dict:
         "configuration": configuration,
         "readiness": {
             "credentials": bool(row and row.encrypted_credentials),
-            "oauth_connected": bool(row and row.last_test_status == "connected"),
-            "bureau_endpoint": endpoint_ready,
-            "request_template": request_ready,
+            "connection_tested": bool(row and row.last_test_status == "connected"),
+            "normal_search_contract": contract_ready,
             "response_mapping": mapping_ready,
             "ready_for_company_use": bool(
                 row
                 and row.is_enabled
                 and row.encrypted_credentials
                 and row.last_test_status == "connected"
-                and endpoint_ready
-                and request_ready
+                and contract_ready
                 and mapping_ready
             ),
         },
@@ -223,13 +224,13 @@ def test_platform_experian_connection(
             table_name="platform_credit_bureau_configurations",
             entity_type="platform_credit_bureau_configuration",
             record_id=row.id,
-            description="The platform owner successfully tested the central Experian OAuth connection.",
+            description="The platform owner successfully tested the central Experian Lesotho connection.",
             actor_role=current_user.role.value,
             severity="info",
             status="success",
             after_data={"environment": row.environment, "status": "connected", "host": result.get("host")},
             changed_fields=["last_test_status", "last_tested_at"],
-            event_data={"source": "superadmin_experian_connection_test"},
+            event_data={"source": "superadmin_experian_connection_test", "protocol": "lesotho_normal_search_rest_v0.5"},
         )
     )
     db.commit()

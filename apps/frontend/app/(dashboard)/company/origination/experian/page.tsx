@@ -5,6 +5,7 @@ import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
 import { originationApi } from "@/api/origination";
+import { listLoanProducts } from "@/api/loanProducts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, LENDING_ROLES, hasRole } from "@/types/auth";
 import type { CreditBureauDecisionContext, CreditBureauEnquiry, ExperianCompanyConfiguration } from "@/types/creditBureau";
 import type { OriginationApplication } from "@/types/origination";
+import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
@@ -36,13 +38,16 @@ export default function ExperianCreditBureauPage() {
   const [running, setRunning] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianCompanyConfiguration | null>(null);
   const [applications, setApplications] = useState<OriginationApplication[]>([]);
+  const [loanProducts, setLoanProducts] = useState<LoanProduct[]>([]);
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [enquiries, setEnquiries] = useState<CreditBureauEnquiry[]>([]);
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
 
   const [enabled, setEnabled] = useState(false);
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
-  const [requireBeforeAffordability, setRequireBeforeAffordability] = useState(false);
+  const [requirementMode, setRequirementMode] = useState<"optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products">("optional");
+  const [requiredAboveAmount, setRequiredAboveAmount] = useState("");
+  const [requiredProductIds, setRequiredProductIds] = useState<string[]>([]);
   const [includeCommitments, setIncludeCommitments] = useState(false);
   const [debtMode, setDebtMode] = useState<"max" | "bureau_only" | "declared_plus_bureau">("max");
   const [declineBelowScore, setDeclineBelowScore] = useState("");
@@ -53,12 +58,20 @@ export default function ExperianCreditBureauPage() {
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [consentMethod, setConsentMethod] = useState<"written" | "electronic" | "recorded" | "other">("written");
   const [consentReference, setConsentReference] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [address1, setAddress1] = useState("");
+  const [address2, setAddress2] = useState("");
+  const [enquiryPurpose, setEnquiryPurpose] = useState("12");
+  const [forceRefresh, setForceRefresh] = useState(false);
 
   const applyConfiguration = useCallback((row: ExperianCompanyConfiguration) => {
     setConfiguration(row);
     setEnabled(Boolean(row.is_enabled));
     setMaxReportAgeHours(Number(row.configuration.max_report_age_hours ?? 24));
-    setRequireBeforeAffordability(Boolean(row.configuration.require_before_affordability));
+    const requirement = row.configuration.requirement_mode;
+    setRequirementMode(requirement === "before_affordability" || requirement === "before_approval" || requirement === "amount_threshold" || requirement === "selected_products" ? requirement : row.configuration.require_before_affordability ? "before_affordability" : "optional");
+    setRequiredAboveAmount(row.configuration.required_above_amount == null ? "" : String(row.configuration.required_above_amount));
+    setRequiredProductIds(Array.isArray(row.configuration.required_product_ids) ? row.configuration.required_product_ids : []);
     setIncludeCommitments(Boolean(row.configuration.include_bureau_commitments_in_affordability));
     const mode = row.configuration.bureau_debt_mode;
     setDebtMode(mode === "bureau_only" || mode === "declared_plus_bureau" ? mode : "max");
@@ -71,12 +84,14 @@ export default function ExperianCreditBureauPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [config, apps] = await Promise.all([
+      const [config, apps, products] = await Promise.all([
         creditBureauApi.getExperianConfiguration(),
         originationApi.listApplications(),
+        listLoanProducts(),
       ]);
       applyConfiguration(config);
       setApplications(apps);
+      setLoanProducts(products.filter((item) => item.is_active));
       setSelectedApplicationId((current) => current || apps[0]?.id || "");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian workspace could not be loaded."));
@@ -122,7 +137,10 @@ export default function ExperianCreditBureauPage() {
         is_enabled: enabled,
         configuration: {
           max_report_age_hours: Math.max(1, Number(maxReportAgeHours || 24)),
-          require_before_affordability: requireBeforeAffordability,
+          requirement_mode: requirementMode,
+          required_above_amount: requirementMode === "amount_threshold" && requiredAboveAmount.trim() ? Number(requiredAboveAmount) : null,
+          required_product_ids: requirementMode === "selected_products" ? requiredProductIds : [],
+          require_before_affordability: requirementMode === "before_affordability",
           include_bureau_commitments_in_affordability: includeCommitments,
           bureau_debt_mode: debtMode,
           decline_below_score: declineBelowScore.trim() ? Number(declineBelowScore) : null,
@@ -151,12 +169,25 @@ export default function ExperianCreditBureauPage() {
         consent_method: consentMethod,
         consent_reference: consentReference.trim() || null,
         permissible_purpose: "credit_application",
+        enquiry_purpose: Number(enquiryPurpose),
+        result_type: "JSON",
+        postal_code: postalCode.trim(),
+        address1: address1.trim() || null,
+        address2: address2.trim() || null,
+        cs_data: true,
+        cpa_plus_nlr_data: true,
+        run_compuscore: true,
+        force_refresh: forceRefresh,
       });
       toast.success("Experian credit check completed", {
         description: row.score === null ? "The bureau response was stored and normalized." : `Score ${row.score}${row.risk_band ? ` · ${row.risk_band}` : ""}`,
       });
       setConsentConfirmed(false);
       setConsentReference("");
+      setPostalCode("");
+      setAddress1("");
+      setAddress2("");
+      setForceRefresh(false);
       await loadApplicationBureau(selectedApplicationId);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian credit check could not be completed."));
@@ -176,7 +207,7 @@ export default function ExperianCreditBureauPage() {
             <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Credit bureau integration</p>
             <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Experian</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Use LoanHub&apos;s centrally secured Experian connection. Your company controls participation and its credit-risk policy; the Platform Owner controls all Experian credentials and API mapping.
+              Use LoanHub&apos;s centrally secured Experian connection. Your company controls participation and its credit-risk policy; the Platform Owner controls the central Experian Lesotho credentials and connection.
             </p>
           </div>
           <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
@@ -188,7 +219,7 @@ export default function ExperianCreditBureauPage() {
           <CircleAlert className="h-4 w-4" />
           <AlertTitle>Platform Experian connection is not ready</AlertTitle>
           <AlertDescription>
-            The LoanHub Platform Owner must configure credentials, product mapping, pass the OAuth test and enable Experian under Platform configuration → API &amp; integrations. Companies cannot enter or view those secrets.
+            The LoanHub Platform Owner must configure the Experian Lesotho credentials, pass the connectivity test and enable Experian under Platform configuration → API &amp; integrations. Companies cannot enter or view those secrets.
           </AlertDescription>
         </Alert>
       ) : (
@@ -196,7 +227,7 @@ export default function ExperianCreditBureauPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Central Experian connection ready</AlertTitle>
           <AlertDescription>
-            {titleCase(configuration?.platform.environment ?? "configured")} environment · OAuth {configuration?.platform.last_test_status === "connected" ? "connected" : "not tested"}. Your company can enable Experian and run consented checks.
+            {titleCase(configuration?.platform.environment ?? "configured")} environment · connection {configuration?.platform.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
           </AlertDescription>
         </Alert>
       )}
@@ -211,7 +242,7 @@ export default function ExperianCreditBureauPage() {
             <Info label="Platform status" value={configuration?.platform.is_enabled ? "Enabled" : "Disabled"} good={Boolean(configuration?.platform.is_enabled)} />
             <Info label="Environment" value={configuration?.platform.environment ? titleCase(configuration.platform.environment) : "Not configured"} good={Boolean(configuration?.platform.environment)} />
             <Info label="Credentials" value={configuration?.platform.has_credentials ? "Stored centrally" : "Not configured"} good={Boolean(configuration?.platform.has_credentials)} />
-            <Info label="OAuth" value={configuration?.platform.last_test_status ? titleCase(configuration.platform.last_test_status) : "Not tested"} good={configuration?.platform.last_test_status === "connected"} />
+            <Info label="Connection test" value={configuration?.platform.last_test_status ? titleCase(configuration.platform.last_test_status) : "Not tested"} good={configuration?.platform.last_test_status === "connected"} />
             <Info label="Product" value={configuration?.platform.product || "Not configured"} good={Boolean(configuration?.platform.product)} />
             <Info label="Ready for use" value={platformReady ? "Ready" : "Not ready"} good={platformReady} />
           </CardContent>
@@ -240,8 +271,51 @@ export default function ExperianCreditBureauPage() {
               <Field label="Refer below score"><Input type="number" min={0} max={1000} value={referBelowScore} onChange={(event) => setReferBelowScore(event.target.value)} disabled={!canConfigure} placeholder="Optional" /></Field>
             </div>
 
+            <div className="space-y-4 rounded-2xl border p-4">
+              <Field label="When is an Experian report required?">
+                <Select value={requirementMode} onValueChange={(value) => setRequirementMode(value as typeof requirementMode)} disabled={!canConfigure}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="optional">Optional · officer decides</SelectItem>
+                    <SelectItem value="before_affordability">Required before affordability</SelectItem>
+                    <SelectItem value="before_approval">Required before approval</SelectItem>
+                    <SelectItem value="amount_threshold">Required above a loan amount</SelectItem>
+                    <SelectItem value="selected_products">Required for selected products</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              {requirementMode === "amount_threshold" ? (
+                <Field label="Require Experian for amounts at or above">
+                  <Input type="number" min={0} step="0.01" value={requiredAboveAmount} onChange={(event) => setRequiredAboveAmount(event.target.value)} disabled={!canConfigure} placeholder="e.g. 5000" />
+                </Field>
+              ) : null}
+
+              {requirementMode === "selected_products" ? (
+                <div className="space-y-2">
+                  <Label>Products that require Experian</Label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {loanProducts.map((product) => (
+                      <label key={product.id} className="flex items-start gap-3 rounded-xl border p-3 text-sm">
+                        <Checkbox
+                          checked={requiredProductIds.includes(product.id)}
+                          onCheckedChange={(value) => setRequiredProductIds((current) => value === true ? [...new Set([...current, product.id])] : current.filter((id) => id !== product.id))}
+                          disabled={!canConfigure}
+                        />
+                        <span><strong>{product.name}</strong><span className="mt-1 block text-xs text-muted-foreground">{formatMoney(product.min_amount)} – {formatMoney(product.max_amount)}</span></span>
+                      </label>
+                    ))}
+                    {!loanProducts.length ? <p className="text-sm text-muted-foreground">No active loan products are available.</p> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <p className="text-xs text-muted-foreground">
+                Optional means LoanHub never blocks the loan because of Experian. Amount and product rules are enforced at approval; the affordability rule is enforced before affordability and remains protected at approval.
+              </p>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
-              <Toggle label="Require before affordability" checked={requireBeforeAffordability} onChange={setRequireBeforeAffordability} disabled={!canConfigure} />
               <Toggle label="Use bureau commitments in affordability" checked={includeCommitments} onChange={setIncludeCommitments} disabled={!canConfigure} />
               <Toggle label="Block applicants with defaults" checked={blockDefaults} onChange={setBlockDefaults} disabled={!canConfigure} />
               <Toggle label="Require identity match" checked={requireIdentityMatch} onChange={setRequireIdentityMatch} disabled={!canConfigure} />
@@ -271,6 +345,23 @@ export default function ExperianCreditBureauPage() {
             </div>
           </div>
 
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Field label="Enquiry purpose">
+              <Select value={enquiryPurpose} onValueChange={setEnquiryPurpose} disabled={!canRun}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="12">12 · Credit Assessment</SelectItem>
+                  <SelectItem value="11">11 · Affordability Assessment</SelectItem>
+                  <SelectItem value="16">16 · Account Management</SelectItem>
+                  <SelectItem value="15">15 · Debt Collection</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Postal code"><Input maxLength={5} value={postalCode} onChange={(event) => setPostalCode(event.target.value)} disabled={!canRun} placeholder="Required by Experian" /></Field>
+            <Field label="Address line 1 override"><Input maxLength={25} value={address1} onChange={(event) => setAddress1(event.target.value)} disabled={!canRun} placeholder="Uses borrower address if blank" /></Field>
+            <Field label="Address line 2 override"><Input maxLength={25} value={address2} onChange={(event) => setAddress2(event.target.value)} disabled={!canRun} placeholder="Uses town/district if blank" /></Field>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Consent method">
               <Select value={consentMethod} onValueChange={(value) => setConsentMethod(value as typeof consentMethod)} disabled={!canRun}>
@@ -281,12 +372,18 @@ export default function ExperianCreditBureauPage() {
             <Field label="Consent reference"><Input value={consentReference} onChange={(event) => setConsentReference(event.target.value)} disabled={!canRun} placeholder="Form, OTP, file or audit reference" /></Field>
           </div>
 
-          <label className="flex items-start gap-3 rounded-2xl border p-4">
-            <Checkbox checked={consentConfirmed} onCheckedChange={(value) => setConsentConfirmed(value === true)} disabled={!canRun || !companyReady} />
-            <span><strong>Borrower consent confirmed for this credit application</strong><span className="mt-1 block text-xs text-muted-foreground">LoanHub stores the consent method/reference with the company-scoped bureau enquiry.</span></span>
-          </label>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <label className="flex items-start gap-3 rounded-2xl border p-4">
+              <Checkbox checked={consentConfirmed} onCheckedChange={(value) => setConsentConfirmed(value === true)} disabled={!canRun || !companyReady} />
+              <span><strong>Borrower consent confirmed for this credit application</strong><span className="mt-1 block text-xs text-muted-foreground">LoanHub stores the consent method/reference with the company-scoped bureau enquiry.</span></span>
+            </label>
+            <label className="flex items-start gap-3 rounded-2xl border p-4">
+              <Checkbox checked={forceRefresh} onCheckedChange={(value) => setForceRefresh(value === true)} disabled={!canRun || !companyReady} />
+              <span><strong>Force a new paid enquiry</strong><span className="mt-1 block text-xs text-muted-foreground">Leave off to reuse a successful report that is still within the company&apos;s maximum report age.</span></span>
+            </label>
+          </div>
 
-          <LoadingButton loading={running} disabled={!canRun || !companyReady || !selectedApplicationId || !consentConfirmed} onClick={() => void runCreditCheck()}><Play className="h-4 w-4" />Run Experian credit check</LoadingButton>
+          <LoadingButton loading={running} disabled={!canRun || !companyReady || !selectedApplicationId || !consentConfirmed || !postalCode.trim()} onClick={() => void runCreditCheck()}><Play className="h-4 w-4" />Run Experian credit check</LoadingButton>
         </CardContent>
       </Card>
 

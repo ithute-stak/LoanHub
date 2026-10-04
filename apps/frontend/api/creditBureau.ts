@@ -31,6 +31,20 @@ export const creditBureauApi = {
       consent_method: "written" | "electronic" | "recorded" | "other";
       consent_reference?: string | null;
       permissible_purpose?: "credit_application";
+      enquiry_purpose?: number;
+      result_type?: "JSON" | "XML";
+      address1?: string | null;
+      address2?: string | null;
+      address3?: string | null;
+      address4?: string | null;
+      postal_code: string;
+      cs_data?: boolean;
+      cpa_plus_nlr_data?: boolean;
+      deeds?: boolean;
+      directors?: boolean;
+      run_compuscore?: boolean;
+      run_codix?: boolean;
+      force_refresh?: boolean;
     },
   ): Promise<CreditBureauEnquiry> =>
     (await api.post<CreditBureauEnquiry>(`/credit-bureau/applications/${applicationId}/experian`, payload)).data,
@@ -47,8 +61,6 @@ export const platformCreditBureauApi = {
     credentials?: {
       username: string;
       password: string;
-      client_id: string;
-      client_secret: string;
     } | null;
   }): Promise<ExperianPlatformConfiguration> =>
     (await api.put<ExperianPlatformConfiguration>("/platform-owner/credit-bureau/experian/configuration", payload)).data,
