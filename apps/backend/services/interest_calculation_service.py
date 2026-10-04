@@ -10,7 +10,7 @@ from database.models.enums import (
     INTEREST_METHOD_LABELS,
     LoanCalculationMethod,
 )
-from services.polyglot_runtime_service import rust_loan_preview
+from services.polyglot_runtime_service import record_parity_mismatch, rust_loan_preview
 
 MONEY = Decimal("0.01")
 HUNDRED = Decimal("100")
@@ -677,6 +677,8 @@ def calculate_loan_terms(
                     and rust_total == total_repayable
                     and rust_schedule == schedule_amounts
                 )
+                if not parity_passed:
+                    record_parity_mismatch("rust_compute")
                 details["compute_runtime"] = {
                     "python_authoritative": True,
                     "rust_used": parity_passed,
