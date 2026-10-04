@@ -20,6 +20,15 @@ type digestResponse struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		response, err := http.Get("http://127.0.0.1:8081/health/ready")
+		if err != nil || response.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		_ = response.Body.Close()
+		return
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
