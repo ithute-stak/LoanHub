@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
@@ -123,3 +124,40 @@ def go_digest(
         )
     except (OSError, ValueError, urllib.error.URLError):
         return None
+
+
+def stable_sha256_text(*, correlation_id: str, payload: str) -> str:
+    """Delegate replayable text hashing to Go when available, otherwise use Python."""
+    result = go_digest(correlation_id=correlation_id, payload=payload)
+    candidate = str((result or {}).get("sha256") or "").lower()
+    if len(candidate) == 64 and all(ch in "0123456789abcdef" for ch in candidate):
+        return candidate
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def rust_variance_classification(
+    *,
+    expected_cents: int,
+    actual_cents: int,
+) -> dict | None:
+    """Delegate deterministic reconciliation variance classification to Rust."""
+    base_url = rust_compute_url()
+    if not base_url:
+        return None
+    query = urllib.parse.urlencode(
+        {
+            "expected_cents": int(expected_cents),
+            "actual_cents": int(actual_cents),
+        }
+    )
+    try:
+        value = _get_json(f"{base_url}/v1/variance-classification?{query}")
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    if value.get("status") not in {"matched", "shortage", "excess"}:
+        return None
+    try:
+        value["variance_cents"] = int(value["variance_cents"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value
