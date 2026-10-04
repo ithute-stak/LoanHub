@@ -1,0 +1,16 @@
+services:
+  backend:
+    environment:
+      LOANHUB_RUST_COMPUTE_URL: http://rust-compute:8082
+      LOANHUB_GO_WORKER_URL: http://go-worker:8081
+    depends_on:
+      rust-compute:
+        condition: service_healthy
+      go-worker:
+        condition: service_healthy
+
+  rust-compute:
+    profiles: []
+
+  go-worker:
+    profiles: []
