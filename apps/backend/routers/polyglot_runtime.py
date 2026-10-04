@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from core.access_control import require_platform_admin
 from database.models.user import User
-from services.polyglot_runtime_service import worker_statuses
+from services.polyglot_runtime_service import runtime_metrics, worker_statuses
 
 
 router = APIRouter(prefix="/runtime", tags=["Runtime"])
@@ -26,6 +26,7 @@ def worker_runtime_status(_: User = Depends(require_platform_admin)):
             }
             for item in statuses
         ],
+        "runtime_metrics": runtime_metrics(),
         "rules": {
             "loan_decisions": "python_authoritative",
             "accounting": "python_authoritative",
