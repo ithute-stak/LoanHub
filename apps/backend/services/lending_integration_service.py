@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from database.models.lending_operations import CDASPayrollProfile
-from database.models.origination import AffordabilityAssessment, BorrowerKYCProfile
+from database.models.origination import AffordabilityAssessment, BorrowerEmploymentProfile, BorrowerKYCProfile
 from database.models.professional_lending import DirectLoanApplication
 from services.credit_bureau_policy_service import (
     company_experian_policy,
@@ -108,6 +108,68 @@ def application_integration_readiness(
     bureau_fresh = latest_bureau is not None
     bureau_ready = not bureau_required_approval or bureau_fresh
 
+    if bureau_fresh and latest_bureau:
+        decline_below = bureau_policy.get("decline_below_score")
+        refer_below = bureau_policy.get("refer_below_score")
+        score = latest_bureau.score
+        if decline_below is not None and score is not None and score < int(decline_below):
+            bureau_ready = False
+            blockers.append(
+                {
+                    "source": "bureau",
+                    "code": "score_below_decline_threshold",
+                    "message": "The latest Experian score is below the company's configured decline threshold.",
+                    "action_path": f"/company/origination/experian?application={application.id}",
+                }
+            )
+        elif refer_below is not None and score is not None and score < int(refer_below):
+            warnings.append(
+                {
+                    "source": "bureau",
+                    "code": "score_requires_referral",
+                    "message": "The latest Experian score is below the company's referral threshold and requires manager attention.",
+                    "action_path": f"/company/origination/experian?application={application.id}",
+                }
+            )
+
+        if bureau_policy.get("block_defaults") and int(bureau_normalized.get("defaults_count") or 0) > 0:
+            bureau_ready = False
+            blockers.append(
+                {
+                    "source": "bureau",
+                    "code": "defaults_blocked",
+                    "message": "Experian reports defaults and company policy blocks approval.",
+                    "action_path": f"/company/origination/experian?application={application.id}",
+                }
+            )
+
+        if bureau_policy.get("require_identity_match") and bureau_normalized.get("identity_match") is not True:
+            bureau_ready = False
+            blockers.append(
+                {
+                    "source": "bureau",
+                    "code": "identity_match_required",
+                    "message": "Experian identity matching has not passed the company's approval policy.",
+                    "action_path": f"/company/origination/experian?application={application.id}",
+                }
+            )
+
+        if bureau_policy.get("include_bureau_commitments_in_affordability") and assessment:
+            input_snapshot = dict(assessment.input_snapshot or {})
+            bureau_snapshot = input_snapshot.get("credit_bureau")
+            bureau_snapshot = dict(bureau_snapshot) if isinstance(bureau_snapshot, dict) else {}
+            assessment_enquiry_id = str(bureau_snapshot.get("enquiry_id") or "")
+            if assessment_enquiry_id != str(latest_bureau.id):
+                core_ready = False
+                blockers.append(
+                    {
+                        "source": "core",
+                        "code": "affordability_stale_after_bureau",
+                        "message": "A newer Experian report is available than the one used for affordability. Recalculate affordability before approval.",
+                        "action_path": f"/company/origination/new?application={application.id}",
+                    }
+                )
+
     if bureau_required_approval and not bureau_fresh:
         blockers.append(
             {
@@ -135,6 +197,11 @@ def application_integration_readiness(
         )
         .first()
     )
+    employment = (
+        db.query(BorrowerEmploymentProfile)
+        .filter(BorrowerEmploymentProfile.borrower_id == application.borrower_id)
+        .first()
+    )
     cdas_selected = bool(application.cdas_collection_enabled)
     cdas_verified = bool(
         cdas_profile
@@ -149,6 +216,24 @@ def application_integration_readiness(
                 "code": "payroll_profile_not_verified",
                 "message": "CDAS collection is selected, but the borrower does not yet have a verified CDAS payroll profile.",
                 "action_path": f"/company/cdas?application={application.id}",
+            }
+        )
+
+    employment_employee_number = str(employment.employee_number or "").strip() if employment else ""
+    cdas_employee_number = str(cdas_profile.employee_number or "").strip() if cdas_profile else ""
+    if (
+        cdas_selected
+        and cdas_verified
+        and employment_employee_number
+        and cdas_employee_number
+        and employment_employee_number.casefold() != cdas_employee_number.casefold()
+    ):
+        warnings.append(
+            {
+                "source": "cdas",
+                "code": "employee_number_mismatch",
+                "message": "The employee number in Core LoanHub employment data differs from the verified CDAS employee number.",
+                "action_path": f"/company/origination/new?application={application.id}",
             }
         )
 
