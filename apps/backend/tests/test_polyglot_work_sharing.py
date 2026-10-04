@@ -174,3 +174,70 @@ def test_rust_loan_engine_supports_first_deterministic_methods() -> None:
     assert '"compound_interest" => compound(req)' in rust
     assert "LoanCalculationMethod.REDUCING_BALANCE" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
     assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
+
+
+def test_java_event_worker_is_registered_and_non_authoritative() -> None:
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    java = (REPO / "services/worker-java/src/main/java/ls/co/loanhub/worker/EventWorker.java").read_text(encoding="utf-8")
+    compose = (REPO / "compose.yaml").read_text(encoding="utf-8")
+
+    assert "LOANHUB_JAVA_WORKER_URL" in runtime
+    assert "def java_canonicalize_event(" in runtime
+    assert "def java_event_batch_summary(" in runtime
+    assert '"/v1/events/canonicalize"' in java
+    assert '"/v1/events/batch-summary"' in java
+    assert '"authoritative", false' in java
+    assert "java-worker:" in compose
+    assert "worker-java.jar" in compose
+
+
+def test_webhook_event_canonicalization_uses_java_only_after_payload_parity(monkeypatch) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from services import webhook_outbox_service as webhook
+
+    event = SimpleNamespace(
+        id="event-1",
+        event_type="loan.approved",
+        payload={"z": 1, "a": {"y": 2, "b": 3}},
+    )
+    canonical = '{"a":{"b":3,"y":2},"z":1}'
+    monkeypatch.setattr(
+        webhook,
+        "java_canonicalize_event",
+        lambda **kwargs: {
+            "authoritative": False,
+            "correlation_id": "webhook:event-1",
+            "event_type": "loan.approved",
+            "canonical_json": canonical,
+            "payload_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        },
+    )
+
+    assert webhook._canonical_event_body(event) == canonical.encode()
+
+
+def test_webhook_event_canonicalization_falls_back_on_java_mismatch(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from services import webhook_outbox_service as webhook
+
+    event = SimpleNamespace(
+        id="event-2",
+        event_type="payment.received",
+        payload={"amount": 100, "currency": "LSL"},
+    )
+    monkeypatch.setattr(
+        webhook,
+        "java_canonicalize_event",
+        lambda **kwargs: {
+            "authoritative": False,
+            "correlation_id": "webhook:event-2",
+            "event_type": "payment.received",
+            "canonical_json": '{"amount":999,"currency":"LSL"}',
+            "payload_sha256": "0" * 64,
+        },
+    )
+
+    assert webhook._canonical_event_body(event) == b'{"amount":100,"currency":"LSL"}'
