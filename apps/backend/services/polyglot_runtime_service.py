@@ -7,6 +7,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from threading import Lock
+from time import monotonic
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,120 @@ class WorkerStatus:
     configured: bool
     ready: bool
     detail: str | None = None
+
+
+_CIRCUIT_FAILURE_THRESHOLD = 3
+_CIRCUIT_OPEN_SECONDS = 30.0
+_runtime_lock = Lock()
+_runtime_state: dict[str, dict[str, float | int | str | None]] = {}
+
+
+def _state(name: str) -> dict[str, float | int | str | None]:
+    with _runtime_lock:
+        return _runtime_state.setdefault(
+            name,
+            {
+                "calls": 0,
+                "successes": 0,
+                "failures": 0,
+                "fallbacks": 0,
+                "parity_mismatches": 0,
+                "consecutive_failures": 0,
+                "circuit_open_until": 0.0,
+                "last_latency_ms": None,
+                "last_error": None,
+            },
+        )
+
+
+def _worker_allowed(name: str) -> bool:
+    state = _state(name)
+    return float(state.get("circuit_open_until") or 0.0) <= monotonic()
+
+
+def _record_success(name: str, started: float) -> None:
+    with _runtime_lock:
+        state = _runtime_state.setdefault(name, {})
+        state["calls"] = int(state.get("calls") or 0) + 1
+        state["successes"] = int(state.get("successes") or 0) + 1
+        state["consecutive_failures"] = 0
+        state["circuit_open_until"] = 0.0
+        state["last_latency_ms"] = round((monotonic() - started) * 1000, 3)
+        state["last_error"] = None
+
+
+def _record_failure(name: str, started: float, error: BaseException | str) -> None:
+    with _runtime_lock:
+        state = _runtime_state.setdefault(name, {})
+        state["calls"] = int(state.get("calls") or 0) + 1
+        state["failures"] = int(state.get("failures") or 0) + 1
+        state["fallbacks"] = int(state.get("fallbacks") or 0) + 1
+        consecutive = int(state.get("consecutive_failures") or 0) + 1
+        state["consecutive_failures"] = consecutive
+        state["last_latency_ms"] = round((monotonic() - started) * 1000, 3)
+        state["last_error"] = type(error).__name__ if isinstance(error, BaseException) else str(error)[:120]
+        if consecutive >= _CIRCUIT_FAILURE_THRESHOLD:
+            state["circuit_open_until"] = monotonic() + _CIRCUIT_OPEN_SECONDS
+
+
+def record_parity_mismatch(name: str) -> None:
+    with _runtime_lock:
+        state = _runtime_state.setdefault(name, {})
+        state["parity_mismatches"] = int(state.get("parity_mismatches") or 0) + 1
+        state["fallbacks"] = int(state.get("fallbacks") or 0) + 1
+
+
+def runtime_metrics() -> dict[str, dict[str, float | int | str | bool | None]]:
+    now = monotonic()
+    with _runtime_lock:
+        snapshot = {}
+        for name, state in _runtime_state.items():
+            open_until = float(state.get("circuit_open_until") or 0.0)
+            snapshot[name] = {
+                "calls": int(state.get("calls") or 0),
+                "successes": int(state.get("successes") or 0),
+                "failures": int(state.get("failures") or 0),
+                "fallbacks": int(state.get("fallbacks") or 0),
+                "parity_mismatches": int(state.get("parity_mismatches") or 0),
+                "consecutive_failures": int(state.get("consecutive_failures") or 0),
+                "circuit_open": open_until > now,
+                "circuit_retry_in_seconds": round(max(0.0, open_until - now), 3),
+                "last_latency_ms": state.get("last_latency_ms"),
+                "last_error": state.get("last_error"),
+            }
+        return snapshot
+
+
+def _guarded_get_json(name: str, url: str, timeout: float) -> dict | None:
+    if not _worker_allowed(name):
+        with _runtime_lock:
+            state = _runtime_state.setdefault(name, {})
+            state["fallbacks"] = int(state.get("fallbacks") or 0) + 1
+        return None
+    started = monotonic()
+    try:
+        value = _get_json(url, timeout=timeout)
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        _record_failure(name, started, exc)
+        return None
+    _record_success(name, started)
+    return value
+
+
+def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> dict | None:
+    if not _worker_allowed(name):
+        with _runtime_lock:
+            state = _runtime_state.setdefault(name, {})
+            state["fallbacks"] = int(state.get("fallbacks") or 0) + 1
+        return None
+    started = monotonic()
+    try:
+        value = _post_json(url, payload, timeout=timeout)
+    except (OSError, TypeError, ValueError, urllib.error.URLError) as exc:
+        _record_failure(name, started, exc)
+        return None
+    _record_success(name, started)
+    return value
 
 
 def _get_json(url: str, timeout: float = 0.8) -> dict:
@@ -107,10 +223,11 @@ def rust_affordability_headroom_preview(
             "proposed_cents": int(proposed_cents),
         }
     )
-    try:
-        return _get_json(f"{base_url}/v1/affordability-headroom?{query}")
-    except (OSError, ValueError, urllib.error.URLError):
-        return None
+    return _guarded_get_json(
+        "rust_compute",
+        f"{base_url}/v1/affordability-headroom?{query}",
+        timeout=0.8,
+    )
 
 
 def go_digest(
@@ -122,13 +239,12 @@ def go_digest(
     base_url = go_worker_url()
     if not base_url:
         return None
-    try:
-        return _post_json(
-            f"{base_url}/v1/digest",
-            {"correlation_id": correlation_id, "payload": payload},
-        )
-    except (OSError, ValueError, urllib.error.URLError):
-        return None
+    return _guarded_post_json(
+        "go_worker",
+        f"{base_url}/v1/digest",
+        {"correlation_id": correlation_id, "payload": payload},
+        timeout=1.0,
+    )
 
 
 def stable_sha256_text(*, correlation_id: str, payload: str) -> str:
@@ -155,9 +271,12 @@ def rust_variance_classification(
             "actual_cents": int(actual_cents),
         }
     )
-    try:
-        value = _get_json(f"{base_url}/v1/variance-classification?{query}")
-    except (OSError, ValueError, urllib.error.URLError):
+    value = _guarded_get_json(
+        "rust_compute",
+        f"{base_url}/v1/variance-classification?{query}",
+        timeout=0.8,
+    )
+    if value is None:
         return None
     if value.get("status") not in {"matched", "shortage", "excess"}:
         return None
@@ -181,20 +300,20 @@ def rust_loan_preview(
     base_url = rust_compute_url()
     if not base_url:
         return None
-    try:
-        value = _post_json(
-            f"{base_url}/v1/loan-preview",
-            {
-                "method": method,
-                "principal": principal,
-                "rate_percent": rate_percent,
-                "term_months": int(term_months),
-                "processing_fee": processing_fee,
-                "due_dates": list(due_dates),
-            },
-            timeout=1.5,
-        )
-    except (OSError, ValueError, urllib.error.URLError):
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/loan-preview",
+        {
+            "method": method,
+            "principal": principal,
+            "rate_percent": rate_percent,
+            "term_months": int(term_months),
+            "processing_fee": processing_fee,
+            "due_dates": list(due_dates),
+        },
+        timeout=1.5,
+    )
+    if value is None:
         return None
     if value.get("authoritative") is not False:
         return None
@@ -215,17 +334,17 @@ def java_canonicalize_event(
     base_url = java_worker_url()
     if not base_url:
         return None
-    try:
-        value = _post_json(
-            f"{base_url}/v1/events/canonicalize",
-            {
-                "correlation_id": correlation_id,
-                "event_type": event_type,
-                "payload": payload,
-            },
-            timeout=1.5,
-        )
-    except (OSError, TypeError, ValueError, urllib.error.URLError):
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/events/canonicalize",
+        {
+            "correlation_id": correlation_id,
+            "event_type": event_type,
+            "payload": payload,
+        },
+        timeout=1.5,
+    )
+    if value is None:
         return None
     if value.get("authoritative") is not False:
         return None
@@ -245,13 +364,13 @@ def java_event_batch_summary(*, events: list[dict]) -> dict | None:
     base_url = java_worker_url()
     if not base_url:
         return None
-    try:
-        value = _post_json(
-            f"{base_url}/v1/events/batch-summary",
-            {"events": events},
-            timeout=1.5,
-        )
-    except (OSError, ValueError, urllib.error.URLError):
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/events/batch-summary",
+        {"events": events},
+        timeout=1.5,
+    )
+    if value is None:
         return None
     if value.get("authoritative") is not False:
         return None
