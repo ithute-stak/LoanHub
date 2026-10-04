@@ -14,6 +14,7 @@ from database.models.professional_lending import DirectLoanApplication
 
 
 DEFAULT_EXPERIAN_POLICY: dict[str, Any] = {
+    "environment": "sandbox",
     "requirement_mode": "optional",
     "max_report_age_hours": 24,
     "required_above_amount": None,
@@ -55,9 +56,10 @@ def latest_fresh_experian_enquiry(
     application_id: UUID,
     borrower_id: UUID,
     max_report_age_hours: int,
+    environment: str = "sandbox",
 ) -> CreditBureauEnquiry | None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_report_age_hours)
-    return (
+    rows = (
         db.query(CreditBureauEnquiry)
         .filter(
             CreditBureauEnquiry.company_id == company_id,
@@ -69,8 +71,17 @@ def latest_fresh_experian_enquiry(
             CreditBureauEnquiry.completed_at >= cutoff,
         )
         .order_by(CreditBureauEnquiry.completed_at.desc(), CreditBureauEnquiry.requested_at.desc())
-        .first()
+        .limit(50)
+        .all()
     )
+    selected_environment = "live" if str(environment).lower() in {"live", "production"} else "sandbox"
+    for row in rows:
+        metadata = dict(row.enquiry_data or {}).get("experian")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        row_environment = "live" if str(metadata.get("environment") or "sandbox").lower() in {"live", "production"} else "sandbox"
+        if row_environment == selected_environment:
+            return row
+    return None
 
 
 def experian_required_for_application(
@@ -135,6 +146,7 @@ def assert_experian_requirement(
         application_id=application.id,
         borrower_id=application.borrower_id,
         max_report_age_hours=int(policy["max_report_age_hours"]),
+        environment=str(policy.get("environment") or "sandbox"),
     )
     if required and not latest:
         mode = str(policy.get("requirement_mode") or "optional")
