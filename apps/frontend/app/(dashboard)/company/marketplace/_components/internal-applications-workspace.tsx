@@ -141,6 +141,16 @@ export function InternalApplicationsWorkspace() {
 
     useEffect(() => { void load(); }, [load]);
 
+    useEffect(() => {
+        if (selected || applications.length === 0 || products.length === 0) return;
+        const requestedApplicationId = typeof window !== "undefined"
+            ? new URLSearchParams(window.location.search).get("application")
+            : null;
+        if (!requestedApplicationId) return;
+        const requested = applications.find((application) => application.id === requestedApplicationId);
+        if (requested) openApplication(requested);
+    }, [applications, products, selected]);
+
     const caseByApplication = useMemo(
         () => new Map((committee?.cases ?? []).map((item) => [item.application_id, item])),
         [committee],
