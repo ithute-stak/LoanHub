@@ -20,7 +20,7 @@ export type ExperianCompanyConfiguration = {
   platform: {
     configured: boolean;
     is_enabled: boolean;
-    environment: "sandbox" | "uat" | "production" | string | null;
+    environment: "sandbox" | "live" | string | null;
     has_credentials: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
@@ -33,7 +33,7 @@ export type ExperianCompanyConfiguration = {
 export type ExperianPlatformConfiguration = {
   provider: "experian";
   scope: "platform";
-  environment: "sandbox" | "uat" | "production" | string;
+  environment: "sandbox" | "live" | string;
   is_enabled: boolean;
   has_credentials: boolean;
   last_test_status: string | null;
