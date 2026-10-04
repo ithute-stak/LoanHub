@@ -24,6 +24,7 @@ FROM dependencies AS production-dependencies
 RUN pnpm prune --prod
 
 FROM rust:1.85-alpine AS wasm-builder
+RUN apk add --no-cache build-base musl-dev
 WORKDIR /src
 RUN rustup target add wasm32-unknown-unknown
 COPY wasm/loanhub-compute/Cargo.toml ./
