@@ -20,7 +20,12 @@ from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatu
 from database.models.governance_control import ApprovalRequest, PaymentAdjustment
 from database.models.payment import PaymentTransaction
 from database.models.reconciliation import ReconciliationBatch, ReconciliationEvent, ReconciliationLine
-from services.polyglot_runtime_service import rust_variance_classification, stable_sha256_text
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_variance_classification,
+    stable_sha256_text,
+    workload_routing_mode,
+)
 
 
 MONEY = Decimal("0.01")
@@ -178,18 +183,35 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
 
     expected_cents = int(expected * 100)
     actual_cents = int(actual * 100)
-    delegated = rust_variance_classification(
-        expected_cents=expected_cents,
-        actual_cents=actual_cents,
+    python_status = (
+        "matched" if variance == 0 else "shortage" if variance < 0 else "excess"
     )
-    delegated_status = (
-        str(delegated.get("status"))
-        if delegated
-        and int(delegated.get("variance_cents", 0)) == int(variance * 100)
+    routing_mode = workload_routing_mode("rust_reconciliation")
+    delegated = (
+        rust_variance_classification(
+            expected_cents=expected_cents,
+            actual_cents=actual_cents,
+        )
+        if routing_mode != "off"
         else None
     )
-    status_value = delegated_status or (
-        "matched" if variance == 0 else "shortage" if variance < 0 else "excess"
+    delegated_status = None
+    if delegated:
+        delegated_variance = int(delegated.get("variance_cents", 0))
+        delegated_candidate = str(delegated.get("status") or "")
+        parity_passed = (
+            delegated_variance == int(variance * 100)
+            and delegated_candidate == python_status
+        )
+        if parity_passed:
+            delegated_status = delegated_candidate
+        else:
+            record_parity_mismatch("rust_compute")
+
+    status_value = (
+        delegated_status
+        if routing_mode == "prefer-worker" and delegated_status
+        else python_status
     )
 
     line.matched_payment_id = payment.id
