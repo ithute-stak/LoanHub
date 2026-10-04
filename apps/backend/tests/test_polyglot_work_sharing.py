@@ -31,3 +31,56 @@ def test_workers_are_bounded_and_health_checked() -> None:
     assert "/v1/digest" in go
     assert "Native kernel boundary" in native
     assert "Server-side Python remains authoritative" in wasm
+
+
+def test_go_hashing_has_python_fallback(monkeypatch) -> None:
+    from services import polyglot_runtime_service as runtime
+
+    monkeypatch.setenv("LOANHUB_GO_WORKER_URL", "http://go-worker:8081")
+    monkeypatch.setattr(runtime, "_post_json", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("down")))
+
+    value = runtime.stable_sha256_text(correlation_id="test", payload="LoanHub")
+    assert value == "67f9129b74eae37edb5b7ea5805b720977b0d1c6d1786211ec283b1f67cd982e"
+
+
+def test_go_hashing_accepts_valid_worker_digest(monkeypatch) -> None:
+    from services import polyglot_runtime_service as runtime
+
+    digest = "a" * 64
+    monkeypatch.setenv("LOANHUB_GO_WORKER_URL", "http://go-worker:8081")
+    monkeypatch.setattr(runtime, "_post_json", lambda *args, **kwargs: {"sha256": digest})
+
+    assert runtime.stable_sha256_text(correlation_id="test", payload="anything") == digest
+
+
+def test_rust_variance_classification_validates_worker_response(monkeypatch) -> None:
+    from services import polyglot_runtime_service as runtime
+
+    monkeypatch.setenv("LOANHUB_RUST_COMPUTE_URL", "http://rust-compute:8082")
+    monkeypatch.setattr(
+        runtime,
+        "_get_json",
+        lambda *args, **kwargs: {
+            "status": "shortage",
+            "variance_cents": -125,
+            "authoritative": False,
+        },
+    )
+
+    assert runtime.rust_variance_classification(
+        expected_cents=1000,
+        actual_cents=875,
+    ) == {
+        "status": "shortage",
+        "variance_cents": -125,
+        "authoritative": False,
+    }
+
+
+def test_reconciliation_uses_go_and_rust_with_python_safety() -> None:
+    service = (ROOT / "services/reconciliation_service.py").read_text(encoding="utf-8")
+
+    assert "stable_sha256_text(" in service
+    assert "rust_variance_classification(" in service
+    assert 'delegated_status or (' in service
+    assert '"matched" if variance == 0 else "shortage" if variance < 0 else "excess"' in service
