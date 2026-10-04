@@ -55,9 +55,10 @@ def test_cdas_approved_loan_registration_draft_is_local_and_provider_safe() -> N
     assert "principal_amount=loan.principal_amount or 0" in router
     assert "reference_no=loan.loan_reference" in router
     assert '"provider_request_sent": False' in router
-    assert "client.add_update_deduction" not in router.split(
+    draft_block = router.split(
         '@router.get("/loans/{loan_id}/registration-draft")', 1
-    )[1].split('@router.get("/operations")', 1)[0]
+    )[1].split('@router.post("/loans/{loan_id}/register")', 1)[0]
+    assert "client.add_update_deduction" not in draft_block
 
 
 def test_cdas_workspace_can_manually_link_verification_to_application() -> None:
