@@ -258,7 +258,7 @@ def application_integration_readiness(
                 "source": "cdas",
                 "code": "company_connection_not_configured",
                 "message": "CDAS collection is selected, but this company has not completed its CDAS connection configuration.",
-                "action_path": "/company/settings",
+                "action_path": "/company/settings?tab=cdas",
             }
         )
     elif cdas_selected and not cdas_provider_enabled:
