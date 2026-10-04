@@ -6,7 +6,7 @@ COPY native-cpp/src ./src
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release
 
-FROM rust:1.82-alpine AS rust-build
+FROM rust:1.85-alpine AS rust-build
 WORKDIR /src/compute-rust
 COPY compute-rust/Cargo.toml ./
 COPY compute-rust/src ./src
