@@ -303,12 +303,27 @@ def application_integration_readiness(
     )
     ready_for_approval = bool(core_ready and bureau_ready and cdas_ready)
 
+    hard_decline_codes = {
+        "affordability_not_positive",
+        "score_below_decline_threshold",
+        "defaults_blocked",
+        "identity_match_required",
+    }
+    blocker_codes = {item["code"] for item in blockers}
+    if ready_for_approval:
+        final_decision = "loanable"
+    elif blocker_codes & hard_decline_codes:
+        final_decision = "not_loanable"
+    else:
+        final_decision = "action_required"
+
     return {
         "application_id": str(application.id),
         "application_reference": application.application_reference,
         "borrower_id": str(application.borrower_id),
         "ready_for_affordability": ready_for_affordability,
         "ready_for_approval": ready_for_approval,
+        "final_decision": final_decision,
         "blockers": blockers,
         "warnings": warnings,
         "core": {
@@ -328,6 +343,7 @@ def application_integration_readiness(
             "fresh": bureau_fresh,
             "max_report_age_hours": int(bureau_policy["max_report_age_hours"]),
             "enquiry_id": str(latest_bureau.id) if latest_bureau else None,
+            "completed_at": latest_bureau.completed_at.isoformat() if latest_bureau and latest_bureau.completed_at else None,
             "score": latest_bureau.score if latest_bureau else None,
             "risk_band": latest_bureau.risk_grade if latest_bureau else None,
             "monthly_commitments": float(latest_bureau.monthly_obligations or 0) if latest_bureau else None,
