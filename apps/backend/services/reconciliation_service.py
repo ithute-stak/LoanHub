@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import re
 import secrets
 from collections import defaultdict
@@ -21,6 +20,7 @@ from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatu
 from database.models.governance_control import ApprovalRequest, PaymentAdjustment
 from database.models.payment import PaymentTransaction
 from database.models.reconciliation import ReconciliationBatch, ReconciliationEvent, ReconciliationLine
+from services.polyglot_runtime_service import rust_variance_classification, stable_sha256_text
 
 
 MONEY = Decimal("0.01")
@@ -65,7 +65,10 @@ def source_fingerprint(*, company_id: UUID, source_type: str, transaction_date: 
         str(money(amount)),
         direction.strip().lower(),
     ])
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return stable_sha256_text(
+        correlation_id=f"reconciliation-source:{company_id}:{transaction_date.isoformat()}",
+        payload=raw,
+    )
 
 
 def _event(db: Session, batch: ReconciliationBatch, event_type: str, actor_user_id: UUID | None, *, line_id: UUID | None = None, payload: dict[str, Any] | None = None) -> None:
@@ -172,6 +175,23 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
     expected = money(payment.amount)
     actual = money(line.amount)
     variance = money(actual - expected)
+
+    expected_cents = int(expected * 100)
+    actual_cents = int(actual * 100)
+    delegated = rust_variance_classification(
+        expected_cents=expected_cents,
+        actual_cents=actual_cents,
+    )
+    delegated_status = (
+        str(delegated.get("status"))
+        if delegated
+        and int(delegated.get("variance_cents", 0)) == int(variance * 100)
+        else None
+    )
+    status_value = delegated_status or (
+        "matched" if variance == 0 else "shortage" if variance < 0 else "excess"
+    )
+
     line.matched_payment_id = payment.id
     line.matched_loan_id = payment.loan_id
     line.matched_borrower_id = payment.borrower_id
@@ -180,11 +200,11 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
     line.match_method = method
     line.match_confidence = confidence
     line.matched_at = datetime.now(timezone.utc)
-    if variance == 0:
+    if status_value == "matched":
         line.status = "matched"
         line.exception_code = None
         line.exception_reason = None
-    elif variance < 0:
+    elif status_value == "shortage":
         line.status = "shortage"
         line.exception_code = "AMOUNT_SHORT"
         line.exception_reason = "External source amount is lower than the matched LoanHub payment"
