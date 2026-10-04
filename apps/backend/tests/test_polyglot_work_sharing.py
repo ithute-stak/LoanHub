@@ -273,3 +273,35 @@ def test_rust_wasm_browser_preview_is_built_and_parity_checked() -> None:
     assert 'Math.abs(previewTotal - Number(result.total_repayable)) < 0.005' in api
     assert "wasm32-unknown-unknown" in dockerfile
     assert "loanhub_compute_wasm.wasm" in dockerfile
+
+
+def test_polyglot_circuit_breaker_opens_after_repeated_failures(monkeypatch) -> None:
+    from services import polyglot_runtime_service as runtime
+
+    runtime._runtime_state.clear()
+    monkeypatch.setenv("LOANHUB_GO_WORKER_URL", "http://go-worker:8081")
+    monkeypatch.setattr(
+        runtime,
+        "_post_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("down")),
+    )
+
+    for _ in range(runtime._CIRCUIT_FAILURE_THRESHOLD):
+        assert runtime.go_digest(correlation_id="test", payload="LoanHub") is None
+
+    metrics = runtime.runtime_metrics()["go_worker"]
+    assert metrics["circuit_open"] is True
+    assert metrics["consecutive_failures"] == runtime._CIRCUIT_FAILURE_THRESHOLD
+    assert metrics["fallbacks"] >= runtime._CIRCUIT_FAILURE_THRESHOLD
+
+
+def test_runtime_status_exposes_worker_metrics_and_circuit_breakers() -> None:
+    service = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "routers/polyglot_runtime.py").read_text(encoding="utf-8")
+
+    assert "_CIRCUIT_FAILURE_THRESHOLD = 3" in service
+    assert "_CIRCUIT_OPEN_SECONDS = 30.0" in service
+    assert "def runtime_metrics(" in service
+    assert '"circuit_open"' in service
+    assert '"parity_mismatches"' in service
+    assert '"runtime_metrics": runtime_metrics()' in router
