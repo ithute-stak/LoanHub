@@ -16,7 +16,7 @@ def worker_runtime_status(_: User = Depends(require_platform_admin)):
     return {
         "authority": "python",
         "frontend": ["nextjs", "typescript", "rust_wasm_optional"],
-        "backend": ["python", "rust_optional", "go_optional", "cpp_optional"],
+        "backend": ["python", "rust_optional", "go_optional", "java_optional", "cpp_optional"],
         "workers": [
             {
                 "name": item.name,
