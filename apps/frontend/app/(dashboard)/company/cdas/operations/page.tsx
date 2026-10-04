@@ -19,6 +19,26 @@ import { getErrorMessage } from "@/utils/apiError";
 
 type ProviderRecord = Record<string, unknown>;
 type MutationResponse = { ok: boolean; deduction: ProviderRecord };
+type LinkedCdasState = {
+    loan_id: string;
+    mandate_id: string;
+    mandate_status: string;
+    employee_no: string;
+    monthly_deduction: string;
+    expected_installments: number;
+    deduction_id: number | null;
+    item_code: string;
+    reference_no: string;
+    loan_policy: number;
+    principal_amount: string;
+    effective_month: string;
+    cdas_status: number | null;
+    lifecycle_status: string;
+    requires_reconciliation: boolean;
+    last_request_type: number | null;
+    last_synced_at: string | null;
+};
+
 type RegistrationDraftResponse = {
     loan_id: string;
     loan_reference: string;
@@ -91,6 +111,7 @@ export default function CdasOperationsPage() {
     const [selectedLoanId, setSelectedLoanId] = useState("");
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
+    const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
         request_type: 1,
@@ -151,6 +172,34 @@ export default function CdasOperationsPage() {
         }
     }
 
+    async function loadLinkedState() {
+        if (!canManage || loading || !selectedLoanId) return;
+        setLoading("prepare");
+        setError(null);
+        try {
+            const response = await api.get<LinkedCdasState>(`/cdas/loans/${selectedLoanId}/state`);
+            setLinkedState(response.data);
+            setLifecycle((current) => ({
+                ...current,
+                deduction_id: response.data.deduction_id ?? 0,
+                employee_no: response.data.employee_no,
+                loan_policy: response.data.loan_policy,
+                item_code: response.data.item_code,
+                deduction_amount: Number(response.data.monthly_deduction),
+                total_installment: response.data.expected_installments,
+                principal_amount: Number(response.data.principal_amount),
+                effective_month: response.data.effective_month,
+                reference_no: response.data.reference_no,
+                confirmed: false,
+            }));
+        } catch (requestError: unknown) {
+            setLinkedState(null);
+            setError(getErrorMessage(requestError, "Linked CDAS state could not be loaded."));
+        } finally {
+            setLoading(null);
+        }
+    }
+
     async function prepareRegistration() {
         if (!canManage || loading || !selectedLoanId) return;
         setLoading("prepare");
@@ -199,7 +248,12 @@ export default function CdasOperationsPage() {
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
                     })
-                    : await api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)
+                    : selectedLoanId && linkedState && [3, 4, 6, 10].includes(lifecycle.request_type)
+                        ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/lifecycle`, {
+                            request_type: lifecycle.request_type,
+                            confirmed: lifecycle.confirmed,
+                        })
+                        : await api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)
             );
             setResult({ title: "CDAS lifecycle response", record: response.data.deduction });
             setLifecycle((current) => ({ ...current, confirmed: false }));
@@ -317,6 +371,7 @@ export default function CdasOperationsPage() {
                                 onChange={(event) => {
                                     setSelectedLoanId(event.target.value);
                                     setRegistrationDraft(null);
+                                    setLinkedState(null);
                                 }}
                                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                             >
@@ -334,9 +389,12 @@ export default function CdasOperationsPage() {
                                 Load approved loans
                             </Button>
                         </div>
-                        <div className="flex items-end">
+                        <div className="flex items-end gap-2">
                             <Button type="button" disabled={Boolean(loading) || !selectedLoanId} onClick={() => void prepareRegistration()}>
                                 Prepare registration
+                            </Button>
+                            <Button type="button" variant="outline" disabled={Boolean(loading) || !selectedLoanId} onClick={() => void loadLinkedState()}>
+                                Load linked state
                             </Button>
                         </div>
                     </div>
@@ -349,6 +407,16 @@ export default function CdasOperationsPage() {
                                 {registrationDraft.ready
                                     ? `Loan ${registrationDraft.loan_reference} has been copied into the Registration form below. No CDAS request has been sent.`
                                     : registrationDraft.reasons.join(" ")}
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
+                    {linkedState ? (
+                        <Alert>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <AlertTitle>Linked CDAS state loaded</AlertTitle>
+                            <AlertDescription>
+                                DeductionID {linkedState.deduction_id ?? "pending"} · {linkedState.lifecycle_status}
+                                {linkedState.requires_reconciliation ? " · reconciliation required before another lifecycle change" : ""}
                             </AlertDescription>
                         </Alert>
                     ) : null}
