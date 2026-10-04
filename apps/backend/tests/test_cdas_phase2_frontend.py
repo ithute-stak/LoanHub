@@ -26,6 +26,7 @@ def test_cdas_read_workspace_is_manual_and_uses_clean_api_routes() -> None:
     assert "onSubmit={verifyEmployee}" in source
     assert "useEffect" not in source
     assert "Manual requests only" in source
+    assert "CDAS API v1.5" in source
     assert "400 requests per day per API user" in source
 
 

@@ -23,6 +23,7 @@ from integrations.cdas_contracts import (
     CdasLifecyclePayload,
     CdasModifyActivePayload,
     CdasSettlementPayload,
+    cdas_reference_data,
 )
 from services.cdas_config_service import (
     configuration_summary,
@@ -286,6 +287,15 @@ async def test_cdas_configuration(
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
     return {"ok": True, "configuration": configuration}
+
+
+@router.get("/reference-data")
+def get_cdas_reference_data(
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Return the official CDAS v1.5 codes and limits without contacting CDAS."""
+    _require_lending_user(context)
+    return cdas_reference_data()
 
 
 @router.get("/request-budget")

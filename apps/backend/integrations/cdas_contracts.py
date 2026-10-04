@@ -9,6 +9,56 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 Money = Decimal
 _MONEY_QUANTUM = Decimal("0.01")
 
+CDAS_API_CONTRACT_VERSION = "1.5"
+CDAS_REQUEST_TYPES = {
+    1: "Registration",
+    3: "Review",
+    4: "Approve",
+    5: "Active",
+    6: "Cancel / Reject",
+    7: "Settled",
+    8: "Auto-settled / Expired",
+    9: "Delete",
+    10: "Change / Update",
+}
+CDAS_MUTATION_REQUEST_TYPES = {1, 3, 4, 6, 10}
+CDAS_DEDUCTION_STATUSES = {
+    1: "Registered",
+    2: "Reserved",
+    3: "Reviewed",
+    4: "Approved",
+    5: "Active",
+    6: "Cancelled",
+    7: "Settled",
+    8: "Auto-settled / Expired",
+    9: "Deleted",
+    10: "Changed",
+}
+CDAS_SETTLEMENT_REASONS = {
+    1: "Policy Expired",
+    2: "Paid By Employee",
+    3: "Consolidation",
+    4: "Deceased Employee",
+}
+CDAS_DEDUCTION_TYPES = {1: "Loan", 2: "Policy"}
+CDAS_DOCUMENT_TYPES = {1: "Output File", 2: "Statement"}
+
+
+def cdas_reference_data() -> dict[str, Any]:
+    """Return the official v1.5 reference codes without contacting CDAS."""
+    return {
+        "contract_version": CDAS_API_CONTRACT_VERSION,
+        "request_types": CDAS_REQUEST_TYPES,
+        "mutation_request_types": sorted(CDAS_MUTATION_REQUEST_TYPES),
+        "deduction_statuses": CDAS_DEDUCTION_STATUSES,
+        "settlement_reasons": CDAS_SETTLEMENT_REASONS,
+        "deduction_types": CDAS_DEDUCTION_TYPES,
+        "document_types": CDAS_DOCUMENT_TYPES,
+        "token_max_hours": 8,
+        "token_idle_minutes": 10,
+        "daily_requests_per_user": 400,
+    }
+
 
 def parse_money(value: Any) -> Decimal:
     if isinstance(value, bool):
@@ -57,7 +107,7 @@ class CdasDocumentRecord(_ProviderModel):
     DocumentTye: str | int | None = None
     Year: int | None = None
     Month: int | None = None
-    Content: str | None = None
+    Content: str | list[int] | None = None
 
 
 class CdasLifecyclePayload(BaseModel):

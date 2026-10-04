@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from integrations.cdas import CdasClient, CdasError
+from integrations.cdas_contracts import cdas_reference_data, validate_document
 
 
 def make_client(handler) -> CdasClient:
@@ -183,3 +184,39 @@ async def test_policy_read_reauthentication_preserves_token_header() -> None:
     assert deductions == []
     assert logins == 2
     assert requests == 2
+
+
+def test_cdas_v15_reference_data_matches_documented_codes_and_limits() -> None:
+    reference = cdas_reference_data()
+
+    assert reference["contract_version"] == "1.5"
+    assert reference["request_types"][1] == "Registration"
+    assert reference["request_types"][3] == "Review"
+    assert reference["request_types"][4] == "Approve"
+    assert reference["request_types"][6] == "Cancel / Reject"
+    assert reference["request_types"][10] == "Change / Update"
+    assert reference["deduction_statuses"][5] == "Active"
+    assert reference["deduction_statuses"][8] == "Auto-settled / Expired"
+    assert reference["settlement_reasons"] == {
+        1: "Policy Expired",
+        2: "Paid By Employee",
+        3: "Consolidation",
+        4: "Deceased Employee",
+    }
+    assert reference["deduction_types"] == {1: "Loan", 2: "Policy"}
+    assert reference["document_types"] == {1: "Output File", 2: "Statement"}
+    assert reference["token_max_hours"] == 8
+    assert reference["token_idle_minutes"] == 10
+    assert reference["daily_requests_per_user"] == 400
+
+
+def test_document_contract_accepts_provider_byte_array_content() -> None:
+    payload = {
+        "FileName": "output.bin",
+        "DocumentTye": "Output File",
+        "Year": 2026,
+        "Month": 10,
+        "Content": [1, 2, 3, 255],
+    }
+
+    assert validate_document(payload)["Content"] == [1, 2, 3, 255]
