@@ -147,8 +147,17 @@ export default function CdasWorkspacePage() {
             const eligible = rows.filter((application) =>
                 ["draft", "submitted", "under_review", "approved"].includes(application.status),
             );
+            const requestedApplicationId = typeof window !== "undefined"
+                ? new URLSearchParams(window.location.search).get("application")
+                : null;
             setApplications(eligible);
-            setSelectedApplicationId((current: string) => current || eligible[0]?.id || "");
+            setSelectedApplicationId((current: string) => {
+                if (current) return current;
+                if (requestedApplicationId && eligible.some((application) => application.id === requestedApplicationId)) {
+                    return requestedApplicationId;
+                }
+                return eligible[0]?.id || "";
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "Loan applications could not be loaded."));
         } finally {

@@ -92,9 +92,18 @@ export default function ExperianCreditBureauPage() {
         listLoanProducts(),
       ]);
       applyConfiguration(config);
+      const requestedApplicationId = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("application")
+        : null;
       setApplications(apps);
       setLoanProducts(products.filter((item) => item.is_active));
-      setSelectedApplicationId((current) => current || apps[0]?.id || "");
+      setSelectedApplicationId((current) => {
+        if (current) return current;
+        if (requestedApplicationId && apps.some((item) => item.id === requestedApplicationId)) {
+          return requestedApplicationId;
+        }
+        return apps[0]?.id || "";
+      });
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian workspace could not be loaded."));
     } finally {

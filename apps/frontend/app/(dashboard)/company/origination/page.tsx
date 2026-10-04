@@ -195,7 +195,7 @@ export default function OriginationDashboardPage() {
                     <TableCell><StatusBadge value={application.kyc_status ?? "not started"} /></TableCell>
                     <TableCell><StatusBadge value={application.affordability_decision ?? "pending"} /></TableCell>
                     <TableCell><StatusBadge value={application.status} /></TableCell>
-                    <TableCell className="text-right"><div className="flex flex-wrap justify-end gap-2">{isCompanyOwner && application.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? <Button size="sm" variant="secondary" onClick={() => { setExceptionApplication(application); setExceptionReason(application.top_up_exception_reason ?? ""); }}>Approve exception</Button> : null}<Button size="sm" asChild><Link href={`/company/origination/new?application=${application.id}`}>Open step form</Link></Button></div></TableCell>
+                    <TableCell className="text-right"><div className="flex flex-wrap justify-end gap-2">{isCompanyOwner && application.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? <Button size="sm" variant="secondary" onClick={() => { setExceptionApplication(application); setExceptionReason(application.top_up_exception_reason ?? ""); }}>Approve exception</Button> : null}<Button size="sm" variant="outline" asChild><Link href={`/company/origination/decision-centre/${application.id}`}>Decision centre</Link></Button><Button size="sm" asChild><Link href={`/company/origination/new?application=${application.id}`}>Open step form</Link></Button></div></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -238,6 +238,19 @@ def accept_offer(
     if offer.status != OfferStatus.PENDING:
         raise HTTPException(status_code=409, detail="This offer is no longer available")
 
+    affordability = dict((offer.calculation_breakdown or {}).get("quick_affordability") or {})
+    override = dict(affordability.get("override") or {}) if isinstance(affordability.get("override"), dict) else {}
+    if not affordability:
+        raise HTTPException(
+            status_code=409,
+            detail="The lender must refresh this quick-loan offer so affordability is checked before it can be accepted",
+        )
+    if not bool(affordability.get("passed")) and not bool(override.get("used")):
+        raise HTTPException(
+            status_code=409,
+            detail="This quick-loan offer failed affordability and has no authorized at-risk approval",
+        )
+
     existing_loan = (
         db.query(ClientCompanyLoan)
         .filter(ClientCompanyLoan.loan_request_id == request.id)

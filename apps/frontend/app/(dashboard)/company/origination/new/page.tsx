@@ -57,6 +57,7 @@ import type { MicroLoanCalculation } from "@/types/loan";
 import type { LoanProduct } from "@/types/loanProduct";
 import type {
   AffordabilityAssessment,
+  ApplicationIntegrationReadiness,
   BankAccountInput,
   DebtObligationInput,
   EmploymentProfileInput,
@@ -194,6 +195,8 @@ function OriginationWizard() {
   const [uploadingKyc, setUploadingKyc] = useState(false);
   const [calculation, setCalculation] = useState<MicroLoanCalculation | null>(null);
   const [assessment, setAssessment] = useState<AffordabilityAssessment | null>(null);
+  const [integrationReadiness, setIntegrationReadiness] = useState<ApplicationIntegrationReadiness | null>(null);
+  const [integrationRefreshing, setIntegrationRefreshing] = useState(false);
 
   const [borrowerId, setBorrowerId] = useState(requestedBorrowerId ?? "");
   const [productId, setProductId] = useState("");
@@ -312,6 +315,7 @@ function OriginationWizard() {
       if (requestedApplicationId) {
         const workspace = await originationApi.getWorkspace(requestedApplicationId);
         setApplication(workspace.application);
+        setIntegrationReadiness(workspace.integration_readiness);
         setBorrowerId(workspace.application.borrower_id);
         setProductId(workspace.application.product_id ?? "");
         setApplicationType(workspace.application.application_type ?? "new_loan");
@@ -380,6 +384,19 @@ function OriginationWizard() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [installmentDueDates, processingFee, rate, requestedAmount, selectedProduct, termCount]);
 
+  async function refreshIntegrationReadiness(applicationId?: string) {
+    const id = applicationId ?? application?.id;
+    if (!id || integrationRefreshing) return;
+    setIntegrationRefreshing(true);
+    try {
+      setIntegrationReadiness(await originationApi.getIntegrationReadiness(id));
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Core, CDAS and bureau readiness could not be refreshed."));
+    } finally {
+      setIntegrationRefreshing(false);
+    }
+  }
+
   async function uploadKycDocuments(files: File[]) {
     if (!files.length || !borrowerId) return;
     setUploadingKyc(true);
@@ -447,6 +464,7 @@ function OriginationWizard() {
         application_step: Math.max(application.application_step, step + 1),
       });
       setApplication(updated);
+      void refreshIntegrationReadiness(updated.id);
       return updated;
     }
     const created = await originationApi.createApplication({
@@ -463,6 +481,7 @@ function OriginationWizard() {
       cdas_collection_enabled: cdasCollectionEnabled,
     });
     setApplication(created);
+    void refreshIntegrationReadiness(created.id);
     window.history.replaceState(null, "", `/company/origination/new?application=${created.id}`);
     return created;
   }
@@ -511,6 +530,7 @@ function OriginationWizard() {
         });
         setAssessment(result);
         setApplication((row) => row ? { ...row, affordability_assessment_id: result.id, affordability_decision: result.decision } : row);
+        await refreshIntegrationReadiness(current.id);
         toast.success("Affordability calculated", { description: titleCase(result.decision) });
       }
       setStep((current) => Math.min(current + 1, steps.length - 1));
@@ -607,6 +627,95 @@ function OriginationWizard() {
         </Card>
 
         <div className="space-y-5">
+          {application ? (
+            <Card className="rounded-3xl border-primary/30">
+              <CardHeader>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle>Core · Bureau · CDAS</CardTitle>
+                    <CardDescription>One readiness view shared by LoanHub approval, Experian and CDAS.</CardDescription>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" disabled={integrationRefreshing} onClick={() => void refreshIntegrationReadiness()}>
+                    {integrationRefreshing ? "Refreshing…" : "Refresh"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                <Health label="Core LoanHub" ok={Boolean(integrationReadiness?.core.ready_for_approval)} />
+                <Health
+                  label={integrationReadiness?.bureau.enabled ? `Experian · ${titleCase(integrationReadiness.bureau.environment)}` : "Experian · optional/off"}
+                  ok={Boolean(!integrationReadiness?.bureau.required_before_approval || integrationReadiness?.bureau.fresh)}
+                />
+                {integrationReadiness?.bureau.enabled ? (
+                  <Health label="Experian platform connection" ok={Boolean(integrationReadiness.bureau.platform_ready)} />
+                ) : null}
+                <Health
+                  label={integrationReadiness?.cdas.selected_for_collection ? "CDAS payroll identity" : "CDAS · not selected"}
+                  ok={Boolean(!integrationReadiness?.cdas.selected_for_collection || integrationReadiness?.cdas.verified)}
+                />
+                {integrationReadiness?.cdas.selected_for_collection ? (
+                  <Health
+                    label={`CDAS company connection · ${titleCase(integrationReadiness.cdas.provider_environment ?? "test")}`}
+                    ok={Boolean(integrationReadiness.cdas.provider_configured && integrationReadiness.cdas.provider_enabled)}
+                  />
+                ) : null}
+
+                {integrationReadiness?.bureau.fresh ? (
+                  <div className="rounded-2xl border bg-muted/20 p-3">
+                    <p className="font-black">Bureau evidence</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Score {integrationReadiness.bureau.score ?? "—"} · {integrationReadiness.bureau.risk_band ?? "No risk band"} · commitments {formatMoney(integrationReadiness.bureau.monthly_commitments ?? 0)}
+                    </p>
+                  </div>
+                ) : null}
+
+                {integrationReadiness?.cdas.verified ? (
+                  <div className="rounded-2xl border bg-muted/20 p-3">
+                    <p className="font-black">CDAS payroll identity</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Employee {integrationReadiness.cdas.employee_number ?? "—"}{integrationReadiness.cdas.department ? ` · ${integrationReadiness.cdas.department}` : ""}
+                    </p>
+                  </div>
+                ) : null}
+
+                {(integrationReadiness?.blockers.length ?? 0) > 0 ? (
+                  <div className="space-y-2">
+                    {integrationReadiness?.blockers.map((item) => (
+                      <div key={`${item.source}:${item.code}`} className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3">
+                        <p className="font-black text-destructive">{titleCase(item.source)} needs attention</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
+                        <Button asChild size="sm" variant="outline" className="mt-3">
+                          <Link href={item.action_path}>Resolve</Link>
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : integrationReadiness ? (
+                  <Alert>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <AlertTitle>Systems agree</AlertTitle>
+                    <AlertDescription>
+                      Core LoanHub, the applicable bureau policy and CDAS collection requirements are aligned for this application.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {(integrationReadiness?.warnings.length ?? 0) > 0 ? (
+                  <div className="space-y-2">
+                    {integrationReadiness?.warnings.map((item) => (
+                      <div key={`warning:${item.source}:${item.code}`} className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
+                        <p className="font-black text-amber-700">{titleCase(item.source)} warning</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
+                        <Button asChild size="sm" variant="outline" className="mt-3">
+                          <Link href={item.action_path}>Review</Link>
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
           <Card className="rounded-3xl border-primary/20 bg-gradient-to-br from-primary/10 via-card to-emerald-500/10"><CardHeader><CardTitle className="flex items-center gap-2"><BadgeCheck className="h-5 w-5 text-primary" />Application health</CardTitle></CardHeader><CardContent className="space-y-3"><Health label="Client selected" ok={Boolean(borrowerId)} />{applicationType === "top_up" ? <Health label="Top-up rule or owner exception" ok={Boolean(topUpEligibility?.eligible || topUpEligibility?.requires_owner_exception)} /> : null}<Health label="Loan terms calculated" ok={Boolean(calculation)} /><Health label="KYC verified" ok={kyc.status === "verified"} /><Health label="Income verified" ok={employment.verification_status === "verified" && employment.verified_net_income > 0} /><Health label="Banking captured" ok={bankAccounts.length > 0} /><Health label="Positive affordability" ok={Boolean(assessment && ["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision))} /></CardContent></Card>
           <Card className="rounded-3xl"><CardHeader><CardTitle>Financial snapshot</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><Line label="Verified income" value={formatMoney(employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0))} /><Line label="Household expenses" value={formatMoney(totalExpenses)} /><Line label="Debt instalments" value={formatMoney(totalDebts)} /><Line label="Proposed instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} /><Line label="Affordability limit" value={formatMoney(assessment?.maximum_affordable_installment ?? 0)} /></CardContent></Card>
           <Alert><CircleAlert className="h-4 w-4" /><AlertTitle>Payment-card security</AlertTitle><AlertDescription>LoanHub never captures or stores CVV/CVC, PIN or a full card number. Only provider tokens and masked card details are accepted.</AlertDescription></Alert>

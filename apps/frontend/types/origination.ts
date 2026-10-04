@@ -241,6 +241,10 @@ export type OriginationApplication = {
   repayment_type: string;
   purpose: string | null;
   status: string;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
   preferred_payment_day: number | null;
   first_payment_date: string | null;
   installment_due_dates: string[];
@@ -294,12 +298,72 @@ export type AffordabilityAssessment = {
   created_at: string;
 };
 
+export type IntegrationBlocker = {
+  source: "core" | "bureau" | "cdas" | string;
+  code: string;
+  message: string;
+  action_path: string;
+};
+
+export type ApplicationIntegrationReadiness = {
+  application_id: string;
+  application_reference: string;
+  borrower_id: string;
+  ready_for_affordability: boolean;
+  ready_for_approval: boolean;
+  final_decision: "loanable" | "not_loanable" | "action_required" | string;
+  blockers: IntegrationBlocker[];
+  warnings: IntegrationBlocker[];
+  core: {
+    status: string;
+    kyc_status: string | null;
+    affordability_decision: string | null;
+    affordability_assessment_id: string | null;
+    ready_for_approval: boolean;
+  };
+  bureau: {
+    enabled: boolean;
+    environment: string;
+    platform_ready: boolean;
+    requirement_mode: string;
+    required_before_affordability: boolean;
+    required_before_approval: boolean;
+    fresh: boolean;
+    max_report_age_hours: number;
+    enquiry_id: string | null;
+    completed_at: string | null;
+    score: number | null;
+    risk_band: string | null;
+    monthly_commitments: number | null;
+    total_balance: number | null;
+    defaults_count: number | null;
+    identity_match: boolean | null;
+    used_in_affordability: boolean;
+    debt_mode: string;
+  };
+  cdas: {
+    selected_for_collection: boolean;
+    provider_environment: string | null;
+    provider_configured: boolean;
+    provider_enabled: boolean;
+    provider_tested: boolean;
+    payroll_profile_found: boolean;
+    verified: boolean;
+    employee_number: string | null;
+    department: string | null;
+    verified_at: string | null;
+    collection_plan: Record<string, unknown>;
+    ready_for_approval: boolean;
+  };
+};
+
 export type OriginationWorkspace = {
   application: OriginationApplication;
   policy: OriginationPolicy;
   profile: FinancialProfile;
   duplicate_check: DuplicateCheck;
   assessments: AffordabilityAssessment[];
+  integration_readiness: ApplicationIntegrationReadiness;
 };
 
 export type TopUpEligibility = {

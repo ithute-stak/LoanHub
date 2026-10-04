@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any
+
+from database.models.borrower import Borrower
+from database.models.origination import OriginationPolicy
+
+MONEY = Decimal("0.01")
+PERCENT = Decimal("0.001")
+
+
+def _money(value: Any) -> Decimal:
+    return Decimal(str(value or 0)).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _percent(value: Any) -> Decimal:
+    return Decimal(str(value or 0)).quantize(PERCENT, rounding=ROUND_HALF_UP)
+
+
+def quick_loan_affordability(
+    *,
+    borrower: Borrower,
+    policy: OriginationPolicy,
+    proposed_installment: Decimal,
+) -> dict[str, Any]:
+    """Assess a marketplace/quick-loan offer before the lender approves it.
+
+    This uses the borrower's durable shared profile and the lender company's
+    configured affordability policy. It never approves a loan by itself.
+    """
+    base_income = (
+        _money(borrower.net_monthly_income)
+        if borrower.net_monthly_income is not None
+        else _money(borrower.monthly_income)
+    )
+    other_income = _money(borrower.other_monthly_income)
+    income = _money(base_income + other_income)
+    living = _money(borrower.monthly_living_expenses)
+    debt = _money(borrower.monthly_debt_repayments)
+    dependants = int(borrower.dependants or 0)
+    dependant_allowance = _money(policy.dependant_allowance)
+    dependant_total = _money(Decimal(dependants) * dependant_allowance)
+    buffer_amount = _money(policy.living_expense_buffer)
+    installment = _money(proposed_installment)
+
+    committed_before_new_loan = _money(living + debt + dependant_total + buffer_amount)
+    disposable_before_new_loan = _money(income - committed_before_new_loan)
+
+    disposable_limit = _money(
+        max(disposable_before_new_loan, Decimal("0"))
+        * Decimal(policy.disposable_income_usage_percent or 0)
+        / Decimal("100")
+    )
+    dti_limit = _money(
+        max(
+            income * Decimal(policy.max_dti_percent or 0) / Decimal("100") - debt,
+            Decimal("0"),
+        )
+    )
+    installment_income_limit = _money(
+        income
+        * Decimal(policy.max_installment_income_percent or 0)
+        / Decimal("100")
+    )
+    maximum_affordable_installment = _money(
+        min(disposable_limit, dti_limit, installment_income_limit)
+    )
+
+    after_installment = _money(disposable_before_new_loan - installment)
+    dti = (
+        _percent((debt + installment) * Decimal("100") / income)
+        if income > 0
+        else Decimal("100.000")
+    )
+    headroom = _money(maximum_affordable_installment - installment)
+
+    reasons: list[dict[str, str]] = []
+    passed = True
+
+    if income <= 0:
+        passed = False
+        reasons.append(
+            {
+                "severity": "error",
+                "code": "income_missing",
+                "message": "Monthly income is missing or zero.",
+            }
+        )
+    elif income < _money(policy.min_verified_net_income):
+        passed = False
+        reasons.append(
+            {
+                "severity": "error",
+                "code": "income_below_minimum",
+                "message": "Monthly income is below the lender's configured minimum.",
+            }
+        )
+    else:
+        reasons.append(
+            {
+                "severity": "pass",
+                "code": "income_ok",
+                "message": "Monthly income meets the lender's configured minimum.",
+            }
+        )
+
+    if installment > maximum_affordable_installment:
+        passed = False
+        reasons.append(
+            {
+                "severity": "error",
+                "code": "installment_above_limit",
+                "message": "The proposed installment exceeds the calculated affordability limit.",
+            }
+        )
+    else:
+        reasons.append(
+            {
+                "severity": "pass",
+                "code": "installment_within_limit",
+                "message": "The proposed installment is within the calculated affordability limit.",
+            }
+        )
+
+    minimum_after_installment = _money(policy.min_disposable_after_installment)
+    if after_installment < minimum_after_installment:
+        passed = False
+        reasons.append(
+            {
+                "severity": "error",
+                "code": "disposable_income_too_low",
+                "message": "Disposable income after the proposed installment is below the lender's minimum.",
+            }
+        )
+
+    return {
+        "decision": "pass" if passed else "fail",
+        "passed": passed,
+        "input_source": "borrower_shared_profile",
+        "policy_id": str(policy.id),
+        "policy_version": int(policy.version or 1),
+        "monthly_income": str(income),
+        "base_income": str(base_income),
+        "other_income": str(other_income),
+        "living_expenses": str(living),
+        "existing_debt_repayments": str(debt),
+        "dependants": dependants,
+        "dependant_allowance_total": str(dependant_total),
+        "configured_buffer": str(buffer_amount),
+        "disposable_before_new_loan": str(disposable_before_new_loan),
+        "proposed_installment": str(installment),
+        "maximum_affordable_installment": str(maximum_affordable_installment),
+        "affordability_headroom": str(headroom),
+        "disposable_after_installment": str(after_installment),
+        "dti_percent": str(dti),
+        "limits": {
+            "disposable_income_limit": str(disposable_limit),
+            "dti_limit": str(dti_limit),
+            "installment_income_limit": str(installment_income_limit),
+            "minimum_disposable_after_installment": str(minimum_after_installment),
+        },
+        "reasons": reasons,
+    }

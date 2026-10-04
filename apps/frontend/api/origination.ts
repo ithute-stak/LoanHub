@@ -9,6 +9,7 @@ import type { InterestMethod } from "@/types/loan";
 import type {
   ContractTemplateStyle,
   AffordabilityAssessment,
+  ApplicationIntegrationReadiness,
   BorrowerProfileActivity,
   FinancialProfile,
   FinancialProfileUpdate,
@@ -73,6 +74,9 @@ export const originationApi = {
 
   getWorkspace: async (id: string): Promise<OriginationWorkspace> =>
     (await api.get<OriginationWorkspace>(`/origination/applications/${id}/workspace`)).data,
+
+  getIntegrationReadiness: async (id: string): Promise<ApplicationIntegrationReadiness> =>
+    (await api.get<ApplicationIntegrationReadiness>(`/origination/applications/${id}/integration-readiness`)).data,
 
   getFinancialProfile: async (borrowerId: string): Promise<FinancialProfile> =>
     (await api.get<FinancialProfile>(`/origination/borrowers/${borrowerId}/financial-profile`)).data,
