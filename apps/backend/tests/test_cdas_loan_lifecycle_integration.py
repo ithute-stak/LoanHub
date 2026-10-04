@@ -68,3 +68,15 @@ def test_cdas_workspace_can_manually_link_verification_to_application() -> None:
     assert "/cdas/applications/${selectedApplicationId}/verify-employee" in page
     assert "Payroll profile linked to this application" in page
     assert "useEffect" not in page
+
+def test_cdas_operations_prepare_registration_from_approved_loanhub_loan() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert "Load approved loans" in page
+    assert "Prepare registration" in page
+    assert "professionalApi.listDirect()" in page
+    assert "application.cdas_collection_enabled" in page
+    assert "/cdas/loans/${selectedLoanId}/registration-draft" in page
+    assert "No CDAS request has been sent." in page
+    assert "confirmed: false" in page
+    assert 'api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)' in page
