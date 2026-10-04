@@ -13,6 +13,7 @@ from database.models.origination import OriginationIntegrationConfiguration
 from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
 from database.schemas.credit_bureau import ExperianCompanySettingsUpdate, ExperianCompanyUsageConfiguration
 from database.session import get_db
+from services.experian_service import environment_test_status, has_credentials_for_environment
 
 
 router = APIRouter(prefix="/credit-bureau", tags=["Credit Bureau Configuration"])
@@ -49,13 +50,15 @@ def _company_configuration(row: OriginationIntegrationConfiguration | None) -> d
 def _platform_ready_for_company_use(
     platform: PlatformCreditBureauConfiguration | None,
     configuration: dict,
+    *,
+    environment: str,
 ) -> bool:
     """Evaluate platform readiness without exposing private provider mapping to tenants."""
     return bool(
         platform
         and platform.is_enabled
-        and platform.encrypted_credentials
-        and platform.last_test_status == "connected"
+        and has_credentials_for_environment(platform, environment)
+        and environment_test_status(platform, environment) == "connected"
         and configuration.get("product") == "normal_search_v2"
         and str(configuration.get("origin") or "").strip()
         and str(configuration.get("dll_version") or "").strip()
@@ -71,18 +74,24 @@ def company_experian_preview(
     company = _company_row(db, company_id)
     platform = _platform_row(db)
     platform_configuration = dict(platform.configuration or {}) if platform else {}
-    platform_ready = _platform_ready_for_company_use(platform, platform_configuration)
+    company_configuration = _company_configuration(company)
+    selected_environment = str(company_configuration.get("environment") or "sandbox")
+    platform_ready = _platform_ready_for_company_use(
+        platform,
+        platform_configuration,
+        environment=selected_environment,
+    )
     return {
         "provider": "experian",
         "scope": "company",
         "is_enabled": bool(company.is_enabled) if company else False,
-        "configuration": _company_configuration(company),
+        "configuration": company_configuration,
         "platform": {
             "configured": bool(platform),
             "is_enabled": bool(platform.is_enabled) if platform else False,
-            "environment": ("live" if str(platform.environment).lower() in {"live", "production"} else "sandbox") if platform else None,
-            "has_credentials": bool(platform and platform.encrypted_credentials),
-            "last_test_status": platform.last_test_status if platform else None,
+            "environment": selected_environment if platform else None,
+            "has_credentials": bool(platform and has_credentials_for_environment(platform, selected_environment)),
+            "last_test_status": environment_test_status(platform, selected_environment) if platform else None,
             "last_tested_at": platform.last_tested_at if platform else None,
             "ready_for_company_use": platform_ready,
             "product": platform_configuration.get("product"),
@@ -116,11 +125,11 @@ def update_experian_configuration(
         row = OriginationIntegrationConfiguration(
             company_id=context.company_id,
             provider="experian",
-            environment="platform",
+            environment=payload.configuration.environment,
         )
         db.add(row)
 
-    row.environment = "platform"
+    row.environment = payload.configuration.environment
     row.is_enabled = payload.is_enabled
     row.configuration = payload.configuration.model_dump()
     row.configured_by_user_id = context.user.id
