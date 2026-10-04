@@ -690,6 +690,20 @@ function OriginationWizard() {
                     </AlertDescription>
                   </Alert>
                 ) : null}
+
+                {(integrationReadiness?.warnings.length ?? 0) > 0 ? (
+                  <div className="space-y-2">
+                    {integrationReadiness?.warnings.map((item) => (
+                      <div key={`warning:${item.source}:${item.code}`} className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
+                        <p className="font-black text-amber-700">{titleCase(item.source)} warning</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
+                        <Button asChild size="sm" variant="outline" className="mt-3">
+                          <Link href={item.action_path}>Review</Link>
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
