@@ -1,5 +1,8 @@
 export type ExperianUsageConfiguration = {
   max_report_age_hours?: number;
+  requirement_mode?: "optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products" | string;
+  required_above_amount?: number | null;
+  required_product_ids?: string[];
   require_before_affordability?: boolean;
   include_bureau_commitments_in_affordability?: boolean;
   bureau_debt_mode?: "max" | "bureau_only" | "declared_plus_bureau" | string;
