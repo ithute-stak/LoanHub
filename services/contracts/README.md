@@ -7,6 +7,7 @@ Specialized runtimes receive bounded, versioned work:
 
 - Rust: deterministic CPU-heavy calculations and matching.
 - Go: concurrent background/network work.
+- Java: enterprise event/batch processing and institutional connector work.
 - Rust/WASM: non-authoritative browser previews.
 - C++: native kernels only behind Rust, after benchmarks justify them.
 
