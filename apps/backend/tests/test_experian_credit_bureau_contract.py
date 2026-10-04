@@ -65,7 +65,7 @@ def test_company_experian_preview_never_exposes_platform_secrets_or_mapping() ->
     company_router = _read(ROOT / "routers/credit_bureau_configuration.py")
     preview = company_router.split("def company_experian_preview", 1)[1].split('@router.put', 1)[0]
 
-    assert '"has_credentials": bool(platform and platform.encrypted_credentials)' in preview
+    assert '"has_credentials": bool(platform and has_credentials_for_environment(platform, selected_environment))' in preview
     assert '"product": platform_configuration.get("product")' in preview
     assert '"region": platform_configuration.get("region")' in preview
     assert '"encrypted_credentials"' not in preview
@@ -229,16 +229,25 @@ def test_company_experian_policy_is_enforced_by_affordability_and_approval() -> 
     assert "Required for selected products" in company_page
 
 
-def test_platform_owner_switches_experian_between_sandbox_and_live_only() -> None:
+def test_each_company_selects_its_own_experian_sandbox_or_live_mode() -> None:
     schema = _read(ROOT / "database/schemas/credit_bureau.py")
-    router = _read(ROOT / "routers/platform_credit_bureau.py")
+    company_router = _read(ROOT / "routers/credit_bureau_configuration.py")
+    enquiry_router = _read(ROOT / "routers/credit_bureau.py")
+    policy_service = _read(ROOT / "services/credit_bureau_policy_service.py")
+    platform_router = _read(ROOT / "routers/platform_credit_bureau.py")
+    company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
     platform_page = _read(FRONTEND_ROOT / "app/(dashboard)/superadmin/control/integrations/experian/page.tsx")
     api = _read(FRONTEND_ROOT / "api/creditBureau.ts")
 
-    assert 'environment: Literal["sandbox", "live"]' in schema
-    assert 'return "live" if normalized in {"live", "production"} else "sandbox"' in router
-    assert '<SelectItem value="sandbox">Sandbox · Experian Lesotho UAT</SelectItem>' in platform_page
-    assert '<SelectItem value="live">Live · Experian Lesotho production</SelectItem>' in platform_page
-    assert '<SelectItem value="uat">' not in platform_page
-    assert '<SelectItem value="production">' not in platform_page
+    assert 'environment: Literal["sandbox", "live"] = "sandbox"' in schema
+    assert 'selected_environment = str(company_configuration.get("environment") or "sandbox")' in company_router
+    assert 'row.environment = payload.configuration.environment' in company_router
+    assert '"environment": selected_environment' in enquiry_router
+    assert 'environment=selected_environment' in enquiry_router
+    assert 'row_environment == selected_environment' in policy_service
+    assert '"environment_profiles": profile_states' in platform_router
+    assert "Sandbox · training and demonstrations" in company_page
+    assert "Live · real credit-bureau enquiries" in company_page
+    assert "Lending companies choose which mode they use" in platform_page
+    assert "Credential profile" in platform_page
     assert 'environment: "sandbox" | "live";' in api
