@@ -150,6 +150,70 @@ fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Strin
     })
 }
 
+fn reducing_balance(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
+    let principal = money(decimal(&req.principal)?);
+    let rate_percent = decimal(&req.rate_percent)?;
+    let fee = money(decimal(&req.processing_fee)?);
+    let monthly_rate =
+        (rate_percent / Decimal::from(100_i64)) / Decimal::from(12_i64);
+
+    let base_payment = if monthly_rate.is_zero() {
+        money(principal / Decimal::from(req.term_months as i64))
+    } else {
+        let mut growth = Decimal::ONE;
+        for _ in 0..req.term_months {
+            growth *= Decimal::ONE + monthly_rate;
+        }
+        let denominator = growth - Decimal::ONE;
+        if denominator.is_zero() {
+            return Err("invalid_amortisation_denominator".to_string());
+        }
+        money(principal * monthly_rate * growth / denominator)
+    };
+
+    let fee_parts = split_amount(fee, req.term_months);
+    let mut opening = principal;
+    let mut total_interest = Decimal::ZERO;
+    let mut schedule: Vec<Decimal> = Vec::with_capacity(req.term_months);
+
+    for index in 0..req.term_months {
+        let interest_due = money(opening * monthly_rate);
+        let principal_due = if index + 1 == req.term_months {
+            opening
+        } else {
+            let candidate = money(base_payment - interest_due);
+            let non_negative = if candidate < Decimal::ZERO {
+                Decimal::ZERO
+            } else {
+                candidate
+            };
+            if non_negative > opening { opening } else { non_negative }
+        };
+        let closing_candidate = money(opening - principal_due);
+        let closing = if closing_candidate < Decimal::ZERO {
+            Decimal::ZERO
+        } else {
+            closing_candidate
+        };
+        let total_due = money(principal_due + interest_due + fee_parts[index]);
+        total_interest += interest_due;
+        schedule.push(total_due);
+        opening = closing;
+    }
+
+    let total_interest = money(total_interest);
+    let total = money(schedule.iter().copied().sum::<Decimal>());
+    Ok(LoanPreviewResponse {
+        method: req.method.clone(),
+        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
+        total_interest: total_interest.to_string(),
+        total_repayable: total.to_string(),
+        schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
+        authoritative: false,
+        native_cpp_used: false,
+    })
+}
+
 fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     let principal = money(decimal(&req.principal)?);
     let rate_percent = decimal(&req.rate_percent)?;
@@ -204,6 +268,7 @@ fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
         "micro_loan" => micro_loan(req),
         "simple_interest" | "flat_rate" => simple_or_flat(req),
         "compound_interest" => compound(req),
+        "reducing_balance" => reducing_balance(req),
         _ => Err("unsupported_method".to_string()),
     }
 }
