@@ -182,8 +182,10 @@ def test_rust_loan_engine_supports_first_deterministic_methods() -> None:
     assert '"micro_loan" => micro_loan(req)' in rust
     assert '"simple_interest" | "flat_rate" => simple_or_flat(req)' in rust
     assert '"compound_interest" => compound(req)' in rust
-    assert "LoanCalculationMethod.REDUCING_BALANCE" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
-    assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
+    assert '"reducing_balance" => reducing_balance(req)' in rust
+    rust_supported = service.split("rust_supported =", 1)[1].split("}", 1)[0]
+    assert "LoanCalculationMethod.REDUCING_BALANCE" in rust_supported
+    assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" not in rust_supported
 
 
 def test_java_event_worker_is_registered_and_non_authoritative() -> None:
