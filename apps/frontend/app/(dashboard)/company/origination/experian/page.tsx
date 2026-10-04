@@ -44,6 +44,7 @@ export default function ExperianCreditBureauPage() {
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
 
   const [enabled, setEnabled] = useState(false);
+  const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
   const [requirementMode, setRequirementMode] = useState<"optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products">("optional");
   const [requiredAboveAmount, setRequiredAboveAmount] = useState("");
@@ -67,6 +68,7 @@ export default function ExperianCreditBureauPage() {
   const applyConfiguration = useCallback((row: ExperianCompanyConfiguration) => {
     setConfiguration(row);
     setEnabled(Boolean(row.is_enabled));
+    setEnvironment(row.configuration.environment === "live" ? "live" : "sandbox");
     setMaxReportAgeHours(Number(row.configuration.max_report_age_hours ?? 24));
     const requirement = row.configuration.requirement_mode;
     setRequirementMode(requirement === "before_affordability" || requirement === "before_approval" || requirement === "amount_threshold" || requirement === "selected_products" ? requirement : row.configuration.require_before_affordability ? "before_affordability" : "optional");
@@ -136,6 +138,7 @@ export default function ExperianCreditBureauPage() {
       const updated = await creditBureauApi.updateExperianConfiguration({
         is_enabled: enabled,
         configuration: {
+          environment,
           max_report_age_hours: Math.max(1, Number(maxReportAgeHours || 24)),
           requirement_mode: requirementMode,
           required_above_amount: requirementMode === "amount_threshold" && requiredAboveAmount.trim() ? Number(requiredAboveAmount) : null,
@@ -227,7 +230,7 @@ export default function ExperianCreditBureauPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Central Experian connection ready</AlertTitle>
           <AlertDescription>
-            {titleCase(configuration?.platform.environment ?? "configured")} environment · connection {configuration?.platform.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
+            {titleCase(configuration?.configuration.environment ?? "sandbox")} mode · connection {configuration?.platform.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
           </AlertDescription>
         </Alert>
       )}
@@ -256,8 +259,23 @@ export default function ExperianCreditBureauPage() {
           <CardContent className="space-y-5">
             <label className="flex items-start gap-3 rounded-2xl border p-4">
               <Checkbox checked={enabled} onCheckedChange={(value) => setEnabled(value === true)} disabled={!canConfigure || !platformReady} />
-              <span><strong>Enable Experian for this company</strong><span className="mt-1 block text-xs text-muted-foreground">Requires the Platform Owner connection to be ready.</span></span>
+              <span><strong>Enable Experian for this company</strong><span className="mt-1 block text-xs text-muted-foreground">Requires the selected Experian mode to be configured and tested by the Platform Owner.</span></span>
             </label>
+
+            <div className="rounded-2xl border p-4">
+              <Field label="Experian mode for this company">
+                <Select value={environment} onValueChange={(value) => setEnvironment(value as "sandbox" | "live")} disabled={!canConfigure}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sandbox">Sandbox · training and demonstrations</SelectItem>
+                    <SelectItem value="live">Live · real credit-bureau enquiries</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions.
+              </p>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Maximum report age (hours)"><Input type="number" min={1} max={720} value={maxReportAgeHours} onChange={(event) => setMaxReportAgeHours(Number(event.target.value))} disabled={!canConfigure} /></Field>
