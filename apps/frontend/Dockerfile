@@ -23,7 +23,7 @@ RUN --mount=type=cache,id=loanhub-pnpm-store,target=/pnpm/store \
 FROM dependencies AS production-dependencies
 RUN pnpm prune --prod
 
-FROM rust:1.82-alpine AS wasm-builder
+FROM rust:1.85-alpine AS wasm-builder
 WORKDIR /src
 RUN rustup target add wasm32-unknown-unknown
 COPY wasm/loanhub-compute/Cargo.toml ./
