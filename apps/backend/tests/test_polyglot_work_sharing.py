@@ -47,8 +47,11 @@ def test_go_hashing_has_python_fallback(monkeypatch) -> None:
 def test_go_hashing_accepts_valid_worker_digest(monkeypatch) -> None:
     from services import polyglot_runtime_service as runtime
 
-    digest = "a" * 64
+    import hashlib
+
+    digest = hashlib.sha256(b"anything").hexdigest()
     monkeypatch.setenv("LOANHUB_GO_WORKER_URL", "http://go-worker:8081")
+    monkeypatch.setenv("LOANHUB_GO_RECON_HASH_MODE", "prefer-worker")
     monkeypatch.setattr(runtime, "_post_json", lambda *args, **kwargs: {"sha256": digest})
 
     assert runtime.stable_sha256_text(correlation_id="test", payload="anything") == digest
@@ -83,7 +86,8 @@ def test_reconciliation_uses_go_and_rust_with_python_safety() -> None:
 
     assert "stable_sha256_text(" in service
     assert "rust_variance_classification(" in service
-    assert 'delegated_status or (' in service
+    assert 'workload_routing_mode("rust_reconciliation")' in service
+    assert 'routing_mode == "prefer-worker"' in service
     assert '"matched" if variance == 0 else "shortage" if variance < 0 else "excess"' in service
 
 
@@ -94,6 +98,7 @@ def test_rust_loan_preview_is_used_only_after_python_parity(monkeypatch) -> None
     from database.models.enums import LoanCalculationMethod
     from services import interest_calculation_service as interest
 
+    monkeypatch.setenv("LOANHUB_RUST_LOAN_CALC_MODE", "prefer-worker")
     monkeypatch.setattr(
         interest,
         "rust_loan_preview",
@@ -122,7 +127,9 @@ def test_rust_loan_preview_is_used_only_after_python_parity(monkeypatch) -> None
     assert details["compute_runtime"] == {
         "python_authoritative": True,
         "rust_used": True,
+        "rust_shadow": False,
         "rust_parity": "passed",
+        "rust_routing_mode": "prefer-worker",
         "cpp_used": False,
         "fallback": False,
     }
@@ -135,6 +142,7 @@ def test_rust_loan_preview_mismatch_falls_back_to_python(monkeypatch) -> None:
     from database.models.enums import LoanCalculationMethod
     from services import interest_calculation_service as interest
 
+    monkeypatch.setenv("LOANHUB_RUST_LOAN_CALC_MODE", "prefer-worker")
     monkeypatch.setattr(
         interest,
         "rust_loan_preview",
@@ -305,3 +313,31 @@ def test_runtime_status_exposes_worker_metrics_and_circuit_breakers() -> None:
     assert '"circuit_open"' in service
     assert '"parity_mismatches"' in service
     assert '"runtime_metrics": runtime_metrics()' in router
+
+
+def test_workload_routing_defaults_and_overrides(monkeypatch) -> None:
+    from services import polyglot_runtime_service as runtime
+
+    monkeypatch.delenv("LOANHUB_RUST_LOAN_CALC_MODE", raising=False)
+    assert runtime.workload_routing_mode("rust_loan_calculation") == "shadow"
+
+    monkeypatch.setenv("LOANHUB_RUST_LOAN_CALC_MODE", "prefer-worker")
+    assert runtime.workload_routing_mode("rust_loan_calculation") == "prefer-worker"
+
+    monkeypatch.setenv("LOANHUB_RUST_LOAN_CALC_MODE", "invalid")
+    assert runtime.workload_routing_mode("rust_loan_calculation") == "shadow"
+
+
+def test_go_hash_mismatch_falls_back_to_python_and_records_parity(monkeypatch) -> None:
+    import hashlib
+
+    from services import polyglot_runtime_service as runtime
+
+    runtime._runtime_state.clear()
+    monkeypatch.setenv("LOANHUB_GO_WORKER_URL", "http://go-worker:8081")
+    monkeypatch.setenv("LOANHUB_GO_RECON_HASH_MODE", "prefer-worker")
+    monkeypatch.setattr(runtime, "_post_json", lambda *args, **kwargs: {"sha256": "a" * 64})
+
+    expected = hashlib.sha256(b"anything").hexdigest()
+    assert runtime.stable_sha256_text(correlation_id="test", payload="anything") == expected
+    assert runtime.runtime_metrics()["go_worker"]["parity_mismatches"] == 1
