@@ -188,20 +188,25 @@ def test_fresh_reports_are_reused_unless_staff_explicitly_force_refresh() -> Non
     company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
 
     assert "force_refresh: bool = False" in schema
-    assert "max_report_age_hours" in router
-    assert "freshness_cutoff" in router
+    policy_service = _read(ROOT / "services/credit_bureau_policy_service.py")
+    assert "max_report_age_hours" in policy_service
+    assert "timedelta(hours=max_report_age_hours)" in policy_service
     assert "if not payload.force_refresh:" in router
     assert "return _enquiry_payload(reusable)" in router
     assert "Force a new paid enquiry" in company_page
     assert "maximum report age" in company_page.lower()
 
 
-def test_company_experian_policy_is_enforced_by_affordability_engine() -> None:
+def test_company_experian_policy_is_enforced_by_affordability_and_approval() -> None:
     service = _read(ROOT / "services/origination_service.py")
+    policy_service = _read(ROOT / "services/credit_bureau_policy_service.py")
+    approval_router = _read(ROOT / "routers/professional_lending.py")
+    schema = _read(ROOT / "database/schemas/credit_bureau.py")
+    company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
 
-    assert "OriginationIntegrationConfiguration.provider == \"experian\"" in service
-    assert "CreditBureauEnquiry.provider == \"experian\"" in service
-    assert 'bureau_policy.get("require_before_affordability")' in service
+    assert "company_experian_policy" in service
+    assert "assert_experian_requirement" in service
+    assert 'stage="affordability"' in service
     assert 'bureau_policy.get("include_bureau_commitments_in_affordability")' in service
     assert 'bureau_policy.get("bureau_debt_mode")' in service
     assert 'bureau_policy.get("decline_below_score")' in service
@@ -209,3 +214,15 @@ def test_company_experian_policy_is_enforced_by_affordability_engine() -> None:
     assert 'bureau_policy.get("block_defaults")' in service
     assert 'bureau_policy.get("require_identity_match")' in service
     assert '"credit_bureau": {' in service
+
+    assert '"optional"' in schema
+    assert '"before_affordability"' in schema
+    assert '"before_approval"' in schema
+    assert '"amount_threshold"' in schema
+    assert '"selected_products"' in schema
+    assert "experian_required_for_application" in policy_service
+    assert 'stage="approval"' in approval_router
+    assert "Optional · officer decides" in company_page
+    assert "Required before approval" in company_page
+    assert "Required above a loan amount" in company_page
+    assert "Required for selected products" in company_page
