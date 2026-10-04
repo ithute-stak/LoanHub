@@ -54,6 +54,16 @@ class ExperianCompanyUsageConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_report_age_hours: int = Field(default=24, ge=1, le=720)
+    requirement_mode: Literal[
+        "optional",
+        "before_affordability",
+        "before_approval",
+        "amount_threshold",
+        "selected_products",
+    ] = "optional"
+    required_above_amount: float | None = Field(default=None, ge=0)
+    required_product_ids: list[str] = Field(default_factory=list)
+    # Backward-compatible field retained for older stored configurations.
     require_before_affordability: bool = False
     include_bureau_commitments_in_affordability: bool = False
     bureau_debt_mode: Literal["max", "bureau_only", "declared_plus_bureau"] = "max"
@@ -64,6 +74,15 @@ class ExperianCompanyUsageConfiguration(BaseModel):
 
     @model_validator(mode="after")
     def validate_score_bands(self):
+        if self.require_before_affordability and self.requirement_mode == "optional":
+            self.requirement_mode = "before_affordability"
+        self.require_before_affordability = self.requirement_mode == "before_affordability"
+
+        if self.requirement_mode == "amount_threshold" and self.required_above_amount is None:
+            raise ValueError("required_above_amount is required when Experian is amount-threshold based")
+        if self.requirement_mode == "selected_products" and not self.required_product_ids:
+            raise ValueError("Select at least one loan product when Experian is product-specific")
+
         if self.decline_below_score is not None and self.refer_below_score is not None:
             if self.decline_below_score > self.refer_below_score:
                 raise ValueError("decline_below_score cannot be greater than refer_below_score")
