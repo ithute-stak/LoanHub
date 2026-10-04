@@ -1,4 +1,5 @@
 export type ExperianUsageConfiguration = {
+  environment?: "sandbox" | "live";
   max_report_age_hours?: number;
   requirement_mode?: "optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products" | string;
   required_above_amount?: number | null;
@@ -46,6 +47,10 @@ export type ExperianPlatformConfiguration = {
     dll_version?: string;
     response_mapping?: Record<string, string>;
     [key: string]: unknown;
+  };
+  environment_profiles?: {
+    sandbox?: { has_credentials: boolean; last_test_status: string | null; last_tested_at?: string | null };
+    live?: { has_credentials: boolean; last_test_status: string | null; last_tested_at?: string | null };
   };
   readiness: {
     credentials: boolean;
