@@ -29,7 +29,8 @@ def test_workers_are_bounded_and_health_checked() -> None:
     assert '"authoritative": false' in rust or '"authoritative":false' in rust
     assert "/health/ready" in go
     assert "/v1/digest" in go
-    assert "Native kernel boundary" in native
+    assert "simple-interest" in native
+    assert "round_ratio_half_up" in native
     assert "Server-side Python remains authoritative" in wasm
 
 
