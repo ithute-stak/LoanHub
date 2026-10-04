@@ -42,6 +42,8 @@ class QuickLoanAffordabilityPreview(BaseModel):
 
 class LoanOfferUpdate(BaseModel):
     approved_amount: Optional[Decimal] = Field(None, max_digits=12, decimal_places=2, gt=0)
+    approve_at_own_risk: bool = False
+    own_risk_reason: Optional[str] = Field(default=None, max_length=1000)
     term_months: Optional[int] = Field(None, gt=0)
     interest_rate_percent: Optional[Decimal] = Field(None, max_digits=5, decimal_places=2, ge=0)
     processing_fee: Optional[Decimal] = Field(None, max_digits=12, decimal_places=2, ge=0)
