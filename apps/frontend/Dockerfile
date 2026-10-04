@@ -23,11 +23,20 @@ RUN --mount=type=cache,id=loanhub-pnpm-store,target=/pnpm/store \
 FROM dependencies AS production-dependencies
 RUN pnpm prune --prod
 
+FROM rust:1.82-alpine AS wasm-builder
+WORKDIR /src
+RUN rustup target add wasm32-unknown-unknown
+COPY wasm/loanhub-compute/Cargo.toml ./
+COPY wasm/loanhub-compute/src ./src
+RUN cargo build --target wasm32-unknown-unknown --release
+
 FROM dependencies AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY . .
+RUN mkdir -p public/wasm
+COPY --from=wasm-builder /src/target/wasm32-unknown-unknown/release/loanhub_compute_wasm.wasm /app/public/wasm/loanhub_compute_wasm.wasm
 RUN pnpm typecheck && pnpm build
 
 FROM node:22-alpine AS runner
