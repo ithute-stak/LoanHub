@@ -33,6 +33,31 @@ fn handle(mut stream: TcpStream) {
         return;
     }
 
+    if method == "GET" && path.starts_with("/v1/variance-classification") {
+        let expected = query_i64(path, "expected_cents");
+        let actual = query_i64(path, "actual_cents");
+        match (expected, actual) {
+            (Some(expected), Some(actual)) => {
+                let variance = actual.saturating_sub(expected);
+                let status = if variance == 0 {
+                    "matched"
+                } else if variance < 0 {
+                    "shortage"
+                } else {
+                    "excess"
+                };
+                let body = format!(
+                    r#"{{"status":"{}","variance_cents":{},"authoritative":false}}"#,
+                    status,
+                    variance
+                );
+                response(&mut stream, "200 OK", &body);
+            }
+            _ => response(&mut stream, "400 Bad Request", r#"{"error":"invalid_query"}"#),
+        }
+        return;
+    }
+
     if method == "GET" && path.starts_with("/v1/affordability-headroom") {
         let income = query_i64(path, "income_cents");
         let commitments = query_i64(path, "commitments_cents");
