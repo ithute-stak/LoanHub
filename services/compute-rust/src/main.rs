@@ -80,6 +80,7 @@ fn micro_loan(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
         total_repayable: total.to_string(),
         schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
         authoritative: false,
+        native_cpp_used: false,
     })
 }
 
