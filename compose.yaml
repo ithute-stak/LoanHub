@@ -74,6 +74,8 @@ services:
     environment:
       <<: *backend-environment
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      LOANHUB_RUST_COMPUTE_URL: ${LOANHUB_RUST_COMPUTE_URL:-}
+      LOANHUB_GO_WORKER_URL: ${LOANHUB_GO_WORKER_URL:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -105,6 +107,42 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - loanhub_files:/app/media
+    networks: [loanhub]
+
+  rust-compute:
+    profiles: ["workers"]
+    image: ${LOANHUB_RUST_COMPUTE_IMAGE:-loanhub-rust-compute}:${LOANHUB_IMAGE_TAG:-local}
+    build:
+      context: ./services/compute-rust
+    restart: unless-stopped
+    environment:
+      LOANHUB_RUST_COMPUTE_ADDR: 0.0.0.0:8082
+    expose:
+      - "8082"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    networks: [loanhub]
+
+  go-worker:
+    profiles: ["workers"]
+    image: ${LOANHUB_GO_WORKER_IMAGE:-loanhub-go-worker}:${LOANHUB_IMAGE_TAG:-local}
+    build:
+      context: ./services/worker-go
+    restart: unless-stopped
+    environment:
+      LOANHUB_GO_WORKER_ADDR: :8081
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD", "/loanhub-go-worker-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
     networks: [loanhub]
 
   frontend:
