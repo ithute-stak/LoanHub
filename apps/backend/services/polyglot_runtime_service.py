@@ -161,3 +161,40 @@ def rust_variance_classification(
     except (KeyError, TypeError, ValueError):
         return None
     return value
+
+
+def rust_loan_preview(
+    *,
+    method: str,
+    principal: str,
+    rate_percent: str,
+    term_months: int,
+    processing_fee: str,
+    due_dates: list[str],
+) -> dict | None:
+    """Ask Rust to compute a non-authoritative loan preview for parity checking."""
+    base_url = rust_compute_url()
+    if not base_url:
+        return None
+    try:
+        value = _post_json(
+            f"{base_url}/v1/loan-preview",
+            {
+                "method": method,
+                "principal": principal,
+                "rate_percent": rate_percent,
+                "term_months": int(term_months),
+                "processing_fee": processing_fee,
+                "due_dates": list(due_dates),
+            },
+            timeout=1.5,
+        )
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    if value.get("authoritative") is not False:
+        return None
+    if value.get("method") != method:
+        return None
+    if not isinstance(value.get("schedule_amounts"), list):
+        return None
+    return value
