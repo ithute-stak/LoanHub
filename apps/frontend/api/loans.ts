@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { simpleInterestBrowserPreview } from "@/lib/wasm-loan-compute";
 import {
   markDocumentGenerationFailed,
   markDocumentGenerationReady,
@@ -74,7 +75,52 @@ export type LoanCalculationPayload = {
 };
 
 export async function calculateLoan(payload: LoanCalculationPayload): Promise<LoanCalculation> {
-  return (await api.post<LoanCalculation>("/loans/calculator", payload)).data;
+  const wasmSupported = payload.interest_method === "simple_interest" || payload.interest_method === "flat_rate";
+  const wasmPreview = wasmSupported
+    ? simpleInterestBrowserPreview({
+        principal: payload.principal,
+        ratePercent: payload.rate_percent,
+        months: payload.months,
+        processingFee: payload.processing_fee ?? 0,
+      })
+    : Promise.resolve<number | null>(null);
+
+  const [response, previewTotal] = await Promise.all([
+    api.post<LoanCalculation>("/loans/calculator", payload),
+    wasmPreview,
+  ]);
+  const result = response.data;
+
+  if (!wasmSupported) {
+    return {
+      ...result,
+      browser_compute: {
+        wasm_used: false,
+        wasm_parity: "method_not_migrated",
+        preview_total_repayable: null,
+      },
+    };
+  }
+  if (previewTotal === null) {
+    return {
+      ...result,
+      browser_compute: {
+        wasm_used: false,
+        wasm_parity: "unavailable",
+        preview_total_repayable: null,
+      },
+    };
+  }
+
+  const parityPassed = Math.abs(previewTotal - Number(result.total_repayable)) < 0.005;
+  return {
+    ...result,
+    browser_compute: {
+      wasm_used: parityPassed,
+      wasm_parity: parityPassed ? "passed" : "mismatch",
+      preview_total_repayable: previewTotal,
+    },
+  };
 }
 
 export async function calculateMicroLoan(
