@@ -90,6 +90,7 @@ export default function CdasOperationsPage() {
     const [approvedCdasApplications, setApprovedCdasApplications] = useState<DirectLoanApplication[]>([]);
     const [selectedLoanId, setSelectedLoanId] = useState("");
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
+    const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
 
     const [lifecycle, setLifecycle] = useState({
         request_type: 1,
@@ -192,9 +193,17 @@ export default function CdasOperationsPage() {
         setError(null);
         setResult(null);
         try {
-            const response = await api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle);
+            const response = (
+                lifecycle.request_type === 1 && selectedLoanId && registrationDraft?.ready
+                    ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/register`, {
+                        confirmed: lifecycle.confirmed,
+                        borrower_consent: borrowerConsentConfirmed,
+                    })
+                    : await api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)
+            );
             setResult({ title: "CDAS lifecycle response", record: response.data.deduction });
             setLifecycle((current) => ({ ...current, confirmed: false }));
+            if (lifecycle.request_type === 1) setBorrowerConsentConfirmed(false);
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS deduction lifecycle request failed."));
         } finally {
@@ -377,11 +386,29 @@ export default function CdasOperationsPage() {
                             <div className="space-y-2"><Label>Effective month</Label><Input type="month" value={lifecycle.effective_month} onChange={(e) => setLifecycle((v) => ({ ...v, effective_month: e.target.value }))} /></div>
                             <div className="space-y-2 md:col-span-2 xl:col-span-3"><Label>Reference number</Label><Input value={lifecycle.reference_no} onChange={(e) => setLifecycle((v) => ({ ...v, reference_no: e.target.value }))} /></div>
                         </div>
+                        {lifecycle.request_type === 1 && registrationDraft?.ready ? (
+                            <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
+                                <input
+                                    type="checkbox"
+                                    checked={borrowerConsentConfirmed}
+                                    onChange={(event) => setBorrowerConsentConfirmed(event.target.checked)}
+                                    className="mt-1"
+                                />
+                                <span>
+                                    <strong>I confirm the borrower authorised payroll deduction for this loan.</strong>
+                                    <br />
+                                    <span className="text-muted-foreground">
+                                        LoanHub records this confirmation on the CDAS mandate before registration is sent.
+                                    </span>
+                                </span>
+                            </label>
+                        ) : null}
+
                         <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
                             <input type="checkbox" checked={lifecycle.confirmed} onChange={(e) => setLifecycle((v) => ({ ...v, confirmed: e.target.checked }))} className="mt-1" />
                             <span><strong>I confirm this CDAS lifecycle action.</strong><br /><span className="text-muted-foreground">I have verified the employee and deduction details and understand this request can change the government payroll record.</span></span>
                         </label>
-                        <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed}>{loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />} Send Lifecycle Action</Button>
+                        <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed || (lifecycle.request_type === 1 && Boolean(registrationDraft?.ready) && !borrowerConsentConfirmed)}>{loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />} Send Lifecycle Action</Button>
                     </form>
                 </CardContent>
             </Card>
