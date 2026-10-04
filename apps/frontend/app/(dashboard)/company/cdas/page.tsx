@@ -91,21 +91,6 @@ function displayValue(value: unknown): string {
 }
 
 function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: string }) {
-    async function loadApplications() {
-        if (applicationsLoading) return;
-        setApplicationsLoading(true);
-        setError(null);
-        try {
-            const rows = await originationApi.listApplications();
-            setApplications(rows.filter((application) => ["draft", "submitted", "under_review", "approved"].includes(application.status)));
-            setSelectedApplicationId((current) => current || rows[0]?.id || "");
-        } catch (requestError: unknown) {
-            setError(getErrorMessage(requestError, "Loan applications could not be loaded."));
-        } finally {
-            setApplicationsLoading(false);
-        }
-    }
-
     return (
         <div className="overflow-hidden rounded-2xl border">
             <div className="border-b bg-muted/30 px-4 py-3 text-sm font-black">{title}</div>
@@ -151,6 +136,24 @@ export default function CdasWorkspacePage() {
         setOwnDeductions(null);
         setActiveDeduction(null);
         setError(null);
+    }
+
+    async function loadApplications() {
+        if (applicationsLoading) return;
+        setApplicationsLoading(true);
+        setError(null);
+        try {
+            const rows = await originationApi.listApplications();
+            const eligible = rows.filter((application) =>
+                ["draft", "submitted", "under_review", "approved"].includes(application.status),
+            );
+            setApplications(eligible);
+            setSelectedApplicationId((current: string) => current || eligible[0]?.id || "");
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "Loan applications could not be loaded."));
+        } finally {
+            setApplicationsLoading(false);
+        }
     }
 
     async function refreshRequestBudget() {
