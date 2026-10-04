@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
@@ -29,6 +30,8 @@ import { toast } from "@/utils/toast";
 const RUN_ROLES = [...LENDING_ROLES, "risk_manager", "compliance_officer"] as const;
 
 export default function ExperianCreditBureauPage() {
+  const searchParams = useSearchParams();
+  const requestedApplicationId = searchParams.get("application");
   const { activeRole } = useTenant();
   const canConfigure = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
   const canRun = hasRole(activeRole, RUN_ROLES);
@@ -94,13 +97,19 @@ export default function ExperianCreditBureauPage() {
       applyConfiguration(config);
       setApplications(apps);
       setLoanProducts(products.filter((item) => item.is_active));
-      setSelectedApplicationId((current) => current || apps[0]?.id || "");
+      setSelectedApplicationId((current) => {
+        if (current) return current;
+        if (requestedApplicationId && apps.some((item) => item.id === requestedApplicationId)) {
+          return requestedApplicationId;
+        }
+        return apps[0]?.id || "";
+      });
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian workspace could not be loaded."));
     } finally {
       setLoading(false);
     }
-  }, [applyConfiguration]);
+  }, [applyConfiguration, requestedApplicationId]);
 
   const loadApplicationBureau = useCallback(async (applicationId: string) => {
     if (!applicationId) {
