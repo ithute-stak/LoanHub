@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 
 from database.models.lending_operations import CDASPayrollProfile
 from database.models.origination import AffordabilityAssessment, BorrowerEmploymentProfile, BorrowerKYCProfile
+from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
 from database.models.professional_lending import DirectLoanApplication
+from services.cdas_config_service import configuration_summary as cdas_configuration_summary, get_configuration as get_cdas_configuration
 from services.credit_bureau_policy_service import (
     company_experian_policy,
     experian_required_for_application,
     latest_fresh_experian_enquiry,
 )
+from services.experian_service import environment_test_status, has_credentials_for_environment
 
 
 def _assessment_decision(assessment: AffordabilityAssessment | None) -> str | None:
@@ -74,6 +77,17 @@ def application_integration_readiness(
     bureau_row, bureau_policy = company_experian_policy(db, application.company_id)
     bureau_enabled = bool(bureau_row and bureau_row.is_enabled)
     bureau_environment = str(bureau_policy.get("environment") or "sandbox")
+    platform_bureau = (
+        db.query(PlatformCreditBureauConfiguration)
+        .filter(PlatformCreditBureauConfiguration.provider == "experian")
+        .first()
+    )
+    bureau_platform_ready = bool(
+        platform_bureau
+        and platform_bureau.is_enabled
+        and has_credentials_for_environment(platform_bureau, bureau_environment)
+        and environment_test_status(platform_bureau, bureau_environment) == "connected"
+    )
     bureau_required_affordability = bool(
         bureau_enabled
         and experian_required_for_application(
@@ -189,6 +203,23 @@ def application_integration_readiness(
             }
         )
 
+    if bureau_enabled and not bureau_platform_ready:
+        warnings.append(
+            {
+                "source": "bureau",
+                "code": "platform_connection_not_ready",
+                "message": "The selected Experian environment is not currently ready at platform level. Existing fresh evidence remains visible, but a new bureau check cannot run until the platform connection is restored.",
+                "action_path": f"/company/origination/experian?application={application.id}",
+            }
+        )
+
+    cdas_config = cdas_configuration_summary(
+        get_cdas_configuration(db, application.company_id)
+    )
+    cdas_provider_configured = bool(cdas_config.get("configured"))
+    cdas_provider_enabled = bool(cdas_config.get("enabled"))
+    cdas_provider_tested = str(cdas_config.get("last_test_status") or "") == "connected"
+
     cdas_profile = (
         db.query(CDASPayrollProfile)
         .filter(
@@ -208,7 +239,9 @@ def application_integration_readiness(
         and cdas_profile.verified
         and str(cdas_profile.employee_number or "").strip()
     )
-    cdas_ready = not cdas_selected or cdas_verified
+    cdas_ready = not cdas_selected or (
+        cdas_verified and cdas_provider_configured and cdas_provider_enabled
+    )
     if cdas_selected and not cdas_verified:
         blockers.append(
             {
@@ -216,6 +249,34 @@ def application_integration_readiness(
                 "code": "payroll_profile_not_verified",
                 "message": "CDAS collection is selected, but the borrower does not yet have a verified CDAS payroll profile.",
                 "action_path": f"/company/cdas?application={application.id}",
+            }
+        )
+
+    if cdas_selected and not cdas_provider_configured:
+        blockers.append(
+            {
+                "source": "cdas",
+                "code": "company_connection_not_configured",
+                "message": "CDAS collection is selected, but this company has not completed its CDAS connection configuration.",
+                "action_path": "/company/settings",
+            }
+        )
+    elif cdas_selected and not cdas_provider_enabled:
+        blockers.append(
+            {
+                "source": "cdas",
+                "code": "company_connection_disabled",
+                "message": "CDAS collection is selected, but CDAS is disabled for this company.",
+                "action_path": "/company/settings",
+            }
+        )
+    elif cdas_selected and not cdas_provider_tested:
+        warnings.append(
+            {
+                "source": "cdas",
+                "code": "company_connection_not_tested",
+                "message": "The CDAS connection has not passed its latest login test. Verify it before registering the approved loan.",
+                "action_path": "/company/settings",
             }
         )
 
@@ -260,6 +321,7 @@ def application_integration_readiness(
         "bureau": {
             "enabled": bureau_enabled,
             "environment": bureau_environment,
+            "platform_ready": bureau_platform_ready,
             "requirement_mode": str(bureau_policy.get("requirement_mode") or "optional"),
             "required_before_affordability": bureau_required_affordability,
             "required_before_approval": bureau_required_approval,
@@ -281,6 +343,10 @@ def application_integration_readiness(
         },
         "cdas": {
             "selected_for_collection": cdas_selected,
+            "provider_environment": cdas_config.get("environment"),
+            "provider_configured": cdas_provider_configured,
+            "provider_enabled": cdas_provider_enabled,
+            "provider_tested": cdas_provider_tested,
             "payroll_profile_found": cdas_profile is not None,
             "verified": cdas_verified,
             "employee_number": cdas_profile.employee_number if cdas_profile else None,
