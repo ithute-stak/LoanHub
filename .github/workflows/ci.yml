@@ -106,7 +106,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo check --manifest-path services/compute-rust/Cargo.toml
-          cargo check --manifest-path apps/frontend/wasm/loanhub-compute/Cargo.toml
+          rustup target add wasm32-unknown-unknown
+          cargo build --manifest-path apps/frontend/wasm/loanhub-compute/Cargo.toml --target wasm32-unknown-unknown --release
           (cd services/worker-go && go test ./... && go build ./...)
           mvn -q -f services/worker-java/pom.xml test package
           cmake -S services/native-cpp -B /tmp/loanhub-native-build
