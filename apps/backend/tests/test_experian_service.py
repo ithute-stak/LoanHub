@@ -13,7 +13,7 @@ from services import experian_service
 
 def _row(configuration: dict | None = None):
     return SimpleNamespace(
-        environment="uat",
+        environment="sandbox",
         is_enabled=True,
         encrypted_credentials="encrypted",
         configuration=configuration or {
@@ -52,13 +52,14 @@ def _context(**overrides):
         "run_compuscore": True,
         "run_codix": False,
         "address_mandatory": True,
+        "environment": "sandbox",
     }
     value.update(overrides)
     return value
 
 
 def test_build_normal_search_payload_matches_lesotho_contract(monkeypatch):
-    monkeypatch.setattr(experian_service, "_credentials", lambda row: {"username": "user", "password": "pass"})
+    monkeypatch.setattr(experian_service, "_credentials", lambda row, environment=None: {"username": "user", "password": "pass"})
 
     payload = experian_service.build_normal_search_payload(_row(), context=_context())
 
@@ -88,7 +89,7 @@ def test_build_normal_search_payload_matches_lesotho_contract(monkeypatch):
 
 
 def test_build_normal_search_payload_uses_passport_flag(monkeypatch):
-    monkeypatch.setattr(experian_service, "_credentials", lambda row: {"username": "user", "password": "pass"})
+    monkeypatch.setattr(experian_service, "_credentials", lambda row, environment=None: {"username": "user", "password": "pass"})
 
     payload = experian_service.build_normal_search_payload(
         _row(),
@@ -110,7 +111,7 @@ def test_build_normal_search_payload_uses_passport_flag(monkeypatch):
     ],
 )
 def test_build_normal_search_payload_rejects_missing_required_fields(monkeypatch, key, value):
-    monkeypatch.setattr(experian_service, "_credentials", lambda row: {"username": "user", "password": "pass"})
+    monkeypatch.setattr(experian_service, "_credentials", lambda row, environment=None: {"username": "user", "password": "pass"})
 
     with pytest.raises(experian_service.ExperianConfigurationError):
         experian_service.build_normal_search_payload(_row(), context=_context(**{key: value}))
