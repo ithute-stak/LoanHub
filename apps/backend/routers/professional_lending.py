@@ -113,13 +113,14 @@ def _require_cdas_payroll_profile(db: Session, *, company_id: UUID, borrower_id:
             CDASPayrollProfile.borrower_id == borrower_id,
             CDASPayrollProfile.employee_number.isnot(None),
             CDASPayrollProfile.employee_number != "",
+            CDASPayrollProfile.verified.is_(True),
         )
         .first()
     )
     if not profile:
         raise HTTPException(
             status_code=409,
-            detail="A stored CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
+            detail="A verified CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
         )
     return profile
 
