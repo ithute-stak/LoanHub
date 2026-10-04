@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -14,6 +14,7 @@ from core.access_control import (
     require_tenant_roles,
     resolve_tenant_context,
 )
+from database.models.borrower import Borrower
 from database.models.enums import LoanRequestStatus, OfferStatus, UserRole
 from database.models.loan_offer import LoanOffer
 from database.models.loan_request import LoanRequest
