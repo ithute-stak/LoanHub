@@ -10,7 +10,11 @@ from database.models.enums import (
     INTEREST_METHOD_LABELS,
     LoanCalculationMethod,
 )
-from services.polyglot_runtime_service import record_parity_mismatch, rust_loan_preview
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_loan_preview,
+    workload_routing_mode,
+)
 
 MONEY = Decimal("0.01")
 HUNDRED = Decimal("100")
@@ -650,14 +654,19 @@ def calculate_loan_terms(
         LoanCalculationMethod.FLAT_RATE,
         LoanCalculationMethod.COMPOUND_INTEREST,
     }
+    rust_routing_mode = workload_routing_mode("rust_loan_calculation")
     if rust_supported:
-        rust_result = rust_loan_preview(
-            method=method.value,
-            principal=str(principal_value),
-            rate_percent=str(rate_value),
-            term_months=term_months,
-            processing_fee=str(fee_value),
-            due_dates=[item.isoformat() for item in due_dates],
+        rust_result = (
+            rust_loan_preview(
+                method=method.value,
+                principal=str(principal_value),
+                rate_percent=str(rate_value),
+                term_months=term_months,
+                processing_fee=str(fee_value),
+                due_dates=[item.isoformat() for item in due_dates],
+            )
+            if rust_routing_mode != "off"
+            else None
         )
         if rust_result:
             try:
@@ -681,12 +690,14 @@ def calculate_loan_terms(
                     record_parity_mismatch("rust_compute")
                 details["compute_runtime"] = {
                     "python_authoritative": True,
-                    "rust_used": parity_passed,
+                    "rust_used": parity_passed and rust_routing_mode == "prefer-worker",
+                    "rust_shadow": parity_passed and rust_routing_mode == "shadow",
                     "rust_parity": "passed" if parity_passed else "mismatch",
+                    "rust_routing_mode": rust_routing_mode,
                     "cpp_used": bool(rust_result.get("native_cpp_used")) if parity_passed else False,
-                    "fallback": not parity_passed,
+                    "fallback": not parity_passed or rust_routing_mode != "prefer-worker",
                 }
-                if parity_passed:
+                if parity_passed and rust_routing_mode == "prefer-worker":
                     monthly_installment = rust_monthly
                     total_repayable = rust_total
 
@@ -694,7 +705,9 @@ def calculate_loan_terms(
             details["compute_runtime"] = {
                 "python_authoritative": True,
                 "rust_used": False,
-                "rust_parity": "unavailable",
+                "rust_shadow": False,
+                "rust_parity": "off" if rust_routing_mode == "off" else "unavailable",
+                "rust_routing_mode": rust_routing_mode,
                 "cpp_used": False,
                 "fallback": True,
             }
@@ -702,7 +715,9 @@ def calculate_loan_terms(
         details["compute_runtime"] = {
             "python_authoritative": True,
             "rust_used": False,
+            "rust_shadow": False,
             "rust_parity": "method_not_migrated",
+            "rust_routing_mode": rust_routing_mode,
             "cpp_used": False,
             "fallback": True,
         }
