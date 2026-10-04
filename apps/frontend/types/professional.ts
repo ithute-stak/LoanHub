@@ -15,6 +15,8 @@ export type DirectLoanApplication = {
   repayment_type: string;
   purpose: string | null;
   installment_due_dates: string[];
+  cdas_collection_enabled: boolean;
+  cdas_collection_plan: Record<string, unknown>;
   status: DirectApplicationStatus | string;
   affordability_snapshot: Record<string, unknown>;
   credit_warning: Record<string, unknown>;
