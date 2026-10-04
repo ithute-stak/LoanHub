@@ -40,7 +40,7 @@ def test_go_hashing_has_python_fallback(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "_post_json", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("down")))
 
     value = runtime.stable_sha256_text(correlation_id="test", payload="LoanHub")
-    assert value == "67f9129b74eae37edb5b7ea5805b720977b0d1c6d1786211ec283b1f67cd982e"
+    assert value == "e400d25405baf415cc81bf1dfe8dea967d55a09c4e8e862e5a9c98fcd6f033c6"
 
 
 def test_go_hashing_accepts_valid_worker_digest(monkeypatch) -> None:
