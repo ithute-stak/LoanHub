@@ -57,6 +57,7 @@ from services.contract_service import (
     update_contract_status,
 )
 from services.credential_service import encrypt_credential
+from services.lending_integration_service import application_integration_readiness
 from services.origination_service import (
     assessment_effective_decision,
     borrower_identity,
@@ -133,13 +134,14 @@ def _require_cdas_payroll_profile(db: Session, *, company_id: UUID, borrower_id:
             CDASPayrollProfile.borrower_id == borrower_id,
             CDASPayrollProfile.employee_number.isnot(None),
             CDASPayrollProfile.employee_number != "",
+            CDASPayrollProfile.verified.is_(True),
         )
         .first()
     )
     if not profile:
         raise HTTPException(
             status_code=409,
-            detail="A stored CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
+            detail="A verified CDAS payroll profile with an employee number is required before this loan can use CDAS collection",
         )
     return profile
 
@@ -508,7 +510,29 @@ def application_workspace(
         "profile": profile,
         "duplicate_check": exposure,
         "assessments": [serialize(item) for item in assessments],
+        "integration_readiness": application_integration_readiness(
+            db,
+            application=application,
+            amount=Decimal(application.requested_amount or 0),
+            product_id=application.product_id,
+        ),
     }
+
+
+@router.get("/applications/{application_id}/integration-readiness")
+def application_integration_status(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, ORIGINATION_VIEW_ROLES)
+    application = _application(db, context=context, application_id=application_id)
+    return application_integration_readiness(
+        db,
+        application=application,
+        amount=Decimal(application.requested_amount or 0),
+        product_id=application.product_id,
+    )
 
 
 @router.post("/applications/{application_id}/assess")
