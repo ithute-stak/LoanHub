@@ -95,6 +95,20 @@ class CdasLoanLifecycleConfirmRequest(BaseModel):
     confirmed: bool = False
 
 
+class CdasLinkedModifyRequest(BaseModel):
+    total_installment: int = Field(gt=0)
+    deduction_amount: float = Field(gt=0)
+    principal_amount: float = Field(gt=0)
+    effective_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    confirmed: bool = False
+
+
+class CdasLinkedSettlementRequest(BaseModel):
+    effective_date: str = Field(min_length=10, max_length=50)
+    settlement_reason: Literal[1, 2, 3, 4]
+    confirmed: bool = False
+
+
 class CdasDocumentRequest(BaseModel):
     year: int = Field(ge=1, le=9999)
     month: int = Field(ge=1, le=12)
@@ -813,6 +827,205 @@ async def change_linked_cdas_loan_lifecycle(
                 if reconciled
                 else f"CDAS lifecycle request {payload.request_type} submitted; reconciliation is still required"
             ),
+            occurred_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(state)
+
+    return {
+        **mutation,
+        "mandate_id": str(mandate.id),
+        "deduction_id": state.deduction_id,
+        "lifecycle_status": state.lifecycle_status,
+        "cdas_status": state.cdas_status,
+    }
+
+
+@router.post("/loans/{loan_id}/modify-active")
+async def modify_linked_cdas_active_deduction(
+    loan_id: UUID,
+    payload: CdasLinkedModifyRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state or not state.deduction_id:
+        raise HTTPException(status_code=409, detail="This loan is not linked to a confirmed CDAS DeductionID")
+    if state.requires_reconciliation:
+        raise HTTPException(status_code=409, detail="Reconcile the previous CDAS operation before modifying this deduction")
+
+    modify = CdasModifyActivePayload(
+        employee_no=mandate.employee_number,
+        item_code=state.item_code,
+        total_installment=payload.total_installment,
+        deduction_amount=payload.deduction_amount,
+        principal_amount=payload.principal_amount,
+        deduction_id=int(state.deduction_id),
+        effective_date=payload.effective_date,
+    )
+    provider_request = modify.provider_payload()
+    ledger_request = modify.ledger_payload()
+    client = get_company_cdas_client(db, context.company_id)
+
+    mutation = await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type="deduction.modify_active",
+        audit_action="cdas.loan.modify_active",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.modify_active_deduction(provider_request),
+    )
+
+    reconciled = bool(mutation.get("reconciled"))
+    provider_response = dict(mutation.get("deduction") or {})
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    state.last_request_type = 10
+    state.last_provider_response = provider_response
+    state.last_error = None
+    state.last_synced_at = now
+    state.requires_reconciliation = not reconciled
+    state.lifecycle_status = "changed" if reconciled else "change_pending"
+    if reconciled:
+        state.cdas_status = 10
+        mandate.monthly_deduction = payload.deduction_amount
+        mandate.expected_installments = payload.total_installment
+        mandate.total_expected = payload.principal_amount
+        mandate.status = "changed"
+
+    db.add(
+        CdasOfficialMandateEvent(
+            company_id=context.company_id,
+            state_id=state.id,
+            actor_user_id=context.user.id,
+            event_type="modify_active",
+            request_type=10,
+            request_snapshot=ledger_request,
+            response_snapshot=provider_response,
+            provider_status_code=(mutation.get("operation") or {}).get("provider_status_code"),
+            success=True,
+            message="Active CDAS deduction modification confirmed" if reconciled else "Active CDAS deduction modification submitted; reconciliation is still required",
+            occurred_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(state)
+
+    return {
+        **mutation,
+        "mandate_id": str(mandate.id),
+        "deduction_id": state.deduction_id,
+        "lifecycle_status": state.lifecycle_status,
+        "cdas_status": state.cdas_status,
+    }
+
+
+@router.post("/loans/{loan_id}/settle")
+async def settle_linked_cdas_deduction(
+    loan_id: UUID,
+    payload: CdasLinkedSettlementRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state or not state.deduction_id:
+        raise HTTPException(status_code=409, detail="This loan is not linked to a confirmed CDAS DeductionID")
+    if state.requires_reconciliation:
+        raise HTTPException(status_code=409, detail="Reconcile the previous CDAS operation before settling this deduction")
+
+    settlement = CdasSettlementPayload(
+        item_code=state.item_code,
+        deduction_id=int(state.deduction_id),
+        effective_date=payload.effective_date,
+        employee_no=mandate.employee_number,
+        settlement_reason=payload.settlement_reason,
+    )
+    provider_request = settlement.provider_payload()
+    ledger_request = settlement.ledger_payload()
+    client = get_company_cdas_client(db, context.company_id)
+
+    mutation = await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type="deduction.settle",
+        audit_action="cdas.loan.settlement",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.settle_deduction(provider_request),
+    )
+
+    reconciled = bool(mutation.get("reconciled"))
+    provider_response = dict(mutation.get("deduction") or {})
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    state.last_request_type = 7
+    state.last_provider_response = provider_response
+    state.last_error = None
+    state.last_synced_at = now
+    state.requires_reconciliation = not reconciled
+    state.lifecycle_status = "settled" if reconciled else "settlement_pending"
+    if reconciled:
+        state.cdas_status = 7
+        state.settled_at = now
+        mandate.status = "settled"
+        mandate.completed_at = now
+
+    db.add(
+        CdasOfficialMandateEvent(
+            company_id=context.company_id,
+            state_id=state.id,
+            actor_user_id=context.user.id,
+            event_type="settlement",
+            request_type=7,
+            request_snapshot=ledger_request,
+            response_snapshot=provider_response,
+            provider_status_code=(mutation.get("operation") or {}).get("provider_status_code"),
+            success=True,
+            message="CDAS settlement confirmed" if reconciled else "CDAS settlement submitted; reconciliation is still required",
             occurred_at=now,
         )
     )
