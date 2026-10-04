@@ -256,3 +256,19 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "native_cpp_used" in rust
     assert "COPY --from=cpp-build" in dockerfile
     assert "loanhub-native" in dockerfile
+
+
+def test_rust_wasm_browser_preview_is_built_and_parity_checked() -> None:
+    wasm = (REPO / "apps/frontend/wasm/loanhub-compute/src/lib.rs").read_text(encoding="utf-8")
+    loader = (REPO / "apps/frontend/lib/wasm-loan-compute.ts").read_text(encoding="utf-8")
+    api = (REPO / "apps/frontend/api/loans.ts").read_text(encoding="utf-8")
+    dockerfile = (REPO / "apps/frontend/Dockerfile").read_text(encoding="utf-8")
+
+    assert "simple_interest_total_cents" in wasm
+    assert "affordability_headroom_cents" in wasm
+    assert 'fetch("/wasm/loanhub_compute_wasm.wasm"' in loader
+    assert "simpleInterestBrowserPreview" in api
+    assert "wasm_parity" in api
+    assert 'Math.abs(previewTotal - Number(result.total_repayable)) < 0.005' in api
+    assert "wasm32-unknown-unknown" in dockerfile
+    assert "loanhub_compute_wasm.wasm" in dockerfile
