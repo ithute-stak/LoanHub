@@ -78,22 +78,64 @@ def public_configuration(row) -> dict[str, Any]:
     return result
 
 
-def _credentials(row) -> dict[str, str]:
+def canonical_environment(value: str | None) -> str:
+    normalized = str(value or "sandbox").strip().lower()
+    return "live" if normalized in {"live", "production"} else "sandbox"
+
+
+def credential_profiles(row) -> dict[str, dict[str, str]]:
     if not row.encrypted_credentials:
-        raise ExperianConfigurationError("Experian credentials have not been configured")
+        return {}
     try:
         parsed = json.loads(decrypt_credential(row.encrypted_credentials))
     except (ValueError, TypeError, json.JSONDecodeError, RuntimeError) as error:
         raise ExperianConfigurationError("Stored Experian credentials are invalid") from error
     if not isinstance(parsed, dict):
         raise ExperianConfigurationError("Stored Experian credentials are invalid")
-    required = ("username", "password")
-    missing = [key for key in required if not str(parsed.get(key) or "").strip()]
-    if missing:
-        raise ExperianConfigurationError(
-            "Experian username and password are required"
-        )
-    return {key: str(parsed[key]).strip() for key in required}
+
+    profiles: dict[str, dict[str, str]] = {}
+    for environment in ("sandbox", "live"):
+        value = parsed.get(environment)
+        if isinstance(value, dict):
+            username = str(value.get("username") or "").strip()
+            password = str(value.get("password") or "").strip()
+            if username and password:
+                profiles[environment] = {"username": username, "password": password}
+
+    # Backward compatibility with the previous single-profile credential shape.
+    if not profiles and parsed.get("username") and parsed.get("password"):
+        environment = canonical_environment(getattr(row, "environment", "sandbox"))
+        profiles[environment] = {
+            "username": str(parsed["username"]).strip(),
+            "password": str(parsed["password"]).strip(),
+        }
+    return profiles
+
+
+def has_credentials_for_environment(row, environment: str) -> bool:
+    return canonical_environment(environment) in credential_profiles(row)
+
+
+def _credentials(row, environment: str | None = None) -> dict[str, str]:
+    target = canonical_environment(environment or getattr(row, "environment", "sandbox"))
+    profiles = credential_profiles(row)
+    if target not in profiles:
+        raise ExperianConfigurationError(f"Experian {target.title()} credentials have not been configured")
+    return profiles[target]
+
+
+def environment_test_status(row, environment: str) -> str | None:
+    configuration = dict(getattr(row, "configuration", {}) or {})
+    states = configuration.get("environment_states")
+    if isinstance(states, dict):
+        state = states.get(canonical_environment(environment))
+        if isinstance(state, dict):
+            value = state.get("last_test_status")
+            return str(value) if value else None
+    # Legacy top-level status only applies to the row's selected environment.
+    if canonical_environment(getattr(row, "environment", None)) == canonical_environment(environment):
+        return getattr(row, "last_test_status", None)
+    return None
 
 
 def _host(environment: str) -> str:
@@ -106,9 +148,12 @@ def _host(environment: str) -> str:
 def test_connection(
     row,
     *,
+    environment: str | None = None,
     timeout_seconds: float = 20.0,
 ) -> dict[str, Any]:
-    host = _host(row.environment)
+    selected_environment = canonical_environment(environment or row.environment)
+    _credentials(row, selected_environment)
+    host = _host(selected_environment)
     try:
         with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
             response = client.get(
@@ -130,7 +175,7 @@ def test_connection(
         )
     return {
         "provider": "experian",
-        "environment": row.environment,
+        "environment": selected_environment,
         "host": host,
         "status": "connected",
         "endpoint": f"{host}{NORMAL_SEARCH_PATH}",
@@ -237,7 +282,7 @@ def _yn(value: Any) -> str:
 
 
 def build_normal_search_payload(row, *, context: dict[str, Any]) -> dict[str, Any]:
-    credentials = _credentials(row)
+    credentials = _credentials(row, context.get("environment"))
     configuration = public_configuration(row)
 
     date_of_birth = str(context.get("date_of_birth") or "").replace("-", "")
@@ -352,9 +397,10 @@ def run_bureau_enquiry(
     if not row.is_enabled:
         raise ExperianConfigurationError("Experian is not enabled at platform level")
 
-    host = _host(row.environment)
+    selected_environment = canonical_environment(context.get("environment") or row.environment)
+    host = _host(selected_environment)
     configuration = public_configuration(row)
-    request_payload = build_normal_search_payload(row, context=context)
+    request_payload = build_normal_search_payload(row, context={**context, "environment": selected_environment})
 
     try:
         with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
