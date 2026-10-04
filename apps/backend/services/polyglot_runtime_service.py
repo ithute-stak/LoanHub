@@ -51,11 +51,16 @@ def go_worker_url() -> str:
     return os.getenv("LOANHUB_GO_WORKER_URL", "").rstrip("/")
 
 
+def java_worker_url() -> str:
+    return os.getenv("LOANHUB_JAVA_WORKER_URL", "").rstrip("/")
+
+
 def worker_statuses() -> list[WorkerStatus]:
     results: list[WorkerStatus] = []
     for name, base_url in [
         ("rust_compute", rust_compute_url()),
         ("go_worker", go_worker_url()),
+        ("java_worker", java_worker_url()),
     ]:
         if not base_url:
             results.append(WorkerStatus(name=name, configured=False, ready=False))
@@ -196,5 +201,60 @@ def rust_loan_preview(
     if value.get("method") != method:
         return None
     if not isinstance(value.get("schedule_amounts"), list):
+        return None
+    return value
+
+
+def java_canonicalize_event(
+    *,
+    correlation_id: str,
+    event_type: str,
+    payload: dict,
+) -> dict | None:
+    """Delegate non-authoritative enterprise event canonicalization to Java."""
+    base_url = java_worker_url()
+    if not base_url:
+        return None
+    try:
+        value = _post_json(
+            f"{base_url}/v1/events/canonicalize",
+            {
+                "correlation_id": correlation_id,
+                "event_type": event_type,
+                "payload": payload,
+            },
+            timeout=1.5,
+        )
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    if value.get("authoritative") is not False:
+        return None
+    if value.get("correlation_id") != correlation_id:
+        return None
+    if value.get("event_type") != event_type:
+        return None
+    if not isinstance(value.get("canonical_json"), str):
+        return None
+    if not isinstance(value.get("payload_sha256"), str):
+        return None
+    return value
+
+
+def java_event_batch_summary(*, events: list[dict]) -> dict | None:
+    """Ask Java to summarize replayable event batches for operational analytics."""
+    base_url = java_worker_url()
+    if not base_url:
+        return None
+    try:
+        value = _post_json(
+            f"{base_url}/v1/events/batch-summary",
+            {"events": events},
+            timeout=1.5,
+        )
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    if value.get("authoritative") is not False:
+        return None
+    if not isinstance(value.get("counts_by_type"), dict):
         return None
     return value
