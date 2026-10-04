@@ -44,6 +44,7 @@ type RuntimeStatus = {
   backend: string[];
   workers: WorkerStatus[];
   runtime_metrics: Record<string, WorkerMetric>;
+  routing: Record<string, { mode: string; env: string }>;
   rules: Record<string, string>;
 };
 
@@ -176,6 +177,31 @@ export default function RuntimeControlPage() {
           );
         })}
       </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Gauge className="h-5 w-5 text-primary" />Workload routing</CardTitle>
+          <CardDescription>Promote specialized runtimes gradually instead of switching the whole platform at once.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {Object.entries(status?.routing ?? {}).map(([workload, route]) => (
+            <div key={workload} className="rounded-2xl border p-4">
+              <p className="text-xs font-black uppercase tracking-wide text-muted-foreground">{workload.replaceAll("_", " ")}</p>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <Badge variant={route.mode === "prefer-worker" ? "default" : "secondary"}>{route.mode}</Badge>
+                <span className="text-[11px] text-muted-foreground">{route.env}</span>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                {route.mode === "off"
+                  ? "Python only; worker is not called."
+                  : route.mode === "shadow"
+                    ? "Worker runs for comparison, but Python result remains authoritative."
+                    : "Worker result may be accepted only after validation/parity checks."}
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
