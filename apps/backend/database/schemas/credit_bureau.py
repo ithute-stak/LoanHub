@@ -58,6 +58,7 @@ class ExperianCompanyUsageConfiguration(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    environment: Literal["sandbox", "live"] = "sandbox"
     max_report_age_hours: int = Field(default=24, ge=1, le=720)
     requirement_mode: Literal[
         "optional",
