@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
     LENDING_ROLES,
     TenantContext,
+    assert_branch_scope,
     get_tenant_context,
     require_tenant_roles,
 )
@@ -20,6 +22,7 @@ from database.models.cdas_official import CdasProviderOperation
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus
 from database.models.lending_operations import CDASPayrollProfile
+from database.models.professional_lending import DirectLoanApplication
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
 from integrations.cdas_contracts import (
@@ -482,6 +485,93 @@ async def verify_cdas_employee(
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
     return {"ok": True, "employee": employee}
+
+
+@router.post("/applications/{application_id}/verify-employee")
+async def verify_cdas_employee_for_application(
+    application_id: UUID,
+    payload: CdasEmployeeLookupRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Verify one application's borrower against CDAS and store the local payroll link."""
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    application = (
+        db.query(DirectLoanApplication)
+        .filter(
+            DirectLoanApplication.id == application_id,
+            DirectLoanApplication.company_id == context.company_id,
+        )
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Loan application not found")
+    assert_branch_scope(context, application.branch_id)
+
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        employee = await client.get_employee_details(payload.employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+
+    requested_employee_no = payload.employee_no.strip()
+    returned_employee_no = str(employee.get("EmployeeNo") or "").strip()
+    if returned_employee_no.casefold() != requested_employee_no.casefold():
+        raise HTTPException(
+            status_code=502,
+            detail="CDAS returned a different employee number than the one requested",
+        )
+
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == application.borrower_id,
+        )
+        .first()
+    )
+    if not profile:
+        profile = CDASPayrollProfile(
+            company_id=context.company_id,
+            borrower_id=application.borrower_id,
+            branch_id=application.branch_id,
+            employee_number=returned_employee_no,
+            ministry_department=employee.get("Department"),
+            employment_status="active",
+            verified=True,
+            verified_at=datetime.now(timezone.utc),
+            verified_by_user_id=context.user.id,
+            verification_reference="CDAS employee details",
+            verification_notes="Verified using CDAS /api/employee/getDetails (Third Party API v1.5).",
+        )
+        db.add(profile)
+    else:
+        profile.branch_id = application.branch_id
+        profile.employee_number = returned_employee_no
+        profile.ministry_department = employee.get("Department")
+        profile.verified = True
+        profile.verified_at = datetime.now(timezone.utc)
+        profile.verified_by_user_id = context.user.id
+        profile.verification_reference = "CDAS employee details"
+        profile.verification_notes = "Verified using CDAS /api/employee/getDetails (Third Party API v1.5)."
+
+    db.commit()
+    db.refresh(profile)
+    return {
+        "ok": True,
+        "application_id": str(application.id),
+        "borrower_id": str(application.borrower_id),
+        "employee": employee,
+        "payroll_profile": {
+            "id": str(profile.id),
+            "employee_number": profile.employee_number,
+            "verified": bool(profile.verified),
+            "verified_at": profile.verified_at,
+            "department": profile.ministry_department,
+        },
+    }
 
 
 @router.post("/employees/affordability")
