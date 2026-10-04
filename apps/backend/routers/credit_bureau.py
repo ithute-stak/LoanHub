@@ -30,6 +30,8 @@ from services.credit_bureau_policy_service import company_experian_policy, lates
 from services.experian_service import (
     ExperianConfigurationError,
     ExperianRequestError,
+    environment_test_status,
+    has_credentials_for_environment,
     run_bureau_enquiry,
 )
 from services.origination_service import borrower_identity
@@ -81,7 +83,7 @@ def _company_integration(db: Session, *, context: TenantContext) -> OriginationI
     return row
 
 
-def _platform_integration(db: Session) -> PlatformCreditBureauConfiguration:
+def _platform_integration(db: Session, *, environment: str) -> PlatformCreditBureauConfiguration:
     row = (
         db.query(PlatformCreditBureauConfiguration)
         .filter(PlatformCreditBureauConfiguration.provider == "experian")
@@ -97,10 +99,15 @@ def _platform_integration(db: Session) -> PlatformCreditBureauConfiguration:
             status_code=409,
             detail="Experian is disabled at platform level. Contact the LoanHub Platform Owner.",
         )
-    if row.last_test_status != "connected":
+    if not has_credentials_for_environment(row, environment):
         raise HTTPException(
             status_code=409,
-            detail="The platform Experian connection has not passed its latest connectivity test",
+            detail=f"The Platform Owner has not configured Experian {environment.title()} credentials",
+        )
+    if environment_test_status(row, environment) != "connected":
+        raise HTTPException(
+            status_code=409,
+            detail=f"The Experian {environment.title()} connection has not passed its latest connectivity test",
         )
     return row
 
@@ -303,7 +310,10 @@ def run_experian_credit_check(
     company_integration = _company_integration(db, context=context)
     if not company_integration.is_enabled:
         raise HTTPException(status_code=409, detail="Experian is not enabled for this lending company")
-    platform_integration = _platform_integration(db)
+    company_policy = dict(company_integration.configuration or {})
+    selected_environment = str(company_policy.get("environment") or company_integration.environment or "sandbox")
+    selected_environment = "live" if selected_environment.lower() in {"live", "production"} else "sandbox"
+    platform_integration = _platform_integration(db, environment=selected_environment)
 
     identity = borrower_identity(db, application.borrower_id)
     if not identity.get("national_id") and not identity.get("passport_number"):
@@ -318,6 +328,7 @@ def run_experian_credit_check(
             application_id=application.id,
             borrower_id=application.borrower_id,
             max_report_age_hours=int(company_policy["max_report_age_hours"]),
+            environment=selected_environment,
         )
         if reusable:
             return _enquiry_payload(reusable)
@@ -339,6 +350,7 @@ def run_experian_credit_check(
                 "consent_reference": consent_reference,
                 "consent_captured_at": now.isoformat(),
                 "connection_scope": "platform",
+                "environment": selected_environment,
                 "enquiry_purpose": payload.enquiry_purpose,
                 "result_type": payload.result_type,
                 "requested_blocks": {
@@ -394,6 +406,7 @@ def run_experian_credit_check(
         "run_compuscore": payload.run_compuscore,
         "run_codix": payload.run_codix,
         "address_mandatory": True,
+        "environment": selected_environment,
     }
 
     try:

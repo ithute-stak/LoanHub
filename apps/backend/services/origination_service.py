@@ -827,6 +827,7 @@ def calculate_affordability(
                 application_id=application.id,
                 borrower_id=borrower_id,
                 max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
+                environment=str(bureau_policy.get("environment") or "sandbox"),
             )
         if latest_bureau:
             response_data = dict(latest_bureau.response_data or {})

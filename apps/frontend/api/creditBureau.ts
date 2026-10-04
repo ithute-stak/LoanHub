@@ -55,7 +55,7 @@ export const platformCreditBureauApi = {
     (await api.get<ExperianPlatformConfiguration>("/platform-owner/credit-bureau/experian/configuration")).data,
 
   updateExperianConfiguration: async (payload: {
-    environment: "sandbox" | "uat" | "production";
+    environment: "sandbox" | "live";
     is_enabled: boolean;
     configuration: Record<string, unknown>;
     credentials?: {

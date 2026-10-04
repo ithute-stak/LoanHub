@@ -19,10 +19,14 @@ from database.models.platform_credit_bureau import PlatformCreditBureauConfigura
 from database.models.user import User
 from database.schemas.credit_bureau import ExperianConfigurationUpdate
 from database.session import get_db
-from services.credential_service import encrypt_credential
+from services.credential_service import decrypt_credential, encrypt_credential
 from services.experian_service import (
     ExperianConfigurationError,
     ExperianRequestError,
+    canonical_environment,
+    credential_profiles,
+    environment_test_status,
+    has_credentials_for_environment,
     public_configuration,
     test_connection,
 )
@@ -52,6 +56,11 @@ def reject_company_experian_provider_credentials(
     )
 
 
+def _public_environment(value: str | None) -> str:
+    normalized = str(value or "sandbox").strip().lower()
+    return "live" if normalized in {"live", "production"} else "sandbox"
+
+
 def _get_row(db: Session) -> PlatformCreditBureauConfiguration | None:
     return (
         db.query(PlatformCreditBureauConfiguration)
@@ -60,8 +69,31 @@ def _get_row(db: Session) -> PlatformCreditBureauConfiguration | None:
     )
 
 
+def _profile_states(row: PlatformCreditBureauConfiguration | None) -> dict:
+    result = {
+        "sandbox": {"has_credentials": False, "last_test_status": None, "last_tested_at": None},
+        "live": {"has_credentials": False, "last_test_status": None, "last_tested_at": None},
+    }
+    if not row:
+        return result
+    profiles = credential_profiles(row)
+    configuration = dict(row.configuration or {})
+    states = configuration.get("environment_states")
+    states = states if isinstance(states, dict) else {}
+    for environment in ("sandbox", "live"):
+        state = states.get(environment)
+        state = state if isinstance(state, dict) else {}
+        result[environment] = {
+            "has_credentials": environment in profiles,
+            "last_test_status": state.get("last_test_status") or environment_test_status(row, environment),
+            "last_tested_at": state.get("last_tested_at"),
+        }
+    return result
+
+
 def _read(row: PlatformCreditBureauConfiguration | None) -> dict:
     configuration = public_configuration(row)
+    profile_states = _profile_states(row)
     contract_ready = (
         configuration.get("product") == "normal_search_v2"
         and bool(str(configuration.get("origin") or "").strip())
@@ -71,22 +103,25 @@ def _read(row: PlatformCreditBureauConfiguration | None) -> dict:
     return {
         "provider": "experian",
         "scope": "platform",
-        "environment": row.environment if row else "sandbox",
+        "environment": _public_environment(row.environment if row else "sandbox"),
+        "environment_profiles": profile_states,
         "is_enabled": bool(row.is_enabled) if row else False,
-        "has_credentials": bool(row and row.encrypted_credentials),
+        "has_credentials": bool(row and any(value["has_credentials"] for value in profile_states.values())),
         "last_test_status": row.last_test_status if row else None,
         "last_tested_at": row.last_tested_at if row else None,
         "configuration": configuration,
         "readiness": {
-            "credentials": bool(row and row.encrypted_credentials),
+            "credentials": bool(row and any(value["has_credentials"] for value in profile_states.values())),
             "connection_tested": bool(row and row.last_test_status == "connected"),
             "normal_search_contract": contract_ready,
             "response_mapping": mapping_ready,
             "ready_for_company_use": bool(
                 row
                 and row.is_enabled
-                and row.encrypted_credentials
-                and row.last_test_status == "connected"
+                and any(
+                    value["has_credentials"] and value["last_test_status"] == "connected"
+                    for value in profile_states.values()
+                )
                 and contract_ready
                 and mapping_ready
             ),
@@ -123,18 +158,28 @@ def update_platform_experian_configuration(
             db.flush()
 
         before = _read(row)
-        environment_changed = row.environment != payload.environment
         credentials_changed = payload.credentials is not None
+        selected_environment = canonical_environment(payload.environment)
 
-        row.environment = payload.environment
+        previous_configuration = dict(row.configuration or {})
+        environment_states = previous_configuration.get("environment_states")
+        environment_states = dict(environment_states) if isinstance(environment_states, dict) else {}
+
+        row.environment = selected_environment
         row.is_enabled = payload.is_enabled
-        row.configuration = payload.configuration
+        row.configuration = {**payload.configuration, "environment_states": environment_states}
         row.configured_by_user_id = current_user.id
         if payload.credentials is not None:
+            profiles = credential_profiles(row)
+            profiles[selected_environment] = payload.credentials.model_dump()
             row.encrypted_credentials = encrypt_credential(
-                json.dumps(payload.credentials.model_dump(), separators=(",", ":"))
+                json.dumps(profiles, separators=(",", ":"))
             )
-        if environment_changed or credentials_changed:
+            environment_states[selected_environment] = {
+                "last_test_status": None,
+                "last_tested_at": None,
+            }
+            row.configuration = {**dict(row.configuration or {}), "environment_states": environment_states}
             row.last_test_status = None
             row.last_tested_at = None
 
@@ -203,20 +248,42 @@ def test_platform_experian_connection(
         raise HTTPException(status_code=409, detail="Configure Experian in Platform Owner → API & integrations first")
 
     try:
-        result = test_connection(row)
+        selected_environment = canonical_environment(row.environment)
+        result = test_connection(row, environment=selected_environment)
     except ExperianConfigurationError as error:
+        tested_at = datetime.now(timezone.utc)
         row.last_test_status = "configuration_error"
-        row.last_tested_at = datetime.now(timezone.utc)
+        row.last_tested_at = tested_at
+        configuration = dict(row.configuration or {})
+        states = configuration.get("environment_states")
+        states = dict(states) if isinstance(states, dict) else {}
+        states[canonical_environment(row.environment)] = {"last_test_status": "configuration_error", "last_tested_at": tested_at.isoformat()}
+        row.configuration = {**configuration, "environment_states": states}
         db.commit()
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ExperianRequestError as error:
+        tested_at = datetime.now(timezone.utc)
         row.last_test_status = error.code
-        row.last_tested_at = datetime.now(timezone.utc)
+        row.last_tested_at = tested_at
+        configuration = dict(row.configuration or {})
+        states = configuration.get("environment_states")
+        states = dict(states) if isinstance(states, dict) else {}
+        states[canonical_environment(row.environment)] = {"last_test_status": error.code, "last_tested_at": tested_at.isoformat()}
+        row.configuration = {**configuration, "environment_states": states}
         db.commit()
         raise HTTPException(status_code=502, detail=str(error)) from error
 
+    tested_at = datetime.now(timezone.utc)
     row.last_test_status = "connected"
-    row.last_tested_at = datetime.now(timezone.utc)
+    row.last_tested_at = tested_at
+    configuration = dict(row.configuration or {})
+    states = configuration.get("environment_states")
+    states = dict(states) if isinstance(states, dict) else {}
+    states[selected_environment] = {
+        "last_test_status": "connected",
+        "last_tested_at": tested_at.isoformat(),
+    }
+    row.configuration = {**configuration, "environment_states": states}
     db.add(
         AuditLog(
             user_id=current_user.id,

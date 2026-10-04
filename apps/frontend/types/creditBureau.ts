@@ -1,4 +1,5 @@
 export type ExperianUsageConfiguration = {
+  environment?: "sandbox" | "live";
   max_report_age_hours?: number;
   requirement_mode?: "optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products" | string;
   required_above_amount?: number | null;
@@ -20,7 +21,11 @@ export type ExperianCompanyConfiguration = {
   platform: {
     configured: boolean;
     is_enabled: boolean;
-    environment: "sandbox" | "uat" | "production" | string | null;
+    environment: "sandbox" | "live" | string | null;
+    environments?: {
+      sandbox?: { has_credentials: boolean; last_test_status: string | null; ready: boolean };
+      live?: { has_credentials: boolean; last_test_status: string | null; ready: boolean };
+    };
     has_credentials: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
@@ -33,7 +38,7 @@ export type ExperianCompanyConfiguration = {
 export type ExperianPlatformConfiguration = {
   provider: "experian";
   scope: "platform";
-  environment: "sandbox" | "uat" | "production" | string;
+  environment: "sandbox" | "live" | string;
   is_enabled: boolean;
   has_credentials: boolean;
   last_test_status: string | null;
@@ -46,6 +51,10 @@ export type ExperianPlatformConfiguration = {
     dll_version?: string;
     response_mapping?: Record<string, string>;
     [key: string]: unknown;
+  };
+  environment_profiles?: {
+    sandbox?: { has_credentials: boolean; last_test_status: string | null; last_tested_at?: string | null };
+    live?: { has_credentials: boolean; last_test_status: string | null; last_tested_at?: string | null };
   };
   readiness: {
     credentials: boolean;
