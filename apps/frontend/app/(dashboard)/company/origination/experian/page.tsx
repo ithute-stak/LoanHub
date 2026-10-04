@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
 import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
@@ -30,8 +29,6 @@ import { toast } from "@/utils/toast";
 const RUN_ROLES = [...LENDING_ROLES, "risk_manager", "compliance_officer"] as const;
 
 export default function ExperianCreditBureauPage() {
-  const searchParams = useSearchParams();
-  const requestedApplicationId = searchParams.get("application");
   const { activeRole } = useTenant();
   const canConfigure = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
   const canRun = hasRole(activeRole, RUN_ROLES);
@@ -95,6 +92,9 @@ export default function ExperianCreditBureauPage() {
         listLoanProducts(),
       ]);
       applyConfiguration(config);
+      const requestedApplicationId = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("application")
+        : null;
       setApplications(apps);
       setLoanProducts(products.filter((item) => item.is_active));
       setSelectedApplicationId((current) => {
@@ -109,7 +109,7 @@ export default function ExperianCreditBureauPage() {
     } finally {
       setLoading(false);
     }
-  }, [applyConfiguration, requestedApplicationId]);
+  }, [applyConfiguration]);
 
   const loadApplicationBureau = useCallback(async (applicationId: string) => {
     if (!applicationId) {
