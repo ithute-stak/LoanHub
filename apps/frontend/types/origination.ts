@@ -294,12 +294,65 @@ export type AffordabilityAssessment = {
   created_at: string;
 };
 
+export type IntegrationBlocker = {
+  source: "core" | "bureau" | "cdas" | string;
+  code: string;
+  message: string;
+  action_path: string;
+};
+
+export type ApplicationIntegrationReadiness = {
+  application_id: string;
+  application_reference: string;
+  borrower_id: string;
+  ready_for_affordability: boolean;
+  ready_for_approval: boolean;
+  blockers: IntegrationBlocker[];
+  warnings: IntegrationBlocker[];
+  core: {
+    status: string;
+    kyc_status: string | null;
+    affordability_decision: string | null;
+    affordability_assessment_id: string | null;
+    ready_for_approval: boolean;
+  };
+  bureau: {
+    enabled: boolean;
+    environment: string;
+    requirement_mode: string;
+    required_before_affordability: boolean;
+    required_before_approval: boolean;
+    fresh: boolean;
+    max_report_age_hours: number;
+    enquiry_id: string | null;
+    score: number | null;
+    risk_band: string | null;
+    monthly_commitments: number | null;
+    total_balance: number | null;
+    defaults_count: number | null;
+    identity_match: boolean | null;
+    used_in_affordability: boolean;
+    debt_mode: string;
+  };
+  cdas: {
+    selected_for_collection: boolean;
+    payroll_profile_found: boolean;
+    verified: boolean;
+    employee_number: string | null;
+    department: string | null;
+    verified_at: string | null;
+    collection_plan: Record<string, unknown>;
+    ready_for_approval: boolean;
+  };
+};
+
 export type OriginationWorkspace = {
   application: OriginationApplication;
   policy: OriginationPolicy;
   profile: FinancialProfile;
   duplicate_check: DuplicateCheck;
   assessments: AffordabilityAssessment[];
+  integration_readiness: ApplicationIntegrationReadiness;
 };
 
 export type TopUpEligibility = {
