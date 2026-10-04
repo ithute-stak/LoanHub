@@ -26,7 +26,7 @@ def test_workers_are_bounded_and_health_checked() -> None:
     wasm = (REPO / "apps/frontend/wasm/loanhub-compute/src/lib.rs").read_text(encoding="utf-8")
 
     assert "/health/ready" in rust
-    assert '"authoritative":false' in rust
+    assert '"authoritative": false' in rust or '"authoritative":false' in rust
     assert "/health/ready" in go
     assert "/v1/digest" in go
     assert "Native kernel boundary" in native
