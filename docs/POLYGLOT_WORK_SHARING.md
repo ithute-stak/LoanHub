@@ -15,14 +15,17 @@ untracked Experian/CDAS mutations.
 | Python | lending policy, affordability authority, accounting, tenancy, orchestration |
 | Rust | deterministic high-volume compute and reconciliation kernels |
 | Go | concurrent network/background workers and fan-out |
+| Java | enterprise event processing, batch work and institutional integration pipelines |
 | C++ | benchmark-proven native numerical kernels behind a safer boundary |
 
 ## Rollout
 
 Phase 1 adds compile-tested worker boundaries and health/contract surfaces.
 Phase 2 moves selected read-only or replayable work behind the workers with
-Python fallback. Phase 3 enables workload routing only after parity tests and
-benchmarks pass.
+Python fallback. Current examples include Go reconciliation hashing, Rust
+reconciliation classification and parity-checked loan previews, plus Java
+webhook-event canonicalization. Phase 3 expands workload routing only after
+parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
 safety ledgers. Workers may prepare, hash, parse or reconcile data, but may not
