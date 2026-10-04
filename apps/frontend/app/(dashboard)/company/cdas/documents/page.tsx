@@ -117,8 +117,8 @@ export default function CdasDocumentsPage() {
             });
 
             const filename = document.FileName || "";
-            const isCsv = filename.toLowerCase().endsWith(".csv");
-            if (isCsv && document.Content) {
+            const isCsvOutput = documentType === 1 && filename.toLowerCase().endsWith(".csv");
+            if (isCsvOutput && document.Content) {
                 const bytes = decodeDocument(document.Content);
                 const file = new File([copyToArrayBuffer(bytes)], filename, { type: "text/csv" });
                 await uploadReconciliationCsv(batch.id, file);
