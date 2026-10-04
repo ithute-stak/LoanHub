@@ -122,6 +122,7 @@ def test_rust_loan_preview_is_used_only_after_python_parity(monkeypatch) -> None
         "python_authoritative": True,
         "rust_used": True,
         "rust_parity": "passed",
+        "cpp_used": False,
         "fallback": False,
     }
 
@@ -241,3 +242,17 @@ def test_webhook_event_canonicalization_falls_back_on_java_mismatch(monkeypatch)
     )
 
     assert webhook._canonical_event_body(event) == b'{"amount":100,"currency":"LSL"}'
+
+
+def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    dockerfile = (REPO / "services/compute-rust/Dockerfile").read_text(encoding="utf-8")
+
+    assert "simple-interest" in native
+    assert "round_ratio_half_up" in native
+    assert "LOANHUB_CPP_KERNEL_PATH" in rust
+    assert "cpp_simple_interest_cents(" in rust
+    assert "native_cpp_used" in rust
+    assert "COPY --from=cpp-build" in dockerfile
+    assert "loanhub-native" in dockerfile
