@@ -2,6 +2,7 @@ use rust_decimal::prelude::*;
 use rust_decimal::RoundingStrategy;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::io::Read;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 fn money(value: Decimal) -> Decimal {
