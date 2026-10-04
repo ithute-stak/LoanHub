@@ -161,7 +161,7 @@ def test_state_changing_routes_require_management_confirmation_and_audit() -> No
         assert route in source
 
     assert source.count("_require_company_manager(context)") >= 7
-    assert source.count("_require_confirmed(payload.confirmed)") == 3
+    assert source.count("_require_confirmed(payload.confirmed)") >= 7
     assert "Explicit confirmation is required for this CDAS state-changing action" in source
     assert "AuditLog(" in source
     assert 'action="cdas.deduction.lifecycle"' in source
