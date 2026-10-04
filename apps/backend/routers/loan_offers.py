@@ -315,6 +315,8 @@ def update_offer(
 
     changes = payload.model_dump(exclude_unset=True)
     changes.pop("status", None)
+    approve_at_own_risk = bool(changes.pop("approve_at_own_risk", False))
+    own_risk_reason = str(changes.pop("own_risk_reason", None) or "").strip()
     supplied_due_dates = changes.pop("installment_due_dates", None)
     for field, value in changes.items():
         setattr(offer, field, value)
@@ -330,17 +332,51 @@ def update_offer(
             status_code=422,
             detail=f"Enter exactly {offer.term_months} installment due dates before updating the offer",
         )
-    try:
-        monthly, total, calculation_breakdown = calculate_offer_totals(
-            offer.approved_amount,
-            offer.interest_rate_percent or 0,
-            offer.term_months,
-            offer.processing_fee or 0,
-            offer.calculation_method,
-            due_dates=supplied_due_dates,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    request = request_or_404(db, offer.loan_request_id)
+    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+        db,
+        request=request,
+        company_id=context.company_id,
+        approved_amount=offer.approved_amount,
+        interest_rate_percent=offer.interest_rate_percent or 0,
+        term_months=offer.term_months,
+        processing_fee=offer.processing_fee or 0,
+        calculation_method=offer.calculation_method,
+        installment_due_dates=supplied_due_dates,
+    )
+    policy = get_or_create_policy(db, context.company_id)
+    if not affordability["passed"]:
+        if not approve_at_own_risk:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "The borrower did not pass affordability for the updated offer terms.",
+                    "affordability": affordability,
+                    "own_risk_override_available": bool(policy.manager_override_enabled),
+                },
+            )
+        if context.role not in COMPANY_MANAGEMENT_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Only authorized company management can approve a failed affordability check at their own risk",
+            )
+        if not policy.manager_override_enabled:
+            raise HTTPException(status_code=403, detail="At-risk affordability overrides are disabled by company policy")
+        if len(own_risk_reason) < 10:
+            raise HTTPException(status_code=422, detail="Give a clear reason of at least 10 characters for the at-risk approval")
+
+    calculation_breakdown = dict(calculation_breakdown or {})
+    calculation_breakdown["quick_affordability"] = {
+        **affordability,
+        "override": {
+            "used": bool(not affordability["passed"] and approve_at_own_risk),
+            "reason": own_risk_reason if not affordability["passed"] and approve_at_own_risk else None,
+            "approved_by_user_id": str(context.user.id) if not affordability["passed"] and approve_at_own_risk else None,
+            "approved_by_role": context.role.value if hasattr(context.role, "value") else str(context.role),
+            "approved_at": datetime.now(timezone.utc).isoformat() if not affordability["passed"] and approve_at_own_risk else None,
+        },
+        "approval_basis": "manager_at_own_risk_override" if not affordability["passed"] and approve_at_own_risk else "affordability_passed",
+    }
     offer.monthly_repayment = monthly
     offer.total_repayment = total
     offer.calculation_method = calculation_breakdown["method"]
