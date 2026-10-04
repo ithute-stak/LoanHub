@@ -225,7 +225,7 @@ def java_canonicalize_event(
             },
             timeout=1.5,
         )
-    except (OSError, ValueError, urllib.error.URLError):
+    except (OSError, TypeError, ValueError, urllib.error.URLError):
         return None
     if value.get("authoritative") is not False:
         return None
