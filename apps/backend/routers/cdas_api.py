@@ -331,7 +331,7 @@ def get_cdas_loan_registration_draft(
     A company manager must still explicitly confirm the mutation in the CDAS
     operations workspace.
     """
-    _require_lending_user(context)
+    _require_company_manager(context)
     assert context.company_id is not None
 
     loan = (
