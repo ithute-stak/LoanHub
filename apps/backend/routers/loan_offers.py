@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from core.access_control import (
+    COMPANY_MANAGEMENT_ROLES,
     LENDING_ROLES,
     TenantContext,
     assert_branch_scope,
@@ -17,10 +18,17 @@ from database.models.enums import LoanRequestStatus, OfferStatus, UserRole
 from database.models.loan_offer import LoanOffer
 from database.models.loan_request import LoanRequest
 from database.models.user import User
-from database.schemas.loan_offer import LoanOfferCreate, LoanOfferResponse, LoanOfferUpdate
+from database.schemas.loan_offer import (
+    LoanOfferCreate,
+    LoanOfferResponse,
+    LoanOfferUpdate,
+    QuickLoanAffordabilityPreview,
+)
 from database.session import get_db
 from services.billing_service import company_has_request_access
 from services.loan_service import calculate_offer_totals
+from services.origination_service import get_or_create_policy
+from services.quick_loan_affordability_service import quick_loan_affordability
 
 
 router = APIRouter(prefix="/loan-offers", tags=["Loan Offers"])
@@ -33,11 +41,95 @@ def offer_or_404(db: Session, offer_id: UUID) -> LoanOffer:
     return offer
 
 
+def _quick_affordability_for_terms(
+    db: Session,
+    *,
+    request: LoanRequest,
+    company_id: UUID,
+    approved_amount,
+    interest_rate_percent,
+    term_months: int,
+    processing_fee,
+    calculation_method,
+    installment_due_dates,
+):
+    if len(installment_due_dates) != term_months:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Enter exactly {term_months} installment due dates before checking affordability",
+        )
+    try:
+        monthly, total, calculation_breakdown = calculate_offer_totals(
+            approved_amount,
+            interest_rate_percent or 0,
+            term_months,
+            processing_fee,
+            calculation_method,
+            due_dates=installment_due_dates,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    borrower = db.query(Borrower).filter(Borrower.id == request.borrower_id).first()
+    if not borrower:
+        raise HTTPException(status_code=404, detail="Borrower not found")
+    policy = get_or_create_policy(db, company_id)
+    affordability = quick_loan_affordability(
+        borrower=borrower,
+        policy=policy,
+        proposed_installment=monthly,
+    )
+    affordability["approved_amount"] = str(approved_amount)
+    affordability["term_months"] = int(term_months)
+    affordability["total_repayment"] = str(total)
+    affordability["calculation_method"] = calculation_breakdown["method"]
+    return affordability, monthly, total, calculation_breakdown
+
+
 def request_or_404(db: Session, request_id: UUID) -> LoanRequest:
     request = db.query(LoanRequest).filter(LoanRequest.id == request_id).first()
     if not request:
         raise HTTPException(status_code=404, detail="Loan request not found")
     return request
+
+
+@router.post("/quick-affordability-preview")
+def preview_quick_loan_affordability(
+    payload: QuickLoanAffordabilityPreview,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, LENDING_ROLES)
+    if context.is_platform_admin or not context.company_id:
+        raise HTTPException(status_code=400, detail="A loan-company context is required")
+    request = request_or_404(db, payload.loan_request_id)
+    if not company_has_request_access(
+        db,
+        company_id=context.company_id,
+        loan_request_id=request.id,
+    ):
+        raise HTTPException(status_code=402, detail="Unlock this loan request before checking affordability")
+
+    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+        db,
+        request=request,
+        company_id=context.company_id,
+        approved_amount=payload.approved_amount,
+        interest_rate_percent=payload.interest_rate_percent,
+        term_months=payload.term_months,
+        processing_fee=payload.processing_fee,
+        calculation_method=payload.calculation_method,
+        installment_due_dates=payload.installment_due_dates,
+    )
+    policy = get_or_create_policy(db, context.company_id)
+    return {
+        "affordability": affordability,
+        "monthly_repayment": monthly,
+        "total_repayment": total,
+        "calculation_method": calculation_breakdown["method"],
+        "own_risk_override_available": bool(policy.manager_override_enabled),
+        "own_risk_override_roles": sorted(role.value if hasattr(role, "value") else str(role) for role in COMPANY_MANAGEMENT_ROLES),
+    }
 
 
 @router.post("/", response_model=LoanOfferResponse, status_code=status.HTTP_201_CREATED)
@@ -73,22 +165,61 @@ def create_offer(
     if duplicate:
         raise HTTPException(status_code=409, detail="Your company already submitted an offer")
 
-    if len(payload.installment_due_dates) != payload.term_months:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Enter exactly {payload.term_months} installment due dates before submitting the offer",
-        )
-    try:
-        monthly, total, calculation_breakdown = calculate_offer_totals(
-            payload.approved_amount,
-            payload.interest_rate_percent or 0,
-            payload.term_months,
-            payload.processing_fee,
-            payload.calculation_method,
-            due_dates=payload.installment_due_dates,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+        db,
+        request=request,
+        company_id=context.company_id,
+        approved_amount=payload.approved_amount,
+        interest_rate_percent=payload.interest_rate_percent or 0,
+        term_months=payload.term_months,
+        processing_fee=payload.processing_fee,
+        calculation_method=payload.calculation_method,
+        installment_due_dates=payload.installment_due_dates,
+    )
+    policy = get_or_create_policy(db, context.company_id)
+    own_risk_reason = (payload.own_risk_reason or "").strip()
+    if not affordability["passed"]:
+        if not payload.approve_at_own_risk:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "The borrower did not pass affordability for these offer terms.",
+                    "affordability": affordability,
+                    "own_risk_override_available": bool(policy.manager_override_enabled),
+                },
+            )
+        if context.role not in COMPANY_MANAGEMENT_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Only authorized company management can approve a failed affordability check at their own risk",
+            )
+        if not policy.manager_override_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="At-risk affordability overrides are disabled by company policy",
+            )
+        if len(own_risk_reason) < 10:
+            raise HTTPException(
+                status_code=422,
+                detail="Give a clear reason of at least 10 characters for the at-risk approval",
+            )
+
+    calculation_breakdown = dict(calculation_breakdown or {})
+    calculation_breakdown["quick_affordability"] = {
+        **affordability,
+        "override": {
+            "used": bool(not affordability["passed"] and payload.approve_at_own_risk),
+            "reason": own_risk_reason if not affordability["passed"] and payload.approve_at_own_risk else None,
+            "approved_by_user_id": str(context.user.id) if not affordability["passed"] and payload.approve_at_own_risk else None,
+            "approved_by_role": context.role.value if hasattr(context.role, "value") else str(context.role),
+            "approved_at": datetime.now(timezone.utc).isoformat() if not affordability["passed"] and payload.approve_at_own_risk else None,
+        },
+        "approval_basis": (
+            "manager_at_own_risk_override"
+            if not affordability["passed"] and payload.approve_at_own_risk
+            else "affordability_passed"
+        ),
+    }
     offer = LoanOffer(
         loan_request_id=request.id,
         company_id=context.company_id,
