@@ -64,3 +64,38 @@ def test_origination_ui_shows_unified_readiness_and_deep_links_to_providers() ->
     assert 'new URLSearchParams(window.location.search).get("application")' in cdas
     assert "eligible.some((application) => application.id === requestedApplicationId)" in cdas
     assert "useEffect" not in cdas
+
+def test_unified_decision_centre_surfaces_core_bureau_cdas_and_final_outcome() -> None:
+    service = _read(ROOT / "services/lending_integration_service.py")
+    page = _read(
+        FRONTEND_ROOT
+        / "app/(dashboard)/company/origination/decision-centre/[applicationId]/page.tsx"
+    )
+    dashboard = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/page.tsx")
+    manager = _read(
+        FRONTEND_ROOT
+        / "app/(dashboard)/company/marketplace/_components/internal-applications-workspace.tsx"
+    )
+
+    assert '"final_decision": final_decision' in service
+    assert 'final_decision = "loanable"' in service
+    assert 'final_decision = "not_loanable"' in service
+    assert 'final_decision = "action_required"' in service
+    assert '"completed_at": latest_bureau.completed_at.isoformat()' in service
+
+    assert "Unified Loan Decision Centre" in page
+    assert "Core LoanHub" in page
+    assert "Experian / Bureau" in page
+    assert "CDAS" in page
+    assert "Final decision" in page
+    assert "LOANABLE" in page
+    assert "NOT LOANABLE" in page
+    assert "Approval blockers" in page
+    assert "Decision evidence timeline" in page
+    assert "/company/origination/experian?application=" in page
+    assert "/company/cdas?application=" in page
+    assert "/company/marketplace?workspace=applications&application=" in page
+
+    assert "/company/origination/decision-centre/${application.id}" in dashboard
+    assert 'new URLSearchParams(window.location.search).get("application")' in manager
+    assert "openApplication(requested)" in manager
