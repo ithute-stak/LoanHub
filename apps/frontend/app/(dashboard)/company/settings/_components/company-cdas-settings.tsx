@@ -22,6 +22,7 @@ type CdasConfiguration = {
     enabled: boolean;
     base_url: string;
     username: string;
+    item_code: string;
     timeout_seconds: number;
     password_configured: boolean;
     configured: boolean;
@@ -35,6 +36,7 @@ type CdasForm = {
     enabled: boolean;
     base_url: string;
     username: string;
+    item_code: string;
     password: string;
     clear_password: boolean;
     timeout_seconds: number;
@@ -49,6 +51,7 @@ const EMPTY_FORM: CdasForm = {
     enabled: false,
     base_url: TEST_URL,
     username: "",
+    item_code: "",
     password: "",
     clear_password: false,
     timeout_seconds: 20,
@@ -60,6 +63,7 @@ function fromConfiguration(configuration: CdasConfiguration): CdasForm {
         enabled: configuration.enabled,
         base_url: configuration.base_url,
         username: configuration.username,
+        item_code: configuration.item_code ?? "",
         password: "",
         clear_password: false,
         timeout_seconds: configuration.timeout_seconds,
@@ -99,6 +103,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
             enabled: false,
             base_url: environment === "test" ? TEST_URL : "",
             username: "",
+            item_code: "",
             password: "",
             clear_password: false,
         }));
@@ -114,6 +119,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                 enabled: form.enabled,
                 base_url: form.base_url.trim(),
                 username: form.username.trim(),
+                item_code: form.item_code.trim() || null,
                 password: form.password.trim() || null,
                 clear_password: form.clear_password,
                 timeout_seconds: Number(form.timeout_seconds),
@@ -181,7 +187,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                 <KeyRound className="h-5 w-5" /> CDAS authentication
                             </CardTitle>
                             <CardDescription className="mt-2 max-w-3xl">
-                                Secure company-specific CDAS credentials. LoanHub uses this authentication foundation for deliberate, documented CDAS operations only. Employee, affordability, deduction and document requests are initiated by a user; no background CDAS crawling or automatic lifecycle processing is enabled.
+                                Secure company-specific CDAS credentials and the Item Code issued to this third party. LoanHub uses this authentication foundation for deliberate, documented CDAS operations only. Employee, affordability, deduction and document requests are initiated by a user; no background CDAS crawling or automatic lifecycle processing is enabled.
                             </CardDescription>
                         </div>
                         <Badge variant={configuration?.enabled ? "default" : "secondary"}>
@@ -230,7 +236,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
                             />
                         </div>
 
-                        <div className="grid gap-4 md:grid-cols-2">
+                        <div className="grid gap-4 md:grid-cols-3">
                             <div className="space-y-2">
                                 <Label htmlFor="cdas-username">Username</Label>
                                 <Input
@@ -238,6 +244,17 @@ export function CompanyCdasSettings({ canManage }: Props) {
                                     value={form.username}
                                     disabled={!canManage || saving}
                                     onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
+                                    autoComplete="off"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="cdas-item-code">Item Code</Label>
+                                <Input
+                                    id="cdas-item-code"
+                                    value={form.item_code}
+                                    disabled={!canManage || saving}
+                                    onChange={(event) => setForm((current) => ({ ...current, item_code: event.target.value }))}
+                                    placeholder="Issued by CDAS / DataNet"
                                     autoComplete="off"
                                 />
                             </div>
