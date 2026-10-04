@@ -90,6 +90,19 @@ def company_experian_preview(
             "configured": bool(platform),
             "is_enabled": bool(platform.is_enabled) if platform else False,
             "environment": selected_environment if platform else None,
+            "environments": {
+                environment: {
+                    "has_credentials": bool(platform and has_credentials_for_environment(platform, environment)),
+                    "last_test_status": environment_test_status(platform, environment) if platform else None,
+                    "ready": bool(
+                        platform
+                        and platform.is_enabled
+                        and has_credentials_for_environment(platform, environment)
+                        and environment_test_status(platform, environment) == "connected"
+                    ),
+                }
+                for environment in ("sandbox", "live")
+            },
             "has_credentials": bool(platform and has_credentials_for_environment(platform, selected_environment)),
             "last_test_status": environment_test_status(platform, selected_environment) if platform else None,
             "last_tested_at": platform.last_tested_at if platform else None,
