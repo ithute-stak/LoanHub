@@ -123,3 +123,23 @@ def test_linked_cdas_lifecycle_uses_stored_provider_identifiers() -> None:
     assert "/cdas/loans/${selectedLoanId}/state" in page
     assert "/cdas/loans/${selectedLoanId}/lifecycle" in page
     assert "DeductionID {linkedState.deduction_id ?? \"pending\"}" in page
+
+
+def test_linked_cdas_modify_and_settlement_use_saved_provider_identity() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert '@router.post("/loans/{loan_id}/modify-active")' in router
+    assert '@router.post("/loans/{loan_id}/settle")' in router
+    assert "deduction_id=int(state.deduction_id)" in router
+    assert "employee_no=mandate.employee_number" in router
+    assert "item_code=state.item_code" in router
+    assert 'operation_type="deduction.modify_active"' in router
+    assert 'operation_type="deduction.settle"' in router
+    assert 'state.lifecycle_status = "changed" if reconciled else "change_pending"' in router
+    assert 'state.lifecycle_status = "settled" if reconciled else "settlement_pending"' in router
+
+    assert "/cdas/loans/${selectedLoanId}/modify-active" in page
+    assert "/cdas/loans/${selectedLoanId}/settle" in page
+    assert "setModify((current) => ({" in page
+    assert "setSettle((current) => ({" in page
