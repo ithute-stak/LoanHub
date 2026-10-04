@@ -114,7 +114,8 @@ services:
     profiles: ["workers"]
     image: ${LOANHUB_RUST_COMPUTE_IMAGE:-loanhub-rust-compute}:${LOANHUB_IMAGE_TAG:-local}
     build:
-      context: ./services/compute-rust
+      context: ./services
+      dockerfile: compute-rust/Dockerfile
     restart: unless-stopped
     environment:
       LOANHUB_RUST_COMPUTE_ADDR: 0.0.0.0:8082
