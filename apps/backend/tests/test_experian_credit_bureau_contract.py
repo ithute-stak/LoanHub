@@ -222,7 +222,9 @@ def test_company_experian_policy_is_enforced_by_affordability_and_approval() -> 
     assert '"amount_threshold"' in schema
     assert '"selected_products"' in schema
     assert "experian_required_for_application" in policy_service
-    assert 'stage="approval"' in approval_router
+    assert "assert_application_integration_readiness_for_approval(" in approval_router
+    integration_service = _read(ROOT / "services/lending_integration_service.py")
+    assert 'stage="approval"' in integration_service
     assert "Optional · officer decides" in company_page
     assert "Required before approval" in company_page
     assert "Required above a loan amount" in company_page
