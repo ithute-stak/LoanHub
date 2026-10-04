@@ -9,6 +9,10 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -130,6 +134,16 @@ public final class EventWorker {
 
     public static void main(String[] args) throws Exception {
         int port = Integer.parseInt(System.getenv().getOrDefault("LOANHUB_JAVA_WORKER_PORT", "8083"));
+        if (args.length > 0 && "--healthcheck".equals(args[0])) {
+            HttpResponse<Void> response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health/ready")).GET().build(),
+                HttpResponse.BodyHandlers.discarding()
+            );
+            if (response.statusCode() != 200) {
+                System.exit(1);
+            }
+            return;
+        }
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
         server.createContext("/health/ready", exchange ->
             json(exchange, 200, Map.of("status", "ready", "runtime", "java"))
