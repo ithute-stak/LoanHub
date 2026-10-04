@@ -24,6 +24,39 @@ _CIRCUIT_OPEN_SECONDS = 30.0
 _runtime_lock = Lock()
 _runtime_state: dict[str, dict[str, float | int | str | None]] = {}
 
+_ROUTING_ENV = {
+    "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
+    "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
+    "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
+    "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
+}
+_ROUTING_DEFAULTS = {
+    "go_reconciliation_hash": "prefer-worker",
+    "rust_reconciliation": "prefer-worker",
+    "rust_loan_calculation": "shadow",
+    "java_event_processing": "shadow",
+}
+_ROUTING_MODES = {"off", "shadow", "prefer-worker"}
+
+
+def workload_routing_mode(workload: str) -> str:
+    env_name = _ROUTING_ENV.get(workload)
+    default = _ROUTING_DEFAULTS.get(workload, "shadow")
+    if not env_name:
+        return default
+    value = os.getenv(env_name, default).strip().lower()
+    return value if value in _ROUTING_MODES else default
+
+
+def routing_snapshot() -> dict[str, dict[str, str]]:
+    return {
+        workload: {
+            "mode": workload_routing_mode(workload),
+            "env": env_name,
+        }
+        for workload, env_name in _ROUTING_ENV.items()
+    }
+
 
 def _state(name: str) -> dict[str, float | int | str | None]:
     with _runtime_lock:
@@ -248,12 +281,26 @@ def go_digest(
 
 
 def stable_sha256_text(*, correlation_id: str, payload: str) -> str:
-    """Delegate replayable text hashing to Go when available, otherwise use Python."""
+    """Parity-check replayable hashing before accepting Go work."""
+    python_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    mode = workload_routing_mode("go_reconciliation_hash")
+    if mode == "off":
+        return python_digest
+
     result = go_digest(correlation_id=correlation_id, payload=payload)
     candidate = str((result or {}).get("sha256") or "").lower()
-    if len(candidate) == 64 and all(ch in "0123456789abcdef" for ch in candidate):
-        return candidate
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    valid = (
+        len(candidate) == 64
+        and all(ch in "0123456789abcdef" for ch in candidate)
+        and candidate == python_digest
+    )
+    if not valid:
+        if result is not None:
+            record_parity_mismatch("go_worker")
+        return python_digest
+    if mode == "shadow":
+        return python_digest
+    return candidate
 
 
 def rust_variance_classification(
