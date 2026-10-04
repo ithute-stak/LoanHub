@@ -14,6 +14,8 @@ from services.credential_service import decrypt_credential
 
 EXPERIAN_HOSTS = {
     "sandbox": "https://apis-uat.experian.co.ls:9443",
+    "live": "https://apis.experian.co.ls:9443",
+    # Legacy aliases retained so previously stored rows remain usable.
     "uat": "https://apis-uat.experian.co.ls:9443",
     "production": "https://apis.experian.co.ls:9443",
 }
@@ -97,7 +99,7 @@ def _credentials(row) -> dict[str, str]:
 def _host(environment: str) -> str:
     value = str(environment or "sandbox").strip().lower()
     if value not in EXPERIAN_HOSTS:
-        raise ExperianConfigurationError("Experian environment must be sandbox, uat or production")
+        raise ExperianConfigurationError("Experian environment must be Sandbox or Live")
     return EXPERIAN_HOSTS[value]
 
 
