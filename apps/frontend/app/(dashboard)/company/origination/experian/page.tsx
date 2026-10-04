@@ -128,8 +128,12 @@ export default function ExperianCreditBureauPage() {
     [applications, selectedApplicationId],
   );
   const latest = enquiries[0] ?? null;
-  const platformReady = Boolean(configuration?.platform.ready_for_company_use);
-  const companyReady = platformReady && enabled;
+  const selectedEnvironmentReady = Boolean(
+    configuration?.platform.environments?.[environment]?.ready ??
+    (configuration?.configuration.environment === environment && configuration?.platform.ready_for_company_use),
+  );
+  const platformReady = selectedEnvironmentReady;
+  const companyReady = selectedEnvironmentReady && enabled;
 
   async function saveCompanySettings() {
     if (!canConfigure) return;
@@ -230,7 +234,7 @@ export default function ExperianCreditBureauPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Central Experian connection ready</AlertTitle>
           <AlertDescription>
-            {titleCase(configuration?.configuration.environment ?? "sandbox")} mode · connection {configuration?.platform.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
+            {titleCase(environment)} mode · connection {configuration?.platform.environments?.[environment]?.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
           </AlertDescription>
         </Alert>
       )}
@@ -274,6 +278,7 @@ export default function ExperianCreditBureauPage() {
               </Field>
               <p className="mt-2 text-xs text-muted-foreground">
                 Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions.
+                {" "}Selected mode status: <strong>{selectedEnvironmentReady ? "ready" : "not ready"}</strong>.
               </p>
             </div>
 
