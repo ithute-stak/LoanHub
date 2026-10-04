@@ -1,36 +1,65 @@
-use std::io::{self, BufRead};
+use std::env;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 
-fn cents(value: &str) -> i64 {
-    let value = value.trim();
-    let negative = value.starts_with('-');
-    let raw = value.trim_start_matches('-');
-    let mut parts = raw.splitn(2, '.');
-    let whole: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-    let frac_raw = parts.next().unwrap_or("0");
-    let mut frac = frac_raw.chars().take(2).collect::<String>();
-    while frac.len() < 2 { frac.push('0'); }
-    let frac: i64 = frac.parse().unwrap_or(0);
-    let result = whole.saturating_mul(100).saturating_add(frac);
-    if negative { -result } else { result }
+fn query_i64(path: &str, key: &str) -> Option<i64> {
+    let query = path.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        if name == key { value.parse::<i64>().ok() } else { None }
+    })
+}
+
+fn response(stream: &mut TcpStream, status: &str, body: &str) {
+    let payload = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(payload.as_bytes());
+}
+
+fn handle(mut stream: TcpStream) {
+    let mut buffer = [0_u8; 4096];
+    let Ok(size) = stream.read(&mut buffer) else { return; };
+    let request = String::from_utf8_lossy(&buffer[..size]);
+    let Some(first_line) = request.lines().next() else { return; };
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
+
+    if method == "GET" && path == "/health/ready" {
+        response(&mut stream, "200 OK", r#"{"status":"ready","runtime":"rust"}"#);
+        return;
+    }
+
+    if method == "GET" && path.starts_with("/v1/affordability-headroom") {
+        let income = query_i64(path, "income_cents");
+        let commitments = query_i64(path, "commitments_cents");
+        let proposed = query_i64(path, "proposed_cents");
+        match (income, commitments, proposed) {
+            (Some(income), Some(commitments), Some(proposed)) => {
+                let headroom = income.saturating_sub(commitments).saturating_sub(proposed);
+                let body = format!(
+                    r#"{{"passed":{},"headroom_cents":{},"authoritative":false}}"#,
+                    headroom >= 0,
+                    headroom
+                );
+                response(&mut stream, "200 OK", &body);
+            }
+            _ => response(&mut stream, "400 Bad Request", r#"{"error":"invalid_query"}"#),
+        }
+        return;
+    }
+
+    response(&mut stream, "404 Not Found", r#"{"error":"not_found"}"#);
 }
 
 fn main() {
-    // Deliberately tiny first contract:
-    // stdin line: affordability|income|commitments|proposed_installment
-    // stdout: pass|headroom_cents
-    //
-    // Python remains authoritative. This worker is suitable for high-volume
-    // previews/batch analytics and must not directly approve a loan.
-    for line in io::stdin().lock().lines().map_while(Result::ok) {
-        let fields: Vec<&str> = line.split('|').collect();
-        if fields.len() != 4 || fields[0] != "affordability" {
-            println!("error|unsupported_contract");
-            continue;
-        }
-        let income = cents(fields[1]);
-        let commitments = cents(fields[2]);
-        let proposed = cents(fields[3]);
-        let headroom = income.saturating_sub(commitments).saturating_sub(proposed);
-        println!("{}|{}", if headroom >= 0 { "pass" } else { "fail" }, headroom);
+    let addr = env::var("LOANHUB_RUST_COMPUTE_ADDR").unwrap_or_else(|_| "0.0.0.0:8082".to_string());
+    let listener = TcpListener::bind(&addr).expect("bind rust compute worker");
+    eprintln!("LoanHub Rust compute worker listening on {addr}");
+    for stream in listener.incoming().flatten() {
+        handle(stream);
     }
 }
