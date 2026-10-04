@@ -78,6 +78,11 @@ export type LoanCalculation = {
   schedule_amounts: number[];
   schedule: LoanCalculationScheduleRow[];
   steps: MicroLoanStep[];
+  browser_compute?: {
+    wasm_used: boolean;
+    wasm_parity: "passed" | "mismatch" | "unavailable" | "method_not_migrated" | string;
+    preview_total_repayable: number | null;
+  };
 };
 
 /** Backward-compatible alias retained for existing imports. */
