@@ -17,6 +17,9 @@ from core.access_control import (
 )
 from database.models.audit_log import AuditLog
 from database.models.cdas_official import CdasProviderOperation
+from database.models.client_loan_company import ClientCompanyLoan
+from database.models.enums import LoanStatus
+from database.models.lending_operations import CDASPayrollProfile
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError
 from integrations.cdas_contracts import (
@@ -49,6 +52,7 @@ class CdasConfigurationUpdateRequest(BaseModel):
     enabled: bool = False
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=200)
+    item_code: str | None = Field(default=None, max_length=100)
     password: str | None = Field(default=None, max_length=500)
     clear_password: bool = False
     timeout_seconds: float = Field(default=20.0, ge=1, le=120)
@@ -266,6 +270,7 @@ def put_cdas_configuration(
             enabled=payload.enabled,
             base_url=payload.base_url,
             username=payload.username,
+            item_code=payload.item_code,
             password=payload.password,
             clear_password=payload.clear_password,
             timeout_seconds=payload.timeout_seconds,
@@ -309,6 +314,89 @@ def get_cdas_request_budget(
     row = get_configuration(db, context.company_id)
     environment = str(row.environment or "test").strip().lower() if row else "test"
     return get_cdas_request_budget_status(db, company_id=context.company_id, environment=environment)
+
+
+@router.get("/loans/{loan_id}/registration-draft")
+def get_cdas_loan_registration_draft(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Build a local CDAS Registration payload for an approved LoanHub loan.
+
+    This endpoint performs no provider request and never creates a deduction.
+    A company manager must still explicitly confirm the mutation in the CDAS
+    operations workspace.
+    """
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.id == loan_id,
+            ClientCompanyLoan.company_id == context.company_id,
+        )
+        .first()
+    )
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    reasons: list[str] = []
+    if not loan.cdas_collection_enabled:
+        reasons.append("CDAS collection is not enabled for this loan")
+    if loan.status not in {LoanStatus.APPROVED, LoanStatus.ACTIVE}:
+        reasons.append("The loan must be approved or active before CDAS registration")
+
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == loan.borrower_id,
+        )
+        .first()
+    )
+    if not profile or not str(profile.employee_number or "").strip():
+        reasons.append("A CDAS payroll profile with an employee number is required")
+    elif not profile.verified:
+        reasons.append("The borrower CDAS payroll profile has not been verified")
+
+    config = get_configuration(db, context.company_id)
+    config_values = dict(config.configuration or {}) if config and isinstance(config.configuration, dict) else {}
+    item_code = str(config_values.get("item_code") or "").strip()
+    if not item_code:
+        reasons.append("Configure the company's CDAS Item Code before registration")
+
+    plan = dict(loan.cdas_collection_plan or {})
+    effective_month = str(plan.get("effective_month") or "").strip()
+    if not effective_month and loan.first_payment_due:
+        effective_month = loan.first_payment_due.strftime("%Y-%m")
+    if not effective_month:
+        reasons.append("The loan does not have a CDAS effective month")
+
+    payload = None
+    if not reasons and profile:
+        payload = {
+            "request_type": 1,
+            "deduction_id": 0,
+            "employee_no": profile.employee_number,
+            "loan_policy": 1,
+            "item_code": item_code,
+            "deduction_amount": str(loan.installment_amount or 0),
+            "total_installment": int(loan.repayment_period or 0),
+            "principal_amount": str(loan.principal_amount or 0),
+            "effective_month": effective_month,
+            "reference_no": loan.loan_reference,
+        }
+
+    return {
+        "loan_id": str(loan.id),
+        "loan_reference": loan.loan_reference,
+        "ready": not reasons,
+        "reasons": reasons,
+        "registration": payload,
+        "provider_request_sent": False,
+    }
 
 
 @router.get("/operations")
