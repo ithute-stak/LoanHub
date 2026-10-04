@@ -192,6 +192,23 @@ export default function CdasOperationsPage() {
                 reference_no: response.data.reference_no,
                 confirmed: false,
             }));
+            setModify((current) => ({
+                ...current,
+                employee_no: response.data.employee_no,
+                item_code: response.data.item_code,
+                total_installment: response.data.expected_installments,
+                deduction_amount: Number(response.data.monthly_deduction),
+                principal_amount: Number(response.data.principal_amount),
+                deduction_id: response.data.deduction_id ?? 0,
+                confirmed: false,
+            }));
+            setSettle((current) => ({
+                ...current,
+                item_code: response.data.item_code,
+                deduction_id: response.data.deduction_id ?? 0,
+                employee_no: response.data.employee_no,
+                confirmed: false,
+            }));
         } catch (requestError: unknown) {
             setLinkedState(null);
             setError(getErrorMessage(requestError, "Linked CDAS state could not be loaded."));
@@ -272,7 +289,17 @@ export default function CdasOperationsPage() {
         setError(null);
         setResult(null);
         try {
-            const response = await api.post<MutationResponse>("/cdas/deductions/modify-active", modify);
+            const response = (
+                selectedLoanId && linkedState
+                    ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/modify-active`, {
+                        total_installment: modify.total_installment,
+                        deduction_amount: modify.deduction_amount,
+                        principal_amount: modify.principal_amount,
+                        effective_date: modify.effective_date,
+                        confirmed: modify.confirmed,
+                    })
+                    : await api.post<MutationResponse>("/cdas/deductions/modify-active", modify)
+            );
             setResult({ title: "CDAS active-deduction response", record: response.data.deduction });
             setModify((current) => ({ ...current, confirmed: false }));
         } catch (requestError: unknown) {
@@ -289,7 +316,15 @@ export default function CdasOperationsPage() {
         setError(null);
         setResult(null);
         try {
-            const response = await api.post<MutationResponse>("/cdas/deductions/settle", settle);
+            const response = (
+                selectedLoanId && linkedState
+                    ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/settle`, {
+                        effective_date: settle.effective_date,
+                        settlement_reason: settle.settlement_reason,
+                        confirmed: settle.confirmed,
+                    })
+                    : await api.post<MutationResponse>("/cdas/deductions/settle", settle)
+            );
             setResult({ title: "CDAS settlement response", record: response.data.deduction });
             setSettle((current) => ({ ...current, confirmed: false }));
         } catch (requestError: unknown) {
