@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -26,6 +26,7 @@ from database.schemas.credit_bureau import ExperianEnquiryRequest
 from database.session import get_db
 from routers.credit_bureau_configuration import company_experian_preview
 from services.credential_service import encrypt_credential
+from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_experian_enquiry
 from services.experian_service import (
     ExperianConfigurationError,
     ExperianRequestError,
@@ -309,23 +310,14 @@ def run_experian_credit_check(
         raise HTTPException(status_code=409, detail="Record the borrower's National ID or passport before running Experian")
 
     now = datetime.now(timezone.utc)
-    company_policy = dict(company_integration.configuration or {})
-    max_report_age_hours = max(1, min(int(company_policy.get("max_report_age_hours") or 24), 720))
+    _, company_policy = company_experian_policy(db, context.company_id)
     if not payload.force_refresh:
-        freshness_cutoff = now - timedelta(hours=max_report_age_hours)
-        reusable = (
-            db.query(CreditBureauEnquiry)
-            .filter(
-                CreditBureauEnquiry.company_id == context.company_id,
-                CreditBureauEnquiry.application_id == application.id,
-                CreditBureauEnquiry.borrower_id == application.borrower_id,
-                CreditBureauEnquiry.provider == "experian",
-                CreditBureauEnquiry.status == "completed",
-                CreditBureauEnquiry.completed_at.isnot(None),
-                CreditBureauEnquiry.completed_at >= freshness_cutoff,
-            )
-            .order_by(CreditBureauEnquiry.completed_at.desc())
-            .first()
+        reusable = latest_fresh_experian_enquiry(
+            db,
+            company_id=context.company_id,
+            application_id=application.id,
+            borrower_id=application.borrower_id,
+            max_report_age_hours=int(company_policy["max_report_age_hours"]),
         )
         if reusable:
             return _enquiry_payload(reusable)
