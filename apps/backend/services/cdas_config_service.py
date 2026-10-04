@@ -121,7 +121,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
             "enabled": False,
             "base_url": DEFAULT_TEST_BASE_URL,
             "username": "",
-        "item_code": "",
+            "item_code": "",
             "timeout_seconds": float(settings.CDAS_TIMEOUT_SECONDS),
             "password_configured": False,
             "configured": False,
