@@ -681,6 +681,7 @@ def calculate_loan_terms(
                     "python_authoritative": True,
                     "rust_used": parity_passed,
                     "rust_parity": "passed" if parity_passed else "mismatch",
+                    "cpp_used": bool(rust_result.get("native_cpp_used")) if parity_passed else False,
                     "fallback": not parity_passed,
                 }
                 if parity_passed:
@@ -692,6 +693,7 @@ def calculate_loan_terms(
                 "python_authoritative": True,
                 "rust_used": False,
                 "rust_parity": "unavailable",
+                "cpp_used": False,
                 "fallback": True,
             }
     else:
@@ -699,6 +701,7 @@ def calculate_loan_terms(
             "python_authoritative": True,
             "rust_used": False,
             "rust_parity": "method_not_migrated",
+            "cpp_used": False,
             "fallback": True,
         }
 
