@@ -45,8 +45,8 @@ export async function simpleInterestBrowserPreview(input: {
   months: number;
   processingFee?: number;
 }): Promise<number | null> {
-  const module = await loadLoanComputeWasm();
-  const fn = module?.simple_interest_total_cents;
+  const wasmExports = await loadLoanComputeWasm();
+  const fn = wasmExports?.simple_interest_total_cents;
   const principalCents = moneyToCents(input.principal);
   const feeCents = moneyToCents(input.processingFee ?? 0);
   const rateMilliPercent = rateToMilliPercent(input.ratePercent);
@@ -73,8 +73,8 @@ export async function affordabilityCashflowHeadroomPreview(input: {
   commitments: number;
   proposedInstallment: number;
 }): Promise<number | null> {
-  const module = await loadLoanComputeWasm();
-  const fn = module?.affordability_headroom_cents;
+  const wasmExports = await loadLoanComputeWasm();
+  const fn = wasmExports?.affordability_headroom_cents;
   const income = moneyToCents(input.income);
   const commitments = moneyToCents(input.commitments);
   const proposed = moneyToCents(input.proposedInstallment);
