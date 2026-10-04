@@ -5,6 +5,7 @@ import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
 import { originationApi } from "@/api/origination";
+import { listLoanProducts } from "@/api/loanProducts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, LENDING_ROLES, hasRole } from "@/types/auth";
 import type { CreditBureauDecisionContext, CreditBureauEnquiry, ExperianCompanyConfiguration } from "@/types/creditBureau";
 import type { OriginationApplication } from "@/types/origination";
+import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
@@ -36,13 +38,16 @@ export default function ExperianCreditBureauPage() {
   const [running, setRunning] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianCompanyConfiguration | null>(null);
   const [applications, setApplications] = useState<OriginationApplication[]>([]);
+  const [loanProducts, setLoanProducts] = useState<LoanProduct[]>([]);
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [enquiries, setEnquiries] = useState<CreditBureauEnquiry[]>([]);
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
 
   const [enabled, setEnabled] = useState(false);
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
-  const [requireBeforeAffordability, setRequireBeforeAffordability] = useState(false);
+  const [requirementMode, setRequirementMode] = useState<"optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products">("optional");
+  const [requiredAboveAmount, setRequiredAboveAmount] = useState("");
+  const [requiredProductIds, setRequiredProductIds] = useState<string[]>([]);
   const [includeCommitments, setIncludeCommitments] = useState(false);
   const [debtMode, setDebtMode] = useState<"max" | "bureau_only" | "declared_plus_bureau">("max");
   const [declineBelowScore, setDeclineBelowScore] = useState("");
@@ -63,7 +68,10 @@ export default function ExperianCreditBureauPage() {
     setConfiguration(row);
     setEnabled(Boolean(row.is_enabled));
     setMaxReportAgeHours(Number(row.configuration.max_report_age_hours ?? 24));
-    setRequireBeforeAffordability(Boolean(row.configuration.require_before_affordability));
+    const requirement = row.configuration.requirement_mode;
+    setRequirementMode(requirement === "before_affordability" || requirement === "before_approval" || requirement === "amount_threshold" || requirement === "selected_products" ? requirement : row.configuration.require_before_affordability ? "before_affordability" : "optional");
+    setRequiredAboveAmount(row.configuration.required_above_amount == null ? "" : String(row.configuration.required_above_amount));
+    setRequiredProductIds(Array.isArray(row.configuration.required_product_ids) ? row.configuration.required_product_ids : []);
     setIncludeCommitments(Boolean(row.configuration.include_bureau_commitments_in_affordability));
     const mode = row.configuration.bureau_debt_mode;
     setDebtMode(mode === "bureau_only" || mode === "declared_plus_bureau" ? mode : "max");
@@ -76,12 +84,14 @@ export default function ExperianCreditBureauPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [config, apps] = await Promise.all([
+      const [config, apps, products] = await Promise.all([
         creditBureauApi.getExperianConfiguration(),
         originationApi.listApplications(),
+        listLoanProducts(),
       ]);
       applyConfiguration(config);
       setApplications(apps);
+      setLoanProducts(products.filter((item) => item.is_active));
       setSelectedApplicationId((current) => current || apps[0]?.id || "");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian workspace could not be loaded."));
@@ -127,7 +137,10 @@ export default function ExperianCreditBureauPage() {
         is_enabled: enabled,
         configuration: {
           max_report_age_hours: Math.max(1, Number(maxReportAgeHours || 24)),
-          require_before_affordability: requireBeforeAffordability,
+          requirement_mode: requirementMode,
+          required_above_amount: requirementMode === "amount_threshold" && requiredAboveAmount.trim() ? Number(requiredAboveAmount) : null,
+          required_product_ids: requirementMode === "selected_products" ? requiredProductIds : [],
+          require_before_affordability: requirementMode === "before_affordability",
           include_bureau_commitments_in_affordability: includeCommitments,
           bureau_debt_mode: debtMode,
           decline_below_score: declineBelowScore.trim() ? Number(declineBelowScore) : null,
@@ -258,8 +271,51 @@ export default function ExperianCreditBureauPage() {
               <Field label="Refer below score"><Input type="number" min={0} max={1000} value={referBelowScore} onChange={(event) => setReferBelowScore(event.target.value)} disabled={!canConfigure} placeholder="Optional" /></Field>
             </div>
 
+            <div className="space-y-4 rounded-2xl border p-4">
+              <Field label="When is an Experian report required?">
+                <Select value={requirementMode} onValueChange={(value) => setRequirementMode(value as typeof requirementMode)} disabled={!canConfigure}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="optional">Optional · officer decides</SelectItem>
+                    <SelectItem value="before_affordability">Required before affordability</SelectItem>
+                    <SelectItem value="before_approval">Required before approval</SelectItem>
+                    <SelectItem value="amount_threshold">Required above a loan amount</SelectItem>
+                    <SelectItem value="selected_products">Required for selected products</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              {requirementMode === "amount_threshold" ? (
+                <Field label="Require Experian for amounts at or above">
+                  <Input type="number" min={0} step="0.01" value={requiredAboveAmount} onChange={(event) => setRequiredAboveAmount(event.target.value)} disabled={!canConfigure} placeholder="e.g. 5000" />
+                </Field>
+              ) : null}
+
+              {requirementMode === "selected_products" ? (
+                <div className="space-y-2">
+                  <Label>Products that require Experian</Label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {loanProducts.map((product) => (
+                      <label key={product.id} className="flex items-start gap-3 rounded-xl border p-3 text-sm">
+                        <Checkbox
+                          checked={requiredProductIds.includes(product.id)}
+                          onCheckedChange={(value) => setRequiredProductIds((current) => value === true ? [...new Set([...current, product.id])] : current.filter((id) => id !== product.id))}
+                          disabled={!canConfigure}
+                        />
+                        <span><strong>{product.name}</strong><span className="mt-1 block text-xs text-muted-foreground">{formatMoney(product.min_amount)} – {formatMoney(product.max_amount)}</span></span>
+                      </label>
+                    ))}
+                    {!loanProducts.length ? <p className="text-sm text-muted-foreground">No active loan products are available.</p> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <p className="text-xs text-muted-foreground">
+                Optional means LoanHub never blocks the loan because of Experian. Amount and product rules are enforced at approval; the affordability rule is enforced before affordability and remains protected at approval.
+              </p>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
-              <Toggle label="Require before affordability" checked={requireBeforeAffordability} onChange={setRequireBeforeAffordability} disabled={!canConfigure} />
               <Toggle label="Use bureau commitments in affordability" checked={includeCommitments} onChange={setIncludeCommitments} disabled={!canConfigure} />
               <Toggle label="Block applicants with defaults" checked={blockDefaults} onChange={setBlockDefaults} disabled={!canConfigure} />
               <Toggle label="Require identity match" checked={requireIdentityMatch} onChange={setRequireIdentityMatch} disabled={!canConfigure} />
