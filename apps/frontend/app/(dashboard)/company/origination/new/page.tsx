@@ -646,10 +646,19 @@ function OriginationWizard() {
                   label={integrationReadiness?.bureau.enabled ? `Experian · ${titleCase(integrationReadiness.bureau.environment)}` : "Experian · optional/off"}
                   ok={Boolean(!integrationReadiness?.bureau.required_before_approval || integrationReadiness?.bureau.fresh)}
                 />
+                {integrationReadiness?.bureau.enabled ? (
+                  <Health label="Experian platform connection" ok={Boolean(integrationReadiness.bureau.platform_ready)} />
+                ) : null}
                 <Health
-                  label={integrationReadiness?.cdas.selected_for_collection ? "CDAS payroll collection" : "CDAS · not selected"}
+                  label={integrationReadiness?.cdas.selected_for_collection ? "CDAS payroll identity" : "CDAS · not selected"}
                   ok={Boolean(!integrationReadiness?.cdas.selected_for_collection || integrationReadiness?.cdas.verified)}
                 />
+                {integrationReadiness?.cdas.selected_for_collection ? (
+                  <Health
+                    label={`CDAS company connection · ${titleCase(integrationReadiness.cdas.provider_environment ?? "test")}`}
+                    ok={Boolean(integrationReadiness.cdas.provider_configured && integrationReadiness.cdas.provider_enabled)}
+                  />
+                ) : null}
 
                 {integrationReadiness?.bureau.fresh ? (
                   <div className="rounded-2xl border bg-muted/20 p-3">
