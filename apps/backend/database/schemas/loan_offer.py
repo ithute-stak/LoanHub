@@ -19,6 +19,18 @@ class LoanOfferCreate(LoanOfferBase):
     loan_request_id: UUID
     branch_id: Optional[UUID] = None
     installment_due_dates: list[date] = Field(min_length=1, max_length=120)
+    approve_at_own_risk: bool = False
+    own_risk_reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class QuickLoanAffordabilityPreview(BaseModel):
+    loan_request_id: UUID
+    approved_amount: Decimal = Field(..., max_digits=12, decimal_places=2, gt=0)
+    term_months: int = Field(..., gt=0, le=120)
+    interest_rate_percent: Decimal = Field(default=Decimal("0"), max_digits=6, decimal_places=3, ge=0)
+    processing_fee: Decimal = Field(default=Decimal("0.00"), max_digits=12, decimal_places=2, ge=0)
+    calculation_method: LoanCalculationMethod = LoanCalculationMethod.MICRO_LOAN
+    installment_due_dates: list[date] = Field(min_length=1, max_length=120)
 
     @field_validator("approved_amount", "interest_rate_percent", "processing_fee")
     @classmethod
