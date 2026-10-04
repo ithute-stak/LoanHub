@@ -57,6 +57,7 @@ from database.schemas.professional_lending import (
 )
 from database.session import get_db
 from services.cdas_collection_policy import build_cdas_collection_plan
+from services.credit_bureau_policy_service import assert_experian_requirement
 from services.file_service import read_file_bytes
 from services.interest_calculation_service import calculate_loan_terms
 from services.loan_service import (
@@ -430,6 +431,15 @@ def approve_direct(
     product_id = payload.product_id or application.product_id
     if not product_id:
         raise HTTPException(status_code=422, detail="Select a loan product before approving the application")
+
+    assert_experian_requirement(
+        db,
+        application=application,
+        stage="approval",
+        amount=Decimal(payload.approved_amount),
+        product_id=product_id,
+    )
+
     product = _company_product_or_404(
         db,
         product_id=product_id,
