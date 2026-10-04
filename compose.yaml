@@ -138,7 +138,7 @@ services:
     expose:
       - "8081"
     healthcheck:
-      test: ["CMD", "/loanhub-go-worker-healthcheck"]
+      test: ["CMD", "/loanhub-go-worker", "--healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 8
