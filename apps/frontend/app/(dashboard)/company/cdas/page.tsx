@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import {
     AlertCircle,
@@ -107,6 +108,8 @@ function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: 
 }
 
 export default function CdasWorkspacePage() {
+    const searchParams = useSearchParams();
+    const requestedApplicationId = searchParams.get("application");
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [employeeNo, setEmployeeNo] = useState("");
@@ -148,7 +151,13 @@ export default function CdasWorkspacePage() {
                 ["draft", "submitted", "under_review", "approved"].includes(application.status),
             );
             setApplications(eligible);
-            setSelectedApplicationId((current: string) => current || eligible[0]?.id || "");
+            setSelectedApplicationId((current: string) => {
+                if (current) return current;
+                if (requestedApplicationId && eligible.some((application) => application.id === requestedApplicationId)) {
+                    return requestedApplicationId;
+                }
+                return eligible[0]?.id || "";
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "Loan applications could not be loaded."));
         } finally {
