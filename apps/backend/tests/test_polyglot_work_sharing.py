@@ -84,3 +84,93 @@ def test_reconciliation_uses_go_and_rust_with_python_safety() -> None:
     assert "rust_variance_classification(" in service
     assert 'delegated_status or (' in service
     assert '"matched" if variance == 0 else "shortage" if variance < 0 else "excess"' in service
+
+
+def test_rust_loan_preview_is_used_only_after_python_parity(monkeypatch) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from database.models.enums import LoanCalculationMethod
+    from services import interest_calculation_service as interest
+
+    monkeypatch.setattr(
+        interest,
+        "rust_loan_preview",
+        lambda **kwargs: {
+            "method": "simple_interest",
+            "monthly_installment": "363.33",
+            "total_interest": "90.00",
+            "total_repayable": "1090.00",
+            "schedule_amounts": ["363.33", "363.33", "363.34"],
+            "authoritative": False,
+        },
+    )
+
+    monthly, total, details = interest.calculate_loan_terms(
+        principal=Decimal("1000"),
+        rate_percent=Decimal("36"),
+        term_months=3,
+        processing_fee=Decimal("0"),
+        interest_method=LoanCalculationMethod.SIMPLE_INTEREST,
+        start_date=date(2026, 1, 1),
+        due_dates=[date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)],
+    )
+
+    assert monthly == Decimal("363.33")
+    assert total == Decimal("1090.00")
+    assert details["compute_runtime"] == {
+        "python_authoritative": True,
+        "rust_used": True,
+        "rust_parity": "passed",
+        "fallback": False,
+    }
+
+
+def test_rust_loan_preview_mismatch_falls_back_to_python(monkeypatch) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from database.models.enums import LoanCalculationMethod
+    from services import interest_calculation_service as interest
+
+    monkeypatch.setattr(
+        interest,
+        "rust_loan_preview",
+        lambda **kwargs: {
+            "method": "simple_interest",
+            "monthly_installment": "999.99",
+            "total_interest": "999.99",
+            "total_repayable": "999.99",
+            "schedule_amounts": ["999.99", "999.99", "999.99"],
+            "authoritative": False,
+        },
+    )
+
+    monthly, total, details = interest.calculate_loan_terms(
+        principal=Decimal("1000"),
+        rate_percent=Decimal("36"),
+        term_months=3,
+        processing_fee=Decimal("0"),
+        interest_method=LoanCalculationMethod.SIMPLE_INTEREST,
+        start_date=date(2026, 1, 1),
+        due_dates=[date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)],
+    )
+
+    assert monthly == Decimal("363.33")
+    assert total == Decimal("1090.00")
+    assert details["compute_runtime"]["python_authoritative"] is True
+    assert details["compute_runtime"]["rust_used"] is False
+    assert details["compute_runtime"]["rust_parity"] == "mismatch"
+    assert details["compute_runtime"]["fallback"] is True
+
+
+def test_rust_loan_engine_supports_first_deterministic_methods() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    service = (ROOT / "services/interest_calculation_service.py").read_text(encoding="utf-8")
+
+    assert '"/v1/loan-preview"' in rust
+    assert '"micro_loan" => micro_loan(req)' in rust
+    assert '"simple_interest" | "flat_rate" => simple_or_flat(req)' in rust
+    assert '"compound_interest" => compound(req)' in rust
+    assert "LoanCalculationMethod.REDUCING_BALANCE" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
+    assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" not in service.split("rust_supported =", 1)[1].split("}", 1)[0]
