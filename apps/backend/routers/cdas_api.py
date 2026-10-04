@@ -90,6 +90,11 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
     borrower_consent: bool = False
 
 
+class CdasLoanLifecycleConfirmRequest(BaseModel):
+    request_type: Literal[3, 4, 6, 10]
+    confirmed: bool = False
+
+
 class CdasDocumentRequest(BaseModel):
     year: int = Field(ge=1, le=9999)
     month: int = Field(ge=1, le=12)
@@ -643,6 +648,183 @@ async def register_cdas_deduction_for_loan(
         "official_state_id": str(state.id),
         "deduction_id": state.deduction_id,
         "lifecycle_status": state.lifecycle_status,
+    }
+
+
+@router.get("/loans/{loan_id}/state")
+def get_cdas_loan_state(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state:
+        raise HTTPException(status_code=404, detail="This loan has no official CDAS provider state")
+
+    return {
+        "loan_id": str(loan_id),
+        "mandate_id": str(mandate.id),
+        "mandate_status": mandate.status,
+        "employee_no": mandate.employee_number,
+        "monthly_deduction": str(mandate.monthly_deduction),
+        "expected_installments": mandate.expected_installments,
+        "deduction_id": state.deduction_id,
+        "item_code": state.item_code,
+        "reference_no": state.reference_no,
+        "loan_policy": state.loan_policy,
+        "principal_amount": str(state.principal_amount),
+        "effective_month": state.effective_month,
+        "cdas_status": state.cdas_status,
+        "lifecycle_status": state.lifecycle_status,
+        "requires_reconciliation": bool(state.requires_reconciliation),
+        "last_request_type": state.last_request_type,
+        "last_synced_at": state.last_synced_at,
+    }
+
+
+@router.post("/loans/{loan_id}/lifecycle")
+async def change_linked_cdas_loan_lifecycle(
+    loan_id: UUID,
+    payload: CdasLoanLifecycleConfirmRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Advance an already-linked CDAS deduction without retyping provider identifiers."""
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state or not state.deduction_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This loan is not linked to a confirmed CDAS DeductionID",
+        )
+    if state.requires_reconciliation:
+        raise HTTPException(
+            status_code=409,
+            detail="Reconcile the previous CDAS operation before submitting another lifecycle change",
+        )
+
+    lifecycle = CdasLifecyclePayload(
+        request_type=payload.request_type,
+        deduction_id=int(state.deduction_id),
+        employee_no=mandate.employee_number,
+        loan_policy=int(state.loan_policy),
+        item_code=state.item_code,
+        deduction_amount=mandate.monthly_deduction,
+        total_installment=int(mandate.expected_installments),
+        principal_amount=state.principal_amount,
+        effective_month=state.effective_month,
+        reference_no=state.reference_no,
+    )
+    provider_request = lifecycle.provider_payload()
+    ledger_request = lifecycle.ledger_payload()
+    client = get_company_cdas_client(db, context.company_id)
+
+    mutation = await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type=f"deduction.lifecycle.{payload.request_type}",
+        audit_action="cdas.loan.lifecycle",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.add_update_deduction(provider_request),
+    )
+
+    reconciled = bool(mutation.get("reconciled"))
+    provider_response = dict(mutation.get("deduction") or {})
+    status_by_request = {3: ("reviewed", 3), 4: ("approved", 4), 6: ("cancelled", 6), 10: ("changed", 10)}
+    lifecycle_status, cdas_status = status_by_request[payload.request_type]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    state.last_request_type = payload.request_type
+    state.last_provider_response = provider_response
+    state.last_error = None
+    state.last_synced_at = now
+    state.requires_reconciliation = not reconciled
+    if reconciled:
+        state.lifecycle_status = lifecycle_status
+        state.cdas_status = cdas_status
+        if payload.request_type == 3:
+            state.reviewed_at = now
+            mandate.status = "reviewed"
+        elif payload.request_type == 4:
+            state.approved_at = now
+            mandate.status = "approved"
+        elif payload.request_type == 6:
+            state.cancelled_at = now
+            mandate.status = "cancelled"
+    else:
+        state.lifecycle_status = f"{lifecycle_status}_pending"
+
+    db.add(
+        CdasOfficialMandateEvent(
+            company_id=context.company_id,
+            state_id=state.id,
+            actor_user_id=context.user.id,
+            event_type=f"lifecycle_{payload.request_type}",
+            request_type=payload.request_type,
+            request_snapshot=ledger_request,
+            response_snapshot=provider_response,
+            provider_status_code=(mutation.get("operation") or {}).get("provider_status_code"),
+            success=True,
+            message=(
+                f"CDAS lifecycle request {payload.request_type} confirmed"
+                if reconciled
+                else f"CDAS lifecycle request {payload.request_type} submitted; reconciliation is still required"
+            ),
+            occurred_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(state)
+
+    return {
+        **mutation,
+        "mandate_id": str(mandate.id),
+        "deduction_id": state.deduction_id,
+        "lifecycle_status": state.lifecycle_status,
+        "cdas_status": state.cdas_status,
     }
 
 
