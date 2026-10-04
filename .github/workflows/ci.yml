@@ -112,6 +112,7 @@ jobs:
           mvn -q -f services/worker-java/pom.xml test package
           cmake -S services/native-cpp -B /tmp/loanhub-native-build
           cmake --build /tmp/loanhub-native-build --config Release
+          test "$(/tmp/loanhub-native-build/loanhub_native simple-interest 100000 36000 3)" = "9000"
 
       - name: Run project validation
         run: |
