@@ -24,6 +24,7 @@ import {
 import { toast } from "@/utils/toast";
 import { calculateLoan } from "@/api/loans";
 import { downloadMarketplaceEvidence } from "@/api/marketplace";
+import { previewQuickLoanAffordability } from "@/api/loanOffers";
 
 import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
 import { CustomDialog } from "@/components/ui/custom-dialog";
@@ -34,6 +35,8 @@ import type { InterestMethod, LoanCalculation } from "@/types/loan";
 import { useAppData } from "@/provider/appDataProvider";
 import { useTenant } from "@/provider/tenantProvider";
 import type { MarketplaceRequestCard } from "@/types/marketplace";
+import type { QuickLoanAffordabilityPreviewResult } from "@/types/loan_offer";
+import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
 
 export function MarketplaceRequestDialog({
@@ -53,7 +56,7 @@ export function MarketplaceRequestDialog({
         unlockMarketplaceRequest,
         submitLoanOffer,
     } = useAppData();
-    const { activeBranchId } = useTenant();
+    const { activeBranchId, activeRole } = useTenant();
     const [unlocking, setUnlocking] = useState(false);
     const [unlockEvidence, setUnlockEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
     const [submitting, setSubmitting] = useState(false);
@@ -67,6 +70,10 @@ export function MarketplaceRequestDialog({
     const [notes, setNotes] = useState("");
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
     const [calculating, setCalculating] = useState(false);
+    const [affordabilityChecking, setAffordabilityChecking] = useState(false);
+    const [quickAffordability, setQuickAffordability] = useState<QuickLoanAffordabilityPreviewResult | null>(null);
+    const [approveAtOwnRisk, setApproveAtOwnRisk] = useState(false);
+    const [ownRiskReason, setOwnRiskReason] = useState("");
 
     useEffect(() => {
         if (!open || !request) return;
@@ -74,6 +81,9 @@ export function MarketplaceRequestDialog({
             setApprovedAmount(String(request.requested_amount));
             setBranchId(activeBranchId ?? "");
             setUnlockEvidence(EMPTY_PAYMENT_EVIDENCE);
+            setQuickAffordability(null);
+            setApproveAtOwnRisk(false);
+            setOwnRiskReason("");
             void loadMarketplaceRequest(request.id).catch(() => undefined);
         }, 0);
         return () => window.clearTimeout(timer);
@@ -111,6 +121,70 @@ export function MarketplaceRequestDialog({
         }, 250);
         return () => window.clearTimeout(timer);
     }, [approvedAmount, installmentDueDates, interestMethod, interestRate, processingFee, termMonths]);
+
+    useEffect(() => {
+        const unlocked = Boolean(
+            request
+            && selectedMarketplaceRequest?.id === request.id
+            && selectedMarketplaceRequest.is_unlocked
+            && selectedMarketplaceRequest.borrower_detail,
+        );
+        const principal = Number(approvedAmount || 0);
+        const months = Math.trunc(Number(termMonths || 0));
+        if (!unlocked || !request || !calculation || principal <= 0 || months <= 0 || !installmentDueDatesComplete(installmentDueDates, months)) {
+            const resetTimer = window.setTimeout(() => setQuickAffordability(null), 0);
+            return () => window.clearTimeout(resetTimer);
+        }
+
+        let cancelled = false;
+        const timer = window.setTimeout(() => {
+            setAffordabilityChecking(true);
+            void previewQuickLoanAffordability({
+                loan_request_id: request.id,
+                branch_id: branchId || null,
+                approved_amount: principal,
+                term_months: months,
+                interest_rate_percent: Number(interestRate || 0),
+                processing_fee: Number(processingFee || 0),
+                calculation_method: interestMethod,
+                installment_due_dates: installmentDueDates,
+                notes: notes.trim() || null,
+            })
+                .then((result) => {
+                    if (cancelled) return;
+                    setQuickAffordability(result);
+                    if (result.affordability.passed) {
+                        setApproveAtOwnRisk(false);
+                        setOwnRiskReason("");
+                    }
+                })
+                .catch((error: unknown) => {
+                    if (!cancelled) {
+                        setQuickAffordability(null);
+                        toast.error(getErrorMessage(error, "Affordability check failed"));
+                    }
+                })
+                .finally(() => {
+                    if (!cancelled) setAffordabilityChecking(false);
+                });
+        }, 300);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [
+        approvedAmount,
+        branchId,
+        calculation,
+        installmentDueDates,
+        interestMethod,
+        interestRate,
+        notes,
+        processingFee,
+        request,
+        selectedMarketplaceRequest,
+        termMonths,
+    ]);
 
     if (!request) return null;
 
@@ -152,6 +226,8 @@ export function MarketplaceRequestDialog({
                 calculation_method: interestMethod,
                 installment_due_dates: installmentDueDates,
                 notes: notes.trim() || null,
+                approve_at_own_risk: Boolean(!quickAffordability?.affordability.passed && approveAtOwnRisk),
+                own_risk_reason: !quickAffordability?.affordability.passed && approveAtOwnRisk ? ownRiskReason.trim() : null,
             });
             toast.success("Loan offer sent to the borrower");
             onOpenChange(false);
@@ -268,7 +344,7 @@ export function MarketplaceRequestDialog({
                         <form onSubmit={handleOffer} className="space-y-4 rounded-3xl border p-5">
                             <div>
                                 <h3 className="text-lg font-black">Prepare company offer</h3>
-                                <p className="mt-1 text-sm text-muted-foreground">The borrower will compare this with offers from other companies. Choose the calculation method the borrower will compare with other offers.</p>
+                                <p className="mt-1 text-sm text-muted-foreground">The borrower will compare this with offers from other companies. LoanHub must pass affordability on the exact proposed installment before this offer is approved, unless authorized management explicitly accepts the risk.</p>
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <Field label="Approved amount">
@@ -314,8 +390,98 @@ export function MarketplaceRequestDialog({
                             <Field label="Offer notes">
                                 <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="w-full rounded-xl border bg-background p-3" placeholder="Conditions, required documents or repayment notes..." />
                             </Field>
-                            <LoadingButton type="submit" loading={submitting} loadingText="Submitting offer..." disabled={calculating || !calculation} className="w-full">
-                                <Send className="h-4 w-4" />Submit loan offer
+
+                            <div className={`rounded-3xl border p-4 ${quickAffordability?.affordability.passed ? "border-emerald-500/30 bg-emerald-500/5" : quickAffordability ? "border-destructive/30 bg-destructive/5" : "bg-muted/20"}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="font-black">Affordability decision</p>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {affordabilityChecking
+                                                ? "Checking affordability against this company's policy…"
+                                                : quickAffordability?.affordability.passed
+                                                    ? "PASS · borrower is loanable for these proposed terms."
+                                                    : quickAffordability
+                                                        ? "FAIL · borrower is not loanable on normal policy for these proposed terms."
+                                                        : "Complete the offer terms to run affordability."}
+                                        </p>
+                                    </div>
+                                    {quickAffordability ? (
+                                        <span className={`rounded-full px-3 py-1 text-xs font-black ${quickAffordability.affordability.passed ? "bg-emerald-500/10 text-emerald-700" : "bg-destructive/10 text-destructive"}`}>
+                                            {quickAffordability.affordability.passed ? "LOANABLE" : "NOT LOANABLE"}
+                                        </span>
+                                    ) : null}
+                                </div>
+
+                                {quickAffordability ? (
+                                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                        <DataBox label="Monthly income" value={formatMoney(Number(quickAffordability.affordability.monthly_income))} />
+                                        <DataBox label="Current commitments" value={formatMoney(Number(quickAffordability.affordability.living_expenses) + Number(quickAffordability.affordability.existing_debt_repayments))} />
+                                        <DataBox label="Proposed installment" value={formatMoney(Number(quickAffordability.affordability.proposed_installment))} />
+                                        <DataBox label="Affordable limit" value={formatMoney(Number(quickAffordability.affordability.maximum_affordable_installment))} />
+                                        <DataBox label="Headroom" value={formatMoney(Number(quickAffordability.affordability.affordability_headroom))} />
+                                        <DataBox label="DTI after loan" value={`${Number(quickAffordability.affordability.dti_percent).toFixed(1)}%`} />
+                                    </div>
+                                ) : null}
+
+                                {quickAffordability && !quickAffordability.affordability.passed ? (
+                                    <div className="mt-4 space-y-3">
+                                        {quickAffordability.affordability.reasons.filter((reason) => reason.severity === "error").map((reason) => (
+                                            <p key={reason.code} className="text-xs font-semibold text-destructive">{reason.message}</p>
+                                        ))}
+                                        {hasRole(activeRole, COMPANY_MANAGEMENT_ROLES) && quickAffordability.own_risk_override_available ? (
+                                            <div className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
+                                                <label className="flex items-start gap-3 text-sm">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={approveAtOwnRisk}
+                                                        onChange={(event) => setApproveAtOwnRisk(event.target.checked)}
+                                                        className="mt-1"
+                                                    />
+                                                    <span>
+                                                        <strong>Approve at own risk</strong>
+                                                        <span className="mt-1 block text-xs text-muted-foreground">
+                                                            This is an explicit management exception. LoanHub preserves the failed affordability result, your identity, role, reason and approval time.
+                                                        </span>
+                                                    </span>
+                                                </label>
+                                                {approveAtOwnRisk ? (
+                                                    <Field label="Reason for at-risk approval">
+                                                        <Textarea
+                                                            value={ownRiskReason}
+                                                            onChange={(event) => setOwnRiskReason(event.target.value)}
+                                                            minLength={10}
+                                                            placeholder="Explain why management is approving this loan despite failed affordability."
+                                                        />
+                                                    </Field>
+                                                ) : null}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-muted-foreground">
+                                                Only authorized company management can approve a failed affordability check at their own risk, and only when affordability overrides are enabled by company policy.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : null}
+                            </div>
+
+                            <LoadingButton
+                                type="submit"
+                                loading={submitting}
+                                loadingText="Submitting offer..."
+                                disabled={
+                                    calculating
+                                    || affordabilityChecking
+                                    || !calculation
+                                    || !quickAffordability
+                                    || (
+                                        !quickAffordability.affordability.passed
+                                        && (!approveAtOwnRisk || ownRiskReason.trim().length < 10)
+                                    )
+                                }
+                                className="w-full"
+                            >
+                                <Send className="h-4 w-4" />
+                                {quickAffordability?.affordability.passed ? "Approve and submit loan offer" : "Approve at own risk and submit"}
                             </LoadingButton>
                         </form>
                     </div>
