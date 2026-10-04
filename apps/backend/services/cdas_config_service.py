@@ -121,6 +121,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
             "enabled": False,
             "base_url": DEFAULT_TEST_BASE_URL,
             "username": "",
+            "item_code": "",
             "timeout_seconds": float(settings.CDAS_TIMEOUT_SECONDS),
             "password_configured": False,
             "configured": False,
@@ -132,6 +133,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
     cfg = _values(row)
     base_url = str(cfg.get("base_url") or "").strip()
     username = str(cfg.get("username") or "").strip()
+    item_code = str(cfg.get("item_code") or "").strip()
     timeout = float(cfg.get("timeout_seconds") or settings.CDAS_TIMEOUT_SECONDS)
     password_ok = bool(row.encrypted_credentials)
     return {
@@ -140,6 +142,7 @@ def configuration_summary(row: OriginationIntegrationConfiguration | None) -> di
         "enabled": bool(row.is_enabled),
         "base_url": base_url,
         "username": username,
+        "item_code": item_code,
         "timeout_seconds": timeout,
         "password_configured": password_ok,
         "configured": bool(base_url and username and password_ok),
@@ -163,6 +166,7 @@ def update_configuration(
     enabled: bool,
     base_url: str,
     username: str,
+    item_code: str | None,
     password: str | None,
     clear_password: bool,
     timeout_seconds: float,
@@ -175,6 +179,9 @@ def update_configuration(
     username = username.strip()
     if not username:
         raise ValueError("CDAS username is required")
+    item_code = str(item_code or "").strip()
+    if len(item_code) > 100:
+        raise ValueError("CDAS Item Code must be 100 characters or fewer")
     if not 1 <= timeout_seconds <= 120:
         raise ValueError("CDAS timeout must be between 1 and 120 seconds")
     if clear_password and password:
@@ -203,6 +210,7 @@ def update_configuration(
     row.configuration = {
         "base_url": base_url,
         "username": username,
+        "item_code": item_code,
         "timeout_seconds": float(timeout_seconds),
     }
     row.encrypted_credentials = encrypted

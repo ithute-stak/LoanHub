@@ -23,8 +23,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { originationApi } from "@/api/origination";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
+import type { OriginationApplication } from "@/types/origination";
 import { getErrorMessage } from "@/utils/apiError";
 
 type CdasEmployee = {
@@ -40,7 +42,13 @@ type CdasEmployee = {
 type ProviderRecord = Record<string, unknown>;
 type LoadingAction = "employee" | "affordability" | "all" | "own" | "active" | null;
 
-type EmployeeLookupResponse = { ok: boolean; employee: CdasEmployee };
+type EmployeeLookupResponse = {
+    ok: boolean;
+    employee: CdasEmployee;
+    application_id?: string;
+    borrower_id?: string;
+    payroll_profile?: { id: string; employee_number: string; verified: boolean; verified_at: string | null; department: string | null };
+};
 type AffordabilityResponse = { ok: boolean; affordability: number };
 type DeductionsResponse = { ok: boolean; deductions: ProviderRecord[] };
 type ActiveDeductionResponse = { ok: boolean; deduction: ProviderRecord };
@@ -102,6 +110,10 @@ export default function CdasWorkspacePage() {
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [employeeNo, setEmployeeNo] = useState("");
+    const [applications, setApplications] = useState<OriginationApplication[]>([]);
+    const [selectedApplicationId, setSelectedApplicationId] = useState("");
+    const [applicationsLoading, setApplicationsLoading] = useState(false);
+    const [linkedPayrollProfile, setLinkedPayrollProfile] = useState<EmployeeLookupResponse["payroll_profile"] | null>(null);
     const [deductionStatus, setDeductionStatus] = useState(5);
     const [employee, setEmployee] = useState<CdasEmployee | null>(null);
     const [affordability, setAffordability] = useState<number | null>(null);
@@ -118,11 +130,30 @@ export default function CdasWorkspacePage() {
 
     function resetResults() {
         setEmployee(null);
+        setLinkedPayrollProfile(null);
         setAffordability(null);
         setAllDeductions(null);
         setOwnDeductions(null);
         setActiveDeduction(null);
         setError(null);
+    }
+
+    async function loadApplications() {
+        if (applicationsLoading) return;
+        setApplicationsLoading(true);
+        setError(null);
+        try {
+            const rows = await originationApi.listApplications();
+            const eligible = rows.filter((application) =>
+                ["draft", "submitted", "under_review", "approved"].includes(application.status),
+            );
+            setApplications(eligible);
+            setSelectedApplicationId((current: string) => current || eligible[0]?.id || "");
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "Loan applications could not be loaded."));
+        } finally {
+            setApplicationsLoading(false);
+        }
     }
 
     async function refreshRequestBudget() {
@@ -144,10 +175,14 @@ export default function CdasWorkspacePage() {
         setLoadingAction("employee");
         setError(null);
         try {
-            const response = await api.post<EmployeeLookupResponse>("/cdas/employees/verify", {
+            const endpoint = selectedApplicationId
+                ? `/cdas/applications/${selectedApplicationId}/verify-employee`
+                : "/cdas/employees/verify";
+            const response = await api.post<EmployeeLookupResponse>(endpoint, {
                 employee_no: normalizedEmployeeNo,
             });
             setEmployee(response.data.employee);
+            setLinkedPayrollProfile(response.data.payroll_profile ?? null);
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS employee verification failed."));
         } finally {
@@ -273,14 +308,42 @@ export default function CdasWorkspacePage() {
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                        <ContactRound className="h-5 w-5" /> Employee number
+                        <ContactRound className="h-5 w-5" /> Employee verification
                     </CardTitle>
                     <CardDescription>
-                        Enter the employee number exactly as CDAS knows it. Each button below sends only the request you choose.
+                        Verify an employee directly, or select a LoanHub application first to link the verified CDAS payroll profile to that borrower.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form className="space-y-4" onSubmit={verifyEmployee}>
+                        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                            <div className="space-y-2">
+                                <Label htmlFor="cdas-application">Loan application (optional)</Label>
+                                <select
+                                    id="cdas-application"
+                                    value={selectedApplicationId}
+                                    disabled={busy || applicationsLoading}
+                                    onChange={(event) => {
+                                        setSelectedApplicationId(event.target.value);
+                                        resetResults();
+                                    }}
+                                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                                >
+                                    <option value="">Verify employee only · do not link</option>
+                                    {applications.map((application) => (
+                                        <option key={application.id} value={application.id}>
+                                            {application.application_reference} · {application.borrower_name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-end">
+                                <Button type="button" variant="outline" disabled={applicationsLoading || busy} onClick={() => void loadApplications()}>
+                                    {applicationsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                                    Load applications
+                                </Button>
+                            </div>
+                        </div>
                         <div className="flex flex-col gap-2 sm:flex-row">
                             <Input
                                 id="cdas-employee-number"
@@ -299,6 +362,14 @@ export default function CdasWorkspacePage() {
                             </Button>
                         </div>
                     </form>
+                    {linkedPayrollProfile ? (
+                        <div className="mt-4 rounded-2xl border bg-muted/20 p-4 text-sm">
+                            <p className="font-black">Payroll profile linked to this application</p>
+                            <p className="mt-1 text-muted-foreground">
+                                Employee {linkedPayrollProfile.employee_number} · {linkedPayrollProfile.department || "Department not supplied"} · verified
+                            </p>
+                        </div>
+                    ) : null}
                 </CardContent>
             </Card>
 

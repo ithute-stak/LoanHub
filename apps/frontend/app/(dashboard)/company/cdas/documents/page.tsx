@@ -11,6 +11,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import {
+    createReconciliationBatch,
+    uploadReconciliationCsv,
+} from "@/api/reconciliation";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
@@ -51,6 +55,7 @@ export default function CdasDocumentsPage() {
     const [documentType, setDocumentType] = useState(2);
     const [document, setDocument] = useState<CdasDocument | null>(null);
     const [loading, setLoading] = useState(false);
+    const [reconciling, setReconciling] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     async function retrieveDocument(event: FormEvent<HTMLFormElement>) {
@@ -86,6 +91,44 @@ export default function CdasDocumentsPage() {
             window.setTimeout(() => URL.revokeObjectURL(url), 0);
         } catch {
             setError("CDAS returned document content that could not be decoded for download.");
+        }
+    }
+
+    function monthBounds(targetYear: number, targetMonth: number) {
+        const start = `${targetYear}-${String(targetMonth).padStart(2, "0")}-01`;
+        const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+        const end = `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+        return { start, end };
+    }
+
+    async function sendToReconciliation() {
+        if (!document || reconciling) return;
+        setReconciling(true);
+        setError(null);
+        try {
+            const bounds = monthBounds(document.Year ?? year, document.Month ?? month);
+            const batch = await createReconciliationBatch({
+                source_type: "cdas_remittance",
+                source_reference: document.FileName || `CDAS-${document.Year ?? year}-${document.Month ?? month}`,
+                account_reference: "CDAS",
+                period_start: bounds.start,
+                period_end: bounds.end,
+                currency: "LSL",
+            });
+
+            const filename = document.FileName || "";
+            const isCsvOutput = documentType === 1 && filename.toLowerCase().endsWith(".csv");
+            if (isCsvOutput && document.Content) {
+                const bytes = decodeDocument(document.Content);
+                const file = new File([copyToArrayBuffer(bytes)], filename, { type: "text/csv" });
+                await uploadReconciliationCsv(batch.id, file);
+            }
+
+            window.location.assign(`/company/reconciliation/batches/${batch.id}`);
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "CDAS reconciliation batch could not be created."));
+        } finally {
+            setReconciling(false);
         }
     }
 
@@ -173,9 +216,22 @@ export default function CdasDocumentsPage() {
                             <div className="rounded-xl border p-4"><p className="text-xs font-bold uppercase text-muted-foreground">Year</p><p className="mt-1 font-bold">{document.Year ?? "—"}</p></div>
                             <div className="rounded-xl border p-4"><p className="text-xs font-bold uppercase text-muted-foreground">Month</p><p className="mt-1 font-bold">{document.Month ?? "—"}</p></div>
                         </div>
-                        <Button type="button" variant="outline" onClick={downloadDocument} disabled={!document.Content}>
-                            <Download className="h-4 w-4" /> Download provider file
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                            <Button type="button" variant="outline" onClick={downloadDocument} disabled={!document.Content}>
+                                <Download className="h-4 w-4" /> Download provider file
+                            </Button>
+                            <Button type="button" onClick={() => void sendToReconciliation()} disabled={reconciling}>
+                                {reconciling ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+                                Send month to reconciliation
+                            </Button>
+                        </div>
+                        <Alert>
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle>Provider file format is not defined by CDAS v1.5</AlertTitle>
+                            <AlertDescription>
+                                LoanHub creates a CDAS remittance reconciliation batch for this month. If CDAS names the returned Output File as CSV, LoanHub imports it through the normal reconciliation CSV validator. Other formats are not guessed; the batch opens without imported lines so staff can inspect the provider file safely.
+                            </AlertDescription>
+                        </Alert>
                     </CardContent>
                 </Card>
             )}

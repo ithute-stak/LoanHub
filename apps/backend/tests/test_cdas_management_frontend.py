@@ -81,3 +81,15 @@ def test_settings_describe_full_manual_integration_without_background_polling() 
     assert "no background CDAS crawling or automatic lifecycle processing is enabled" in source
     assert 'href="/company/cdas"' in source
     assert "authentication-only" not in source.lower()
+
+def test_cdas_documents_bridge_safely_into_reconciliation() -> None:
+    source = DOCUMENTS.read_text(encoding="utf-8")
+
+    assert "createReconciliationBatch" in source
+    assert "uploadReconciliationCsv" in source
+    assert 'source_type: "cdas_remittance"' in source
+    assert "Send month to reconciliation" in source
+    assert "Provider file format is not defined by CDAS v1.5" in source
+    assert 'documentType === 1 && filename.toLowerCase().endsWith(".csv")' in source
+    assert "Other formats are not guessed" in source
+    assert "window.location.assign(`/" + "company/reconciliation/batches/${batch.id}`)" in source
