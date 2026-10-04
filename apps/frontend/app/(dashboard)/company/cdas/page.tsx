@@ -225,7 +225,7 @@ export default function CdasWorkspacePage() {
             <section className="rounded-2xl border bg-card p-5 shadow-sm 2xl:rounded-3xl 2xl:p-7">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="max-w-4xl">
-                        <Badge variant="secondary" className="mb-3">Documented manual CDAS integration</Badge>
+                        <div className="mb-3 flex flex-wrap gap-2"><Badge variant="secondary">Documented manual CDAS integration</Badge><Badge variant="outline">CDAS API v1.5</Badge></div>
                         <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight sm:text-3xl">
                             <ShieldCheck className="h-7 w-7 text-primary" />
                             CDAS lending workspace
