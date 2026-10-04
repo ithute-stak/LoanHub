@@ -653,6 +653,7 @@ def calculate_loan_terms(
         LoanCalculationMethod.SIMPLE_INTEREST,
         LoanCalculationMethod.FLAT_RATE,
         LoanCalculationMethod.COMPOUND_INTEREST,
+        LoanCalculationMethod.REDUCING_BALANCE,
     }
     rust_routing_mode = workload_routing_mode("rust_loan_calculation")
     if rust_supported:
