@@ -57,9 +57,9 @@ from database.schemas.professional_lending import (
 )
 from database.session import get_db
 from services.cdas_collection_policy import build_cdas_collection_plan
-from services.credit_bureau_policy_service import assert_experian_requirement
 from services.file_service import read_file_bytes
 from services.interest_calculation_service import calculate_loan_terms
+from services.lending_integration_service import assert_application_integration_readiness_for_approval
 from services.loan_service import (
     create_repayment_schedule,
     generate_loan_reference,
@@ -410,33 +410,13 @@ def approve_direct(
         parent_loan_id=application.parent_loan_id,
         top_up_exception_approved=bool(application.top_up_exception_approved),
     )
-    if application.channel == "credit_origination":
-        assessment = (
-            db.get(AffordabilityAssessment, application.affordability_assessment_id)
-            if application.affordability_assessment_id
-            else None
-        )
-        decision = assessment_effective_decision(assessment)
-        if decision not in {"eligible", "conditionally_eligible"}:
-            raise HTTPException(
-                status_code=409,
-                detail="A positive affordability assessment is required before approval",
-            )
-    if application.cdas_collection_enabled:
-        _require_cdas_payroll_profile(
-            db,
-            company_id=context.company_id,
-            borrower_id=application.borrower_id,
-        )
-
     product_id = payload.product_id or application.product_id
     if not product_id:
         raise HTTPException(status_code=422, detail="Select a loan product before approving the application")
 
-    assert_experian_requirement(
+    assert_application_integration_readiness_for_approval(
         db,
         application=application,
-        stage="approval",
         amount=Decimal(payload.approved_amount),
         product_id=product_id,
     )
