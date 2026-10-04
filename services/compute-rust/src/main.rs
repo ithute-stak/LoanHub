@@ -3,6 +3,7 @@ use rust_decimal::RoundingStrategy;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::Read;
+use std::process::Command;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 fn money(value: Decimal) -> Decimal {
@@ -41,6 +42,7 @@ struct LoanPreviewResponse {
     total_repayable: String,
     schedule_amounts: Vec<String>,
     authoritative: bool,
+    native_cpp_used: bool,
 }
 
 fn decimal(value: &str) -> Result<Decimal, String> {
@@ -81,14 +83,54 @@ fn micro_loan(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     })
 }
 
+fn cpp_simple_interest_cents(
+    principal: Decimal,
+    rate_percent: Decimal,
+    months: usize,
+) -> Option<i64> {
+    if rate_percent.scale() > 3 {
+        return None;
+    }
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
+    let rate_milli_percent = (
+        rate_percent.round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero)
+            * Decimal::from(1000_i64)
+    ).to_i64()?;
+    let output = Command::new(path)
+        .arg("simple-interest")
+        .arg(principal_cents.to_string())
+        .arg(rate_milli_percent.to_string())
+        .arg(months.to_string())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()?.trim().parse::<i64>().ok()
+}
+
 fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     let principal = money(decimal(&req.principal)?);
     let rate_percent = decimal(&req.rate_percent)?;
     let fee = money(decimal(&req.processing_fee)?);
     let annual_rate = rate_percent / Decimal::from(100_i64);
-    let total_interest = money(
+    let rust_total_interest = money(
         principal * annual_rate * Decimal::from(req.term_months as i64) / Decimal::from(12_i64),
     );
+    let rust_interest_cents = (rust_total_interest * Decimal::from(100_i64)).to_i64();
+    let cpp_interest_cents = cpp_simple_interest_cents(principal, rate_percent, req.term_months);
+    let native_cpp_used = cpp_interest_cents.is_some()
+        && rust_interest_cents.is_some()
+        && cpp_interest_cents == rust_interest_cents;
+    let total_interest = if native_cpp_used {
+        money(
+            Decimal::from(cpp_interest_cents.unwrap_or_default())
+                / Decimal::from(100_i64)
+        )
+    } else {
+        rust_total_interest
+    };
     let total = money(principal + total_interest + fee);
     let principal_parts = split_amount(principal, req.term_months);
     let interest_parts = split_amount(total_interest, req.term_months);
@@ -103,6 +145,7 @@ fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Strin
         total_repayable: total.to_string(),
         schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
         authoritative: false,
+        native_cpp_used,
     })
 }
 
@@ -148,6 +191,7 @@ fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
         total_repayable: total.to_string(),
         schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
         authoritative: false,
+        native_cpp_used: false,
     })
 }
 
