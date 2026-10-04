@@ -104,3 +104,22 @@ def test_registration_ui_uses_linked_loan_endpoint_and_requires_borrower_consent
     assert "borrower_consent: borrowerConsentConfirmed" in page
     assert "I confirm the borrower authorised payroll deduction for this loan." in page
     assert "LoanHub records this confirmation on the CDAS mandate before registration is sent." in page
+
+
+def test_linked_cdas_lifecycle_uses_stored_provider_identifiers() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert '@router.get("/loans/{loan_id}/state")' in router
+    assert '@router.post("/loans/{loan_id}/lifecycle")' in router
+    assert "if not state or not state.deduction_id" in router
+    assert "Reconcile the previous CDAS operation before submitting another lifecycle change" in router
+    assert "deduction_id=int(state.deduction_id)" in router
+    assert "employee_no=mandate.employee_number" in router
+    assert "item_code=state.item_code" in router
+    assert 'status_by_request = {3: ("reviewed", 3), 4: ("approved", 4), 6: ("cancelled", 6), 10: ("changed", 10)}' in router
+
+    assert "Load linked state" in page
+    assert "/cdas/loans/${selectedLoanId}/state" in page
+    assert "/cdas/loans/${selectedLoanId}/lifecycle" in page
+    assert "DeductionID {linkedState.deduction_id ?? \"pending\"}" in page
