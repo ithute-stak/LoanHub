@@ -23,8 +23,10 @@ untracked Experian/CDAS mutations.
 Phase 1 adds compile-tested worker boundaries and health/contract surfaces.
 Phase 2 moves selected read-only or replayable work behind the workers with
 Python fallback. Current examples include Go reconciliation hashing, Rust
-reconciliation classification and parity-checked loan previews, plus Java
-webhook-event canonicalization. Phase 3 expands workload routing only after
+reconciliation classification and parity-checked loan previews, Java
+webhook-event canonicalization, a C++ integer-cents simple-interest kernel
+invoked behind Rust, and Rust/WASM browser previews checked against the
+authoritative Python API result. Phase 3 expands workload routing only after
 parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
