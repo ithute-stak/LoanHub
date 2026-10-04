@@ -348,7 +348,10 @@ def _add_missing_source_lines(db: Session, batch: ReconciliationBatch) -> int:
             amount=money(payment.amount),
             currency=payment.currency,
             direction="credit",
-            source_fingerprint=hashlib.sha256(f"payment:{payment.id}".encode()).hexdigest(),
+            source_fingerprint=stable_sha256_text(
+                correlation_id=f"reconciliation-payment:{payment.id}",
+                payload=f"payment:{payment.id}",
+            ),
             status="missing_source",
             matched_payment_id=payment.id,
             matched_loan_id=payment.loan_id,
