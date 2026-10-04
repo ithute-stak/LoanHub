@@ -61,7 +61,7 @@ export async function simpleInterestBrowserPreview(input: {
       Math.trunc(input.months),
       feeCents,
     );
-    if (result < 0n) return null;
+    if (result < BigInt(0)) return null;
     return Number(result) / 100;
   } catch {
     return null;
