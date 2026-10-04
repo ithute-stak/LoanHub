@@ -319,6 +319,7 @@ export type ApplicationIntegrationReadiness = {
   bureau: {
     enabled: boolean;
     environment: string;
+    platform_ready: boolean;
     requirement_mode: string;
     required_before_affordability: boolean;
     required_before_approval: boolean;
@@ -336,6 +337,10 @@ export type ApplicationIntegrationReadiness = {
   };
   cdas: {
     selected_for_collection: boolean;
+    provider_environment: string | null;
+    provider_configured: boolean;
+    provider_enabled: boolean;
+    provider_tested: boolean;
     payroll_profile_found: boolean;
     verified: boolean;
     employee_number: string | null;
