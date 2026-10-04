@@ -18,7 +18,11 @@ from database.config.config import settings
 from database.models.company_operating_system import CompanyWebhookEndpoint
 from database.models.governance_control import WebhookDeliveryAttempt, WebhookOutboxEvent
 from services.crypto_service import decrypt_control_secret
-from services.polyglot_runtime_service import java_canonicalize_event
+from services.polyglot_runtime_service import (
+    java_canonicalize_event,
+    record_parity_mismatch,
+    workload_routing_mode,
+)
 
 
 WEBHOOK_SECRET_PURPOSE = b"loanhub-outbound-webhook-v1"
@@ -100,6 +104,10 @@ def _canonical_event_body(event: WebhookOutboxEvent) -> bytes:
         separators=(",", ":"),
         default=str,
     ).encode()
+    routing_mode = workload_routing_mode("java_event_processing")
+    if routing_mode == "off":
+        return python_body
+
     delegated = java_canonicalize_event(
         correlation_id=f"webhook:{event.id}",
         event_type=event.event_type,
@@ -115,9 +123,17 @@ def _canonical_event_body(event: WebhookOutboxEvent) -> bytes:
             python_body.decode("utf-8")
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        record_parity_mismatch("java_worker")
         return python_body
 
-    if candidate_hash != delegated.get("payload_sha256") or not same_payload:
+    parity_passed = (
+        candidate_hash == delegated.get("payload_sha256")
+        and same_payload
+    )
+    if not parity_passed:
+        record_parity_mismatch("java_worker")
+        return python_body
+    if routing_mode == "shadow":
         return python_body
     return candidate
 
