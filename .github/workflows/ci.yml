@@ -60,6 +60,13 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Enable pnpm
         run: |
           set -euo pipefail
@@ -95,6 +102,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir apps/frontend install --frozen-lockfile
 
+      - name: Compile polyglot workers
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path services/compute-rust/Cargo.toml
+          rustup target add wasm32-unknown-unknown
+          cargo build --manifest-path apps/frontend/wasm/loanhub-compute/Cargo.toml --target wasm32-unknown-unknown --release
+          (cd services/worker-go && go test ./... && go build ./...)
+          mvn -q -f services/worker-java/pom.xml test package
+          cmake -S services/native-cpp -B /tmp/loanhub-native-build
+          cmake --build /tmp/loanhub-native-build --config Release
+          test "$(/tmp/loanhub-native-build/loanhub_native simple-interest 100000 36000 3)" = "9000"
+
       - name: Run project validation
         run: |
           set -euo pipefail
@@ -108,6 +127,13 @@ jobs:
           grep -Fq 'password = os.getenv("SYSTEM_OWNER_PASSWORD", "")' apps/backend/scripts/sync_system_owner.py
           grep -Fq 'SYSTEM_OWNER_PASSWORD: ${{ secrets.LOANHUB_SYSTEM_OWNER_PASSWORD }}' .github/workflows/system-owner-access.yml
           echo 'System-owner recovery uses the protected GitHub Actions secret and contains no embedded password value.'
+
+      - name: Build polyglot worker images
+        run: |
+          set -euo pipefail
+          docker build -f services/compute-rust/Dockerfile -t loanhub-rust-compute-ci:${{ github.sha }} services
+          docker build -t loanhub-go-worker-ci:${{ github.sha }} services/worker-go
+          docker build -t loanhub-java-worker-ci:${{ github.sha }} services/worker-java
 
       - name: Build backend production image
         run: docker build -t loanhub-backend-ci:${{ github.sha }} apps/backend

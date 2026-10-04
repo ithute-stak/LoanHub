@@ -65,6 +65,8 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_cdas_loan_lifecycle_integration.py \
   tests/test_lending_integration_orchestration.py \
   tests/test_quick_loan_affordability_gate.py \
+  tests/test_polyglot_work_sharing.py \
+  tests/test_polyglot_runtime_router.py \
   tests/test_cdas_uat_helper.py
 "$PYTHON_BIN" -m alembic heads
 

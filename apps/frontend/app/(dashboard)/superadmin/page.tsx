@@ -8,6 +8,7 @@ import {
     FileBarChart,
     FileText,
     RefreshCcw,
+    ServerCog,
     ShieldCheck,
     Users,
 } from "lucide-react";
@@ -93,6 +94,14 @@ export default function SuperAdminDashboardPage() {
                             />
                             Refresh live data
                         </button>
+
+                        <Link
+                            href="/superadmin/runtime"
+                            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-background px-4 text-sm font-black transition hover:border-primary hover:text-primary"
+                        >
+                            <ServerCog className="h-4 w-4" />
+                            Runtime monitor
+                        </Link>
 
                         <Link
                             href="/superadmin/reports"

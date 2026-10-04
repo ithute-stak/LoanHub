@@ -18,6 +18,11 @@ from database.config.config import settings
 from database.models.company_operating_system import CompanyWebhookEndpoint
 from database.models.governance_control import WebhookDeliveryAttempt, WebhookOutboxEvent
 from services.crypto_service import decrypt_control_secret
+from services.polyglot_runtime_service import (
+    java_canonicalize_event,
+    record_parity_mismatch,
+    workload_routing_mode,
+)
 
 
 WEBHOOK_SECRET_PURPOSE = b"loanhub-outbound-webhook-v1"
@@ -92,6 +97,47 @@ def _sign(secret: str, timestamp: str, body: bytes) -> str:
     return f"sha256={digest}"
 
 
+def _canonical_event_body(event: WebhookOutboxEvent) -> bytes:
+    python_body = json.dumps(
+        event.payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    routing_mode = workload_routing_mode("java_event_processing")
+    if routing_mode == "off":
+        return python_body
+
+    delegated = java_canonicalize_event(
+        correlation_id=f"webhook:{event.id}",
+        event_type=event.event_type,
+        payload=event.payload,
+    )
+    if not delegated:
+        return python_body
+
+    try:
+        candidate = delegated["canonical_json"].encode("utf-8")
+        candidate_hash = hashlib.sha256(candidate).hexdigest()
+        same_payload = json.loads(candidate.decode("utf-8")) == json.loads(
+            python_body.decode("utf-8")
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        record_parity_mismatch("java_worker")
+        return python_body
+
+    parity_passed = (
+        candidate_hash == delegated.get("payload_sha256")
+        and same_payload
+    )
+    if not parity_passed:
+        record_parity_mismatch("java_worker")
+        return python_body
+    if routing_mode == "shadow":
+        return python_body
+    return candidate
+
+
 def _deliver(db: Session, event: WebhookOutboxEvent) -> None:
     endpoint = db.get(CompanyWebhookEndpoint, event.endpoint_id)
     event.attempt_count = int(event.attempt_count or 0) + 1
@@ -112,7 +158,7 @@ def _deliver(db: Session, event: WebhookOutboxEvent) -> None:
             endpoint.encryption_version,
             WEBHOOK_SECRET_PURPOSE,
         )
-        body = json.dumps(event.payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        body = _canonical_event_body(event)
         timestamp = str(int(time.time()))
         response = httpx.post(
             endpoint.endpoint_url,

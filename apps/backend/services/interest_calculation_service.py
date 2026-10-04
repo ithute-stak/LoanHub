@@ -3,12 +3,17 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from typing import Any, Iterable
 
 from database.models.enums import (
     INTEREST_METHOD_LABELS,
     LoanCalculationMethod,
+)
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_loan_preview,
+    workload_routing_mode,
 )
 
 MONEY = Decimal("0.01")
@@ -642,4 +647,80 @@ def calculate_loan_terms(
         "schedule_rows": [row.as_dict() for row in rows],
         **extra,
     }
+
+    rust_supported = method in {
+        LoanCalculationMethod.MICRO_LOAN,
+        LoanCalculationMethod.SIMPLE_INTEREST,
+        LoanCalculationMethod.FLAT_RATE,
+        LoanCalculationMethod.COMPOUND_INTEREST,
+        LoanCalculationMethod.REDUCING_BALANCE,
+    }
+    rust_routing_mode = workload_routing_mode("rust_loan_calculation")
+    if rust_supported:
+        rust_result = (
+            rust_loan_preview(
+                method=method.value,
+                principal=str(principal_value),
+                rate_percent=str(rate_value),
+                term_months=term_months,
+                processing_fee=str(fee_value),
+                due_dates=[item.isoformat() for item in due_dates],
+            )
+            if rust_routing_mode != "off"
+            else None
+        )
+        if rust_result:
+            try:
+                rust_monthly = money(Decimal(str(rust_result["monthly_installment"])))
+                rust_total_interest = money(Decimal(str(rust_result["total_interest"])))
+                rust_total = money(Decimal(str(rust_result["total_repayable"])))
+                rust_schedule = [
+                    money(Decimal(str(value)))
+                    for value in rust_result["schedule_amounts"]
+                ]
+            except (KeyError, InvalidOperation, TypeError, ValueError):
+                rust_result = None
+            else:
+                parity_passed = (
+                    rust_monthly == monthly_installment
+                    and rust_total_interest == total_interest
+                    and rust_total == total_repayable
+                    and rust_schedule == schedule_amounts
+                )
+                if not parity_passed:
+                    record_parity_mismatch("rust_compute")
+                details["compute_runtime"] = {
+                    "python_authoritative": True,
+                    "rust_used": parity_passed and rust_routing_mode == "prefer-worker",
+                    "rust_shadow": parity_passed and rust_routing_mode == "shadow",
+                    "rust_parity": "passed" if parity_passed else "mismatch",
+                    "rust_routing_mode": rust_routing_mode,
+                    "cpp_used": bool(rust_result.get("native_cpp_used")) if parity_passed else False,
+                    "fallback": not parity_passed or rust_routing_mode != "prefer-worker",
+                }
+                if parity_passed and rust_routing_mode == "prefer-worker":
+                    monthly_installment = rust_monthly
+                    total_repayable = rust_total
+
+        if "compute_runtime" not in details:
+            details["compute_runtime"] = {
+                "python_authoritative": True,
+                "rust_used": False,
+                "rust_shadow": False,
+                "rust_parity": "off" if rust_routing_mode == "off" else "unavailable",
+                "rust_routing_mode": rust_routing_mode,
+                "cpp_used": False,
+                "fallback": True,
+            }
+    else:
+        details["compute_runtime"] = {
+            "python_authoritative": True,
+            "rust_used": False,
+            "rust_shadow": False,
+            "rust_parity": "method_not_migrated",
+            "rust_routing_mode": rust_routing_mode,
+            "cpp_used": False,
+            "fallback": True,
+        }
+
     return monthly_installment, total_repayable, details

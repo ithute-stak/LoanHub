@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import re
 import secrets
 from collections import defaultdict
@@ -21,6 +20,12 @@ from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatu
 from database.models.governance_control import ApprovalRequest, PaymentAdjustment
 from database.models.payment import PaymentTransaction
 from database.models.reconciliation import ReconciliationBatch, ReconciliationEvent, ReconciliationLine
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_variance_classification,
+    stable_sha256_text,
+    workload_routing_mode,
+)
 
 
 MONEY = Decimal("0.01")
@@ -65,7 +70,10 @@ def source_fingerprint(*, company_id: UUID, source_type: str, transaction_date: 
         str(money(amount)),
         direction.strip().lower(),
     ])
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return stable_sha256_text(
+        correlation_id=f"reconciliation-source:{company_id}:{transaction_date.isoformat()}",
+        payload=raw,
+    )
 
 
 def _event(db: Session, batch: ReconciliationBatch, event_type: str, actor_user_id: UUID | None, *, line_id: UUID | None = None, payload: dict[str, Any] | None = None) -> None:
@@ -172,6 +180,40 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
     expected = money(payment.amount)
     actual = money(line.amount)
     variance = money(actual - expected)
+
+    expected_cents = int(expected * 100)
+    actual_cents = int(actual * 100)
+    python_status = (
+        "matched" if variance == 0 else "shortage" if variance < 0 else "excess"
+    )
+    routing_mode = workload_routing_mode("rust_reconciliation")
+    delegated = (
+        rust_variance_classification(
+            expected_cents=expected_cents,
+            actual_cents=actual_cents,
+        )
+        if routing_mode != "off"
+        else None
+    )
+    delegated_status = None
+    if delegated:
+        delegated_variance = int(delegated.get("variance_cents", 0))
+        delegated_candidate = str(delegated.get("status") or "")
+        parity_passed = (
+            delegated_variance == int(variance * 100)
+            and delegated_candidate == python_status
+        )
+        if parity_passed:
+            delegated_status = delegated_candidate
+        else:
+            record_parity_mismatch("rust_compute")
+
+    status_value = (
+        delegated_status
+        if routing_mode == "prefer-worker" and delegated_status
+        else python_status
+    )
+
     line.matched_payment_id = payment.id
     line.matched_loan_id = payment.loan_id
     line.matched_borrower_id = payment.borrower_id
@@ -180,11 +222,11 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
     line.match_method = method
     line.match_confidence = confidence
     line.matched_at = datetime.now(timezone.utc)
-    if variance == 0:
+    if status_value == "matched":
         line.status = "matched"
         line.exception_code = None
         line.exception_reason = None
-    elif variance < 0:
+    elif status_value == "shortage":
         line.status = "shortage"
         line.exception_code = "AMOUNT_SHORT"
         line.exception_reason = "External source amount is lower than the matched LoanHub payment"
@@ -328,7 +370,10 @@ def _add_missing_source_lines(db: Session, batch: ReconciliationBatch) -> int:
             amount=money(payment.amount),
             currency=payment.currency,
             direction="credit",
-            source_fingerprint=hashlib.sha256(f"payment:{payment.id}".encode()).hexdigest(),
+            source_fingerprint=stable_sha256_text(
+                correlation_id=f"reconciliation-payment:{payment.id}",
+                payload=f"payment:{payment.id}",
+            ),
             status="missing_source",
             matched_payment_id=payment.id,
             matched_loan_id=payment.loan_id,
