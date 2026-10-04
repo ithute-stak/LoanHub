@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -97,8 +98,8 @@ class CdasLoanLifecycleConfirmRequest(BaseModel):
 
 class CdasLinkedModifyRequest(BaseModel):
     total_installment: int = Field(gt=0)
-    deduction_amount: float = Field(gt=0)
-    principal_amount: float = Field(gt=0)
+    deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+    principal_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
     effective_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     confirmed: bool = False
 
