@@ -108,6 +108,7 @@ def test_experian_is_locked_to_official_lesotho_normal_search_hosts() -> None:
     service = _read(ROOT / "services/experian_service.py")
 
     assert '"sandbox": "https://apis-uat.experian.co.ls:9443"' in service
+    assert '"live": "https://apis.experian.co.ls:9443"' in service
     assert '"uat": "https://apis-uat.experian.co.ls:9443"' in service
     assert '"production": "https://apis.experian.co.ls:9443"' in service
     assert 'NORMAL_SEARCH_PATH = "/NormalSearchService"' in service
@@ -226,3 +227,18 @@ def test_company_experian_policy_is_enforced_by_affordability_and_approval() -> 
     assert "Required before approval" in company_page
     assert "Required above a loan amount" in company_page
     assert "Required for selected products" in company_page
+
+
+def test_platform_owner_switches_experian_between_sandbox_and_live_only() -> None:
+    schema = _read(ROOT / "database/schemas/credit_bureau.py")
+    router = _read(ROOT / "routers/platform_credit_bureau.py")
+    platform_page = _read(FRONTEND_ROOT / "app/(dashboard)/superadmin/control/integrations/experian/page.tsx")
+    api = _read(FRONTEND_ROOT / "api/creditBureau.ts")
+
+    assert 'environment: Literal["sandbox", "live"]' in schema
+    assert 'return "live" if normalized in {"live", "production"} else "sandbox"' in router
+    assert '<SelectItem value="sandbox">Sandbox · Experian Lesotho UAT</SelectItem>' in platform_page
+    assert '<SelectItem value="live">Live · Experian Lesotho production</SelectItem>' in platform_page
+    assert '<SelectItem value="uat">' not in platform_page
+    assert '<SelectItem value="production">' not in platform_page
+    assert 'environment: "sandbox" | "live";' in api
