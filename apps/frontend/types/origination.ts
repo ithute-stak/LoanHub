@@ -307,6 +307,7 @@ export type ApplicationIntegrationReadiness = {
   borrower_id: string;
   ready_for_affordability: boolean;
   ready_for_approval: boolean;
+  final_decision: "loanable" | "not_loanable" | "action_required" | string;
   blockers: IntegrationBlocker[];
   warnings: IntegrationBlocker[];
   core: {
@@ -326,6 +327,7 @@ export type ApplicationIntegrationReadiness = {
     fresh: boolean;
     max_report_age_hours: number;
     enquiry_id: string | null;
+    completed_at: string | null;
     score: number | null;
     risk_band: string | null;
     monthly_commitments: number | null;
