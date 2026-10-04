@@ -139,6 +139,7 @@ export default function PlatformExperianConfigurationPage() {
   if (loading) return <PageLoader rows={10} />;
 
   const readiness = configuration?.readiness;
+  const selectedProfile = configuration?.environment_profiles?.[environment];
 
   return (
     <main className="loanhub-page space-y-6">
@@ -198,11 +199,11 @@ export default function PlatformExperianConfigurationPage() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Experian username"><Input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian username"} /></Field>
-            <Field label="Experian password"><Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={configuration?.has_credentials ? "Leave blank to keep stored value" : "Experian password"} /></Field>
+            <Field label="Experian username"><Input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={selectedProfile?.has_credentials ? "Leave blank to keep stored value" : "Experian username"} /></Field>
+            <Field label="Experian password"><Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={selectedProfile?.has_credentials ? "Leave blank to keep stored value" : "Experian password"} /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <StatusLine label="Stored credentials" value={configuration?.has_credentials ? "Configured" : "Missing"} good={Boolean(configuration?.has_credentials)} />
-              <StatusLine label="Latest connection test" value={configuration?.last_test_status ? titleCase(configuration.last_test_status) : "Not tested"} good={configuration?.last_test_status === "connected"} />
+              <StatusLine label={`${environment === "live" ? "Live" : "Sandbox"} credentials`} value={selectedProfile?.has_credentials ? "Configured" : "Missing"} good={Boolean(selectedProfile?.has_credentials)} />
+              <StatusLine label="Latest connection test" value={selectedProfile?.last_test_status ? titleCase(selectedProfile.last_test_status) : "Not tested"} good={selectedProfile?.last_test_status === "connected"} />
             </div>
           </CardContent>
         </Card>
@@ -234,7 +235,7 @@ export default function PlatformExperianConfigurationPage() {
           </label>
           <div className="flex flex-wrap gap-2">
             <LoadingButton loading={saving} onClick={() => void saveConfiguration()}><Save className="h-4 w-4" />Save configuration</LoadingButton>
-            <LoadingButton loading={testing} variant="outline" disabled={!configuration?.has_credentials} onClick={() => void testConnection()}><TestTube2 className="h-4 w-4" />Test connection</LoadingButton>
+            <LoadingButton loading={testing} variant="outline" disabled={!selectedProfile?.has_credentials} onClick={() => void testConnection()}><TestTube2 className="h-4 w-4" />Test connection</LoadingButton>
           </div>
         </CardContent>
       </Card>
