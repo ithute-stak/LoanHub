@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from database.models.audit_log import AuditLog
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
-from database.models.lending_operations import CreditBureauEnquiry
 from database.models.enums import InstallmentStatus, LoanCalculationMethod, LoanStatus
 from database.models.file_management import ManagedFile
 from database.models.origination import (
@@ -23,7 +22,6 @@ from database.models.origination import (
     BorrowerExpense,
     BorrowerIncomeSource,
     BorrowerKYCProfile,
-    OriginationIntegrationConfiguration,
     OriginationPolicy,
 )
 from database.models.person import Person
@@ -31,6 +29,11 @@ from database.models.professional_lending import CreditBlacklist, DirectLoanAppl
 from database.models.repayment import RepaymentInstallment
 from database.models.user import User
 from database.schemas.origination import FinancialProfileUpdate, OriginationPolicyUpdate
+from services.credit_bureau_policy_service import (
+    assert_experian_requirement,
+    company_experian_policy,
+    latest_fresh_experian_enquiry,
+)
 from services.company_client_service import (
     normalized_monthly_debt_installment,
     sync_borrower_external_debt_summary,
@@ -808,44 +811,30 @@ def calculate_affordability(
     household_expenses = money(totals["household_expenses"])
     debt_installments = money(totals["existing_debt_installments"])
 
-    bureau_policy_row = (
-        db.query(OriginationIntegrationConfiguration)
-        .filter(
-            OriginationIntegrationConfiguration.company_id == company_id,
-            OriginationIntegrationConfiguration.provider == "experian",
-            OriginationIntegrationConfiguration.is_enabled.is_(True),
-        )
-        .first()
-    )
-    bureau_policy = dict(bureau_policy_row.configuration or {}) if bureau_policy_row else {}
-    latest_bureau = (
-        db.query(CreditBureauEnquiry)
-        .filter(
-            CreditBureauEnquiry.company_id == company_id,
-            CreditBureauEnquiry.application_id == application.id,
-            CreditBureauEnquiry.borrower_id == borrower_id,
-            CreditBureauEnquiry.provider == "experian",
-            CreditBureauEnquiry.status == "completed",
-        )
-        .order_by(CreditBureauEnquiry.completed_at.desc(), CreditBureauEnquiry.requested_at.desc())
-        .first()
-        if bureau_policy_row
-        else None
-    )
-    bureau_fresh = False
+    bureau_policy_row, bureau_policy = company_experian_policy(db, company_id)
+    latest_bureau = None
     bureau_normalized: dict = {}
-    if latest_bureau and latest_bureau.completed_at:
-        max_age_hours = max(1, min(int(bureau_policy.get("max_report_age_hours") or 24), 720))
-        completed_at = latest_bureau.completed_at
-        if completed_at.tzinfo is None:
-            completed_at = completed_at.replace(tzinfo=timezone.utc)
-        bureau_fresh = datetime.now(timezone.utc) - completed_at <= timedelta(hours=max_age_hours)
-        if bureau_fresh:
+    if bureau_policy_row and bureau_policy_row.is_enabled:
+        latest_bureau = assert_experian_requirement(
+            db,
+            application=application,
+            stage="affordability",
+        )
+        if not latest_bureau:
+            latest_bureau = latest_fresh_experian_enquiry(
+                db,
+                company_id=company_id,
+                application_id=application.id,
+                borrower_id=borrower_id,
+                max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
+            )
+        if latest_bureau:
             response_data = dict(latest_bureau.response_data or {})
             normalized = response_data.get("normalized")
             bureau_normalized = dict(normalized) if isinstance(normalized, dict) else {}
 
-    bureau_monthly_commitments = money(latest_bureau.monthly_obligations if bureau_fresh and latest_bureau else 0)
+    bureau_fresh = latest_bureau is not None
+    bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
     if bureau_fresh and bureau_policy.get("include_bureau_commitments_in_affordability"):
         debt_mode = str(bureau_policy.get("bureau_debt_mode") or "max")
         if debt_mode == "bureau_only":
@@ -901,11 +890,7 @@ def calculate_affordability(
         referral = True
         reasons.append({"severity": "warning", "code": "enhanced_due_diligence", "message": "Enhanced due diligence is required."})
 
-    if bureau_policy_row:
-        if bureau_policy.get("require_before_affordability") and not bureau_fresh:
-            blocking = True
-            reasons.append({"severity": "error", "code": "bureau_required", "message": "A fresh Experian credit-bureau report is required before affordability can be completed."})
-        elif bureau_fresh and latest_bureau:
+    if bureau_policy_row and bureau_policy_row.is_enabled and bureau_fresh and latest_bureau:
             score = latest_bureau.score
             decline_below = bureau_policy.get("decline_below_score")
             refer_below = bureau_policy.get("refer_below_score")
