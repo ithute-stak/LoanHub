@@ -11,12 +11,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { professionalApi } from "@/api/professional";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
+import type { DirectLoanApplication } from "@/types/professional";
 import { getErrorMessage } from "@/utils/apiError";
 
 type ProviderRecord = Record<string, unknown>;
 type MutationResponse = { ok: boolean; deduction: ProviderRecord };
+type RegistrationDraftResponse = {
+    loan_id: string;
+    loan_reference: string;
+    ready: boolean;
+    reasons: string[];
+    provider_request_sent: false;
+    registration: {
+        request_type: 1;
+        deduction_id: 0;
+        employee_no: string;
+        loan_policy: 1;
+        item_code: string;
+        deduction_amount: string;
+        total_installment: number;
+        principal_amount: string;
+        effective_month: string;
+        reference_no: string;
+    } | null;
+};
 
 const LIFECYCLE_TYPES = [
     [1, "Registration"],
@@ -63,9 +84,12 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 export default function CdasOperationsPage() {
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
-    const [loading, setLoading] = useState<"lifecycle" | "modify" | "settle" | null>(null);
+    const [loading, setLoading] = useState<"prepare" | "lifecycle" | "modify" | "settle" | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<{ title: string; record: ProviderRecord } | null>(null);
+    const [approvedCdasApplications, setApprovedCdasApplications] = useState<DirectLoanApplication[]>([]);
+    const [selectedLoanId, setSelectedLoanId] = useState("");
+    const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
         request_type: 1,
@@ -100,6 +124,66 @@ export default function CdasOperationsPage() {
         settlement_reason: 2,
         confirmed: false,
     });
+
+    async function loadApprovedCdasLoans() {
+        if (loading) return;
+        setLoading("prepare");
+        setError(null);
+        setRegistrationDraft(null);
+        try {
+            const applications = await professionalApi.listDirect();
+            const eligible = applications.filter(
+                (application) =>
+                    application.status === "approved"
+                    && application.cdas_collection_enabled
+                    && Boolean(application.loan_id),
+            );
+            setApprovedCdasApplications(eligible);
+            setSelectedLoanId((current) => current || eligible[0]?.loan_id || "");
+            if (eligible.length === 0) {
+                setError("No approved CDAS-enabled loans are available for registration.");
+            }
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "Approved CDAS-enabled loans could not be loaded."));
+        } finally {
+            setLoading(null);
+        }
+    }
+
+    async function prepareRegistration() {
+        if (!canManage || loading || !selectedLoanId) return;
+        setLoading("prepare");
+        setError(null);
+        setRegistrationDraft(null);
+        try {
+            const response = await api.get<RegistrationDraftResponse>(
+                `/cdas/loans/${selectedLoanId}/registration-draft`,
+            );
+            setRegistrationDraft(response.data);
+            if (!response.data.ready || !response.data.registration) {
+                setError(response.data.reasons.join(" ") || "This loan is not ready for CDAS registration.");
+                return;
+            }
+            const draft = response.data.registration;
+            setLifecycle({
+                request_type: draft.request_type,
+                deduction_id: draft.deduction_id,
+                employee_no: draft.employee_no,
+                loan_policy: draft.loan_policy,
+                item_code: draft.item_code,
+                deduction_amount: Number(draft.deduction_amount),
+                total_installment: draft.total_installment,
+                principal_amount: Number(draft.principal_amount),
+                effective_month: draft.effective_month,
+                reference_no: draft.reference_no,
+                confirmed: false,
+            });
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "CDAS registration preparation failed."));
+        } finally {
+            setLoading(null);
+        }
+    }
 
     async function submitLifecycle(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -205,6 +289,62 @@ export default function CdasOperationsPage() {
                     <CardContent><ResultCard title={result.title} record={result.record} /></CardContent>
                 </Card>
             )}
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Prepare registration from an approved LoanHub loan</CardTitle>
+                    <CardDescription>
+                        This step reads LoanHub only. It does not contact CDAS and does not create a payroll deduction. After preparation, review every field below and explicitly confirm Registration before sending it.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
+                        <div className="space-y-2">
+                            <Label htmlFor="cdas-registration-loan">Approved CDAS-enabled loan</Label>
+                            <select
+                                id="cdas-registration-loan"
+                                value={selectedLoanId}
+                                disabled={Boolean(loading)}
+                                onChange={(event) => {
+                                    setSelectedLoanId(event.target.value);
+                                    setRegistrationDraft(null);
+                                }}
+                                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                            >
+                                <option value="">Select a loan</option>
+                                {approvedCdasApplications.map((application) => (
+                                    <option key={application.id} value={application.loan_id || ""}>
+                                        {application.loan_reference || application.application_reference} · {application.borrower_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex items-end">
+                            <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadApprovedCdasLoans()}>
+                                {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                Load approved loans
+                            </Button>
+                        </div>
+                        <div className="flex items-end">
+                            <Button type="button" disabled={Boolean(loading) || !selectedLoanId} onClick={() => void prepareRegistration()}>
+                                Prepare registration
+                            </Button>
+                        </div>
+                    </div>
+
+                    {registrationDraft ? (
+                        <Alert>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <AlertTitle>{registrationDraft.ready ? "Registration prepared" : "Loan is not ready"}</AlertTitle>
+                            <AlertDescription>
+                                {registrationDraft.ready
+                                    ? `Loan ${registrationDraft.loan_reference} has been copied into the Registration form below. No CDAS request has been sent.`
+                                    : registrationDraft.reasons.join(" ")}
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
+                </CardContent>
+            </Card>
 
             <Card>
                 <CardHeader>
