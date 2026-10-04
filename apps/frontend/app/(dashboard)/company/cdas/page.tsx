@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import {
     AlertCircle,
@@ -108,8 +107,6 @@ function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: 
 }
 
 export default function CdasWorkspacePage() {
-    const searchParams = useSearchParams();
-    const requestedApplicationId = searchParams.get("application");
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [employeeNo, setEmployeeNo] = useState("");
@@ -150,6 +147,9 @@ export default function CdasWorkspacePage() {
             const eligible = rows.filter((application) =>
                 ["draft", "submitted", "under_review", "approved"].includes(application.status),
             );
+            const requestedApplicationId = typeof window !== "undefined"
+                ? new URLSearchParams(window.location.search).get("application")
+                : null;
             setApplications(eligible);
             setSelectedApplicationId((current: string) => {
                 if (current) return current;
