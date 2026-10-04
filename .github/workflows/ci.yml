@@ -60,6 +60,13 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Enable pnpm
         run: |
           set -euo pipefail
@@ -101,6 +108,7 @@ jobs:
           cargo check --manifest-path services/compute-rust/Cargo.toml
           cargo check --manifest-path apps/frontend/wasm/loanhub-compute/Cargo.toml
           (cd services/worker-go && go test ./... && go build ./...)
+          mvn -q -f services/worker-java/pom.xml test package
           cmake -S services/native-cpp -B /tmp/loanhub-native-build
           cmake --build /tmp/loanhub-native-build --config Release
 
@@ -123,6 +131,7 @@ jobs:
           set -euo pipefail
           docker build -t loanhub-rust-compute-ci:${{ github.sha }} services/compute-rust
           docker build -t loanhub-go-worker-ci:${{ github.sha }} services/worker-go
+          docker build -t loanhub-java-worker-ci:${{ github.sha }} services/worker-java
 
       - name: Build backend production image
         run: docker build -t loanhub-backend-ci:${{ github.sha }} apps/backend
