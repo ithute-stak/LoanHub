@@ -22,6 +22,10 @@ export type ExperianCompanyConfiguration = {
     configured: boolean;
     is_enabled: boolean;
     environment: "sandbox" | "live" | string | null;
+    environments?: {
+      sandbox?: { has_credentials: boolean; last_test_status: string | null; ready: boolean };
+      live?: { has_credentials: boolean; last_test_status: string | null; ready: boolean };
+    };
     has_credentials: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
