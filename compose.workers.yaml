@@ -4,6 +4,10 @@ services:
       LOANHUB_RUST_COMPUTE_URL: http://rust-compute:8082
       LOANHUB_GO_WORKER_URL: http://go-worker:8081
       LOANHUB_JAVA_WORKER_URL: http://java-worker:8083
+      LOANHUB_GO_RECON_HASH_MODE: ${LOANHUB_GO_RECON_HASH_MODE:-prefer-worker}
+      LOANHUB_RUST_RECON_MODE: ${LOANHUB_RUST_RECON_MODE:-prefer-worker}
+      LOANHUB_RUST_LOAN_CALC_MODE: ${LOANHUB_RUST_LOAN_CALC_MODE:-shadow}
+      LOANHUB_JAVA_EVENT_MODE: ${LOANHUB_JAVA_EVENT_MODE:-shadow}
     depends_on:
       rust-compute:
         condition: service_healthy
