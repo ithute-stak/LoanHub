@@ -80,3 +80,27 @@ def test_cdas_operations_prepare_registration_from_approved_loanhub_loan() -> No
     assert "No CDAS request has been sent." in page
     assert "confirmed: false" in page
     assert 'api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)' in page
+
+
+def test_confirmed_loan_registration_persists_official_cdas_provider_link() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+
+    assert '@router.post("/loans/{loan_id}/register")' in router
+    assert "CdasOfficialMandateState" in router
+    assert "CdasOfficialMandateEvent" in router
+    assert "CDASDeductionMandate" in router
+    assert "borrower_consent" in router
+    assert 'operation_type="deduction.lifecycle.1"' in router
+    assert "state.deduction_id = deduction_id" in router
+    assert 'state.lifecycle_status = "registered" if reconciled else "registration_pending"' in router
+    assert "mandate.external_reference = str(deduction_id)" in router
+    assert 'event_type="registration"' in router
+
+
+def test_registration_ui_uses_linked_loan_endpoint_and_requires_borrower_consent() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert "/cdas/loans/${selectedLoanId}/register" in page
+    assert "borrower_consent: borrowerConsentConfirmed" in page
+    assert "I confirm the borrower authorised payroll deduction for this loan." in page
+    assert "LoanHub records this confirmation on the CDAS mandate before registration is sent." in page
