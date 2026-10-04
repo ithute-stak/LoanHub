@@ -21,7 +21,7 @@ class ExperianConfigurationUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    environment: Literal["sandbox", "uat", "production"] = "sandbox"
+    environment: Literal["sandbox", "live"] = "sandbox"
     is_enabled: bool = False
     configuration: dict[str, Any] = Field(default_factory=dict)
     credentials: ExperianCredentialsInput | None = None
@@ -29,7 +29,12 @@ class ExperianConfigurationUpdate(BaseModel):
     @field_validator("environment", mode="before")
     @classmethod
     def normalize_legacy_environment(cls, value: Any) -> Any:
-        return "sandbox" if str(value or "").strip().lower() == "manual" else value
+        normalized = str(value or "").strip().lower()
+        if normalized in {"manual", "uat", "sandbox"}:
+            return "sandbox"
+        if normalized in {"production", "live"}:
+            return "live"
+        return value
 
     @model_validator(mode="after")
     def validate_product_configuration(self):
