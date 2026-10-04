@@ -241,6 +241,10 @@ export type OriginationApplication = {
   repayment_type: string;
   purpose: string | null;
   status: string;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
   preferred_payment_day: number | null;
   first_payment_date: string | null;
   installment_due_dates: string[];
