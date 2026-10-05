@@ -575,6 +575,7 @@ def reverse_reference_accounting(
 
 
 def record_reversal_accounting(db: Session, payment: PaymentTransaction) -> JournalEntry | None:
+    """Reverse the exact journals created by a payment and its derived platform charge."""
     company_result = None
     if payment.company_id:
         company_result = reverse_reference_accounting(
@@ -586,7 +587,7 @@ def record_reversal_accounting(db: Session, payment: PaymentTransaction) -> Jour
             user_id=payment.initiated_by_user_id,
             reason=f"payment {payment.id}",
         )
-    # A platform journal may also exist for tenant/platform fees.
+
     platform_key, _ = scope_key(None)
     if _journal_for_reference(db, platform_key, "payment_transaction", str(payment.id)):
         reverse_reference_accounting(
@@ -598,6 +599,42 @@ def record_reversal_accounting(db: Session, payment: PaymentTransaction) -> Jour
             user_id=payment.initiated_by_user_id,
             reason=f"payment {payment.id}",
         )
+
+    # A successful payment can also have produced a transaction-charge accrual.
+    # Reverse both sides of that accrual from the original journal lines instead
+    # of approximating the accounts or amount.
+    from database.models.finance import TransactionChargeLedgerEntry
+    charge = db.query(TransactionChargeLedgerEntry).filter(
+        TransactionChargeLedgerEntry.payment_id == payment.id
+    ).first()
+    if charge and charge.status not in {"waived", "reversed"}:
+        reverse_reference_accounting(
+            db,
+            company_id=charge.company_id,
+            branch_id=None,
+            reference_type="platform_transaction_charge_accrual",
+            reference_id=str(charge.id),
+            user_id=payment.initiated_by_user_id,
+            reason=f"transaction charge for reversed payment {payment.id}",
+        )
+        if _journal_for_reference(
+            db, platform_key, "platform_transaction_charge_accrual", str(charge.id)
+        ):
+            reverse_reference_accounting(
+                db,
+                company_id=None,
+                branch_id=None,
+                reference_type="platform_transaction_charge_accrual",
+                reference_id=str(charge.id),
+                user_id=payment.initiated_by_user_id,
+                reason=f"transaction charge for reversed payment {payment.id}",
+            )
+        charge.status = "reversed"
+        charge.waived_at = datetime.now(timezone.utc)
+        charge.waiver_reason = "Underlying payment reversed"
+        db.add(charge)
+
+    return company_result
 
 def record_treasury_entry_accounting(db: Session, treasury_entry) -> JournalEntry | None:
     if treasury_entry.payment_transaction_id or treasury_entry.is_voided:
