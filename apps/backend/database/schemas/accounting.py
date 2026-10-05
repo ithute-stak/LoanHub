@@ -320,3 +320,9 @@ class FixedAssetRead(BaseModel):
     last_depreciation_date: date | None = None
     disposed_at: date | None = None
     disposal_proceeds: Decimal | None = None
+
+
+class LoanWriteOffCreate(BaseModel):
+    loan_id: UUID
+    write_off_date: date
+    description: str = Field(min_length=5, max_length=1000)
