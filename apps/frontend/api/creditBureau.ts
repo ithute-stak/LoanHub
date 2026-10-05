@@ -6,6 +6,8 @@ import type {
   ExperianConnectionTest,
   ExperianPlatformConfiguration,
   ExperianUsageConfiguration,
+  CreditBureauSubscription,
+  CreditBureauPaygTransaction,
 } from "@/types/creditBureau";
 
 export const creditBureauApi = {
@@ -23,6 +25,15 @@ export const creditBureauApi = {
 
   decisionContext: async (applicationId: string): Promise<CreditBureauDecisionContext> =>
     (await api.get<CreditBureauDecisionContext>(`/credit-bureau/applications/${applicationId}/decision-context`)).data,
+
+  requestExperianSubscription: async (): Promise<CreditBureauSubscription> =>
+    (await api.post<CreditBureauSubscription>("/credit-bureau/experian/subscription")).data,
+
+  getExperianSubscription: async (): Promise<CreditBureauSubscription> =>
+    (await api.get<CreditBureauSubscription>("/credit-bureau/experian/subscription")).data,
+
+  listExperianTransactions: async (): Promise<CreditBureauPaygTransaction[]> =>
+    (await api.get<CreditBureauPaygTransaction[]>("/credit-bureau/experian/transactions")).data,
 
   runExperian: async (
     applicationId: string,
@@ -67,4 +78,22 @@ export const platformCreditBureauApi = {
 
   testExperianConnection: async (): Promise<ExperianConnectionTest> =>
     (await api.post<ExperianConnectionTest>("/platform-owner/credit-bureau/experian/test-connection")).data,
+
+  listExperianSubscriptions: async (): Promise<CreditBureauSubscription[]> =>
+    (await api.get<CreditBureauSubscription[]>("/platform-owner/credit-bureau/experian/subscriptions")).data,
+
+  decideExperianSubscription: async (
+    companyId: string,
+    payload: {
+      decision: "approved" | "rejected" | "suspended";
+      price_per_transaction?: number | null;
+      currency?: string | null;
+      reason?: string | null;
+      notes?: string | null;
+    },
+  ): Promise<CreditBureauSubscription> =>
+    (await api.post<CreditBureauSubscription>(`/platform-owner/credit-bureau/experian/subscriptions/${companyId}/decision`, payload)).data,
+
+  listExperianTransactions: async (): Promise<CreditBureauPaygTransaction[]> =>
+    (await api.get<CreditBureauPaygTransaction[]>("/platform-owner/credit-bureau/experian/transactions")).data,
 };
