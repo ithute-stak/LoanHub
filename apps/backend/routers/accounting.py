@@ -17,6 +17,7 @@ from core.access_control import (
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.branch import CompanyBranch
 from database.models.enums import UserRole
+from database.models.governance_control import ApprovalRequest, BankStatementLine
 from database.schemas.accounting import (
     AccountingAccountCreate,
     AccountingAccountRead,
@@ -35,6 +36,7 @@ from database.schemas.accounting import (
     PrepaymentAdjustmentCreate,
     TrialBalanceLine,
     TrialBalanceRead,
+    VatTransactionCreate,
 )
 from database.session import get_db
 from services.accounting_service import (
@@ -49,6 +51,7 @@ from services.accounting_service import (
     post_doubtful_debt_allowance,
     post_expense,
     post_prepayment_adjustment,
+    post_vat_transaction,
     scope_key,
 )
 
@@ -679,3 +682,104 @@ def statement_of_cash_flows(
         db, company_id=selected_company_id, from_date=from_date, to_date=to_date,
         branch_id=selected_branch_id,
     )
+
+
+@router.post("/vat/transactions", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def post_vat(
+    payload: VatTransactionCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_vat_transaction(
+        db,
+        company_id=selected_company_id,
+        branch_id=branch,
+        transaction_type=payload.transaction_type,
+        net_amount=payload.net_amount,
+        vat_amount=payload.vat_amount,
+        account_code=payload.account_code,
+        settlement_account_code=payload.settlement_account_code,
+        vat_registered=payload.vat_registered,
+        description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/period-close-checklist")
+def period_close_checklist(
+    company_id: UUID | None = None,
+    to_date: date = Query(default_factory=date.today),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Control-oriented close checklist before a period can be locked/closed."""
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    key, _ = scope_key(selected_company_id)
+    ensure_chart(db, company_id=selected_company_id)
+    db.flush()
+
+    lines = trial_balance_data(db, key, None, to_date, selected_branch_id)
+    total_debit = sum((line.debit for line in lines), Decimal("0"))
+    total_credit = sum((line.credit for line in lines), Decimal("0"))
+    suspense = next((line.balance for line in lines if line.code == "2990"), Decimal("0"))
+
+    drafts = db.query(JournalEntry.id).filter(
+        JournalEntry.company_id == selected_company_id,
+        JournalEntry.entry_date <= to_date,
+        JournalEntry.status == "draft",
+    )
+    unmatched_bank = db.query(BankStatementLine.id).filter(
+        BankStatementLine.company_id == selected_company_id,
+        BankStatementLine.transaction_date <= to_date,
+        BankStatementLine.status == "unmatched",
+    )
+    approvals = db.query(ApprovalRequest.id).filter(
+        ApprovalRequest.company_id == selected_company_id,
+        ApprovalRequest.status == "pending",
+    )
+    if selected_branch_id:
+        drafts = drafts.filter(JournalEntry.branch_id == selected_branch_id)
+        unmatched_bank = unmatched_bank.filter(BankStatementLine.branch_id == selected_branch_id)
+        approvals = approvals.filter(
+            (ApprovalRequest.branch_id == selected_branch_id) | (ApprovalRequest.branch_id.is_(None))
+        )
+
+    checks = {
+        "trial_balance_balanced": total_debit == total_credit,
+        "suspense_cleared": suspense == 0,
+        "draft_journals_cleared": drafts.count() == 0,
+        "bank_lines_reconciled": unmatched_bank.count() == 0,
+        "pending_financial_approvals_cleared": approvals.count() == 0,
+    }
+    return {
+        "as_of": to_date,
+        "branch_id": str(selected_branch_id) if selected_branch_id else None,
+        "ready_to_close": all(checks.values()),
+        "checks": checks,
+        "amounts": {
+            "total_debit": total_debit,
+            "total_credit": total_credit,
+            "trial_balance_difference": total_debit - total_credit,
+            "suspense_balance": suspense,
+        },
+        "counts": {
+            "draft_journals": drafts.count(),
+            "unmatched_bank_lines": unmatched_bank.count(),
+            "pending_approvals": approvals.count(),
+        },
+    }
