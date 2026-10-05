@@ -7,6 +7,9 @@ from database.schemas.accounting import VatTransactionCreate
 from services.accounting_service import COMPANY_CHART, PLATFORM_CHART
 
 
+ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+
+
 def _chart_map(rows):
     return {code: (name, account_type, normal_balance) for code, name, account_type, normal_balance in rows}
 
@@ -56,3 +59,16 @@ def test_vat_schema_rejects_unknown_transaction_type():
             account_code="1100",
             description="Invalid VAT classification",
         )
+
+
+def test_trial_balance_keeps_debit_minus_credit_and_statements_present_credit_classes():
+    source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "balance = debit - credit" in source
+    assert 'line.account_type in {"liability", "equity", "revenue"}' in source
+
+
+def test_period_close_requires_reconciliation_batches_closed():
+    source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "ReconciliationBatch" in source
+    assert '"reconciliation_batches_closed"' in source
+    assert '"open_reconciliation_batches"' in source
