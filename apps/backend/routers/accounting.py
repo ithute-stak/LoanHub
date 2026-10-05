@@ -39,6 +39,7 @@ from database.schemas.accounting import (
     LedgerLineRead,
     LedgerRead,
     LoanWriteOffCreate,
+    WrittenOffLoanRecoveryCreate,
     PrepaymentAdjustmentCreate,
     PeriodAdjustmentReversalCreate,
     TrialBalanceLine,
@@ -69,6 +70,7 @@ from services.accounting_service import (
     post_suspense_correction,
     post_fixed_asset_depreciation,
     post_loan_write_off,
+    record_written_off_loan_recovery,
     dispose_fixed_asset,
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
@@ -1209,3 +1211,29 @@ def accounting_transaction_coverage(
         to_date=to_date,
         branch_id=selected_branch_id,
     )
+
+
+@router.post("/recoveries/written-off-loans", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def recover_written_off_loan(
+    payload: WrittenOffLoanRecoveryCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    entry = record_written_off_loan_recovery(
+        db,
+        company_id=selected_company_id,
+        loan_id=payload.loan_id,
+        amount=payload.amount,
+        recovery_date=payload.recovery_date,
+        payment_method=payload.payment_method,
+        proof_reference=payload.proof_reference,
+        description=payload.description,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
