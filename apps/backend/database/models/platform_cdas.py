@@ -83,6 +83,8 @@ class PlatformCdasTransaction(Base):
     settled_at = Column(DateTime, nullable=True)
     waived_at = Column(DateTime, nullable=True)
     waiver_reason = Column(Text, nullable=True)
+    refunded_at = Column(DateTime, nullable=True)
+    refund_reason = Column(Text, nullable=True)
     metadata_json = Column(JSONB, nullable=False, default=dict)
 
     subscription = relationship("PlatformCdasSubscription")
