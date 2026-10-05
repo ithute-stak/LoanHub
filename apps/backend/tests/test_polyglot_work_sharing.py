@@ -480,7 +480,7 @@ def test_rust_portfolio_risk_batch_kernel_is_shadow_routed() -> None:
     assert '"rust_portfolio_risk": "shadow"' in runtime
     assert "def rust_portfolio_risk_summary(" in runtime
     assert 'workload_routing_mode("rust_portfolio_risk")' in portfolio
-    assert "record_parity_mismatch("rust_compute")" in portfolio
+    assert 'record_parity_mismatch("rust_compute")' in portfolio
     assert "LOANHUB_RUST_PORTFOLIO_RISK_MODE=shadow" in env
 
 
