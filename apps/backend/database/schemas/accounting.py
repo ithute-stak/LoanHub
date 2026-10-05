@@ -242,3 +242,13 @@ class VatTransactionCreate(BaseModel):
     branch_id: UUID | None = None
     entry_date: date | None = None
     reference_id: str | None = Field(default=None, max_length=120)
+
+
+class SuspenseCorrectionCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    target_account_code: str = Field(min_length=4, max_length=30)
+    target_side: str = Field(pattern="^(debit|credit)$")
+    description: str = Field(min_length=5, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
