@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,7 @@ from services.credit_bureau_payg_service import (
     invoice_payload,
     list_invoices,
     mark_invoice_paid,
+    refund_transaction,
     review_subscription,
     subscription_payload,
     transaction_payload,
@@ -57,6 +59,18 @@ from services.credit_bureau_payg_service import (
 
 router = APIRouter(prefix="/platform-owner/credit-bureau", tags=["Platform Owner Credit Bureau"])
 company_guard_router = APIRouter(prefix="/origination", tags=["Credit Origination Integrations"])
+
+
+class ProviderInvoiceSettlement(BaseModel):
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = Field(default=None, max_length=1000)
+
+class CreditBureauTransactionRefund(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+
 
 
 @company_guard_router.put("/integrations/experian")
@@ -428,6 +442,24 @@ def waive_experian_transaction(
     )
 
 
+@router.post("/experian/transactions/{transaction_id}/refund")
+def refund_experian_transaction(
+    transaction_id: UUID,
+    payload: CreditBureauTransactionRefund,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        refund_transaction(
+            db,
+            transaction_id=transaction_id,
+            reason=payload.reason,
+            payment_method=payload.payment_method,
+            proof_reference=payload.proof_reference,
+        )
+    )
+
+
 @router.post("/experian/invoices/{company_id}")
 def issue_experian_invoice(
     company_id: UUID,
@@ -457,7 +489,14 @@ def list_experian_invoices(
 @router.post("/experian/invoices/{invoice_id}/paid")
 def mark_experian_invoice_paid(
     invoice_id: UUID,
+    payload: ProviderInvoiceSettlement,
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
 ):
-    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
+    return invoice_payload(mark_invoice_paid(
+        db,
+        invoice_id=invoice_id,
+        payment_method=payload.payment_method,
+        proof_reference=payload.proof_reference,
+        notes=payload.notes,
+    ))

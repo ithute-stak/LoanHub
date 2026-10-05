@@ -8,7 +8,7 @@ from services.accounting_service import ensure_chart, scope_key
 
 PROVISION_ACCOUNTS = (
     ("1150", "Allowance for Credit Losses", "asset", "credit", "Contra-asset allowance against loans receivable."),
-    ("6700", "Credit Loss Provision Expense", "expense", "debit", "Expense or release arising from an approved credit-loss provision run."),
+    ("5510", "Credit Loss Provision Expense", "expense", "debit", "Expense or release arising from an approved credit-loss provision run."),
 )
 
 

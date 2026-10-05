@@ -118,6 +118,18 @@ export const platformCreditBureauApi = {
   listExperianInvoices: async (): Promise<CreditBureauInvoice[]> =>
     (await api.get<CreditBureauInvoice[]>("/platform-owner/credit-bureau/experian/invoices")).data,
 
-  markExperianInvoicePaid: async (invoiceId: string): Promise<CreditBureauInvoice> =>
-    (await api.post<CreditBureauInvoice>(`/platform-owner/credit-bureau/experian/invoices/${invoiceId}/paid`)).data,
+  markExperianInvoicePaid: async (
+    invoiceId: string,
+    paymentMethod: "cash" | "bank" | "electronic",
+    proofReference?: string,
+    notes?: string,
+  ): Promise<CreditBureauInvoice> =>
+    (await api.post<CreditBureauInvoice>(
+      `/platform-owner/credit-bureau/experian/invoices/${invoiceId}/paid`,
+      {
+        payment_method: paymentMethod,
+        proof_reference: proofReference || null,
+        notes: notes || null,
+      },
+    )).data,
 };

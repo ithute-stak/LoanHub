@@ -55,6 +55,18 @@ class CdasInvoiceCreate(BaseModel):
     period_end: date
 
 
+class ProviderInvoiceSettlement(BaseModel):
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class CdasTransactionRefund(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+
+
 class CdasSubscriptionDecision(BaseModel):
     decision: Literal["approved", "rejected", "suspended"]
     currency: str = Field(default="LSL", min_length=3, max_length=3)
@@ -240,20 +252,33 @@ def get_cdas_invoices(
 @router.post("/invoices/{invoice_id}/paid")
 def mark_cdas_invoice_paid(
     invoice_id: UUID,
+    payload: ProviderInvoiceSettlement,
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
 ):
-    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
+    return invoice_payload(mark_invoice_paid(
+        db,
+        invoice_id=invoice_id,
+        payment_method=payload.payment_method,
+        proof_reference=payload.proof_reference,
+        notes=payload.notes,
+    ))
 
 
 
 @router.post("/transactions/{transaction_id}/refund")
 def refund_cdas_transaction(
     transaction_id: UUID,
-    payload: CdasTransactionWaiver,
+    payload: CdasTransactionRefund,
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
 ):
     return transaction_payload(
-        refund_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+        refund_transaction(
+            db,
+            transaction_id=transaction_id,
+            reason=payload.reason,
+            payment_method=payload.payment_method,
+            proof_reference=payload.proof_reference,
+        )
     )

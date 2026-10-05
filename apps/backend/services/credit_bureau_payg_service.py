@@ -627,6 +627,9 @@ def accrue_successful_enquiry(
     )
     db.add(transaction)
     db.flush()
+    if is_live and price > 0:
+        from services.accounting_service import record_credit_bureau_transaction_accrual
+        record_credit_bureau_transaction_accrual(db, transaction)
 
     if is_live and subscription.warning_threshold is not None:
         projected = outstanding_balance(db, company_id=subscription.company_id)
@@ -688,17 +691,72 @@ def waive_transaction(
     row = db.query(PlatformCreditBureauTransaction).filter(PlatformCreditBureauTransaction.id == transaction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
-    if row.status in {"settled", "sandbox"}:
-        raise HTTPException(status_code=409, detail=f"A {row.status} transaction cannot be waived")
+    if row.status != "accrued":
+        raise HTTPException(
+            status_code=409,
+            detail="Only an accrued, not-yet-invoiced Credit Bureau transaction can be waived",
+        )
     row.status = "waived"
     row.waived_at = datetime.now(timezone.utc)
     row.waiver_reason = reason.strip()
+    from services.accounting_service import reverse_credit_bureau_transaction_accrual
+    reverse_credit_bureau_transaction_accrual(db, row)
     _notify_company_owners(
         db,
         company_id=row.company_id,
         title="Credit Bureau charge waived",
         message=f"Charge {row.transaction_reference} for {row.currency} {_money(row.amount):.2f} was waived.",
         event_type="credit_bureau.transaction.waived",
+        entity_type="credit_bureau_transaction",
+        entity_id=str(row.id),
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def refund_transaction(
+    db: Session,
+    *,
+    transaction_id: UUID,
+    reason: str,
+    payment_method: str,
+    proof_reference: str | None,
+) -> PlatformCreditBureauTransaction:
+    row = db.query(PlatformCreditBureauTransaction).filter(
+        PlatformCreditBureauTransaction.id == transaction_id
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
+    if row.status == "refunded":
+        return row
+    if row.status != "settled":
+        raise HTTPException(status_code=409, detail="Only a settled Credit Bureau transaction can be refunded")
+    method = payment_method.strip().lower()
+    if method not in {"cash", "bank", "electronic"}:
+        raise HTTPException(status_code=422, detail="Unsupported refund payment method")
+    if method != "cash" and not (proof_reference or "").strip():
+        raise HTTPException(status_code=422, detail="Non-cash refunds require proof_reference")
+
+    refunded_at = datetime.now(timezone.utc)
+    metadata = dict(row.metadata_json or {})
+    metadata["refund"] = {
+        "payment_method": method,
+        "proof_reference": (proof_reference or "").strip() or None,
+        "reason": reason.strip(),
+        "recorded_at": refunded_at.isoformat(),
+    }
+    row.metadata_json = metadata
+    row.status = "refunded"
+
+    from services.accounting_service import record_credit_bureau_transaction_refund
+    record_credit_bureau_transaction_refund(db, row)
+    _notify_company_owners(
+        db,
+        company_id=row.company_id,
+        title="Credit Bureau charge refunded",
+        message=f"Charge {row.transaction_reference} for {row.currency} {_money(row.amount):.2f} has been refunded.",
+        event_type="credit_bureau.transaction.refunded",
         entity_type="credit_bureau_transaction",
         entity_id=str(row.id),
     )
@@ -773,8 +831,9 @@ def create_invoice(
     )
     db.add(invoice)
     db.flush()
-    from services.accounting_service import record_credit_bureau_invoice_accrual
-    record_credit_bureau_invoice_accrual(db, invoice)
+    # Usage is accrued at the successful provider transaction; invoice
+    # creation groups those already-recognised charges and must not duplicate
+    # expense/revenue recognition.
     for row in rows:
         if row.status == "accrued":
             row.status = "invoiced"
@@ -823,15 +882,35 @@ def list_invoices(db: Session, *, company_id: UUID | None = None, limit: int = 1
     return [invoice_payload(row) for row in rows]
 
 
-def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauInvoice:
+def mark_invoice_paid(
+    db: Session,
+    *,
+    invoice_id: UUID,
+    payment_method: str,
+    proof_reference: str | None,
+    notes: str | None = None,
+) -> PlatformCreditBureauInvoice:
     invoice = db.query(PlatformCreditBureauInvoice).filter(PlatformCreditBureauInvoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Credit Bureau invoice not found")
     if invoice.status == "paid":
         return invoice
+    method = payment_method.strip().lower()
+    if method not in {"cash", "bank", "electronic"}:
+        raise HTTPException(status_code=422, detail="Unsupported invoice payment method")
+    if method != "cash" and not (proof_reference or "").strip():
+        raise HTTPException(status_code=422, detail="Non-cash invoice payments require proof_reference")
     paid_at = datetime.now(timezone.utc)
     invoice.status = "paid"
     invoice.paid_at = paid_at
+    snapshot = dict(invoice.snapshot or {})
+    snapshot["settlement"] = {
+        "payment_method": method,
+        "proof_reference": (proof_reference or "").strip() or None,
+        "notes": (notes or "").strip() or None,
+        "recorded_at": paid_at.isoformat(),
+    }
+    invoice.snapshot = snapshot
     from services.accounting_service import record_credit_bureau_invoice_payment
     record_credit_bureau_invoice_payment(db, invoice)
     transaction_ids = [UUID(value) for value in dict(invoice.snapshot or {}).get("transaction_ids", [])]

@@ -1088,7 +1088,7 @@ def reverse_loan_payment(db: Session, payment: PaymentTransaction) -> None:
     if not loan:
         return
 
-    if payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+    if payment.purpose in {PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT}:
         allocations = (
             db.query(PaymentAllocation)
             .filter(PaymentAllocation.payment_id == payment.id)

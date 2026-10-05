@@ -651,10 +651,16 @@ def apply_gateway_resource(
         finalize_gateway_payment(db, payment)
     elif status == PaymentStatus.REVERSED and payment.status == PaymentStatus.SUCCEEDED:
         from services.loan_service import reverse_loan_payment
+        from services.governance_control_service import complete_adjustment_for_provider_reversal
         reverse_loan_payment(db, payment)
         record_reversal_accounting(db, payment)
         payment.status = PaymentStatus.REVERSED
         payment.completed_at = datetime.now(timezone.utc)
+        complete_adjustment_for_provider_reversal(
+            db,
+            payment=payment,
+            provider_reference=response_id or payment.provider_reference,
+        )
     elif payment.status != PaymentStatus.SUCCEEDED:
         payment.status = status
         if status in {PaymentStatus.FAILED, PaymentStatus.CANCELLED}:
