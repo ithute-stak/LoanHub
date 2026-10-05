@@ -200,3 +200,33 @@ def test_statement_of_financial_position_includes_unclosed_profit_in_equity():
     assert '@router.get("/statement-of-changes-in-equity")' in router
     assert '"profit_or_loss_for_period"' in router
     assert '"drawings_and_distributions"' in router
+
+
+def test_money_sources_are_accrued_at_source_and_coverage_is_enforced():
+    accounting = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    finance = (ROOT / "backend" / "services" / "platform_finance_service.py").read_text(encoding="utf-8")
+    bureau = (ROOT / "backend" / "services" / "credit_bureau_payg_service.py").read_text(encoding="utf-8")
+    cdas = (ROOT / "backend" / "services" / "platform_cdas_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+
+    assert "def record_platform_transaction_charge_accrual(" in accounting
+    assert "def record_credit_bureau_transaction_accrual(" in accounting
+    assert "def reverse_credit_bureau_transaction_accrual(" in accounting
+    assert "def record_cdas_transaction_accrual(" in accounting
+    assert "def reverse_cdas_transaction_accrual(" in accounting
+    assert "record_platform_transaction_charge_accrual(db, entry)" in finance
+    assert "record_credit_bureau_transaction_accrual(db, transaction)" in bureau
+    assert "reverse_credit_bureau_transaction_accrual(db, row)" in bureau
+    assert "record_cdas_transaction_accrual(db, row)" in cdas
+    assert "reverse_cdas_transaction_accrual(db, row)" in cdas
+    assert "def transaction_accounting_coverage(" in accounting
+    assert '"transaction_accounting_coverage_complete"' in accounting
+    assert '@router.get("/controls/transaction-coverage")' in router
+
+
+def test_invoices_do_not_duplicate_usage_accruals():
+    bureau = (ROOT / "backend" / "services" / "credit_bureau_payg_service.py").read_text(encoding="utf-8")
+    cdas = (ROOT / "backend" / "services" / "platform_cdas_service.py").read_text(encoding="utf-8")
+    assert "record_credit_bureau_invoice_accrual(db, invoice)" not in bureau
+    assert "record_cdas_invoice_accrual(db, invoice)" not in cdas
+    assert "Only an accrued, not-yet-invoiced Credit Bureau transaction can be waived" in bureau
