@@ -708,7 +708,17 @@ def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCdasInvoice:
             row.settled_at = paid_at
     subscription = get_subscription(db, company_id=invoice.company_id)
     if subscription and subscription.status == "suspended" and subscription.auto_suspend_on_limit:
-        if subscription.credit_limit is None or outstanding_balance(db, company_id=invoice.company_id) < _money(subscription.credit_limit):
+        other_overdue = db.query(PlatformCdasInvoice.id).filter(
+            PlatformCdasInvoice.company_id == invoice.company_id,
+            PlatformCdasInvoice.id != invoice.id,
+            PlatformCdasInvoice.status == "issued",
+            PlatformCdasInvoice.amount_due > 0,
+            PlatformCdasInvoice.due_at < paid_at,
+        ).first()
+        within_credit = subscription.credit_limit is None or outstanding_balance(
+            db, company_id=invoice.company_id
+        ) < _money(subscription.credit_limit)
+        if not other_overdue and within_credit:
             subscription.status = "approved"
             subscription.suspended_at = None
     _notify_company_owners(
