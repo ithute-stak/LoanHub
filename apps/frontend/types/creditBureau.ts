@@ -13,10 +13,46 @@ export type ExperianUsageConfiguration = {
   require_identity_match?: boolean;
 };
 
+export type CreditBureauSubscription = {
+  id?: string;
+  provider: "experian";
+  company_id?: string;
+  status: "not_subscribed" | "pending" | "approved" | "rejected" | "suspended" | string;
+  approved: boolean;
+  price_per_transaction: number | null;
+  currency: string;
+  requested_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  suspended_at: string | null;
+  rejection_reason: string | null;
+  notes?: string | null;
+  company?: { id: string; name: string; registration_number?: string | null; license_number?: string | null };
+};
+
+export type CreditBureauPaygTransaction = {
+  id: string;
+  provider: "experian";
+  company_id: string;
+  subscription_id: string;
+  enquiry_id: string;
+  transaction_reference: string;
+  unit_price: number;
+  amount: number;
+  currency: string;
+  status: string;
+  accrued_at: string;
+  settled_at: string | null;
+  waived_at: string | null;
+  waiver_reason: string | null;
+  metadata: Record<string, unknown>;
+};
+
 export type ExperianCompanyConfiguration = {
   provider: "experian";
   scope: "company";
   is_enabled: boolean;
+  subscription: CreditBureauSubscription;
   configuration: ExperianUsageConfiguration;
   platform: {
     configured: boolean;
