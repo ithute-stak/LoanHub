@@ -5,11 +5,14 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from database.models.enums import PaymentMethod
 from database.schemas.accounting import FixedAssetCreate, VatTransactionCreate
 from services.accounting_service import (
     COMPANY_CHART,
     PLATFORM_CHART,
+    _cash_flow_section,
     calculate_fixed_asset_depreciation,
+    settlement_account_code,
 )
 
 
@@ -483,3 +486,26 @@ def test_chart_upgrade_preserves_legacy_credit_loss_journal_semantics():
     assert 'JournalEntry.reference_type == "credit_loss_provision_run"' in service
     assert '{JournalLine.account_id: provision_5510.id}' in service
     assert 'by_code.pop("6700", None)' in service
+
+
+def test_settlement_account_routing_executes_for_cash_bank_and_electronic_channels():
+    assert settlement_account_code(PaymentMethod.CASH) == "1000"
+    assert settlement_account_code(PaymentMethod.BANK) == "1010"
+    assert settlement_account_code(PaymentMethod.LELEFAPAYGATE) == "1020"
+    assert settlement_account_code("electronic") == "1020"
+
+
+def test_cash_flow_policy_executes_explicit_lending_asset_and_equity_classification():
+    payment_entry = SimpleNamespace(reference_type="payment_transaction")
+    asset_entry = SimpleNamespace(reference_type="fixed_asset_acquisition")
+    ordinary_entry = SimpleNamespace(reference_type="expense")
+
+    assert _cash_flow_section(
+        payment_entry, {"1100"}, company_id="tenant"
+    ) == ("operating", "lending_business_cash_flow")
+    assert _cash_flow_section(
+        asset_entry, {"1500"}, company_id="tenant"
+    ) == ("investing", "fixed_asset_transaction")
+    assert _cash_flow_section(
+        ordinary_entry, {"3000"}, company_id="tenant"
+    ) == ("financing", "owner_equity_counterpart")
