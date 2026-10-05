@@ -412,7 +412,9 @@ fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
 struct PortfolioRiskRow {
     outstanding_balance: String,
     days_past_due: i64,
-    is_written_off: bool,
+    active: bool,
+    first_payment_due: bool,
+    first_payment_default: bool,
     branch_label: Option<String>,
     product_label: Option<String>,
     employer_label: Option<String>,
@@ -430,6 +432,7 @@ struct RiskGroupSummary {
     exposure: String,
     share_percent: String,
     par_30: String,
+    fpd_rate: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -476,20 +479,26 @@ fn concentration(
 ) -> Result<RiskConcentrationSummary, String> {
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, (usize, Decimal, Decimal)> = BTreeMap::new();
-    for row in rows.iter().filter(|row| !row.is_written_off) {
+    for row in rows.iter().filter(|row| row.active) {
         let balance = money(decimal(&row.outstanding_balance)?);
         let label = selector(row).cloned().unwrap_or_else(|| "Unknown".to_string());
-        let entry = grouped.entry(label).or_insert((0, Decimal::ZERO, Decimal::ZERO));
+        let entry = grouped.entry(label).or_insert((0, Decimal::ZERO, Decimal::ZERO, 0_i64, 0_i64));
         entry.0 += 1;
         entry.1 += balance;
         if row.days_past_due >= 30 {
             entry.2 += balance;
         }
+        if row.first_payment_due {
+            entry.3 += 1;
+            if row.first_payment_default {
+                entry.4 += 1;
+            }
+        }
     }
 
     let mut groups: Vec<RiskGroupSummary> = grouped
         .into_iter()
-        .map(|(label, (loan_count, exposure, par30_amount))| {
+        .map(|(label, (loan_count, exposure, par30_amount, fpd_eligible, fpd_count))| {
             let exposure = money(exposure);
             RiskGroupSummary {
                 label,
@@ -497,6 +506,7 @@ fn concentration(
                 exposure: exposure.to_string(),
                 share_percent: percent(exposure, total).to_string(),
                 par_30: percent(par30_amount, exposure).to_string(),
+                fpd_rate: percent(Decimal::from(fpd_count), Decimal::from(fpd_eligible)).to_string(),
             }
         })
         .collect();
@@ -524,7 +534,7 @@ fn concentration(
 }
 
 fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskResponse, String> {
-    let active: Vec<&PortfolioRiskRow> = req.rows.iter().filter(|row| !row.is_written_off).collect();
+    let active: Vec<&PortfolioRiskRow> = req.rows.iter().filter(|row| row.active).collect();
     let exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
         Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
     })?);
