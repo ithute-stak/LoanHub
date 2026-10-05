@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -227,5 +228,5 @@ class CreditBureauTransactionWaiver(BaseModel):
 
 class CreditBureauInvoiceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    period_start: Any
-    period_end: Any
+    period_start: date
+    period_end: date
