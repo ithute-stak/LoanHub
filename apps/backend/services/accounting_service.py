@@ -678,6 +678,170 @@ def post_expense(
     )
 
 
+def record_platform_transaction_charge_accrual(db: Session, charge) -> None:
+    """Accrue a LoanHub transaction charge when the charge is earned/incurred.
+
+    Tenant:   Dr platform fees / Cr provider payable
+    Platform: Dr tenant receivable / Cr transaction-fee revenue
+    """
+    amount = _money(charge.charge_amount)
+    if amount <= 0:
+        return
+    when = (charge.accrued_at or datetime.now(timezone.utc)).date()
+    post_codes(
+        db,
+        company_id=charge.company_id,
+        branch_id=None,
+        debit_code="6600",
+        credit_code="2400",
+        amount=amount,
+        description=f"LoanHub transaction charge {charge.id}",
+        reference_type="platform_transaction_charge_accrual",
+        reference_id=str(charge.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="1200",
+        credit_code="4200",
+        amount=amount,
+        description=f"Transaction fee revenue {charge.id}",
+        reference_type="platform_transaction_charge_accrual",
+        reference_id=str(charge.id),
+        entry_date=when,
+    )
+
+
+def record_credit_bureau_transaction_accrual(db: Session, transaction) -> None:
+    """Recognise a live Credit Bureau usage charge when the service is consumed."""
+    amount = _money(transaction.amount)
+    if amount <= 0 or transaction.status not in {"accrued", "invoiced", "settled"}:
+        return
+    when = (transaction.accrued_at or datetime.now(timezone.utc)).date()
+    post_codes(
+        db,
+        company_id=transaction.company_id,
+        branch_id=None,
+        debit_code="6700",
+        credit_code="2400",
+        amount=amount,
+        description=f"Credit Bureau usage {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_accrual",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="1200",
+        credit_code="4500",
+        amount=amount,
+        description=f"Credit Bureau usage revenue {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_accrual",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+
+
+def reverse_credit_bureau_transaction_accrual(db: Session, transaction) -> None:
+    """Reverse a previously accrued Credit Bureau charge when it is waived."""
+    amount = _money(transaction.amount)
+    if amount <= 0:
+        return
+    when = (transaction.waived_at or datetime.now(timezone.utc)).date()
+    post_codes(
+        db,
+        company_id=transaction.company_id,
+        branch_id=None,
+        debit_code="2400",
+        credit_code="6700",
+        amount=amount,
+        description=f"Credit Bureau charge waived {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_waiver",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="4500",
+        credit_code="1200",
+        amount=amount,
+        description=f"Credit Bureau revenue waived {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_waiver",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+
+
+def record_cdas_transaction_accrual(db: Session, transaction) -> None:
+    """Recognise a live CDAS usage charge when the operation succeeds."""
+    amount = _money(transaction.amount)
+    if amount <= 0 or transaction.status not in {"accrued", "invoiced", "settled"}:
+        return
+    when = (transaction.accrued_at or datetime.now(timezone.utc)).date()
+    post_codes(
+        db,
+        company_id=transaction.company_id,
+        branch_id=None,
+        debit_code="6800",
+        credit_code="2400",
+        amount=amount,
+        description=f"CDAS usage {transaction.transaction_reference}",
+        reference_type="cdas_transaction_accrual",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="1200",
+        credit_code="4600",
+        amount=amount,
+        description=f"CDAS usage revenue {transaction.transaction_reference}",
+        reference_type="cdas_transaction_accrual",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+
+
+def reverse_cdas_transaction_accrual(db: Session, transaction) -> None:
+    """Reverse a previously accrued CDAS charge when it is waived."""
+    amount = _money(transaction.amount)
+    if amount <= 0:
+        return
+    when = (transaction.waived_at or datetime.now(timezone.utc)).date()
+    post_codes(
+        db,
+        company_id=transaction.company_id,
+        branch_id=None,
+        debit_code="2400",
+        credit_code="6800",
+        amount=amount,
+        description=f"CDAS charge waived {transaction.transaction_reference}",
+        reference_type="cdas_transaction_waiver",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="4600",
+        credit_code="1200",
+        amount=amount,
+        description=f"CDAS revenue waived {transaction.transaction_reference}",
+        reference_type="cdas_transaction_waiver",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+
+
 def record_credit_bureau_invoice_accrual(db: Session, invoice) -> None:
     amount = _money(invoice.amount_due)
     if amount <= 0:
