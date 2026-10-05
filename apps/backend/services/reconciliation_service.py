@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from core.access_control import TenantContext
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
 from database.models.governance_control import ApprovalRequest, PaymentAdjustment
 from database.models.payment import PaymentTransaction
@@ -134,7 +135,13 @@ def create_batch(db: Session, context: TenantContext, *, source_type: str, sourc
         currency=currency.strip().upper() or "LSL",
         status="draft",
         methodology_snapshot={
-            "matching_priority": ["exact_provider_reference", "exact_proof_reference", "exact_folio_or_loan_reference_with_unique_payment"],
+            "matching_priority": [
+                "exact_clearing_settlement_provider_reference",
+                "exact_clearing_settlement_proof_reference",
+                "exact_provider_reference",
+                "exact_proof_reference",
+                "exact_folio_or_loan_reference_with_unique_payment",
+            ],
             "date_tolerance_days": 3,
             "free_text_name_matching": False,
             "ambiguous_matches": "exception",
@@ -236,8 +243,113 @@ def _classify_amount(line: ReconciliationLine, payment: PaymentTransaction, meth
         line.exception_reason = "External source amount is higher than the matched LoanHub payment"
 
 
+def _clearing_settlement_query(db: Session, batch: ReconciliationBatch):
+    query = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == batch.company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "electronic_clearing_settlement",
+        CompanyOperatingRecord.status == "posted",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if batch.branch_id:
+        query = query.filter(CompanyOperatingRecord.branch_id == batch.branch_id)
+    return query
+
+
+def _classify_clearing_settlement(
+    line: ReconciliationLine,
+    settlement: CompanyOperatingRecord,
+    *,
+    method: str,
+    confidence: Decimal,
+) -> None:
+    data = dict(settlement.data or {})
+    expected = money(settlement.amount)
+    actual = money(line.amount)
+    variance = money(actual - expected)
+    expected_direction = "credit" if data.get("direction") == "provider_to_bank" else "debit"
+
+    line.expected_amount = expected
+    line.variance_amount = variance
+    line.match_method = method
+    line.match_confidence = confidence
+    line.matched_at = datetime.now(timezone.utc)
+    payload = dict(line.source_payload or {})
+    payload["matched_clearing_settlement_id"] = str(settlement.id)
+    payload["matched_clearing_journal_entry_id"] = data.get("journal_entry_id")
+    payload["expected_bank_direction"] = expected_direction
+    payload["clearing_provider_reference"] = settlement.reference
+    payload["clearing_proof_reference"] = data.get("proof_reference")
+    line.source_payload = payload
+
+    if line.direction != expected_direction:
+        line.status = "adjustment_required"
+        line.exception_code = "CLEARING_DIRECTION_MISMATCH"
+        line.exception_reason = (
+            f"Bank statement direction {line.direction} does not agree with "
+            f"clearing settlement direction {expected_direction}"
+        )
+    elif variance == 0:
+        line.status = "matched"
+        line.exception_code = None
+        line.exception_reason = None
+    elif variance < 0:
+        line.status = "shortage"
+        line.exception_code = "CLEARING_AMOUNT_SHORT"
+        line.exception_reason = "Bank settlement is lower than the clearing settlement amount"
+    else:
+        line.status = "excess"
+        line.exception_code = "CLEARING_AMOUNT_EXCESS"
+        line.exception_reason = "Bank settlement is higher than the clearing settlement amount"
+
+
+def _match_bank_line_to_clearing_settlement(
+    db: Session,
+    batch: ReconciliationBatch,
+    line: ReconciliationLine,
+) -> bool:
+    if batch.source_type != "bank_statement":
+        return False
+    reference = (line.reference or "").strip()
+    if not reference:
+        return False
+
+    rows = _clearing_settlement_query(db, batch).all()
+    matches: list[tuple[CompanyOperatingRecord, str]] = []
+    for row in rows:
+        data = dict(row.data or {})
+        proof_reference = str(data.get("proof_reference") or "").strip()
+        if row.reference == reference:
+            matches.append((row, "exact_clearing_settlement_provider_reference"))
+        elif proof_reference and proof_reference == reference:
+            matches.append((row, "exact_clearing_settlement_proof_reference"))
+
+    unique = {row.id: (row, method) for row, method in matches}
+    if len(unique) == 1:
+        row, method = next(iter(unique.values()))
+        _classify_clearing_settlement(line, row, method=method, confidence=Decimal("1.000"))
+        return True
+    if len(unique) > 1:
+        line.status = "unmatched"
+        line.exception_code = "AMBIGUOUS_CLEARING_SETTLEMENT"
+        line.exception_reason = "Multiple electronic-clearing settlements share this bank reference"
+        line.candidate_snapshot = [
+            {
+                "clearing_settlement_id": str(row.id),
+                "provider_reference": row.reference,
+                "proof_reference": dict(row.data or {}).get("proof_reference"),
+                "amount": float(row.amount or 0),
+            }
+            for row, _ in unique.values()
+        ]
+        return True
+    return False
+
+
 def auto_match_line(db: Session, batch: ReconciliationBatch, line: ReconciliationLine) -> None:
     if line.source_kind != "external" or line.status in {"duplicate", "ignored"}:
+        return
+    if _match_bank_line_to_clearing_settlement(db, batch, line):
         return
     candidates: list[tuple[PaymentTransaction, str, Decimal]] = []
     reference = (line.reference or "").strip()
@@ -347,6 +459,71 @@ def import_csv(db: Session, context: TenantContext, batch: ReconciliationBatch, 
     return summarize_batch(db, context, batch)
 
 
+def _add_missing_clearing_settlement_lines(db: Session, batch: ReconciliationBatch) -> int:
+    if batch.source_type != "bank_statement":
+        return 0
+    matched_ids = {
+        str((row.source_payload or {}).get("matched_clearing_settlement_id"))
+        for row in db.query(ReconciliationLine).filter(
+            ReconciliationLine.batch_id == batch.id,
+            ReconciliationLine.source_kind == "external",
+        ).all()
+        if (row.source_payload or {}).get("matched_clearing_settlement_id")
+    }
+    existing_expected = {
+        str((row.source_payload or {}).get("clearing_settlement_id"))
+        for row in db.query(ReconciliationLine).filter(
+            ReconciliationLine.batch_id == batch.id,
+            ReconciliationLine.source_kind == "system_expected",
+        ).all()
+        if (row.source_payload or {}).get("clearing_settlement_id")
+    }
+
+    created = 0
+    for settlement in _clearing_settlement_query(db, batch).all():
+        data = dict(settlement.data or {})
+        settlement_date_text = data.get("settlement_date")
+        if not settlement_date_text:
+            continue
+        settlement_date = date.fromisoformat(settlement_date_text)
+        if settlement_date < batch.period_start or settlement_date > batch.period_end:
+            continue
+        sid = str(settlement.id)
+        if sid in matched_ids or sid in existing_expected:
+            continue
+        direction = "credit" if data.get("direction") == "provider_to_bank" else "debit"
+        db.add(ReconciliationLine(
+            company_id=batch.company_id,
+            batch_id=batch.id,
+            source_kind="system_expected",
+            source_line_key=f"clearing-settlement:{settlement.id}",
+            transaction_date=settlement_date,
+            reference=settlement.reference or data.get("proof_reference"),
+            description="Electronic clearing settlement absent from imported bank statement",
+            amount=money(settlement.amount),
+            currency=settlement.currency,
+            direction=direction,
+            source_fingerprint=stable_sha256_text(
+                correlation_id=f"reconciliation-clearing:{settlement.id}",
+                payload=f"clearing-settlement:{settlement.id}",
+            ),
+            status="missing_source",
+            expected_amount=money(settlement.amount),
+            variance_amount=-money(settlement.amount),
+            exception_code="MISSING_BANK_SETTLEMENT",
+            exception_reason="Posted electronic clearing settlement was not present in the imported bank statement",
+            source_payload={
+                "clearing_settlement_id": sid,
+                "journal_entry_id": data.get("journal_entry_id"),
+                "provider_reference": settlement.reference,
+                "proof_reference": data.get("proof_reference"),
+                "direction": data.get("direction"),
+            },
+        ))
+        created += 1
+    return created
+
+
 def _add_missing_source_lines(db: Session, batch: ReconciliationBatch) -> int:
     matched_ids = {row[0] for row in db.query(ReconciliationLine.matched_payment_id).filter(ReconciliationLine.batch_id == batch.id, ReconciliationLine.matched_payment_id.isnot(None)).all()}
     existing_system_ids = {row.source_payload.get("payment_id") for row in db.query(ReconciliationLine).filter(ReconciliationLine.batch_id == batch.id, ReconciliationLine.source_kind == "system_expected").all()}
@@ -412,12 +589,24 @@ def reconcile(db: Session, context: TenantContext, batch: ReconciliationBatch) -
     for line in db.query(ReconciliationLine).filter(ReconciliationLine.batch_id == batch.id, ReconciliationLine.source_kind == "external", ReconciliationLine.status == "unmatched").all():
         auto_match_line(db, batch, line)
     created = _add_missing_source_lines(db, batch)
+    clearing_created = _add_missing_clearing_settlement_lines(db, batch)
     db.flush()
     recalculate_batch(db, batch)
     batch.reconciled_at = datetime.now(timezone.utc)
     batch.reconciled_by_user_id = context.user.id
     batch.status = "exception" if batch.exception_line_count else "reconciled"
-    _event(db, batch, "batch_reconciled", context.user.id, payload={"status": batch.status, "exceptions": batch.exception_line_count, "missing_source_added": created})
+    _event(
+        db,
+        batch,
+        "batch_reconciled",
+        context.user.id,
+        payload={
+            "status": batch.status,
+            "exceptions": batch.exception_line_count,
+            "missing_source_added": created,
+            "missing_clearing_settlements_added": clearing_created,
+        },
+    )
     db.commit()
     return summarize_batch(db, context, batch)
 
