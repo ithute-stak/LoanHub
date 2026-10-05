@@ -279,9 +279,11 @@ def review_subscription(
     if currency:
         row.currency = str(currency).strip().upper()[:3]
     if credit_limit is not None:
-        row.credit_limit = _money(credit_limit)
+        normalized_limit = _money(credit_limit)
+        row.credit_limit = normalized_limit if normalized_limit > 0 else None
     if warning_threshold is not None:
-        row.warning_threshold = _money(warning_threshold)
+        normalized_warning = _money(warning_threshold)
+        row.warning_threshold = normalized_warning if normalized_warning > 0 else None
     if auto_suspend_on_limit is not None:
         row.auto_suspend_on_limit = bool(auto_suspend_on_limit)
     if billing_due_days is not None:
@@ -570,6 +572,7 @@ def create_invoice(
         },
     )
     db.add(invoice)
+    db.flush()
     for row in rows:
         if row.status == "accrued":
             row.status = "invoiced"
@@ -659,3 +662,94 @@ def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauI
     db.commit()
     db.refresh(invoice)
     return invoice
+
+
+def run_monthly_invoice_cycle(db: Session, *, now: datetime | None = None) -> int:
+    """Issue the previous calendar month's invoices once; safe to run repeatedly."""
+    now = now or datetime.now(timezone.utc)
+    first_this_month = date(now.year, now.month, 1)
+    previous_end = first_this_month - timedelta(days=1)
+    previous_start = date(previous_end.year, previous_end.month, 1)
+    subscriptions = (
+        db.query(PlatformCreditBureauSubscription)
+        .filter(
+            PlatformCreditBureauSubscription.provider == "experian",
+            PlatformCreditBureauSubscription.status.in_(("approved", "suspended")),
+        )
+        .all()
+    )
+    issued = 0
+    for subscription in subscriptions:
+        existing = (
+            db.query(PlatformCreditBureauInvoice)
+            .filter(
+                PlatformCreditBureauInvoice.company_id == subscription.company_id,
+                PlatformCreditBureauInvoice.provider == "experian",
+                PlatformCreditBureauInvoice.period_start == previous_start,
+                PlatformCreditBureauInvoice.period_end == previous_end,
+            )
+            .first()
+        )
+        if existing:
+            continue
+        live_count = (
+            db.query(func.count(PlatformCreditBureauTransaction.id))
+            .filter(
+                PlatformCreditBureauTransaction.company_id == subscription.company_id,
+                PlatformCreditBureauTransaction.provider == "experian",
+                PlatformCreditBureauTransaction.accrued_at >= datetime.combine(previous_start, time.min, tzinfo=timezone.utc),
+                PlatformCreditBureauTransaction.accrued_at < datetime.combine(first_this_month, time.min, tzinfo=timezone.utc),
+                PlatformCreditBureauTransaction.status.in_(("accrued", "waived")),
+            )
+            .scalar()
+            or 0
+        )
+        if not live_count:
+            continue
+        create_invoice(
+            db,
+            company_id=subscription.company_id,
+            period_start=previous_start,
+            period_end=previous_end,
+        )
+        issued += 1
+    return issued
+
+
+def suspend_overdue_accounts(db: Session, *, now: datetime | None = None) -> int:
+    """Suspend approved PAYG access when an issued invoice is overdue."""
+    now = now or datetime.now(timezone.utc)
+    overdue_company_ids = {
+        company_id
+        for (company_id,) in (
+            db.query(PlatformCreditBureauInvoice.company_id)
+            .filter(
+                PlatformCreditBureauInvoice.provider == "experian",
+                PlatformCreditBureauInvoice.status == "issued",
+                PlatformCreditBureauInvoice.amount_due > 0,
+                PlatformCreditBureauInvoice.due_at < now,
+            )
+            .all()
+        )
+    }
+    suspended = 0
+    for company_id in overdue_company_ids:
+        subscription = get_subscription(db, company_id=company_id)
+        if not subscription or subscription.status != "approved" or not subscription.auto_suspend_on_limit:
+            continue
+        subscription.status = "suspended"
+        subscription.suspended_at = now
+        _notify_company_owners(
+            db,
+            company_id=company_id,
+            title="Credit Bureau access suspended for overdue invoice",
+            message="Live Credit Bureau access has been suspended because a PAYG invoice is overdue.",
+            event_type="credit_bureau.invoice.overdue_suspension",
+            entity_id=str(subscription.id),
+            priority="high",
+            deduplication_key=f"credit-bureau-overdue-{subscription.id}-{now.strftime('%Y-%m-%d')}",
+        )
+        suspended += 1
+    if suspended:
+        db.commit()
+    return suspended
