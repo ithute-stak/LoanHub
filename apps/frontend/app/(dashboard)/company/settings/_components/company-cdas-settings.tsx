@@ -30,6 +30,7 @@ type Subscription = {
     credit_limit: number | null;
     warning_threshold: number | null;
     auto_suspend_on_limit: boolean;
+    billing_due_days?: number;
     rejection_reason?: string | null;
     usage?: {
         live_transaction_count: number;
@@ -62,6 +63,22 @@ type CdasTransaction = {
     accrued_at: string;
 };
 
+type CdasInvoice = {
+    id: string;
+    invoice_number: string;
+    period_start: string;
+    period_end: string;
+    transaction_count: number;
+    subtotal: number;
+    waived_amount: number;
+    amount_due: number;
+    currency: string;
+    status: string;
+    issued_at: string;
+    due_at: string;
+    paid_at: string | null;
+};
+
 type Props = { canManage: boolean };
 
 const OPERATION_LABELS: Record<string, string> = {
@@ -80,6 +97,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
     const canSwitchEnvironment = activeRole === "company_owner";
     const [configuration, setConfiguration] = useState<CdasConfiguration | null>(null);
     const [transactions, setTransactions] = useState<CdasTransaction[]>([]);
+    const [invoices, setInvoices] = useState<CdasInvoice[]>([]);
     const [loading, setLoading] = useState(true);
     const [requesting, setRequesting] = useState(false);
     const [switching, setSwitching] = useState(false);
@@ -89,12 +107,14 @@ export function CompanyCdasSettings({ canManage }: Props) {
         setLoading(true);
         setLoadError(null);
         try {
-            const [configResponse, transactionResponse] = await Promise.all([
+            const [configResponse, transactionResponse, invoiceResponse] = await Promise.all([
                 api.get<CdasConfiguration>("/cdas/configuration"),
                 api.get<CdasTransaction[]>("/cdas/transactions?limit=10"),
+                api.get<CdasInvoice[]>("/cdas/invoices?limit=12"),
             ]);
             setConfiguration(configResponse.data);
             setTransactions(transactionResponse.data);
+            setInvoices(invoiceResponse.data);
         } catch (error: unknown) {
             setLoadError(getErrorMessage(error, "CDAS service status could not be loaded."));
         } finally {
@@ -226,6 +246,24 @@ export function CompanyCdasSettings({ canManage }: Props) {
                     {Object.entries(subscription?.pricing || {}).map(([key, price]) => (
                         <div key={key} className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">{OPERATION_LABELS[key] || titleCase(key)}</p><p className="mt-2 text-lg font-black">{formatMoney(price)}</p></div>
                     ))}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader><CardTitle>CDAS invoices</CardTitle><CardDescription>Monthly Live PAYG statements. Standard payment term: {subscription?.billing_due_days ?? 14} days.</CardDescription></CardHeader>
+                <CardContent className="space-y-2">
+                    {invoices.length ? invoices.map((row) => (
+                        <div key={row.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <p className="text-sm font-black">{row.invoice_number}</p>
+                                <p className="text-xs text-muted-foreground">{row.period_start} → {row.period_end} · {row.transaction_count} operations · Due {new Date(row.due_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-sm font-black">{formatMoney(row.amount_due)}</p>
+                                <Badge variant={row.status === "paid" ? "default" : "secondary"}>{titleCase(row.status)}</Badge>
+                            </div>
+                        </div>
+                    )) : <p className="text-sm text-muted-foreground">No CDAS invoices have been issued yet.</p>}
                 </CardContent>
             </Card>
 
