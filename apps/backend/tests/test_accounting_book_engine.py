@@ -474,3 +474,12 @@ def test_written_off_recovery_balance_is_ledger_net_of_reversals():
     assert 'JournalEntry.reference_id.like(f"reversal:written_off_loan_recovery:{loan_id}:%")' in service
     assert 'f"reversal:payment_transaction:{pid}"' in service
     assert "case.recovered_amount = _written_off_recovery_balance(" in service
+
+
+def test_chart_upgrade_preserves_legacy_credit_loss_journal_semantics():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"credit loss" in str(legacy_6700.name or "").lower()' in service
+    assert 'legacy_6700.code = "5510"' in service
+    assert 'JournalEntry.reference_type == "credit_loss_provision_run"' in service
+    assert '{JournalLine.account_id: provision_5510.id}' in service
+    assert 'by_code.pop("6700", None)' in service
