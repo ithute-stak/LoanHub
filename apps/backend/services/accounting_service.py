@@ -33,6 +33,7 @@ COMPANY_CHART = [
     ("6400", "Assisted Borrower Account Opening Expense", "expense", "debit"),
     ("6500", "Operating Expenses", "expense", "debit"),
     ("6600", "Platform Fees and Charges", "expense", "debit"),
+    ("6700", "Credit Bureau Expense", "expense", "debit"),
     ("3100", "Opening Balance and Retained Funds", "equity", "credit"),
 ]
 
@@ -45,6 +46,8 @@ PLATFORM_CHART = [
     ("4200", "Transaction Fee Revenue", "revenue", "credit"),
     ("4300", "Borrower Service Fee Revenue", "revenue", "credit"),
     ("4400", "Assisted Borrower Account Opening Revenue", "revenue", "credit"),
+    ("4500", "Credit Bureau Revenue", "revenue", "credit"),
+    ("1200", "Tenant Receivables", "asset", "debit"),
     ("5000", "Cash Handling Expense", "expense", "debit"),
     ("5100", "Refund and Reversal Expense", "expense", "debit"),
 ]
@@ -671,3 +674,97 @@ def reverse_reference_accounting(
             for line in original.lines
         ],
     )
+
+
+
+def record_credit_bureau_invoice_accrual(db: Session, invoice) -> None:
+    """Accrue one bureau invoice into both company and platform ledgers exactly once."""
+    amount = _money(invoice.amount_due)
+    if amount <= 0:
+        return
+
+    company_key, _ = scope_key(invoice.company_id)
+    platform_key, _ = scope_key(None)
+    reference_id = str(invoice.id)
+
+    ensure_chart(db, company_id=invoice.company_id)
+    if not _journal_for_reference(db, company_key, "credit_bureau_invoice", reference_id):
+        expense = account_by_code(db, company_key, "6700")
+        payable = account_by_code(db, company_key, "2000")
+        create_entry(
+            db,
+            company_id=invoice.company_id,
+            entry_date=invoice.issued_at.date(),
+            description=f"Credit Bureau invoice {invoice.invoice_number}",
+            reference_type="credit_bureau_invoice",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": expense.id, "debit": amount, "credit": 0},
+                {"account_id": payable.id, "debit": 0, "credit": amount},
+            ],
+        )
+
+    ensure_chart(db, company_id=None)
+    if not _journal_for_reference(db, platform_key, "credit_bureau_invoice", reference_id):
+        receivable = account_by_code(db, platform_key, "1200")
+        revenue = account_by_code(db, platform_key, "4500")
+        create_entry(
+            db,
+            company_id=None,
+            entry_date=invoice.issued_at.date(),
+            description=f"Credit Bureau revenue {invoice.invoice_number}",
+            reference_type="credit_bureau_invoice",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": receivable.id, "debit": amount, "credit": 0},
+                {"account_id": revenue.id, "debit": 0, "credit": amount},
+            ],
+        )
+
+
+def record_credit_bureau_invoice_payment(db: Session, invoice) -> None:
+    """Settle bureau invoice receivable/payable in both ledgers exactly once."""
+    amount = _money(invoice.amount_due)
+    if amount <= 0:
+        return
+    company_key, _ = scope_key(invoice.company_id)
+    platform_key, _ = scope_key(None)
+    reference_id = str(invoice.id)
+
+    ensure_chart(db, company_id=invoice.company_id)
+    if not _journal_for_reference(db, company_key, "credit_bureau_invoice_payment", reference_id):
+        payable = account_by_code(db, company_key, "2000")
+        cash = account_by_code(db, company_key, "1000")
+        create_entry(
+            db,
+            company_id=invoice.company_id,
+            entry_date=(invoice.paid_at or datetime.now(timezone.utc)).date(),
+            description=f"Credit Bureau invoice payment {invoice.invoice_number}",
+            reference_type="credit_bureau_invoice_payment",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": payable.id, "debit": amount, "credit": 0},
+                {"account_id": cash.id, "debit": 0, "credit": amount},
+            ],
+        )
+
+    ensure_chart(db, company_id=None)
+    if not _journal_for_reference(db, platform_key, "credit_bureau_invoice_payment", reference_id):
+        cash = account_by_code(db, platform_key, "1000")
+        receivable = account_by_code(db, platform_key, "1200")
+        create_entry(
+            db,
+            company_id=None,
+            entry_date=(invoice.paid_at or datetime.now(timezone.utc)).date(),
+            description=f"Credit Bureau invoice receipt {invoice.invoice_number}",
+            reference_type="credit_bureau_invoice_payment",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": cash.id, "debit": amount, "credit": 0},
+                {"account_id": receivable.id, "debit": 0, "credit": amount},
+            ],
+        )
