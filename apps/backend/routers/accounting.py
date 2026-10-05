@@ -52,6 +52,7 @@ from database.session import get_db
 from services.accounting_service import (
     accounting_business_date,
     asset_payload,
+    bank_settlement_chain,
     create_fixed_asset,
     calculate_fixed_asset_depreciation,
     create_entry,
@@ -1312,4 +1313,27 @@ def electronic_clearing_aging_control(
         as_of=as_of,
         branch_id=selected_branch_id,
         stale_after_days=stale_after_days,
+    )
+
+
+@router.get("/controls/bank-settlement-chain")
+def bank_settlement_chain_control(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return bank_settlement_chain(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
     )
