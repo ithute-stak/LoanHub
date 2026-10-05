@@ -191,9 +191,10 @@ async def test_cdas_profile(
 def get_cdas_transactions(
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
+    company_id: UUID | None = None,
     limit: int = 200,
 ):
-    return list_transactions(db, limit=limit)
+    return list_transactions(db, company_id=company_id, limit=limit)
 
 
 
@@ -230,9 +231,10 @@ def issue_cdas_invoice(
 def get_cdas_invoices(
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
+    company_id: UUID | None = None,
     limit: int = 200,
 ):
-    return list_invoices(db, limit=limit)
+    return list_invoices(db, company_id=company_id, limit=limit)
 
 
 @router.post("/invoices/{invoice_id}/paid")
