@@ -15,6 +15,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from core.access_control import TenantContext
+from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
@@ -697,6 +698,160 @@ def request_adjustment(db: Session, context: TenantContext, batch: Reconciliatio
     return adjustment
 
 
+def set_bank_statement_balances(
+    db: Session,
+    context: TenantContext,
+    batch: ReconciliationBatch,
+    *,
+    opening_balance: Decimal,
+    closing_balance: Decimal,
+) -> ReconciliationBatch:
+    if batch.source_type != "bank_statement":
+        raise HTTPException(status_code=422, detail="Statement balances apply only to bank-statement reconciliation batches")
+    if batch.status == "closed":
+        raise HTTPException(status_code=409, detail="Closed reconciliation batches are immutable")
+
+    methodology = dict(batch.methodology_snapshot or {})
+    methodology["bank_statement_balances"] = {
+        "opening_balance": str(money(opening_balance)),
+        "closing_balance": str(money(closing_balance)),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_by_user_id": str(context.user.id),
+    }
+    batch.methodology_snapshot = methodology
+    _event(
+        db,
+        batch,
+        "bank_statement_balances_recorded",
+        context.user.id,
+        payload=methodology["bank_statement_balances"],
+    )
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
+def bank_statement_balance_reconciliation(
+    db: Session,
+    batch: ReconciliationBatch,
+) -> dict[str, Any]:
+    if batch.source_type != "bank_statement":
+        raise HTTPException(status_code=422, detail="Balance reconciliation applies only to bank-statement batches")
+
+    declared = dict(batch.methodology_snapshot or {}).get("bank_statement_balances") or {}
+    if "opening_balance" not in declared or "closing_balance" not in declared:
+        return {
+            "configured": False,
+            "balanced": False,
+            "reason": "Record the bank statement opening and closing balances",
+        }
+
+    statement_opening = money(declared["opening_balance"])
+    statement_closing = money(declared["closing_balance"])
+    lines = db.query(ReconciliationLine).filter(
+        ReconciliationLine.batch_id == batch.id,
+    ).all()
+    external = [row for row in lines if row.source_kind == "external" and row.status != "duplicate"]
+
+    statement_net = Decimal("0.00")
+    for line in external:
+        signed = money(line.amount) if line.direction == "credit" else -money(line.amount)
+        statement_net += signed
+    statement_net = money(statement_net)
+    calculated_statement_closing = money(statement_opening + statement_net)
+    statement_arithmetic_difference = money(statement_closing - calculated_statement_closing)
+
+    scope_key_value = f"company:{batch.company_id}"
+    bank_account = db.query(AccountingAccount).filter(
+        AccountingAccount.scope_key == scope_key_value,
+        AccountingAccount.code == "1010",
+        AccountingAccount.is_active.is_(True),
+    ).first()
+    if not bank_account:
+        return {
+            "configured": True,
+            "balanced": False,
+            "reason": "Bank ledger account 1010 is not configured",
+        }
+
+    opening_q = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == bank_account.id,
+        JournalEntry.scope_key == scope_key_value,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date < batch.period_start,
+    )
+    closing_q = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == bank_account.id,
+        JournalEntry.scope_key == scope_key_value,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= batch.period_end,
+    )
+    if batch.branch_id:
+        opening_q = opening_q.filter(JournalEntry.branch_id == batch.branch_id)
+        closing_q = closing_q.filter(JournalEntry.branch_id == batch.branch_id)
+    opening_debit, opening_credit = opening_q.first()
+    closing_debit, closing_credit = closing_q.first()
+    ledger_opening = money(Decimal(opening_debit) - Decimal(opening_credit))
+    ledger_closing = money(Decimal(closing_debit) - Decimal(closing_credit))
+    ledger_movement = money(ledger_closing - ledger_opening)
+
+    timing_adjustment = Decimal("0.00")
+    timing_items = []
+    for line in lines:
+        if line.status != "ignored":
+            continue
+        signed = money(line.amount) if line.direction == "credit" else -money(line.amount)
+        if line.source_kind == "system_expected":
+            adjustment = signed
+            kind = "ledger_item_not_yet_on_bank_statement"
+        elif line.source_kind == "external":
+            adjustment = -signed
+            kind = "bank_statement_item_excluded_from_ledger"
+        else:
+            continue
+        timing_adjustment += adjustment
+        timing_items.append({
+            "line_id": str(line.id),
+            "source_kind": line.source_kind,
+            "direction": line.direction,
+            "amount": float(money(line.amount)),
+            "adjustment": float(money(adjustment)),
+            "reason": line.resolution_note,
+            "kind": kind,
+        })
+    timing_adjustment = money(timing_adjustment)
+    statement_reconciled_to_ledger = money(statement_closing + timing_adjustment)
+    ledger_difference = money(ledger_closing - statement_reconciled_to_ledger)
+
+    return {
+        "configured": True,
+        "batch_id": str(batch.id),
+        "batch_reference": batch.batch_reference,
+        "period_start": batch.period_start.isoformat(),
+        "period_end": batch.period_end.isoformat(),
+        "statement_opening_balance": float(statement_opening),
+        "statement_net_movement": float(statement_net),
+        "calculated_statement_closing_balance": float(calculated_statement_closing),
+        "statement_closing_balance": float(statement_closing),
+        "statement_arithmetic_difference": float(statement_arithmetic_difference),
+        "statement_arithmetic_balanced": statement_arithmetic_difference == 0,
+        "ledger_opening_balance": float(ledger_opening),
+        "ledger_net_movement": float(ledger_movement),
+        "ledger_closing_balance": float(ledger_closing),
+        "timing_adjustment": float(timing_adjustment),
+        "statement_reconciled_to_ledger": float(statement_reconciled_to_ledger),
+        "ledger_difference": float(ledger_difference),
+        "balanced": statement_arithmetic_difference == 0 and ledger_difference == 0,
+        "timing_items": timing_items,
+    }
+
+
 def close_batch(db: Session, context: TenantContext, batch: ReconciliationBatch, *, note: str) -> ReconciliationBatch:
     if batch.status == "closed":
         return batch
@@ -705,6 +860,16 @@ def close_batch(db: Session, context: TenantContext, batch: ReconciliationBatch,
         raise HTTPException(status_code=409, detail=f"{batch.exception_line_count} unresolved reconciliation exception(s) must be cleared before close-off")
     if batch.status not in {"reconciled", "exception"}:
         raise HTTPException(status_code=409, detail="Run reconciliation before closing the batch")
+    if batch.source_type == "bank_statement":
+        balance_control = bank_statement_balance_reconciliation(db, batch)
+        if not balance_control.get("balanced"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Bank statement balances do not reconcile to account 1010",
+                    "balance_reconciliation": balance_control,
+                },
+            )
     if not note.strip():
         raise HTTPException(status_code=422, detail="A close-off note is required")
     batch.status = "closed"
