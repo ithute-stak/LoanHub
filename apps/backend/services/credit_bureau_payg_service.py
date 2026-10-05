@@ -61,7 +61,7 @@ def outstanding_balance(db: Session, *, company_id: UUID) -> Decimal:
         .filter(
             PlatformCreditBureauTransaction.company_id == company_id,
             PlatformCreditBureauTransaction.provider == "experian",
-            PlatformCreditBureauTransaction.status.in_(("accrued", "invoiced")),
+            PlatformCreditBureauTransaction.status.in_(("reserved", "accrued", "invoiced")),
         )
         .scalar()
         or Decimal("0")
@@ -86,7 +86,7 @@ def month_usage(db: Session, *, company_id: UUID, now: datetime | None = None) -
             PlatformCreditBureauTransaction.provider == "experian",
             PlatformCreditBureauTransaction.accrued_at >= start,
             PlatformCreditBureauTransaction.accrued_at < end,
-            PlatformCreditBureauTransaction.status != "waived",
+            PlatformCreditBureauTransaction.status.notin_(("waived", "cancelled", "reserved")),
         )
         .one()
     )
@@ -390,6 +390,195 @@ def assert_live_credit_available(
     )
 
 
+def reserve_enquiry_charge(
+    db: Session,
+    *,
+    subscription: PlatformCreditBureauSubscription,
+    enquiry_id: UUID,
+    environment: str,
+) -> PlatformCreditBureauTransaction | None:
+    """Atomically reserve Live PAYG credit before contacting the bureau.
+
+    Reservations are not billable. They only prevent concurrent successful
+    enquiries from overshooting the company's approved credit limit.
+    """
+    if str(environment).strip().lower() != "live":
+        return None
+
+    existing = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(PlatformCreditBureauTransaction.enquiry_id == enquiry_id)
+        .first()
+    )
+    if existing:
+        return existing
+
+    locked = (
+        db.query(PlatformCreditBureauSubscription)
+        .filter(
+            PlatformCreditBureauSubscription.id == subscription.id,
+            PlatformCreditBureauSubscription.provider == "experian",
+        )
+        .with_for_update()
+        .one()
+    )
+    if locked.status != "approved":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Credit Bureau subscription is {locked.status}. Contact the LoanHub Platform Owner.",
+        )
+
+    price = _money(locked.price_per_transaction)
+    if locked.credit_limit is not None:
+        outstanding = outstanding_balance(db, company_id=locked.company_id)
+        limit = _money(locked.credit_limit)
+        if outstanding + price > limit:
+            if locked.auto_suspend_on_limit:
+                locked.status = "suspended"
+                locked.suspended_at = datetime.now(timezone.utc)
+                _notify_company_owners(
+                    db,
+                    company_id=locked.company_id,
+                    title="Credit Bureau access automatically suspended",
+                    message=(
+                        f"Live Credit Bureau usage reached the approved credit limit of "
+                        f"{locked.currency} {limit:.2f}. Settle the outstanding balance or contact the Platform Owner."
+                    ),
+                    event_type="credit_bureau.credit_limit.suspended",
+                    entity_id=str(locked.id),
+                    priority="high",
+                    deduplication_key=f"credit-bureau-limit-{locked.id}-{limit}",
+                )
+                db.commit()
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Credit Bureau credit limit reached. Outstanding {locked.currency} {outstanding:.2f}; "
+                    f"next Live enquiry {locked.currency} {price:.2f}; limit {locked.currency} {limit:.2f}."
+                ),
+            )
+
+    now = datetime.now(timezone.utc)
+    transaction = PlatformCreditBureauTransaction(
+        provider="experian",
+        company_id=locked.company_id,
+        subscription_id=locked.id,
+        enquiry_id=enquiry_id,
+        transaction_reference=f"CB-{uuid4().hex[:24].upper()}",
+        unit_price=price,
+        amount=price,
+        currency=locked.currency or DEFAULT_CURRENCY,
+        status="reserved",
+        accrued_at=now,
+        metadata_json={
+            "billing_model": "pay_as_you_go",
+            "charge_trigger": "successful_fresh_provider_enquiry",
+            "environment": "live",
+            "price_snapshot": float(price),
+            "reservation": {
+                "state": "reserved",
+                "reserved_at": now.isoformat(),
+            },
+        },
+    )
+    db.add(transaction)
+    db.commit()
+    db.refresh(transaction)
+    return transaction
+
+
+def cancel_enquiry_reservation(
+    db: Session,
+    *,
+    enquiry_id: UUID,
+    reason: str,
+) -> PlatformCreditBureauTransaction | None:
+    row = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(
+            PlatformCreditBureauTransaction.enquiry_id == enquiry_id,
+            PlatformCreditBureauTransaction.status == "reserved",
+        )
+        .first()
+    )
+    if not row:
+        return None
+    metadata = dict(row.metadata_json or {})
+    reservation = dict(metadata.get("reservation") or {})
+    reservation.update(
+        {
+            "state": "cancelled",
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "reason": str(reason or "provider_request_failed")[:500],
+        }
+    )
+    metadata["reservation"] = reservation
+    row.metadata_json = metadata
+    row.status = "cancelled"
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def reconcile_payg_reservations(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    stale_after_minutes: int = 60,
+) -> dict[str, int]:
+    """Self-heal reservations left behind by process crashes or interrupted calls."""
+    from database.models.lending_operations import CreditBureauEnquiry
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=max(5, int(stale_after_minutes)))
+    rows = (
+        db.query(PlatformCreditBureauTransaction, CreditBureauEnquiry)
+        .join(CreditBureauEnquiry, CreditBureauEnquiry.id == PlatformCreditBureauTransaction.enquiry_id)
+        .filter(
+            PlatformCreditBureauTransaction.provider == "experian",
+            PlatformCreditBureauTransaction.status == "reserved",
+            PlatformCreditBureauTransaction.accrued_at <= cutoff,
+        )
+        .all()
+    )
+    finalized = 0
+    cancelled = 0
+    for transaction, enquiry in rows:
+        metadata = dict(transaction.metadata_json or {})
+        reservation = dict(metadata.get("reservation") or {})
+        if enquiry.status == "completed":
+            transaction.status = "accrued"
+            reservation.update(
+                {
+                    "state": "finalized",
+                    "finalized_at": now.isoformat(),
+                    "reconciled": True,
+                }
+            )
+            finalized += 1
+        else:
+            transaction.status = "cancelled"
+            reservation.update(
+                {
+                    "state": "cancelled",
+                    "cancelled_at": now.isoformat(),
+                    "reason": (
+                        "enquiry_failed"
+                        if enquiry.status == "failed"
+                        else "stale_reservation_timeout"
+                    ),
+                    "reconciled": True,
+                }
+            )
+            cancelled += 1
+        metadata["reservation"] = reservation
+        transaction.metadata_json = metadata
+
+    if finalized or cancelled:
+        db.commit()
+    return {"finalized": finalized, "cancelled": cancelled}
+
+
 def accrue_successful_enquiry(
     db: Session,
     *,
@@ -402,10 +591,21 @@ def accrue_successful_enquiry(
         .filter(PlatformCreditBureauTransaction.enquiry_id == enquiry_id)
         .first()
     )
+    is_live = str(environment).strip().lower() == "live"
     if existing:
+        if is_live and existing.status == "reserved":
+            metadata = dict(existing.metadata_json or {})
+            reservation = dict(metadata.get("reservation") or {})
+            reservation.update({
+                "state": "finalized",
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+            })
+            metadata["reservation"] = reservation
+            existing.metadata_json = metadata
+            existing.status = "accrued"
+            db.flush()
         return existing
 
-    is_live = str(environment).strip().lower() == "live"
     price = _money(subscription.price_per_transaction) if is_live else Decimal("0.00")
     transaction = PlatformCreditBureauTransaction(
         provider="experian",
