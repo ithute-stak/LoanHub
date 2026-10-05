@@ -434,3 +434,17 @@ def test_canonical_bank_reconciliation_supersedes_legacy_bank_line_close_check()
     assert '"legacy_unmatched_bank_lines"' in service
     assert '"canonical_bank_batch_exists"' in service
     assert "True if canonical_bank_batch_exists else legacy_bank_unmatched_count == 0" in service
+
+
+def test_chargebacks_and_direct_debits_reverse_the_original_loan_effects():
+    loan_service = (ROOT / "backend" / "services" / "loan_service.py").read_text(encoding="utf-8")
+    governance = (ROOT / "backend" / "services" / "governance_control_service.py").read_text(encoding="utf-8")
+    gateway = (ROOT / "backend" / "services" / "lelefa_paygate_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "governance_controls.py").read_text(encoding="utf-8")
+
+    assert "PaymentPurpose.DIRECT_DEBIT" in loan_service
+    assert 'if adjustment.adjustment_type == "chargeback":' in governance
+    assert 'allowed_statuses.add("under_investigation")' in governance
+    assert "def complete_adjustment_for_provider_reversal(" in governance
+    assert "complete_adjustment_for_provider_reversal(" in gateway
+    assert '@router.post("/payment-adjustments/{adjustment_id}/provider-confirm")' in router
