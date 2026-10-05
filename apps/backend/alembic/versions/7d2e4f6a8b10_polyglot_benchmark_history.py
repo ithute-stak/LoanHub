@@ -1,7 +1,7 @@
 """persist polyglot benchmark promotion evidence
 
 Revision ID: 7d2e4f6a8b10
-Revises: 6c1f9a7e2d40
+Revises: r1x2z3b4c501
 Create Date: 2026-10-05
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "7d2e4f6a8b10"
-down_revision = "6c1f9a7e2d40"
+down_revision = "r1x2z3b4c501"
 branch_labels = None
 depends_on = None
 
