@@ -117,6 +117,10 @@ export default function PlatformCdasPage() {
     const [adjustmentReason, setAdjustmentReason] = useState("");
     const [invoiceStart, setInvoiceStart] = useState("");
     const [invoiceEnd, setInvoiceEnd] = useState("");
+    const [settlementMethod, setSettlementMethod] = useState<"cash" | "bank" | "electronic">("bank");
+    const [settlementReference, setSettlementReference] = useState("");
+    const [refundMethod, setRefundMethod] = useState<"cash" | "bank" | "electronic">("bank");
+    const [refundReference, setRefundReference] = useState("");
     const [billingAction, setBillingAction] = useState<string | null>(null);
 
     const selected = useMemo(
@@ -266,9 +270,16 @@ export default function PlatformCdasPage() {
 
     async function markInvoicePaid(invoiceId: string) {
         if (!selectedCompanyId) return;
+        if (settlementMethod !== "cash" && settlementReference.trim().length < 2) {
+            toast.error("Enter the bank/gateway settlement reference.");
+            return;
+        }
         setBillingAction(`paid:${invoiceId}`);
         try {
-            await api.post(`/platform-owner/cdas/invoices/${invoiceId}/paid`);
+            await api.post(`/platform-owner/cdas/invoices/${invoiceId}/paid`, {
+                payment_method: settlementMethod,
+                proof_reference: settlementReference.trim() || null,
+            });
             toast.success("CDAS invoice marked paid");
             await loadBilling(selectedCompanyId);
             await load();
@@ -284,10 +295,18 @@ export default function PlatformCdasPage() {
             toast.error("Enter a reason of at least 3 characters.");
             return;
         }
+        if (action === "refund" && refundMethod !== "cash" && refundReference.trim().length < 2) {
+            toast.error("Enter the bank/gateway refund reference.");
+            return;
+        }
         setBillingAction(`${action}:${transactionId}`);
         try {
             await api.post(`/platform-owner/cdas/transactions/${transactionId}/${action}`, {
                 reason: adjustmentReason.trim(),
+                ...(action === "refund" ? {
+                    payment_method: refundMethod,
+                    proof_reference: refundReference.trim() || null,
+                } : {}),
             });
             toast.success(action === "waive" ? "CDAS charge waived" : "CDAS charge refunded");
             setAdjustmentReason("");
@@ -391,6 +410,10 @@ export default function PlatformCdasPage() {
                                     <div className="space-y-2"><Label>Period end</Label><Input type="date" value={invoiceEnd} onChange={(e) => setInvoiceEnd(e.target.value)} /></div>
                                     <div className="flex items-end"><LoadingButton className="w-full" loading={billingAction === "invoice"} disabled={!invoiceStart || !invoiceEnd} onClick={() => void createManualInvoice()}>Issue invoice</LoadingButton></div>
                                 </div>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="space-y-2"><Label>Settlement method</Label><Select value={settlementMethod} onValueChange={(value) => setSettlementMethod(value as "cash" | "bank" | "electronic")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem><SelectItem value="electronic">Electronic / gateway</SelectItem></SelectContent></Select></div>
+                                    <div className="space-y-2"><Label>Settlement reference</Label><Input value={settlementReference} onChange={(e) => setSettlementReference(e.target.value)} placeholder={settlementMethod === "cash" ? "Optional for cash" : "Required bank/gateway reference"} /></div>
+                                </div>
                                 <div className="space-y-2">
                                     {invoices.length ? invoices.map((invoice) => (
                                         <div key={invoice.id} className="flex flex-col gap-3 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -406,6 +429,10 @@ export default function PlatformCdasPage() {
                             <CardHeader><CardTitle>Charge adjustments</CardTitle><CardDescription>Waive an unpaid charge or refund a settled charge without deleting financial history.</CardDescription></CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="space-y-2"><Label>Adjustment reason</Label><Input value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)} placeholder="Required reason for waiver or refund" /></div>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="space-y-2"><Label>Refund method</Label><Select value={refundMethod} onValueChange={(value) => setRefundMethod(value as "cash" | "bank" | "electronic")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="bank">Bank</SelectItem><SelectItem value="electronic">Electronic / gateway</SelectItem></SelectContent></Select></div>
+                                    <div className="space-y-2"><Label>Refund reference</Label><Input value={refundReference} onChange={(e) => setRefundReference(e.target.value)} placeholder={refundMethod === "cash" ? "Optional for cash refund" : "Required bank/gateway reference"} /></div>
+                                </div>
                                 <div className="space-y-2">
                                     {transactions.length ? transactions.map((transaction) => (
                                         <div key={transaction.id} className="flex flex-col gap-3 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
