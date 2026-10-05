@@ -61,3 +61,20 @@ def test_restore_verification_never_targets_production_database() -> None:
     restore_block = script[restore_pos:]
     assert '--dbname "$VERIFY_DB"' in restore_block
     assert '--dbname "$DB_NAME"' not in restore_block
+
+
+
+def test_pitr_readiness_reports_wal_archiving_without_mutation() -> None:
+    script = _read(ROOT / "scripts/check_pitr_readiness.sh")
+
+    assert "current_setting('wal_level')" in script
+    assert "current_setting('archive_mode')" in script
+    assert "current_setting('archive_command')" in script
+    assert "current_setting('max_wal_senders')" in script
+    assert "pg_is_in_recovery()" in script
+    assert "pg_current_wal_lsn()" in script
+    assert 'pitr_ready=false' in script
+    assert 'pitr_ready=true' in script
+    assert "ALTER SYSTEM" not in script
+    assert "pg_reload_conf" not in script
+    assert "pg_terminate_backend" not in script
