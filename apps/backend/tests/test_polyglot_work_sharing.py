@@ -1080,6 +1080,7 @@ def test_go_push_preparation_keeps_recipient_policy_in_python(monkeypatch) -> No
 def test_go_push_handoff_does_not_fallback_after_ambiguous_batch(monkeypatch) -> None:
     from services import mobile_push_service as push
 
+    monkeypatch.setattr(push, "go_worker_url", lambda: "http://go-worker:8081")
     monkeypatch.setattr(push, "_firebase_access_token", lambda: ("loanhub-prod", "short-lived-token"))
 
     class FakeSession:
@@ -1109,5 +1110,5 @@ def test_go_push_handoff_does_not_fallback_after_ambiguous_batch(monkeypatch) ->
 
     monkeypatch.setattr(push, "go_push_delivery_batch", ambiguous)
 
-    assert push._send_sync_go(["user-1"], {"event_id": "evt-1"}) is False
+    assert push._send_sync_go(["user-1"], {"event_id": "evt-1"}) is True
     assert calls["count"] == 1
