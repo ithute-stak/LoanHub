@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
+import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck, WalletCards } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
 import { originationApi } from "@/api/origination";
@@ -35,6 +35,7 @@ export default function ExperianCreditBureauPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [requestingSubscription, setRequestingSubscription] = useState(false);
   const [running, setRunning] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianCompanyConfiguration | null>(null);
   const [applications, setApplications] = useState<OriginationApplication[]>([]);
@@ -142,14 +143,16 @@ export default function ExperianCreditBureauPage() {
     (configuration?.configuration.environment === environment && configuration?.platform.ready_for_company_use),
   );
   const platformReady = selectedEnvironmentReady;
-  const companyReady = selectedEnvironmentReady && enabled;
+  const subscription = configuration?.subscription;
+  const subscriptionApproved = subscription?.status === "approved";
+  const companyReady = selectedEnvironmentReady && subscriptionApproved;
 
   async function saveCompanySettings() {
     if (!canConfigure) return;
     setSaving(true);
     try {
       const updated = await creditBureauApi.updateExperianConfiguration({
-        is_enabled: enabled,
+        is_enabled: subscriptionApproved,
         configuration: {
           environment,
           max_report_age_hours: Math.max(1, Number(maxReportAgeHours || 24)),
@@ -173,6 +176,22 @@ export default function ExperianCreditBureauPage() {
       toast.error(getErrorMessage(error, "Experian company policy could not be saved."));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function requestSubscription() {
+    if (!canConfigure) return;
+    setRequestingSubscription(true);
+    try {
+      await creditBureauApi.requestExperianSubscription();
+      toast.success("Credit Bureau subscription requested", {
+        description: "The LoanHub Platform Owner must approve your company before any paid bureau enquiry can run.",
+      });
+      applyConfiguration(await creditBureauApi.getExperianConfiguration());
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Credit Bureau subscription request could not be submitted."));
+    } finally {
+      setRequestingSubscription(false);
     }
   }
 
@@ -223,7 +242,7 @@ export default function ExperianCreditBureauPage() {
             <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Credit bureau integration</p>
             <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Experian</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Use LoanHub&apos;s centrally secured Experian connection. Your company controls participation and its credit-risk policy; the Platform Owner controls the central Experian Lesotho credentials and connection.
+              Use LoanHub&apos;s centrally secured Experian connection. Your company requests access; the Platform Owner approves the subscription, controls the provider connection and charges your company per successful fresh bureau transaction.
             </p>
           </div>
           <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
@@ -243,7 +262,7 @@ export default function ExperianCreditBureauPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Central Experian connection ready</AlertTitle>
           <AlertDescription>
-            {titleCase(environment)} mode · connection {configuration?.platform.environments?.[environment]?.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
+            {titleCase(environment)} mode · connection {configuration?.platform.environments?.[environment]?.last_test_status === "connected" ? "tested" : "not tested"}. Paid checks can run only after Platform Owner subscription approval.
           </AlertDescription>
         </Alert>
       )}
@@ -270,10 +289,29 @@ export default function ExperianCreditBureauPage() {
             <CardDescription>These settings apply only to your lending company and never contain Experian secrets.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <label className="flex items-start gap-3 rounded-2xl border p-4">
-              <Checkbox checked={enabled} onCheckedChange={(value) => setEnabled(value === true)} disabled={!canConfigure || !platformReady} />
-              <span><strong>Enable Experian for this company</strong><span className="mt-1 block text-xs text-muted-foreground">Requires the selected Experian mode to be configured and tested by the Platform Owner.</span></span>
-            </label>
+            <div className="rounded-2xl border p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="flex items-center gap-2 font-black"><WalletCards className="h-4 w-4 text-primary" />Credit Bureau PAYG subscription</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Status: <strong>{titleCase(subscription?.status || "not subscribed")}</strong>
+                    {subscription?.price_per_transaction != null ? ` · ${formatMoney(subscription.price_per_transaction)} per successful fresh enquiry` : ""}
+                  </p>
+                  {subscription?.rejection_reason ? <p className="mt-2 text-xs text-destructive">{subscription.rejection_reason}</p> : null}
+                </div>
+                {canConfigure && subscription?.status !== "approved" && subscription?.status !== "pending" ? (
+                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()} disabled={!platformReady}>
+                    Request subscription
+                  </LoadingButton>
+                ) : null}
+                {canConfigure && (!subscription || subscription.status === "not_subscribed") ? (
+                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()} disabled={!platformReady}>
+                    Request subscription
+                  </LoadingButton>
+                ) : null}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">Approval is controlled only by the LoanHub Platform Owner. Reusing a still-fresh report is not charged; forcing or requiring a fresh provider enquiry creates one PAYG transaction.</p>
+            </div>
 
             <div className="rounded-2xl border p-4">
               <Field label="Experian mode for this company">
@@ -353,7 +391,7 @@ export default function ExperianCreditBureauPage() {
               <Toggle label="Require identity match" checked={requireIdentityMatch} onChange={setRequireIdentityMatch} disabled={!canConfigure} />
             </div>
 
-            {canConfigure ? <LoadingButton loading={saving} onClick={() => void saveCompanySettings()}><Save className="h-4 w-4" />Save company policy</LoadingButton> : null}
+            {canConfigure ? <LoadingButton loading={saving} onClick={() => void saveCompanySettings()} disabled={!subscriptionApproved}><Save className="h-4 w-4" />Save company policy</LoadingButton> : null}
           </CardContent>
         </Card>
       </div>
