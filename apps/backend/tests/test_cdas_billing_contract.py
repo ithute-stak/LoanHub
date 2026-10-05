@@ -54,6 +54,7 @@ def test_cdas_invoices_use_snapshotted_operation_prices_and_transaction_states()
     assert 'row.status = "invoiced"' in service
     assert 'row.status = "settled"' in service
     assert 'row.status = "refunded"' in service
+    assert "Only an accrued, not-yet-invoiced CDAS transaction can be waived" in service
     assert "Only a settled CDAS transaction can be refunded" in service
 
 
@@ -115,3 +116,20 @@ def test_cdas_test_operations_remain_free_and_only_live_is_invoiced() -> None:
     assert 'rate = _money(normalize_pricing(subscription.pricing).get(operation_type, 0)) if live else Decimal("0.00")' in service
     assert '"accrued" if live and rate > 0 else ("free_live" if live else "test")' in service
     assert 'PlatformCdasTransaction.environment == "live"' in service
+
+
+
+def test_platform_cdas_console_exposes_invoice_payment_waiver_and_refund_controls() -> None:
+    page = _read(
+        FRONTEND_ROOT
+        / "app/(dashboard)/superadmin/control/integrations/cdas/page.tsx"
+    )
+    router = _read(ROOT / "routers/platform_cdas.py")
+
+    assert "Billing & invoices" in page
+    assert "Charge adjustments" in page
+    assert "Issue invoice" in page
+    assert "Mark paid" in page
+    assert ">Waive<" in page
+    assert ">Refund<" in page
+    assert "company_id: UUID | None = None" in router
