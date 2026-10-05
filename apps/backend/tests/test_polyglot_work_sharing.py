@@ -420,6 +420,35 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
             "schedule_amounts": ["363.33", "363.33", "363.34"],
         },
     )
+    monkeypatch.setattr(
+        benchmark,
+        "rust_portfolio_risk_summary",
+        lambda **kwargs: {
+            "active_exposure": "15000.00",
+            "active_loans": 2,
+            "par_30_amount": "5000.00",
+            "par_30": "33.33",
+            "delinquency_buckets": [
+                {"bucket": "current", "loan_count": 1, "exposure": "10000.00"},
+                {"bucket": "1-7", "loan_count": 0, "exposure": "0.00"},
+                {"bucket": "8-30", "loan_count": 0, "exposure": "0.00"},
+                {"bucket": "31-60", "loan_count": 1, "exposure": "5000.00"},
+                {"bucket": "61-90", "loan_count": 0, "exposure": "0.00"},
+                {"bucket": "90+", "loan_count": 0, "exposure": "0.00"},
+            ],
+            "vintages": [
+                {"vintage": "2026-02", "par_30": "100.00"},
+                {"vintage": "2026-01", "par_30": "0.00"},
+            ],
+            "top_up_performance": [
+                {"label": "New / non-top-up"},
+                {"label": "Top-up"},
+            ],
+            "top_up_exposure": "5000.00",
+            "cdas_exposure": "10000.00",
+            "authoritative": False,
+        },
+    )
     java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
     canonical = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
     monkeypatch.setattr(
@@ -437,7 +466,7 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     assert result["iterations"] == 2
     assert result["non_authoritative"] is True
     assert result["changes_routing"] is False
-    assert len(result["results"]) == 4
+    assert len(result["results"]) == 5
     assert all(item["parity_passed"] == 2 for item in result["results"])
     assert all(item["promotion_candidate"] is True for item in result["results"])
 
@@ -651,3 +680,179 @@ def test_go_webhook_ambiguous_worker_failure_does_not_immediately_python_replay(
     assert event.status in {"retrying", "dead_letter"}
     assert "outcome unknown" in event.last_error
     assert endpoint.failure_count == 1
+
+
+def test_rust_portfolio_risk_phase_two_moves_more_snapshot_loops() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    portfolio = (ROOT / "services/portfolio_risk_service.py").read_text(encoding="utf-8")
+    benchmark = (ROOT / "services/polyglot_benchmark_service.py").read_text(encoding="utf-8")
+
+    assert "fn delinquency_buckets(" in rust
+    assert "fn vintage_summaries(" in rust
+    assert "fn top_up_performance(" in rust
+    assert "top_up_exposure:" in rust
+    assert "cdas_exposure:" in rust
+    assert "def _python_risk_aggregation(" in portfolio
+    assert '"promoted_no_live_parity"' in portfolio
+    assert 'workload="rust_portfolio_risk"' in benchmark
+    assert '"rust_portfolio_risk": 250.0' in benchmark
+
+
+def test_rust_portfolio_risk_normalizer_matches_python_contract() -> None:
+    from datetime import date
+    from types import SimpleNamespace
+
+    from database.models.enums import LoanStatus
+    from services import portfolio_risk_service as portfolio
+
+    rows = [
+        SimpleNamespace(
+            outstanding_balance="10000.00",
+            principal_amount="10000.00",
+            days_past_due=0,
+            loan_status=LoanStatus.ACTIVE.value,
+            is_written_off=False,
+            is_top_up=False,
+            cdas_collection_enabled=True,
+            evidence_snapshot={"first_payment_due": True},
+            first_payment_default=False,
+            origination_month=date(2026, 1, 1),
+            delinquency_bucket="current",
+            branch_label="Maseru",
+            product_label="Standard",
+            employer_label="Employer A",
+        ),
+        SimpleNamespace(
+            outstanding_balance="5000.00",
+            principal_amount="6000.00",
+            days_past_due=35,
+            loan_status=LoanStatus.ACTIVE.value,
+            is_written_off=False,
+            is_top_up=True,
+            cdas_collection_enabled=False,
+            evidence_snapshot={"first_payment_due": True},
+            first_payment_default=True,
+            origination_month=date(2026, 2, 1),
+            delinquency_bucket="31-60",
+            branch_label="Maseru",
+            product_label="Standard",
+            employer_label="Employer B",
+        ),
+    ]
+
+    python_value = portfolio._python_risk_aggregation(rows)
+    rust_value = {
+        "active_exposure": "15000.00",
+        "active_loans": 2,
+        "par_1_amount": "5000.00",
+        "par_1": "33.33",
+        "par_7_amount": "5000.00",
+        "par_7": "33.33",
+        "par_30_amount": "5000.00",
+        "par_30": "33.33",
+        "par_60_amount": "0.00",
+        "par_60": "0.00",
+        "par_90_amount": "0.00",
+        "par_90": "0.00",
+        "branch": {
+            "hhi": "10000.00",
+            "top_share_percent": "100.00",
+            "group_count": 1,
+            "groups": [{
+                "label": "Maseru",
+                "loan_count": 2,
+                "exposure": "15000.00",
+                "share_percent": "100.00",
+                "par_30": "33.33",
+                "fpd_rate": "50.00",
+            }],
+        },
+        "product": {
+            "hhi": "10000.00",
+            "top_share_percent": "100.00",
+            "group_count": 1,
+            "groups": [{
+                "label": "Standard",
+                "loan_count": 2,
+                "exposure": "15000.00",
+                "share_percent": "100.00",
+                "par_30": "33.33",
+                "fpd_rate": "50.00",
+            }],
+        },
+        "employer": {
+            "hhi": "5555.78",
+            "top_share_percent": "66.67",
+            "group_count": 2,
+            "groups": [
+                {
+                    "label": "Employer A",
+                    "loan_count": 1,
+                    "exposure": "10000.00",
+                    "share_percent": "66.67",
+                    "par_30": "0.00",
+                    "fpd_rate": "0.00",
+                },
+                {
+                    "label": "Employer B",
+                    "loan_count": 1,
+                    "exposure": "5000.00",
+                    "share_percent": "33.33",
+                    "par_30": "100.00",
+                    "fpd_rate": "100.00",
+                },
+            ],
+        },
+        "delinquency_buckets": [
+            {"bucket": "current", "loan_count": 1, "exposure": "10000.00"},
+            {"bucket": "1-7", "loan_count": 0, "exposure": "0.00"},
+            {"bucket": "8-30", "loan_count": 0, "exposure": "0.00"},
+            {"bucket": "31-60", "loan_count": 1, "exposure": "5000.00"},
+            {"bucket": "61-90", "loan_count": 0, "exposure": "0.00"},
+            {"bucket": "90+", "loan_count": 0, "exposure": "0.00"},
+        ],
+        "vintages": [
+            {
+                "vintage": "2026-02",
+                "loan_count": 1,
+                "originated_principal": "6000.00",
+                "outstanding_balance": "5000.00",
+                "par_30": "100.00",
+                "fpd_rate": "100.00",
+                "write_off_count": 0,
+                "top_up_count": 1,
+            },
+            {
+                "vintage": "2026-01",
+                "loan_count": 1,
+                "originated_principal": "10000.00",
+                "outstanding_balance": "10000.00",
+                "par_30": "0.00",
+                "fpd_rate": "0.00",
+                "write_off_count": 0,
+                "top_up_count": 0,
+            },
+        ],
+        "top_up_performance": [
+            {
+                "label": "New / non-top-up",
+                "loan_count": 1,
+                "active_exposure": "10000.00",
+                "par_30": "0.00",
+                "fpd_rate": "0.00",
+                "write_off_count": 0,
+            },
+            {
+                "label": "Top-up",
+                "loan_count": 1,
+                "active_exposure": "5000.00",
+                "par_30": "100.00",
+                "fpd_rate": "100.00",
+                "write_off_count": 0,
+            },
+        ],
+        "top_up_exposure": "5000.00",
+        "cdas_exposure": "10000.00",
+    }
+
+    assert portfolio._normalized_rust_risk(rust_value) == python_value
