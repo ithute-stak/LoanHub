@@ -448,3 +448,21 @@ def test_chargebacks_and_direct_debits_reverse_the_original_loan_effects():
     assert "def complete_adjustment_for_provider_reversal(" in governance
     assert "complete_adjustment_for_provider_reversal(" in gateway
     assert '@router.post("/payment-adjustments/{adjustment_id}/provider-confirm")' in router
+
+
+def test_loan_control_excludes_written_off_principal_and_includes_direct_debits():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"source_written_off_principal"' in service
+    assert '"write_offs": write_off_count' in service
+    assert "CollectionCase.write_off_at.is_not(None)" in service
+    assert "loan_source_principal_outstanding(" in service
+    assert "PaymentPurpose.DIRECT_DEBIT" in service
+
+
+def test_post_writeoff_payments_route_to_recovery_income_not_receivable():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "written_off_case" in service
+    assert 'description="Recovery received after loan write-off"' in service
+    assert 'reference_type="payment_transaction"' in service
+    assert 'credit_code="4300"' in service
+    assert "recovery_payment_ids" in service
