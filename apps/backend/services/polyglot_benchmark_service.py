@@ -18,6 +18,7 @@ from services.polyglot_runtime_service import (
     rust_affordability_assessment,
     rust_loan_preview,
     rust_portfolio_risk_summary,
+    rust_predictive_signal_batch,
     rust_variance_classification,
     workload_routing_mode,
 )
@@ -47,6 +48,7 @@ _THRESHOLDS_MS = {
     "rust_loan_calculation": 250.0,
     "rust_portfolio_risk": 250.0,
     "rust_affordability": 100.0,
+    "rust_predictive_risk": 250.0,
     "java_event_processing": 250.0,
     "java_underwriting_rules": 100.0,
 }
@@ -263,6 +265,35 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
         )
         return True, parity
 
+    predictive_rows = [
+        {
+            "key": "loan-1",
+            "current_dpd": 12,
+            "previous_dpd": 2,
+            "current_bucket": "8-30",
+            "previous_bucket": "1-7",
+            "first_payment_default": True,
+            "is_top_up": True,
+            "has_work_item": True,
+            "work_priority": "high",
+            "work_priority_score": "75",
+        }
+    ]
+
+    def benchmark_rust_predictive() -> tuple[bool, bool]:
+        result = rust_predictive_signal_batch(rows=predictive_rows)
+        if result is None or len(result) != 1:
+            return False, False
+        item = result[0]
+        return True, (
+            item.get("key") == "loan-1"
+            and item.get("risk_score") == "74"
+            and item.get("risk_band") == "high"
+            and item.get("projected_par30_entry") is True
+            and item.get("stress_bucket_30d") == "31-60"
+            and item.get("authoritative") is None
+        )
+
     def benchmark_java_underwriting() -> tuple[bool, bool]:
         result = java_underwriting_rules(
             monthly_income="5500.00",
@@ -329,6 +360,12 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             worker="rust_compute",
             iterations=iterations,
             operation=benchmark_rust_affordability,
+        ),
+        _run_case(
+            workload="rust_predictive_risk",
+            worker="rust_compute",
+            iterations=iterations,
+            operation=benchmark_rust_predictive,
         ),
         _run_case(
             workload="java_underwriting_rules",
