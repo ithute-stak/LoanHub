@@ -377,3 +377,30 @@ def test_period_close_requires_clearing_settlement_bank_traceability():
     assert '"clearing_settlements_bank_matched": bool(settlement_chain["complete"])' in service
     assert '"bank_settlement_chain": settlement_chain' in service
     assert '@router.get("/controls/bank-settlement-chain")' in router
+
+
+def test_bank_statement_balances_reconcile_statement_arithmetic_to_account_1010():
+    reconciliation = (ROOT / "backend" / "services" / "reconciliation_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "reconciliation.py").read_text(encoding="utf-8")
+
+    assert "def set_bank_statement_balances(" in reconciliation
+    assert "def bank_statement_balance_reconciliation(" in reconciliation
+    assert '"statement_arithmetic_difference"' in reconciliation
+    assert '"ledger_closing_balance"' in reconciliation
+    assert '"statement_reconciled_to_ledger"' in reconciliation
+    assert '"ledger_item_not_yet_on_bank_statement"' in reconciliation
+    assert '"bank_statement_item_excluded_from_ledger"' in reconciliation
+    assert 'detail={"message": "Bank statement balances do not reconcile to account 1010"' in reconciliation
+    assert '@router.put("/batches/{batch_id}/bank-statement-balances")' in router
+    assert '@router.get("/batches/{batch_id}/bank-balance-reconciliation")' in router
+
+
+def test_period_close_requires_closed_balanced_bank_batch_when_bank_is_used():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"bank_statement_balance_reconciled"' in service
+    assert '"bank_ledger_activity"' in service
+    assert '"bank_opening"' in service
+    assert '"bank_closing"' in service
+    assert '"bank_statement_balance_reconciliation": bank_balance_control' in service
+    assert 'ReconciliationBatch.source_type == "bank_statement"' in service
+    assert 'ReconciliationBatch.status == "closed"' in service
