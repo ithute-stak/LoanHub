@@ -29,7 +29,7 @@ from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.lending_operations import CollectionCase
 from database.models.credit_loss_provisioning import CreditLossProvisionRun
 from database.models.governance_control import ApprovalRequest, BankStatementLine
-from database.models.reconciliation import ReconciliationBatch
+from database.models.reconciliation import ReconciliationBatch, ReconciliationLine
 from database.models.enums import (
     PaymentDirection,
     PaymentMethod,
@@ -2900,5 +2900,110 @@ def electronic_clearing_aging(
         "stale_amount": float(_money(stale_total)),
         "has_stale_items": stale_count > 0,
         "aging_buckets": {name: float(_money(value)) for name, value in buckets.items()},
+        "items": items,
+    }
+
+
+def bank_settlement_chain(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Trace electronic clearing settlements from 1020 journal to bank statement evidence."""
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    settlement_q = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "electronic_clearing_settlement",
+        CompanyOperatingRecord.status == "posted",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if branch_id:
+        settlement_q = settlement_q.filter(CompanyOperatingRecord.branch_id == branch_id)
+
+    bank_batches = db.query(ReconciliationBatch).filter(
+        ReconciliationBatch.company_id == company_id,
+        ReconciliationBatch.source_type == "bank_statement",
+        ReconciliationBatch.period_end >= from_date,
+        ReconciliationBatch.period_start <= to_date,
+    )
+    if branch_id:
+        bank_batches = bank_batches.filter(
+            (ReconciliationBatch.branch_id == branch_id) | (ReconciliationBatch.branch_id.is_(None))
+        )
+    batch_rows = bank_batches.all()
+    batch_ids = [row.id for row in batch_rows]
+    reconciliation_lines = (
+        db.query(ReconciliationLine)
+        .filter(
+            ReconciliationLine.batch_id.in_(batch_ids),
+            ReconciliationLine.source_kind == "external",
+        )
+        .all()
+        if batch_ids
+        else []
+    )
+
+    matched_by_settlement: dict[str, ReconciliationLine] = {}
+    for line in reconciliation_lines:
+        settlement_id = str((line.source_payload or {}).get("matched_clearing_settlement_id") or "")
+        if settlement_id and line.status == "matched":
+            matched_by_settlement[settlement_id] = line
+
+    items = []
+    unmatched = []
+    for settlement in settlement_q.all():
+        data = dict(settlement.data or {})
+        settlement_date_text = data.get("settlement_date")
+        if not settlement_date_text:
+            continue
+        settlement_date = date.fromisoformat(settlement_date_text)
+        if settlement_date < from_date or settlement_date > to_date:
+            continue
+
+        line = matched_by_settlement.get(str(settlement.id))
+        journal_id = data.get("journal_entry_id")
+        journal_exists = bool(
+            journal_id
+            and db.query(JournalEntry.id).filter(
+                JournalEntry.id == UUID(str(journal_id)),
+                JournalEntry.company_id == company_id,
+                JournalEntry.reference_type == "electronic_clearing_settlement",
+                JournalEntry.status == "posted",
+            ).first()
+        )
+        item = {
+            "settlement_id": str(settlement.id),
+            "provider_reference": settlement.reference,
+            "proof_reference": data.get("proof_reference"),
+            "settlement_date": settlement_date.isoformat(),
+            "direction": data.get("direction"),
+            "amount": float(_money(settlement.amount)),
+            "journal_entry_id": journal_id,
+            "journal_posted": journal_exists,
+            "bank_statement_matched": line is not None,
+            "reconciliation_line_id": str(line.id) if line else None,
+            "reconciliation_batch_id": str(line.batch_id) if line else None,
+            "bank_reference": line.reference if line else None,
+            "bank_transaction_date": line.transaction_date.isoformat() if line else None,
+        }
+        items.append(item)
+        if not journal_exists or line is None:
+            unmatched.append(str(settlement.id))
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "settlement_count": len(items),
+        "fully_traced_count": len(items) - len(unmatched),
+        "unmatched_count": len(unmatched),
+        "complete": len(unmatched) == 0,
+        "unmatched_settlement_ids": unmatched,
         "items": items,
     }
