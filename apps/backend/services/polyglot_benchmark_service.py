@@ -14,6 +14,7 @@ from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from services.polyglot_runtime_service import (
     go_digest,
     java_canonicalize_event,
+    java_report_csv,
     rust_loan_preview,
     rust_portfolio_risk_summary,
     rust_variance_classification,
@@ -45,6 +46,7 @@ _THRESHOLDS_MS = {
     "rust_loan_calculation": 250.0,
     "rust_portfolio_risk": 250.0,
     "java_event_processing": 250.0,
+    "java_report_csv": 250.0,
 }
 
 
@@ -230,6 +232,52 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             parity = False
         return True, parity
 
+    csv_metadata = {
+        "title": "Operational Report - Maseru",
+        "reference": "RPT-BENCHMARK",
+        "scope_name": "Maseru",
+        "period_start": "2026-10-01",
+        "period_end": "2026-10-01",
+    }
+    csv_metrics = [
+        ["active_loans", 12],
+        ["collections", 1234.5],
+        ["healthy", True],
+    ]
+    expected_csv = (
+        "\ufeffLoanHub Report,Operational Report - Maseru\r\n"
+        "Developed by,Ithute Solutions\r\n"
+        "Reference,RPT-BENCHMARK\r\n"
+        "Scope,Maseru\r\n"
+        "Period start,2026-10-01\r\n"
+        "Period end,2026-10-01\r\n"
+        "\r\n"
+        "Metric,Value\r\n"
+        "Active Loans,12\r\n"
+        "Collections,1234.5\r\n"
+        "Healthy,True\r\n"
+    ).encode("utf-8")
+
+    def benchmark_java_csv() -> tuple[bool, bool]:
+        result = java_report_csv(
+            metadata=csv_metadata,
+            metrics_items=csv_metrics,
+        )
+        if result is None:
+            return False, False
+        try:
+            import base64
+
+            content = base64.b64decode(result["content_base64"], validate=True)
+            parity = (
+                content == expected_csv
+                and hashlib.sha256(content).hexdigest()
+                == str(result.get("sha256") or "").lower()
+            )
+        except (KeyError, TypeError, ValueError):
+            parity = False
+        return True, parity
+
     java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
     java_expected = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
     java_hash = hashlib.sha256(java_expected.encode("utf-8")).hexdigest()
@@ -271,6 +319,12 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             worker="rust_compute",
             iterations=iterations,
             operation=benchmark_rust_portfolio,
+        ),
+        _run_case(
+            workload="java_report_csv",
+            worker="java_worker",
+            iterations=iterations,
+            operation=benchmark_java_csv,
         ),
         _run_case(
             workload="java_event_processing",
