@@ -485,7 +485,12 @@ def waive_transaction(
     transaction_id: UUID,
     reason: str,
 ) -> PlatformCreditBureauTransaction:
-    row = db.query(PlatformCreditBureauTransaction).filter(PlatformCreditBureauTransaction.id == transaction_id).first()
+    row = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(PlatformCreditBureauTransaction.id == transaction_id)
+        .with_for_update()
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
     if row.status in {"settled", "sandbox"}:
@@ -544,6 +549,7 @@ def create_invoice(
             PlatformCreditBureauTransaction.status.in_(("accrued", "waived")),
         )
         .order_by(PlatformCreditBureauTransaction.accrued_at.asc())
+        .with_for_update()
         .all()
     )
     subtotal = sum((_money(row.amount) for row in rows), Decimal("0"))
@@ -624,7 +630,12 @@ def list_invoices(db: Session, *, company_id: UUID | None = None, limit: int = 1
 
 
 def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauInvoice:
-    invoice = db.query(PlatformCreditBureauInvoice).filter(PlatformCreditBureauInvoice.id == invoice_id).first()
+    invoice = (
+        db.query(PlatformCreditBureauInvoice)
+        .filter(PlatformCreditBureauInvoice.id == invoice_id)
+        .with_for_update()
+        .first()
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="Credit Bureau invoice not found")
     if invoice.status == "paid":
@@ -642,6 +653,8 @@ def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauI
                 PlatformCreditBureauTransaction.id.in_(transaction_ids),
                 PlatformCreditBureauTransaction.status == "invoiced",
             )
+            .order_by(PlatformCreditBureauTransaction.id.asc())
+            .with_for_update()
             .all()
         )
         for row in rows:
