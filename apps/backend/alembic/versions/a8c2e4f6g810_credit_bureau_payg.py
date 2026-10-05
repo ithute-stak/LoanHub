@@ -35,6 +35,10 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=30), nullable=False, server_default="pending"),
         sa.Column("price_per_transaction", sa.Numeric(precision=15, scale=2), nullable=False, server_default="0"),
         sa.Column("currency", sa.String(length=3), nullable=False, server_default="LSL"),
+        sa.Column("credit_limit", sa.Numeric(precision=15, scale=2), nullable=True),
+        sa.Column("warning_threshold", sa.Numeric(precision=15, scale=2), nullable=True),
+        sa.Column("auto_suspend_on_limit", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("billing_due_days", sa.Integer(), nullable=False, server_default="14"),
         sa.Column("requested_by_user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("reviewed_by_user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("requested_at", sa.DateTime(), nullable=False),
@@ -83,8 +87,50 @@ def upgrade() -> None:
     op.create_index("ix_platform_credit_bureau_transactions_transaction_reference", "platform_credit_bureau_transactions", ["transaction_reference"], unique=True)
     op.create_index("ix_platform_credit_bureau_transactions_status", "platform_credit_bureau_transactions", ["status"])
 
+    op.create_table(
+        "platform_credit_bureau_invoices",
+        *_audit_columns(),
+        sa.Column("provider", sa.String(length=40), nullable=False, server_default="experian"),
+        sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("subscription_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("invoice_number", sa.String(length=100), nullable=False),
+        sa.Column("period_start", sa.Date(), nullable=False),
+        sa.Column("period_end", sa.Date(), nullable=False),
+        sa.Column("transaction_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("subtotal", sa.Numeric(precision=18, scale=2), nullable=False, server_default="0"),
+        sa.Column("waived_amount", sa.Numeric(precision=18, scale=2), nullable=False, server_default="0"),
+        sa.Column("amount_due", sa.Numeric(precision=18, scale=2), nullable=False, server_default="0"),
+        sa.Column("currency", sa.String(length=3), nullable=False, server_default="LSL"),
+        sa.Column("status", sa.String(length=30), nullable=False, server_default="issued"),
+        sa.Column("issued_at", sa.DateTime(), nullable=False),
+        sa.Column("due_at", sa.DateTime(), nullable=False),
+        sa.Column("paid_at", sa.DateTime(), nullable=True),
+        sa.Column("notes", sa.Text(), nullable=True),
+        sa.Column("snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.ForeignKeyConstraint(["company_id"], ["loan_companies.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["subscription_id"], ["platform_credit_bureau_subscriptions.id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("company_id", "provider", "period_start", "period_end", name="uq_credit_bureau_invoice_period"),
+    )
+    op.create_index("ix_platform_credit_bureau_invoices_provider", "platform_credit_bureau_invoices", ["provider"])
+    op.create_index("ix_platform_credit_bureau_invoices_company_id", "platform_credit_bureau_invoices", ["company_id"])
+    op.create_index("ix_platform_credit_bureau_invoices_subscription_id", "platform_credit_bureau_invoices", ["subscription_id"])
+    op.create_index("ix_platform_credit_bureau_invoices_invoice_number", "platform_credit_bureau_invoices", ["invoice_number"], unique=True)
+    op.create_index("ix_platform_credit_bureau_invoices_period_start", "platform_credit_bureau_invoices", ["period_start"])
+    op.create_index("ix_platform_credit_bureau_invoices_period_end", "platform_credit_bureau_invoices", ["period_end"])
+    op.create_index("ix_platform_credit_bureau_invoices_status", "platform_credit_bureau_invoices", ["status"])
+
 
 def downgrade() -> None:
+    op.drop_index("ix_platform_credit_bureau_invoices_status", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_period_end", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_period_start", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_invoice_number", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_subscription_id", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_company_id", table_name="platform_credit_bureau_invoices")
+    op.drop_index("ix_platform_credit_bureau_invoices_provider", table_name="platform_credit_bureau_invoices")
+    op.drop_table("platform_credit_bureau_invoices")
+
     op.drop_index("ix_platform_credit_bureau_transactions_status", table_name="platform_credit_bureau_transactions")
     op.drop_index("ix_platform_credit_bureau_transactions_transaction_reference", table_name="platform_credit_bureau_transactions")
     op.drop_index("ix_platform_credit_bureau_transactions_enquiry_id", table_name="platform_credit_bureau_transactions")
