@@ -815,7 +815,6 @@ def calculate_affordability(
 
     bureau_policy_row, bureau_policy = company_experian_policy(db, company_id)
     latest_bureau = None
-    bureau_normalized: dict = {}
     if bureau_policy_row and bureau_policy_row.is_enabled:
         latest_bureau = assert_experian_requirement(
             db,
@@ -831,11 +830,6 @@ def calculate_affordability(
                 max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
                 environment=str(bureau_policy.get("environment") or "sandbox"),
             )
-        if latest_bureau:
-            response_data = dict(latest_bureau.response_data or {})
-            normalized = response_data.get("normalized")
-            bureau_normalized = dict(normalized) if isinstance(normalized, dict) else {}
-
     bureau_fresh = latest_bureau is not None
     bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
     cdas_profile = (
