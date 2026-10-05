@@ -83,7 +83,7 @@ def _company_integration(db: Session, *, context: TenantContext) -> OriginationI
     if not row:
         raise HTTPException(
             status_code=409,
-            detail="Experian is available from the platform, but this lending company has not enabled it",
+            detail="This lending company does not yet have an approved Credit Bureau subscription",
         )
     return row
 
@@ -315,7 +315,7 @@ def run_experian_credit_check(
     subscription = require_approved_subscription(db, company_id=context.company_id)
     company_integration = _company_integration(db, context=context)
     if not company_integration.is_enabled:
-        raise HTTPException(status_code=409, detail="Experian is not enabled for this lending company")
+        raise HTTPException(status_code=409, detail="Credit Bureau access is not active for this lending company")
     company_policy = dict(company_integration.configuration or {})
     selected_environment = str(company_policy.get("environment") or company_integration.environment or "sandbox")
     selected_environment = "live" if selected_environment.lower() in {"live", "production"} else "sandbox"
