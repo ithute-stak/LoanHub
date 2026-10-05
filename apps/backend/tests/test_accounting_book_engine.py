@@ -180,3 +180,13 @@ def test_period_adjustments_support_next_period_reversal():
     assert '{"accrual_adjustment", "prepayment_adjustment"}' in service
     assert 'reference_type="period_adjustment_reversal"' in service
     assert '@router.post("/adjustments/{entry_id}/reverse"' in router
+
+
+def test_cash_flow_engine_is_explicit_and_reconciles_to_ledger_cash():
+    source = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def _cash_flow_section(" in source
+    assert '"lending_business_cash_flow"' in source
+    assert '"tenant_lending_cash_flows": "operating"' in source
+    assert '"reconciliation_difference"' in source
+    assert '"reconciled": reconciliation_difference == 0' in source
+    assert '"cash_flow_reconciled": bool(cash_flow["reconciled"])' in source
