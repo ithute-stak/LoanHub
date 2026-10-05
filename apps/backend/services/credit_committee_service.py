@@ -780,6 +780,11 @@ def finalize_case(
             application=application,
             amount=Decimal(application.requested_amount or 0),
             product_id=application.product_id,
+            proposed_installment=(
+                Decimal(assessment.proposed_installment)
+                if assessment.proposed_installment is not None
+                else None
+            ),
         )
         final_evidence_snapshot = build_evidence_snapshot(db, application)
 
