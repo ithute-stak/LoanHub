@@ -1708,6 +1708,7 @@ def loan_receivables_control_reconciliation(
         PaymentTransaction.purpose.in_([
             PaymentPurpose.LOAN_DISBURSEMENT,
             PaymentPurpose.LOAN_REPAYMENT,
+            PaymentPurpose.DIRECT_DEBIT,
         ]),
         func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)) <= as_of,
     )
@@ -1723,12 +1724,32 @@ def loan_receivables_control_reconciliation(
         if payment.purpose == PaymentPurpose.LOAN_DISBURSEMENT:
             disbursed += _money(payment.amount)
             disbursement_count += 1
-        elif payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+        elif payment.purpose in {PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT}:
             principal, _, _ = _loan_repayment_components(db, payment)
             principal_repaid += principal
             repayment_count += 1
 
-    subledger_balance = _money(disbursed - principal_repaid)
+    written_off_principal = Decimal("0.00")
+    write_off_count = 0
+    writeoff_cases = db.query(CollectionCase).join(
+        ClientCompanyLoan, ClientCompanyLoan.id == CollectionCase.loan_id
+    ).filter(
+        CollectionCase.company_id == company_id,
+        CollectionCase.write_off_at.is_not(None),
+        func.date(CollectionCase.write_off_at) <= as_of,
+    )
+    if branch_id:
+        writeoff_cases = writeoff_cases.filter(ClientCompanyLoan.branch_id == branch_id)
+    for case in writeoff_cases.all():
+        written_off_principal += loan_source_principal_outstanding(
+            db,
+            company_id=company_id,
+            loan_id=case.loan_id,
+            as_of=case.write_off_at.date(),
+        )
+        write_off_count += 1
+
+    subledger_balance = _money(disbursed - principal_repaid - written_off_principal)
     variance = _money(ledger_balance - subledger_balance)
     return {
         "as_of": as_of.isoformat(),
@@ -1737,12 +1758,14 @@ def loan_receivables_control_reconciliation(
         "ledger_principal_receivable": float(ledger_balance),
         "source_disbursements": float(_money(disbursed)),
         "source_principal_repayments": float(_money(principal_repaid)),
+        "source_written_off_principal": float(_money(written_off_principal)),
         "source_principal_receivable": float(subledger_balance),
         "variance": float(variance),
         "balanced": variance == 0,
         "source_counts": {
             "disbursements": disbursement_count,
             "repayments": repayment_count,
+            "write_offs": write_off_count,
         },
     }
 
@@ -1761,6 +1784,7 @@ def loan_source_principal_outstanding(
         PaymentTransaction.purpose.in_([
             PaymentPurpose.LOAN_DISBURSEMENT,
             PaymentPurpose.LOAN_REPAYMENT,
+            PaymentPurpose.DIRECT_DEBIT,
         ]),
         func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)) <= as_of,
     ).all()
@@ -1769,7 +1793,7 @@ def loan_source_principal_outstanding(
     for payment in payments:
         if payment.purpose == PaymentPurpose.LOAN_DISBURSEMENT:
             disbursed += _money(payment.amount)
-        elif payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+        elif payment.purpose in {PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT}:
             principal, _, _ = _loan_repayment_components(db, payment)
             principal_repaid += principal
     return max(_money(disbursed - principal_repaid), Decimal("0.00"))
