@@ -863,3 +863,51 @@ def record_cdas_invoice_payment(db: Session, invoice) -> None:
                 {"account_id": receivable.id, "debit": 0, "credit": amount},
             ],
         )
+
+
+
+def record_cdas_transaction_refund(db: Session, transaction) -> None:
+    """Post a settled CDAS charge refund into both ledgers exactly once."""
+    amount = _money(transaction.amount)
+    if amount <= 0:
+        return
+    company_key, _ = scope_key(transaction.company_id)
+    platform_key, _ = scope_key(None)
+    reference_id = str(transaction.id)
+    refunded_at = transaction.refunded_at or datetime.now(timezone.utc)
+
+    ensure_chart(db, company_id=transaction.company_id)
+    if not _journal_for_reference(db, company_key, "cdas_transaction_refund", reference_id):
+        cash = account_by_code(db, company_key, "1000")
+        expense = account_by_code(db, company_key, "6800")
+        create_entry(
+            db,
+            company_id=transaction.company_id,
+            entry_date=refunded_at.date(),
+            description=f"CDAS transaction refund {transaction.transaction_reference}",
+            reference_type="cdas_transaction_refund",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": cash.id, "debit": amount, "credit": 0},
+                {"account_id": expense.id, "debit": 0, "credit": amount},
+            ],
+        )
+
+    ensure_chart(db, company_id=None)
+    if not _journal_for_reference(db, platform_key, "cdas_transaction_refund", reference_id):
+        revenue = account_by_code(db, platform_key, "4600")
+        cash = account_by_code(db, platform_key, "1000")
+        create_entry(
+            db,
+            company_id=None,
+            entry_date=refunded_at.date(),
+            description=f"CDAS transaction refund {transaction.transaction_reference}",
+            reference_type="cdas_transaction_refund",
+            reference_id=reference_id,
+            status_value="posted",
+            lines=[
+                {"account_id": revenue.id, "debit": amount, "credit": 0},
+                {"account_id": cash.id, "debit": 0, "credit": amount},
+            ],
+        )
