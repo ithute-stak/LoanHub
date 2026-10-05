@@ -426,3 +426,11 @@ def test_bank_statement_adjustment_rejects_cash_and_clearing_as_counterparts():
     reconciliation = (ROOT / "backend" / "services" / "reconciliation_service.py").read_text(encoding="utf-8")
     assert 'if counterpart.code in {"1000", "1010", "1020"}:' in reconciliation
     assert "Choose the actual income, expense, receivable, payable or equity counterpart account" in reconciliation
+
+
+def test_canonical_bank_reconciliation_supersedes_legacy_bank_line_close_check():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "canonical_bank_batch_q" in service
+    assert '"legacy_unmatched_bank_lines"' in service
+    assert '"canonical_bank_batch_exists"' in service
+    assert "True if canonical_bank_batch_exists else legacy_bank_unmatched_count == 0" in service
