@@ -508,23 +508,7 @@ def list_transactions(db: Session, *, company_id: UUID | None = None, limit: int
     if company_id is not None:
         query = query.filter(PlatformCdasTransaction.company_id == company_id)
     rows = query.order_by(PlatformCdasTransaction.accrued_at.desc()).limit(max(1, min(limit, 1000))).all()
-    return [
-        {
-            "id": str(row.id),
-            "company_id": str(row.company_id),
-            "environment": row.environment,
-            "operation_type": row.operation_type,
-            "transaction_reference": row.transaction_reference,
-            "unit_price": float(row.unit_price or 0),
-            "amount": float(row.amount or 0),
-            "currency": row.currency,
-            "status": row.status,
-            "source_reference": row.source_reference,
-            "accrued_at": row.accrued_at,
-            "metadata": dict(row.metadata_json or {}),
-        }
-        for row in rows
-    ]
+    return [transaction_payload(row) for row in rows]
 
 
 
