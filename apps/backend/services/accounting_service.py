@@ -882,3 +882,87 @@ def cash_flow_statement(
         "net_change_in_cash": float(net_change),
         "details": details,
     }
+
+
+def post_vat_transaction(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    transaction_type: str,
+    net_amount,
+    vat_amount,
+    account_code: str,
+    settlement_account_code: str,
+    vat_registered: bool,
+    description: str,
+    reference_id: str,
+    user_id,
+    entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 16 VAT treatment.
+
+    VAT-registered sale:
+      Dr cash/bank/receivable (gross)
+      Cr revenue (net)
+      Cr VAT payable/output VAT
+
+    VAT-registered purchase/expense/asset:
+      Dr expense/asset (net)
+      Dr VAT receivable/input VAT
+      Cr cash/bank/payable (gross)
+
+    Non-registered entities do not post VAT separately; tax paid is part of cost.
+    """
+    if transaction_type not in {"sale", "purchase", "expense", "asset"}:
+        raise HTTPException(status_code=422, detail="Unsupported VAT transaction type")
+
+    net = _money(net_amount)
+    vat = _money(vat_amount)
+    gross = _money(net + vat)
+    if net <= 0 or vat < 0:
+        raise HTTPException(status_code=422, detail="VAT transaction amounts are invalid")
+    if not vat_registered and transaction_type == "sale" and vat:
+        raise HTTPException(status_code=422, detail="A non-VAT-registered business must not add output VAT")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    primary = account_by_code(db, key, account_code)
+    settlement = account_by_code(db, key, settlement_account_code)
+
+    if transaction_type == "sale":
+        if primary.account_type != "revenue":
+            raise HTTPException(status_code=422, detail="Sales must credit a revenue account")
+        if settlement.account_type != "asset":
+            raise HTTPException(status_code=422, detail="Sales settlement must debit cash, bank or receivables")
+        lines = [
+            {"account_id": settlement.id, "debit": gross, "credit": 0},
+            {"account_id": primary.id, "debit": 0, "credit": net if vat_registered else gross},
+        ]
+        if vat_registered and vat:
+            output_vat = account_by_code(db, key, "2200")
+            lines.append({"account_id": output_vat.id, "debit": 0, "credit": vat})
+    else:
+        if primary.account_type not in {"expense", "asset"}:
+            raise HTTPException(status_code=422, detail="Purchase/expense/asset VAT must debit an expense or asset account")
+        if settlement.account_type not in {"asset", "liability"}:
+            raise HTTPException(status_code=422, detail="Purchase settlement must use cash, bank or a payable account")
+        cost = net if vat_registered else gross
+        lines = [{"account_id": primary.id, "debit": cost, "credit": 0}]
+        if vat_registered and vat:
+            input_vat = account_by_code(db, key, "1600")
+            lines.append({"account_id": input_vat.id, "debit": vat, "credit": 0})
+        lines.append({"account_id": settlement.id, "debit": 0, "credit": gross})
+
+    return create_entry(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        created_by_user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+        description=description,
+        reference_type="vat_transaction",
+        reference_id=reference_id,
+        status_value="posted",
+        lines=lines,
+    )
