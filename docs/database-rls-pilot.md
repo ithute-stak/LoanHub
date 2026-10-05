@@ -1,14 +1,22 @@
 # PostgreSQL RLS Pilot
 
-LoanHub's first database-level tenant-isolation pilot covers only internal,
+LoanHub's database-level tenant-isolation rollout covers internal,
 company-owned operational tables:
 
 - `crm_relationship_cases`
 - `collateral_assets`
 - `legal_recovery_matters`
+- `customer_complaint_cases`
+- `company_operation_events`
+- `procurement_vendors`
+- `procurement_requests`
+- `company_budget_plans`
+- `company_budget_lines`
+- `internal_audit_engagements`
+- `internal_audit_findings`
 
-The pilot deliberately excludes borrower-facing, public, shared-identity and
-provider-wide tables.
+The rollout deliberately excludes borrower-facing, public, shared-identity and
+provider-wide tables until their access semantics are separately proven.
 
 ## Context source
 
@@ -55,3 +63,19 @@ Do not expand RLS to additional tables until all of the following are proven:
 4. platform read/write role distinctions behave as intended;
 5. backup/restore and migrations remain operational;
 6. no borrower/public flow depends on one of the protected tables.
+
+
+## Acceptance gate
+
+The branch is not considered production-ready until CI proves all three layers:
+
+1. tenant-context regression tests pass;
+2. policy and Database Management observability contracts pass;
+3. the disposable PostgreSQL isolation probe confirms that a restricted runtime
+   role scoped to Company A cannot read, insert, update, or delete Company B's
+   protected records.
+
+The System Owner Database Management view must also report a non-superuser
+runtime role, no row-security override capability, separate ownership of
+protected tables, and at least one policy on every protected table before
+`enforcement_ready` becomes true.
