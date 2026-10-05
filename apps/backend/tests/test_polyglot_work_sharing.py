@@ -973,4 +973,4 @@ def test_java_report_csv_contract_is_registered() -> None:
     assert '"java_report_csv": "shadow"' in runtime
     assert "def _build_csv_python(" in reporting
     assert 'workload_routing_mode("java_report_csv")' in reporting
-    assert "record_parity_mismatch("java_worker")" in reporting
+    assert 'record_parity_mismatch("java_worker")' in reporting
