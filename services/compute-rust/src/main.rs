@@ -794,6 +794,140 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct AffordabilityAssessmentRequest {
+    base_income: String,
+    other_income: String,
+    living_expenses: String,
+    existing_debt_repayments: String,
+    dependants: i64,
+    dependant_allowance: String,
+    living_expense_buffer: String,
+    proposed_installment: String,
+    disposable_income_usage_percent: String,
+    max_dti_percent: String,
+    max_installment_income_percent: String,
+    min_verified_net_income: String,
+    min_disposable_after_installment: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AffordabilityAssessmentResponse {
+    passed: bool,
+    monthly_income: String,
+    base_income: String,
+    other_income: String,
+    living_expenses: String,
+    existing_debt_repayments: String,
+    dependant_allowance_total: String,
+    configured_buffer: String,
+    disposable_before_new_loan: String,
+    proposed_installment: String,
+    maximum_affordable_installment: String,
+    affordability_headroom: String,
+    disposable_after_installment: String,
+    dti_percent: String,
+    disposable_income_limit: String,
+    dti_limit: String,
+    installment_income_limit: String,
+    minimum_disposable_after_installment: String,
+    income_missing: bool,
+    income_below_minimum: bool,
+    installment_above_limit: bool,
+    disposable_income_too_low: bool,
+    authoritative: bool,
+}
+
+fn affordability_assessment(
+    req: &AffordabilityAssessmentRequest,
+) -> Result<AffordabilityAssessmentResponse, String> {
+    let base_income = money(decimal(&req.base_income)?);
+    let other_income = money(decimal(&req.other_income)?);
+    let income = money(base_income + other_income);
+    let living = money(decimal(&req.living_expenses)?);
+    let debt = money(decimal(&req.existing_debt_repayments)?);
+    let dependant_allowance = money(decimal(&req.dependant_allowance)?);
+    let dependant_total = money(Decimal::from(req.dependants.max(0)) * dependant_allowance);
+    let buffer_amount = money(decimal(&req.living_expense_buffer)?);
+    let installment = money(decimal(&req.proposed_installment)?);
+
+    let committed_before_new_loan = money(living + debt + dependant_total + buffer_amount);
+    let disposable_before_new_loan = money(income - committed_before_new_loan);
+    let disposable_percent = decimal(&req.disposable_income_usage_percent)?;
+    let max_dti_percent = decimal(&req.max_dti_percent)?;
+    let max_installment_percent = decimal(&req.max_installment_income_percent)?;
+
+    let positive_disposable = if disposable_before_new_loan > Decimal::ZERO {
+        disposable_before_new_loan
+    } else {
+        Decimal::ZERO
+    };
+    let disposable_limit = money(
+        positive_disposable * disposable_percent / Decimal::from(100_i64)
+    );
+
+    let raw_dti_limit =
+        income * max_dti_percent / Decimal::from(100_i64) - debt;
+    let dti_limit = money(if raw_dti_limit > Decimal::ZERO {
+        raw_dti_limit
+    } else {
+        Decimal::ZERO
+    });
+
+    let installment_income_limit = money(
+        income * max_installment_percent / Decimal::from(100_i64)
+    );
+    let maximum_affordable_installment = money(
+        disposable_limit.min(dti_limit).min(installment_income_limit)
+    );
+    let after_installment = money(disposable_before_new_loan - installment);
+    let dti = if income > Decimal::ZERO {
+        ((debt + installment) * Decimal::from(100_i64) / income)
+            .round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero)
+    } else {
+        Decimal::from(100_i64)
+    };
+    let headroom = money(maximum_affordable_installment - installment);
+    let minimum_income = money(decimal(&req.min_verified_net_income)?);
+    let minimum_after = money(decimal(&req.min_disposable_after_installment)?);
+
+    let income_missing = income <= Decimal::ZERO;
+    let income_below_minimum = !income_missing && income < minimum_income;
+    let installment_above_limit = installment > maximum_affordable_installment;
+    let disposable_income_too_low = after_installment < minimum_after;
+    let passed = !income_missing
+        && !income_below_minimum
+        && !installment_above_limit
+        && !disposable_income_too_low;
+
+    Ok(AffordabilityAssessmentResponse {
+        passed,
+        monthly_income: income.to_string(),
+        base_income: base_income.to_string(),
+        other_income: other_income.to_string(),
+        living_expenses: living.to_string(),
+        existing_debt_repayments: debt.to_string(),
+        dependant_allowance_total: dependant_total.to_string(),
+        configured_buffer: buffer_amount.to_string(),
+        disposable_before_new_loan: disposable_before_new_loan.to_string(),
+        proposed_installment: installment.to_string(),
+        maximum_affordable_installment: maximum_affordable_installment.to_string(),
+        affordability_headroom: headroom.to_string(),
+        disposable_after_installment: after_installment.to_string(),
+        dti_percent: dti.to_string(),
+        disposable_income_limit: disposable_limit.to_string(),
+        dti_limit: dti_limit.to_string(),
+        installment_income_limit: installment_income_limit.to_string(),
+        minimum_disposable_after_installment: minimum_after.to_string(),
+        income_missing,
+        income_below_minimum,
+        installment_above_limit,
+        disposable_income_too_low,
+        authoritative: false,
+    })
+}
+
+
 fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     if req.term_months == 0 || req.term_months > 120 || req.due_dates.len() != req.term_months {
         return Err("invalid term or due_dates".to_string());
@@ -837,6 +971,28 @@ fn main() {
             match serde_json::from_str::<PortfolioRiskRequest>(&body)
                 .map_err(|_| "invalid_json".to_string())
                 .and_then(|payload| portfolio_risk_summary(&payload))
+            {
+                Ok(result) => {
+                    let body = serde_json::to_string(&result).unwrap();
+                    let _ = request.respond(json_response(200, body));
+                }
+                Err(error) => {
+                    let body = serde_json::json!({"error": error}).to_string();
+                    let _ = request.respond(json_response(422, body));
+                }
+            }
+            continue;
+        }
+
+        if request.method() == &Method::Post && url == "/v1/affordability-assessment" {
+            let mut body = String::new();
+            if request.as_reader().read_to_string(&mut body).is_err() {
+                let _ = request.respond(json_response(400, r#"{"error":"invalid_body"}"#.to_string()));
+                continue;
+            }
+            match serde_json::from_str::<AffordabilityAssessmentRequest>(&body)
+                .map_err(|_| "invalid_json".to_string())
+                .and_then(|payload| affordability_assessment(&payload))
             {
                 Ok(result) => {
                     let body = serde_json::to_string(&result).unwrap();
