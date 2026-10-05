@@ -58,6 +58,7 @@ from database.models.platform_credit_bureau import (
     PlatformCreditBureauConfiguration,
     PlatformCreditBureauSubscription,
     PlatformCreditBureauTransaction,
+    PlatformCreditBureauInvoice,
 )
 from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from database.models.early_settlement import LoanEarlySettlement
@@ -166,6 +167,7 @@ __all__ = [
     "PlatformCreditBureauConfiguration",
     "PlatformCreditBureauSubscription",
     "PlatformCreditBureauTransaction",
+    "PlatformCreditBureauInvoice",
     "PolyglotBenchmarkRun",
     "LoanEarlySettlement",
     "AccountingExport",
