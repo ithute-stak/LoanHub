@@ -14,6 +14,8 @@ from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from services.polyglot_runtime_service import (
     go_digest,
     java_canonicalize_event,
+    java_underwriting_rules,
+    rust_affordability_assessment,
     rust_loan_preview,
     rust_portfolio_risk_summary,
     rust_variance_classification,
@@ -44,7 +46,9 @@ _THRESHOLDS_MS = {
     "rust_reconciliation": 100.0,
     "rust_loan_calculation": 250.0,
     "rust_portfolio_risk": 250.0,
+    "rust_affordability": 100.0,
     "java_event_processing": 250.0,
+    "java_underwriting_rules": 100.0,
 }
 
 
@@ -230,6 +234,54 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             parity = False
         return True, parity
 
+    def benchmark_rust_affordability() -> tuple[bool, bool]:
+        result = rust_affordability_assessment(
+            base_income="5000.00",
+            other_income="500.00",
+            living_expenses="1200.00",
+            existing_debt_repayments="600.00",
+            dependants=2,
+            dependant_allowance="250.00",
+            living_expense_buffer="300.00",
+            proposed_installment="700.00",
+            disposable_income_usage_percent="80",
+            max_dti_percent="40",
+            max_installment_income_percent="35",
+            min_verified_net_income="2000.00",
+            min_disposable_after_installment="500.00",
+        )
+        if result is None:
+            return False, False
+        parity = (
+            result.get("passed") is True
+            and result.get("monthly_income") == "5500.00"
+            and result.get("maximum_affordable_installment") == "1600.00"
+            and result.get("affordability_headroom") == "900.00"
+            and result.get("disposable_after_installment") == "2200.00"
+            and result.get("dti_percent") == "23.636"
+            and result.get("authoritative") is False
+        )
+        return True, parity
+
+    def benchmark_java_underwriting() -> tuple[bool, bool]:
+        result = java_underwriting_rules(
+            monthly_income="5500.00",
+            min_verified_net_income="2000.00",
+            proposed_installment="700.00",
+            maximum_affordable_installment="1600.00",
+            disposable_after_installment="2200.00",
+            min_disposable_after_installment="500.00",
+        )
+        if result is None:
+            return False, False
+        reasons = result.get("reasons") or []
+        codes = [item.get("code") for item in reasons if isinstance(item, dict)]
+        return True, (
+            result.get("passed") is True
+            and result.get("decision") == "pass"
+            and codes == ["income_ok", "installment_within_limit"]
+        )
+
     java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
     java_expected = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
     java_hash = hashlib.sha256(java_expected.encode("utf-8")).hexdigest()
@@ -271,6 +323,18 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             worker="rust_compute",
             iterations=iterations,
             operation=benchmark_rust_portfolio,
+        ),
+        _run_case(
+            workload="rust_affordability",
+            worker="rust_compute",
+            iterations=iterations,
+            operation=benchmark_rust_affordability,
+        ),
+        _run_case(
+            workload="java_underwriting_rules",
+            worker="java_worker",
+            iterations=iterations,
+            operation=benchmark_java_underwriting,
         ),
         _run_case(
             workload="java_event_processing",

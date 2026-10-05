@@ -30,7 +30,9 @@ _ROUTING_ENV = {
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
+    "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
+    "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
@@ -38,7 +40,9 @@ _ROUTING_DEFAULTS = {
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
+    "rust_affordability": "shadow",
     "java_event_processing": "shadow",
+    "java_underwriting_rules": "shadow",
 }
 _ROUTING_MODES = {"off", "shadow", "prefer-worker"}
 
@@ -240,6 +244,65 @@ def worker_statuses() -> list[WorkerStatus]:
     return results
 
 
+def rust_affordability_assessment(
+    *,
+    base_income: str,
+    other_income: str,
+    living_expenses: str,
+    existing_debt_repayments: str,
+    dependants: int,
+    dependant_allowance: str,
+    living_expense_buffer: str,
+    proposed_installment: str,
+    disposable_income_usage_percent: str,
+    max_dti_percent: str,
+    max_installment_income_percent: str,
+    min_verified_net_income: str,
+    min_disposable_after_installment: str,
+) -> dict | None:
+    """Delegate deterministic affordability arithmetic to Rust.
+
+    The result is non-authoritative and must be parity-checked by Python before
+    it is accepted for a lender decision.
+    """
+    base_url = rust_compute_url()
+    if not base_url:
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/affordability-assessment",
+        {
+            "base_income": base_income,
+            "other_income": other_income,
+            "living_expenses": living_expenses,
+            "existing_debt_repayments": existing_debt_repayments,
+            "dependants": int(dependants),
+            "dependant_allowance": dependant_allowance,
+            "living_expense_buffer": living_expense_buffer,
+            "proposed_installment": proposed_installment,
+            "disposable_income_usage_percent": disposable_income_usage_percent,
+            "max_dti_percent": max_dti_percent,
+            "max_installment_income_percent": max_installment_income_percent,
+            "min_verified_net_income": min_verified_net_income,
+            "min_disposable_after_installment": min_disposable_after_installment,
+        },
+        timeout=1.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    required = {
+        "passed",
+        "monthly_income",
+        "maximum_affordable_installment",
+        "affordability_headroom",
+        "disposable_after_installment",
+        "dti_percent",
+    }
+    if not required.issubset(value):
+        return None
+    return value
+
+
 def rust_affordability_headroom_preview(
     *,
     income_cents: int,
@@ -408,6 +471,44 @@ def java_canonicalize_event(
     if not isinstance(value.get("canonical_json"), str):
         return None
     if not isinstance(value.get("payload_sha256"), str):
+        return None
+    return value
+
+
+def java_underwriting_rules(
+    *,
+    monthly_income: str,
+    min_verified_net_income: str,
+    proposed_installment: str,
+    maximum_affordable_installment: str,
+    disposable_after_installment: str,
+    min_disposable_after_installment: str,
+) -> dict | None:
+    """Delegate deterministic lender-rule evaluation to Java.
+
+    Python remains authoritative and parity-checks the Java result before use.
+    """
+    base_url = java_worker_url()
+    if not base_url:
+        return None
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/underwriting/rules",
+        {
+            "monthly_income": monthly_income,
+            "min_verified_net_income": min_verified_net_income,
+            "proposed_installment": proposed_installment,
+            "maximum_affordable_installment": maximum_affordable_installment,
+            "disposable_after_installment": disposable_after_installment,
+            "min_disposable_after_installment": min_disposable_after_installment,
+        },
+        timeout=1.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    if value.get("decision") not in {"pass", "fail"}:
+        return None
+    if not isinstance(value.get("reasons"), list):
         return None
     return value
 
