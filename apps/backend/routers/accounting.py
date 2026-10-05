@@ -29,6 +29,10 @@ from database.schemas.accounting import (
     DoubtfulDebtAllowanceCreate,
     ExpensePostCreate,
     FinancialStatementLine,
+    FixedAssetCreate,
+    FixedAssetDepreciationRun,
+    FixedAssetDisposeCreate,
+    FixedAssetRead,
     FinancialStatementRead,
     JournalEntryCreate,
     JournalEntryRead,
@@ -43,10 +47,14 @@ from database.schemas.accounting import (
 from database.session import get_db
 from services.accounting_service import (
     accounting_business_date,
+    asset_payload,
+    create_fixed_asset,
+    calculate_fixed_asset_depreciation,
     create_entry,
     ensure_chart,
     entry_query,
     cash_flow_statement,
+    fixed_asset_query,
     ledger_rows,
     post_accrual_adjustment,
     post_depreciation_adjustment,
@@ -55,6 +63,8 @@ from services.accounting_service import (
     post_prepayment_adjustment,
     post_vat_transaction,
     post_suspense_correction,
+    post_fixed_asset_depreciation,
+    dispose_fixed_asset,
     scope_key,
 )
 
@@ -838,3 +848,137 @@ def suspense_correction(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/assets", response_model=list[FixedAssetRead])
+def list_fixed_assets(
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    include_disposed: bool = True,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    query = fixed_asset_query(db, company_id=selected_company_id, branch_id=selected_branch_id)
+    if not include_disposed:
+        query = query.filter_by(status="active")
+    return [asset_payload(row) for row in query.order_by("reference").all()]
+
+
+@router.post("/assets", response_model=FixedAssetRead, status_code=status.HTTP_201_CREATED)
+def register_fixed_asset(
+    payload: FixedAssetCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    asset = create_fixed_asset(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        reference=payload.reference,
+        name=payload.name,
+        description=payload.description,
+        acquisition_date=payload.acquisition_date,
+        cost=payload.cost,
+        residual_value=payload.residual_value,
+        useful_life_years=payload.useful_life_years,
+        depreciation_method=payload.depreciation_method,
+        depreciation_rate=payload.depreciation_rate,
+        location=payload.location,
+        serial_number=payload.serial_number,
+        assigned_to=payload.assigned_to,
+        user_id=context.user.id,
+        settlement_account_code=payload.settlement_account_code,
+        post_acquisition=payload.post_acquisition,
+    )
+    db.commit()
+    db.refresh(asset)
+    return asset_payload(asset)
+
+
+@router.get("/assets/{asset_id}", response_model=FixedAssetRead)
+def fixed_asset_detail(
+    asset_id: UUID,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, None)
+    asset = fixed_asset_query(db, company_id=selected_company_id, branch_id=selected_branch_id).filter_by(id=asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Fixed asset not found")
+    return asset_payload(asset)
+
+
+@router.post("/assets/{asset_id}/depreciate")
+def depreciate_fixed_asset(
+    asset_id: UUID,
+    payload: FixedAssetDepreciationRun,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, None)
+    asset = fixed_asset_query(db, company_id=selected_company_id, branch_id=selected_branch_id).filter_by(id=asset_id).with_for_update().first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Fixed asset not found")
+    amount = calculate_fixed_asset_depreciation(asset, period_start=payload.period_start, period_end=payload.period_end)
+    entry = post_fixed_asset_depreciation(
+        db, asset=asset, period_start=payload.period_start, period_end=payload.period_end,
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(asset)
+    return {
+        "asset": asset_payload(asset),
+        "depreciation_amount": amount,
+        "journal_entry_id": str(entry.id) if entry else None,
+    }
+
+
+@router.post("/assets/{asset_id}/dispose")
+def dispose_registered_fixed_asset(
+    asset_id: UUID,
+    payload: FixedAssetDisposeCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, None)
+    asset = fixed_asset_query(db, company_id=selected_company_id, branch_id=selected_branch_id).filter_by(id=asset_id).with_for_update().first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Fixed asset not found")
+    entry = dispose_fixed_asset(
+        db,
+        asset=asset,
+        disposal_date=payload.disposal_date,
+        proceeds=payload.proceeds,
+        settlement_account_code=payload.settlement_account_code,
+        description=payload.description,
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(asset)
+    return {"asset": asset_payload(asset), "journal_entry_id": str(entry.id)}
