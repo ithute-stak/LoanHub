@@ -184,6 +184,19 @@ def review_subscription(
     row.suspended_at = now if normalized == "suspended" else None
     row.rejection_reason = reason if normalized == "rejected" else None
     row.notes = notes
+    _notify_company_owners(
+        db,
+        company_id=company_id,
+        title=f"CDAS subscription {normalized}",
+        message=(
+            f"Your CDAS subscription is now {normalized}. Live operations use the Platform Owner pricing schedule."
+            if normalized == "approved"
+            else f"Your CDAS subscription is now {normalized}."
+        ),
+        event_type=f"cdas.subscription.{normalized}",
+        entity_id=str(row.id),
+        priority="high" if normalized in {"rejected", "suspended"} else "normal",
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -472,7 +485,7 @@ def record_successful_operation(
     )
     db.add(row)
     if live and subscription.warning_threshold is not None:
-        projected = outstanding_balance(db, company_id=company_id) + rate
+        projected = outstanding_balance(db, company_id=company_id)
         threshold = _money(subscription.warning_threshold)
         if projected >= threshold:
             _notify_company_owners(
