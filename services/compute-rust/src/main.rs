@@ -1,3 +1,4 @@
+use chrono::{Datelike, Duration, NaiveDate};
 use rust_decimal::prelude::*;
 use rust_decimal::RoundingStrategy;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,7 @@ struct LoanPreviewRequest {
     rate_percent: String,
     term_months: usize,
     processing_fee: String,
+    interest_start_date: Option<String>,
     due_dates: Vec<String>,
 }
 
@@ -214,6 +216,151 @@ fn reducing_balance(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Str
     })
 }
 
+fn parse_date(value: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| format!("invalid date: {value}"))
+}
+
+fn month_days(year: i32, month: u32) -> Result<u32, String> {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let next = NaiveDate::from_ymd_opt(next_year, next_month, 1)
+        .ok_or_else(|| "invalid month".to_string())?;
+    Ok((next - Duration::days(1)).day())
+}
+
+fn daily_period_factor(
+    annual_rate: Decimal,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<Decimal, String> {
+    if annual_rate.is_zero() || end_date <= start_date {
+        return Ok(Decimal::ZERO);
+    }
+    let monthly_rate = annual_rate / Decimal::from(12_i64);
+    let mut current = start_date + Duration::days(1);
+    let mut factor = Decimal::ZERO;
+    while current <= end_date {
+        let days_in_month = month_days(current.year(), current.month())?;
+        let month_end = NaiveDate::from_ymd_opt(current.year(), current.month(), days_in_month)
+            .ok_or_else(|| "invalid month end".to_string())?;
+        let segment_end = if month_end < end_date { month_end } else { end_date };
+        let days = (segment_end - current).num_days() + 1;
+        factor += monthly_rate * Decimal::from(days) / Decimal::from(days_in_month);
+        current = segment_end + Duration::days(1);
+    }
+    Ok(factor)
+}
+
+fn daily_segment_interest(
+    balance: Decimal,
+    annual_rate: Decimal,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<Decimal, String> {
+    if annual_rate.is_zero() || end_date <= start_date {
+        return Ok(Decimal::ZERO);
+    }
+    let monthly_rate = annual_rate / Decimal::from(12_i64);
+    let mut current = start_date + Duration::days(1);
+    let mut total = Decimal::ZERO;
+    while current <= end_date {
+        let days_in_month = month_days(current.year(), current.month())?;
+        let month_end = NaiveDate::from_ymd_opt(current.year(), current.month(), days_in_month)
+            .ok_or_else(|| "invalid month end".to_string())?;
+        let segment_end = if month_end < end_date { month_end } else { end_date };
+        let days = (segment_end - current).num_days() + 1;
+        total += money(
+            balance * monthly_rate * Decimal::from(days) / Decimal::from(days_in_month)
+        );
+        current = segment_end + Duration::days(1);
+    }
+    Ok(money(total))
+}
+
+fn daily_accrual_reducing(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
+    let principal = money(decimal(&req.principal)?);
+    let rate_percent = decimal(&req.rate_percent)?;
+    let annual_rate = rate_percent / Decimal::from(100_i64);
+    let fee = money(decimal(&req.processing_fee)?);
+    let start_raw = req.interest_start_date.as_deref()
+        .ok_or_else(|| "interest_start_date_required".to_string())?;
+    let start_date = parse_date(start_raw)?;
+    let due_dates: Vec<NaiveDate> = req.due_dates.iter()
+        .map(|value| parse_date(value))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut factors = Vec::with_capacity(req.term_months);
+    let mut period_start = start_date;
+    for due_date in &due_dates {
+        factors.push(daily_period_factor(annual_rate, period_start, *due_date)?);
+        period_start = *due_date;
+    }
+
+    let base_payment = if annual_rate.is_zero() {
+        money(principal / Decimal::from(req.term_months as i64))
+    } else {
+        let mut cumulative = Decimal::ONE;
+        let mut discount_sum = Decimal::ZERO;
+        for factor in factors {
+            cumulative *= Decimal::ONE + factor;
+            discount_sum += Decimal::ONE / cumulative;
+        }
+        if discount_sum.is_zero() {
+            return Err("invalid_daily_discount_sum".to_string());
+        }
+        money(principal / discount_sum)
+    };
+
+    let fee_parts = split_amount(fee, req.term_months);
+    let mut opening = principal;
+    let mut previous_date = start_date;
+    let mut total_interest = Decimal::ZERO;
+    let mut schedule = Vec::with_capacity(req.term_months);
+
+    for (index, due_date) in due_dates.iter().enumerate() {
+        let interest_due =
+            daily_segment_interest(opening, annual_rate, previous_date, *due_date)?;
+        let principal_due = if index + 1 == req.term_months {
+            opening
+        } else {
+            let candidate = money(base_payment - interest_due);
+            let non_negative = if candidate < Decimal::ZERO {
+                Decimal::ZERO
+            } else {
+                candidate
+            };
+            if non_negative > opening { opening } else { non_negative }
+        };
+        let closing_candidate = money(opening - principal_due);
+        let closing = if closing_candidate < Decimal::ZERO {
+            Decimal::ZERO
+        } else {
+            closing_candidate
+        };
+        let total_due = money(principal_due + interest_due + fee_parts[index]);
+        total_interest += interest_due;
+        schedule.push(total_due);
+        opening = closing;
+        previous_date = *due_date;
+    }
+
+    let total_interest = money(total_interest);
+    let total = money(schedule.iter().copied().sum::<Decimal>());
+    Ok(LoanPreviewResponse {
+        method: req.method.clone(),
+        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
+        total_interest: total_interest.to_string(),
+        total_repayable: total.to_string(),
+        schedule_amounts: schedule.into_iter().map(|value| value.to_string()).collect(),
+        authoritative: false,
+        native_cpp_used: false,
+    })
+}
+
 fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     let principal = money(decimal(&req.principal)?);
     let rate_percent = decimal(&req.rate_percent)?;
@@ -269,6 +416,7 @@ fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
         "simple_interest" | "flat_rate" => simple_or_flat(req),
         "compound_interest" => compound(req),
         "reducing_balance" => reducing_balance(req),
+        "daily_accrual_reducing" => daily_accrual_reducing(req),
         _ => Err("unsupported_method".to_string()),
     }
 }
