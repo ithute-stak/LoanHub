@@ -355,8 +355,11 @@ def decide_experian_subscription(
         price = payload.price_per_transaction
         if price is None:
             price = float(dict(platform.configuration or {}).get("default_price_per_transaction") or 0)
-        if price < 0:
-            raise HTTPException(status_code=422, detail="Transaction price cannot be negative")
+        if price <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Set a positive PAYG price per successful Credit Bureau transaction before approval",
+            )
     else:
         price = payload.price_per_transaction
 
