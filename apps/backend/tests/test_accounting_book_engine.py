@@ -300,3 +300,16 @@ def test_provider_settlements_preserve_payment_channel_and_evidence():
     assert "class ProviderInvoiceSettlement" in bureau_router
     assert "class ProviderInvoiceSettlement" in cdas_router
     assert "class CdasTransactionRefund" in cdas_router
+
+
+def test_credit_bureau_refunds_are_evidence_backed_and_accounted():
+    accounting = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    bureau = (ROOT / "backend" / "services" / "credit_bureau_payg_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "platform_credit_bureau.py").read_text(encoding="utf-8")
+
+    assert "def record_credit_bureau_transaction_refund(" in accounting
+    assert "def refund_transaction(" in bureau
+    assert "Only a settled Credit Bureau transaction can be refunded" in bureau
+    assert "Non-cash refunds require proof_reference" in bureau
+    assert 'metadata["refund"]' in bureau
+    assert '@router.post("/experian/transactions/{transaction_id}/refund")' in router
