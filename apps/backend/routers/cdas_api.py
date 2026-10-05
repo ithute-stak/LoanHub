@@ -178,6 +178,44 @@ def _company_cdas_environment(db: Session, company_id: UUID) -> str:
     return str(row.environment or "test").strip().lower() if row else "test"
 
 
+def _prepare_cdas_business_operation(
+    db: Session,
+    *,
+    company_id: UUID,
+    operation_type: str,
+) -> str:
+    environment = _company_cdas_environment(db, company_id)
+    subscription = require_cdas_subscription(db, company_id=company_id)
+    assert_live_credit_available(
+        db,
+        subscription=subscription,
+        environment=environment,
+        operation_type=operation_type,
+    )
+    return environment
+
+
+def _record_cdas_business_operation(
+    db: Session,
+    *,
+    context: TenantContext,
+    environment: str,
+    operation_type: str,
+    source_reference: str | None = None,
+) -> None:
+    assert context.company_id is not None
+    record_successful_operation(
+        db,
+        company_id=context.company_id,
+        environment=environment,
+        operation_type=operation_type,
+        actor_user_id=context.user.id,
+        billing_key=f"cdas-read:{uuid4().hex}",
+        source_reference=source_reference,
+        metadata={"request_origin": "tenant_user"},
+    )
+
+
 def _record_cdas_mutation_audit(
     db: Session,
     context: TenantContext,
@@ -1186,11 +1224,19 @@ async def verify_cdas_employee(
 ):
     _require_lending_user(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="employee_verification")
     try:
         client = get_company_cdas_client(db, context.company_id)
         employee = await client.get_employee_details(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="employee_verification",
+        source_reference=payload.employee_no.strip(),
+    )
     return {"ok": True, "employee": employee}
 
 
@@ -1217,6 +1263,7 @@ async def verify_cdas_employee_for_application(
         raise HTTPException(status_code=404, detail="Loan application not found")
     assert_branch_scope(context, application.branch_id)
 
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="employee_verification")
     try:
         client = get_company_cdas_client(db, context.company_id)
         employee = await client.get_employee_details(payload.employee_no)
@@ -1266,6 +1313,13 @@ async def verify_cdas_employee_for_application(
 
     db.commit()
     db.refresh(profile)
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="employee_verification",
+        source_reference=str(application.id),
+    )
     return {
         "ok": True,
         "application_id": str(application.id),
@@ -1289,11 +1343,13 @@ async def check_cdas_affordability(
 ):
     _require_lending_user(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="affordability")
     try:
         client = get_company_cdas_client(db, context.company_id)
         affordability = await client.check_affordability(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(db, context=context, environment=environment, operation_type="affordability", source_reference=payload.employee_no.strip())
     return {"ok": True, "affordability": affordability}
 
 
@@ -1305,11 +1361,13 @@ async def view_all_cdas_deductions(
 ):
     _require_lending_user(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="deduction_lookup")
     try:
         client = get_company_cdas_client(db, context.company_id)
         deductions = await client.view_all_deductions(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(db, context=context, environment=environment, operation_type="deduction_lookup", source_reference=payload.employee_no.strip())
     return {"ok": True, "deductions": deductions}
 
 
@@ -1321,11 +1379,13 @@ async def view_own_cdas_deductions(
 ):
     _require_lending_user(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="deduction_lookup")
     try:
         client = get_company_cdas_client(db, context.company_id)
         deductions = await client.view_own_deductions(payload.employee_no, payload.deduction_status)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(db, context=context, environment=environment, operation_type="deduction_lookup", source_reference=payload.employee_no.strip())
     return {"ok": True, "deductions": deductions}
 
 
@@ -1337,11 +1397,13 @@ async def get_active_approved_cdas_deduction(
 ):
     _require_lending_user(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="deduction_lookup")
     try:
         client = get_company_cdas_client(db, context.company_id)
         deduction = await client.get_active_and_approved_deduction(payload.employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(db, context=context, environment=environment, operation_type="deduction_lookup", source_reference=payload.employee_no.strip())
     return {"ok": True, "deduction": deduction}
 
 
@@ -1425,6 +1487,7 @@ async def get_cdas_document(
 ):
     _require_company_manager(context)
     assert context.company_id is not None
+    environment = _prepare_cdas_business_operation(db, company_id=context.company_id, operation_type="document")
     try:
         client = get_company_cdas_client(db, context.company_id)
         document = await client.get_document(
@@ -1434,6 +1497,13 @@ async def get_cdas_document(
         )
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="document",
+        source_reference=f"{payload.year:04d}-{payload.month:02d}:{payload.document_type}",
+    )
     return {"ok": True, "document": document}
 
 
