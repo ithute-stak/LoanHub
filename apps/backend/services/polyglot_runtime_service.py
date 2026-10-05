@@ -435,7 +435,7 @@ def java_event_batch_summary(*, events: list[dict]) -> dict | None:
 def rust_portfolio_risk_summary(*, rows: list[dict]) -> dict | None:
     """Delegate batched deterministic portfolio-risk aggregation to Rust."""
     base_url = rust_compute_url()
-    if not base_url or workload_routing_mode("rust_portfolio_risk") == "off":
+    if not base_url:
         return None
     value = _guarded_post_json(
         "rust_compute",
