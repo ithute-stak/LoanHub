@@ -16,7 +16,7 @@ import { PageLoader } from "@/components/ui/page-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { titleCase } from "@/lib/format";
-import type { ExperianPlatformConfiguration } from "@/types/creditBureau";
+import type { CreditBureauSubscription, ExperianPlatformConfiguration } from "@/types/creditBureau";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
@@ -44,6 +44,8 @@ export default function PlatformExperianConfigurationPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianPlatformConfiguration | null>(null);
+  const [subscriptions, setSubscriptions] = useState<CreditBureauSubscription[]>([]);
+  const [decidingCompanyId, setDecidingCompanyId] = useState<string | null>(null);
 
   const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [enabled, setEnabled] = useState(false);
@@ -53,6 +55,8 @@ export default function PlatformExperianConfigurationPage() {
   const [originVersion, setOriginVersion] = useState("1.0");
   const [dllVersion, setDllVersion] = useState("1.0");
   const [responseMapping, setResponseMapping] = useState(EMPTY_JSON);
+  const [defaultTransactionPrice, setDefaultTransactionPrice] = useState("0");
+  const [billingCurrency, setBillingCurrency] = useState("LSL");
 
   const applyConfiguration = useCallback((row: ExperianPlatformConfiguration) => {
     setConfiguration(row);
@@ -62,12 +66,19 @@ export default function PlatformExperianConfigurationPage() {
     setOriginVersion(String(row.configuration.origin_version ?? "1.0"));
     setDllVersion(String(row.configuration.dll_version ?? "1.0"));
     setResponseMapping(prettyJson(row.configuration.response_mapping ?? {}));
+    setDefaultTransactionPrice(String(row.configuration.default_price_per_transaction ?? 0));
+    setBillingCurrency(String(row.configuration.billing_currency ?? "LSL"));
   }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      applyConfiguration(await platformCreditBureauApi.getExperianConfiguration());
+      const [config, subscriptionRows] = await Promise.all([
+        platformCreditBureauApi.getExperianConfiguration(),
+        platformCreditBureauApi.listExperianSubscriptions(),
+      ]);
+      applyConfiguration(config);
+      setSubscriptions(subscriptionRows);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Platform Experian configuration could not be loaded."));
     } finally {
@@ -97,6 +108,8 @@ export default function PlatformExperianConfigurationPage() {
           origin_version: originVersion.trim() || "1.0",
           dll_version: dllVersion.trim() || "1.0",
           response_mapping: mapping,
+          default_price_per_transaction: Math.max(0, Number(defaultTransactionPrice || 0)),
+          billing_currency: billingCurrency.trim().toUpperCase() || "LSL",
         },
         credentials: supplyingCredentials
           ? {
@@ -117,6 +130,23 @@ export default function PlatformExperianConfigurationPage() {
       toast.error(getErrorMessage(error, "Platform Experian configuration could not be saved."));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function decideSubscription(companyId: string, decision: "approved" | "rejected" | "suspended") {
+    setDecidingCompanyId(companyId);
+    try {
+      await platformCreditBureauApi.decideExperianSubscription(companyId, {
+        decision,
+        price_per_transaction: decision === "approved" ? Math.max(0, Number(defaultTransactionPrice || 0)) : undefined,
+        currency: billingCurrency.trim().toUpperCase() || "LSL",
+      });
+      toast.success(`Credit Bureau subscription ${decision}`);
+      setSubscriptions(await platformCreditBureauApi.listExperianSubscriptions());
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Subscription decision could not be saved."));
+    } finally {
+      setDecidingCompanyId(null);
     }
   }
 
@@ -219,6 +249,14 @@ export default function PlatformExperianConfigurationPage() {
               <Field label="Origin version"><Input maxLength={5} value={originVersion} onChange={(event) => setOriginVersion(event.target.value)} /></Field>
               <Field label="DLL version"><Input maxLength={30} value={dllVersion} onChange={(event) => setDllVersion(event.target.value)} /></Field>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Default PAYG price per successful enquiry">
+                <Input type="number" min={0} step="0.01" value={defaultTransactionPrice} onChange={(event) => setDefaultTransactionPrice(event.target.value)} />
+              </Field>
+              <Field label="Billing currency">
+                <Input maxLength={3} value={billingCurrency} onChange={(event) => setBillingCurrency(event.target.value.toUpperCase())} />
+              </Field>
+            </div>
             <Field label="Response mapping (JSON)">
               <Textarea className="min-h-44 font-mono text-xs" value={responseMapping} onChange={(event) => setResponseMapping(event.target.value)} />
               <p className="text-xs text-muted-foreground">Map LoanHub fields such as <code>score</code>, <code>risk_band</code>, <code>monthly_commitments</code>, <code>total_balance</code>, <code>defaults_count</code> and <code>provider_reference</code> to dotted paths in the provider response.</p>
@@ -240,10 +278,45 @@ export default function PlatformExperianConfigurationPage() {
         </CardContent>
       </Card>
 
+      <Card className="rounded-3xl">
+        <CardHeader>
+          <CardTitle>Loan company Credit Bureau subscriptions</CardTitle>
+          <CardDescription>Companies can only request access. The Platform Owner approves, rejects or suspends access and owns the PAYG tariff.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {subscriptions.length ? subscriptions.map((subscription) => (
+            <div key={subscription.company_id || subscription.id} className="flex flex-col gap-4 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="font-black">{subscription.company?.name || subscription.company_id || "Loan company"}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {titleCase(subscription.status)} · {subscription.price_per_transaction == null ? "Price set on approval" : `${subscription.currency} ${subscription.price_per_transaction.toFixed(2)} per successful fresh enquiry`}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {subscription.status !== "approved" ? (
+                  <LoadingButton loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "approved")}>
+                    Approve at {billingCurrency} {Number(defaultTransactionPrice || 0).toFixed(2)}
+                  </LoadingButton>
+                ) : (
+                  <LoadingButton variant="outline" loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "suspended")}>
+                    Suspend
+                  </LoadingButton>
+                )}
+                {subscription.status === "pending" ? (
+                  <LoadingButton variant="outline" loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "rejected")}>
+                    Reject
+                  </LoadingButton>
+                ) : null}
+              </div>
+            </div>
+          )) : <p className="text-sm text-muted-foreground">No loan company has requested Credit Bureau access yet.</p>}
+        </CardContent>
+      </Card>
+
       <Alert>
         <BadgeCheck className="h-4 w-4" />
-        <AlertTitle>Recommended first setup</AlertTitle>
-        <AlertDescription>Configure Sandbox credentials first and test them. When production credentials are issued, select the Live credential profile, save those credentials and test again. Individual lending companies can then choose their own mode.</AlertDescription>
+        <AlertTitle>Platform-owned PAYG service</AlertTitle>
+        <AlertDescription>Configure and test the central Experian connection, set the PAYG transaction price, then approve lending-company subscription requests. A successful fresh provider enquiry creates one billable transaction; reuse of a fresh cached report does not.</AlertDescription>
       </Alert>
     </main>
   );
