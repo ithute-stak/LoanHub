@@ -2588,6 +2588,17 @@ def record_written_off_loan_recovery(
 
     written_off_principal = _money(writeoff.total_credit)
     recovery_income = account_by_code(db, key, "4300")
+    recovery_payment_ids = [
+        str(row[0])
+        for row in db.query(PaymentTransaction.id).filter(
+            PaymentTransaction.company_id == company_id,
+            PaymentTransaction.loan_id == loan_id,
+            PaymentTransaction.status.in_([PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED]),
+        ).all()
+    ]
+    recovery_reference_filter = JournalEntry.reference_id.like(f"{loan_id}:%")
+    if recovery_payment_ids:
+        recovery_reference_filter = recovery_reference_filter | JournalEntry.reference_id.in_(recovery_payment_ids)
     recovered_to_date = _money(
         db.query(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
@@ -2596,10 +2607,7 @@ def record_written_off_loan_recovery(
             JournalEntry.scope_key == key,
             JournalEntry.status == "posted",
             JournalEntry.reference_type.in_(["written_off_loan_recovery", "payment_transaction"]),
-        )
-        .filter(
-            (JournalEntry.reference_type == "payment_transaction")
-            | (JournalEntry.reference_id.like(f"{loan_id}:%"))
+            recovery_reference_filter,
         )
         .scalar()
         or 0
