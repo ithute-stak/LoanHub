@@ -2609,6 +2609,82 @@ def electronic_clearing_reconciliation(
         amount = _money(row.amount)
         source_treasury += amount if row.direction == TreasuryDirection.MONEY_IN else -amount
 
+    from database.models.platform_credit_bureau import (
+        PlatformCreditBureauInvoice,
+        PlatformCreditBureauTransaction,
+    )
+    from database.models.platform_cdas import PlatformCdasInvoice, PlatformCdasTransaction
+    from database.models.treasury import BranchOpeningSource
+    from database.models.enums import OpeningSourceType
+
+    provider_invoice_net = Decimal("0.00")
+    provider_invoice_count = 0
+    bureau_invoice_rows = db.query(PlatformCreditBureauInvoice).filter(
+        PlatformCreditBureauInvoice.company_id == company_id,
+        PlatformCreditBureauInvoice.status == "paid",
+        PlatformCreditBureauInvoice.paid_at.is_not(None),
+        func.date(PlatformCreditBureauInvoice.paid_at) <= as_of,
+    ).all()
+    for row in bureau_invoice_rows:
+        settlement = dict(row.snapshot or {}).get("settlement") or {}
+        if settlement_account_code(settlement.get("payment_method")) == "1020":
+            provider_invoice_net -= _money(row.amount_due)
+            provider_invoice_count += 1
+
+    cdas_invoice_rows = db.query(PlatformCdasInvoice).filter(
+        PlatformCdasInvoice.company_id == company_id,
+        PlatformCdasInvoice.status == "paid",
+        PlatformCdasInvoice.paid_at.is_not(None),
+        func.date(PlatformCdasInvoice.paid_at) <= as_of,
+    ).all()
+    for row in cdas_invoice_rows:
+        settlement = dict(row.snapshot or {}).get("settlement") or {}
+        if settlement_account_code(settlement.get("payment_method")) == "1020":
+            provider_invoice_net -= _money(row.amount_due)
+            provider_invoice_count += 1
+
+    provider_refund_net = Decimal("0.00")
+    provider_refund_count = 0
+    bureau_refunds = db.query(PlatformCreditBureauTransaction).filter(
+        PlatformCreditBureauTransaction.company_id == company_id,
+        PlatformCreditBureauTransaction.status == "refunded",
+    ).all()
+    for row in bureau_refunds:
+        refund = dict(row.metadata_json or {}).get("refund") or {}
+        recorded_at = refund.get("recorded_at")
+        if recorded_at and date.fromisoformat(str(recorded_at)[:10]) <= as_of and settlement_account_code(refund.get("payment_method")) == "1020":
+            provider_refund_net += _money(row.amount)
+            provider_refund_count += 1
+
+    cdas_refunds = db.query(PlatformCdasTransaction).filter(
+        PlatformCdasTransaction.company_id == company_id,
+        PlatformCdasTransaction.status == "refunded",
+    ).all()
+    for row in cdas_refunds:
+        refund = dict(row.metadata_json or {}).get("refund") or {}
+        recorded_at = refund.get("recorded_at")
+        if recorded_at and date.fromisoformat(str(recorded_at)[:10]) <= as_of and settlement_account_code(refund.get("payment_method")) == "1020":
+            provider_refund_net += _money(row.amount)
+            provider_refund_count += 1
+
+    opening_q = db.query(BranchOpeningSource).filter(
+        BranchOpeningSource.company_id == company_id,
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+        BranchOpeningSource.payment_method.notin_([PaymentMethod.CASH, PaymentMethod.BANK]),
+        BranchOpeningSource.source_type.notin_([
+            OpeningSourceType.PREVIOUS_CLOSING,
+            OpeningSourceType.HEADQUARTERS_FUNDING,
+        ]),
+    )
+    if branch_id:
+        opening_q = opening_q.filter(BranchOpeningSource.branch_id == branch_id)
+    opening_rows = [
+        row for row in opening_q.all()
+        if row.daily_ledger and row.daily_ledger.business_date <= as_of
+    ]
+    opening_net = sum((_money(row.amount) for row in opening_rows), Decimal("0.00"))
+
     settlement_q = db.query(CompanyOperatingRecord).filter(
         CompanyOperatingRecord.company_id == company_id,
         CompanyOperatingRecord.module == "accounting",
@@ -2633,7 +2709,15 @@ def electronic_clearing_reconciliation(
             bank_to_provider += amount
         settlement_rows.append(row)
 
-    expected = _money(source_payment_net + source_treasury - provider_to_bank + bank_to_provider)
+    expected = _money(
+        source_payment_net
+        + source_treasury
+        + opening_net
+        + provider_invoice_net
+        + provider_refund_net
+        - provider_to_bank
+        + bank_to_provider
+    )
     variance = _money(ledger_balance - expected)
     return {
         "as_of": as_of.isoformat(),
@@ -2641,6 +2725,9 @@ def electronic_clearing_reconciliation(
         "ledger_clearing_balance": float(ledger_balance),
         "source_payment_net": float(_money(source_payment_net)),
         "source_treasury_net": float(_money(source_treasury)),
+        "opening_source_net": float(_money(opening_net)),
+        "provider_invoice_net": float(_money(provider_invoice_net)),
+        "provider_refund_net": float(_money(provider_refund_net)),
         "provider_to_bank_settlements": float(_money(provider_to_bank)),
         "bank_to_provider_settlements": float(_money(bank_to_provider)),
         "expected_clearing_balance": float(expected),
@@ -2649,6 +2736,9 @@ def electronic_clearing_reconciliation(
         "source_counts": {
             "electronic_payments": len(source_payments),
             "manual_electronic_treasury_entries": len(treasury_rows),
+            "electronic_opening_sources": len(opening_rows),
+            "electronic_provider_invoice_payments": provider_invoice_count,
+            "electronic_provider_refunds": provider_refund_count,
             "clearing_settlements": len(settlement_rows),
         },
     }
