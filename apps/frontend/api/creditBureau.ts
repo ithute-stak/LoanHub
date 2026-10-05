@@ -8,6 +8,8 @@ import type {
   ExperianUsageConfiguration,
   CreditBureauSubscription,
   CreditBureauPaygTransaction,
+  CreditBureauUsage,
+  CreditBureauInvoice,
 } from "@/types/creditBureau";
 
 export const creditBureauApi = {
@@ -34,6 +36,12 @@ export const creditBureauApi = {
 
   listExperianTransactions: async (): Promise<CreditBureauPaygTransaction[]> =>
     (await api.get<CreditBureauPaygTransaction[]>("/credit-bureau/experian/transactions")).data,
+
+  getExperianUsage: async (): Promise<CreditBureauUsage> =>
+    (await api.get<CreditBureauUsage>("/credit-bureau/experian/usage")).data,
+
+  listExperianInvoices: async (): Promise<CreditBureauInvoice[]> =>
+    (await api.get<CreditBureauInvoice[]>("/credit-bureau/experian/invoices")).data,
 
   runExperian: async (
     applicationId: string,
@@ -90,10 +98,26 @@ export const platformCreditBureauApi = {
       currency?: string | null;
       reason?: string | null;
       notes?: string | null;
+      credit_limit?: number | null;
+      warning_threshold?: number | null;
+      auto_suspend_on_limit?: boolean | null;
+      billing_due_days?: number | null;
     },
   ): Promise<CreditBureauSubscription> =>
     (await api.post<CreditBureauSubscription>(`/platform-owner/credit-bureau/experian/subscriptions/${companyId}/decision`, payload)).data,
 
   listExperianTransactions: async (): Promise<CreditBureauPaygTransaction[]> =>
     (await api.get<CreditBureauPaygTransaction[]>("/platform-owner/credit-bureau/experian/transactions")).data,
+
+  waiveExperianTransaction: async (transactionId: string, reason: string): Promise<CreditBureauPaygTransaction> =>
+    (await api.post<CreditBureauPaygTransaction>(`/platform-owner/credit-bureau/experian/transactions/${transactionId}/waive`, { reason })).data,
+
+  issueExperianInvoice: async (companyId: string, periodStart: string, periodEnd: string): Promise<CreditBureauInvoice> =>
+    (await api.post<CreditBureauInvoice>(`/platform-owner/credit-bureau/experian/invoices/${companyId}`, { period_start: periodStart, period_end: periodEnd })).data,
+
+  listExperianInvoices: async (): Promise<CreditBureauInvoice[]> =>
+    (await api.get<CreditBureauInvoice[]>("/platform-owner/credit-bureau/experian/invoices")).data,
+
+  markExperianInvoicePaid: async (invoiceId: string): Promise<CreditBureauInvoice> =>
+    (await api.post<CreditBureauInvoice>(`/platform-owner/credit-bureau/experian/invoices/${invoiceId}/paid`)).data,
 };
