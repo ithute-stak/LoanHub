@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, joinedload
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
+from database.models.lending_operations import CollectionCase
 from database.models.enums import (
     PaymentDirection,
     PaymentPurpose,
@@ -1386,3 +1387,133 @@ def loan_receivables_control_reconciliation(
             "repayments": repayment_count,
         },
     }
+
+
+def loan_source_principal_outstanding(
+    db: Session,
+    *,
+    company_id,
+    loan_id,
+    as_of: date,
+) -> Decimal:
+    payments = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.loan_id == loan_id,
+        PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+        PaymentTransaction.purpose.in_([
+            PaymentPurpose.LOAN_DISBURSEMENT,
+            PaymentPurpose.LOAN_REPAYMENT,
+        ]),
+        func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)) <= as_of,
+    ).all()
+    disbursed = Decimal("0.00")
+    principal_repaid = Decimal("0.00")
+    for payment in payments:
+        if payment.purpose == PaymentPurpose.LOAN_DISBURSEMENT:
+            disbursed += _money(payment.amount)
+        elif payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+            principal, _, _ = _loan_repayment_components(db, payment)
+            principal_repaid += principal
+    return max(_money(disbursed - principal_repaid), Decimal("0.00"))
+
+
+def post_loan_write_off(
+    db: Session,
+    *,
+    company_id,
+    loan_id,
+    write_off_date: date,
+    description: str,
+    user_id,
+) -> JournalEntry:
+    """Write off a loan principal after operational collections have marked it written off.
+
+    The available credit-loss allowance is used first; any uncovered principal
+    is charged to credit-loss provision expense. The gross loan receivable is
+    removed from account 1100. The source loan remains available operationally
+    for recoveries and audit history.
+    """
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    case = db.query(CollectionCase).filter(
+        CollectionCase.company_id == company_id,
+        CollectionCase.loan_id == loan_id,
+    ).first()
+    if not case or case.status != "written_off":
+        raise HTTPException(
+            status_code=409,
+            detail="Collections must mark the loan written_off before accounting can derecognise the receivable",
+        )
+
+    key, _ = scope_key(company_id)
+    existing = _journal_for_reference(db, key, "loan_write_off", str(loan_id))
+    if existing:
+        return existing
+
+    principal = loan_source_principal_outstanding(
+        db, company_id=company_id, loan_id=loan_id, as_of=write_off_date
+    )
+    if principal <= 0:
+        raise HTTPException(status_code=409, detail="No outstanding loan principal remains to write off")
+
+    ensure_chart(db, company_id=company_id)
+    allowance_account = account_by_code(db, key, "1150")
+    expense_account = account_by_code(db, key, "5510")
+    principal_account = account_by_code(db, key, "1100")
+
+    allowance_q = db.query(
+        func.coalesce(func.sum(JournalLine.credit), 0),
+        func.coalesce(func.sum(JournalLine.debit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == allowance_account.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= write_off_date,
+    )
+    allowance_credit, allowance_debit = allowance_q.first()
+    allowance_available = max(
+        _money(Decimal(allowance_credit) - Decimal(allowance_debit)),
+        Decimal("0.00"),
+    )
+    allowance_used = min(principal, allowance_available)
+    uncovered = _money(principal - allowance_used)
+
+    lines = []
+    if allowance_used:
+        lines.append({
+            "account_id": allowance_account.id,
+            "debit": allowance_used,
+            "credit": 0,
+            "description": "Use credit-loss allowance on write-off",
+        })
+    if uncovered:
+        lines.append({
+            "account_id": expense_account.id,
+            "debit": uncovered,
+            "credit": 0,
+            "description": "Uncovered loan write-off expense",
+        })
+    lines.append({
+        "account_id": principal_account.id,
+        "debit": 0,
+        "credit": principal,
+        "description": "Derecognise written-off loan principal",
+    })
+
+    return create_entry(
+        db,
+        company_id=company_id,
+        branch_id=loan.branch_id,
+        created_by_user_id=user_id,
+        entry_date=write_off_date,
+        description=description,
+        reference_type="loan_write_off",
+        reference_id=str(loan_id),
+        status_value="posted",
+        lines=lines,
+    )
