@@ -26,6 +26,7 @@ from services.reconciliation_service import (
     batch_payload,
     close_batch,
     create_batch,
+    decide_bank_statement_accounting_adjustment,
     dashboard,
     export_csv,
     import_csv,
@@ -34,6 +35,7 @@ from services.reconciliation_service import (
     manual_match,
     reconcile,
     request_adjustment,
+    request_bank_statement_accounting_adjustment,
     resolve_line,
     set_bank_statement_balances,
     summarize_batch,
@@ -78,6 +80,16 @@ class CloseBatchRequest(BaseModel):
 class BankStatementBalancesRequest(BaseModel):
     opening_balance: Decimal
     closing_balance: Decimal
+
+
+class BankAccountingAdjustmentRequest(BaseModel):
+    counterpart_account_code: str = Field(min_length=2, max_length=30)
+    description: str = Field(min_length=5, max_length=2000)
+
+
+class BankAccountingAdjustmentDecision(BaseModel):
+    approved: bool
+    reason: str = Field(min_length=5, max_length=8000)
 
 
 @router.get("/dashboard")
@@ -231,6 +243,56 @@ def resolve_reconciliation_line(
         resolution=payload.resolution,
         note=payload.note,
     ))
+
+
+@router.post("/batches/{batch_id}/lines/{line_id}/bank-accounting-adjustment", status_code=201)
+def request_bank_accounting_adjustment(
+    batch_id: UUID,
+    line_id: UUID,
+    payload: BankAccountingAdjustmentRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, ADJUSTMENT_ROLES)
+    batch = batch_or_404(db, context, batch_id, lock=True)
+    line = line_or_404(db, context, batch_id, line_id)
+    approval = request_bank_statement_accounting_adjustment(
+        db,
+        context,
+        batch,
+        line,
+        counterpart_account_code=payload.counterpart_account_code,
+        description=payload.description,
+    )
+    return {
+        "approval_id": str(approval.id),
+        "status": approval.status,
+        "action_type": approval.action_type,
+        "line": line_payload(line),
+    }
+
+
+@router.post("/batches/{batch_id}/lines/{line_id}/bank-accounting-adjustment/{approval_id}/decision")
+def decide_bank_accounting_adjustment(
+    batch_id: UUID,
+    line_id: UUID,
+    approval_id: UUID,
+    payload: BankAccountingAdjustmentDecision,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, ADJUSTMENT_ROLES)
+    batch = batch_or_404(db, context, batch_id, lock=True)
+    line = line_or_404(db, context, batch_id, line_id)
+    return decide_bank_statement_accounting_adjustment(
+        db,
+        context,
+        batch,
+        line,
+        approval_id=approval_id,
+        approved=payload.approved,
+        reason=payload.reason,
+    )
 
 
 @router.post("/batches/{batch_id}/lines/{line_id}/adjustment", status_code=201)
