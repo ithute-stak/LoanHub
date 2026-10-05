@@ -38,6 +38,7 @@ from database.schemas.accounting import (
     JournalEntryRead,
     LedgerLineRead,
     LedgerRead,
+    LoanWriteOffCreate,
     PrepaymentAdjustmentCreate,
     TrialBalanceLine,
     TrialBalanceRead,
@@ -65,6 +66,7 @@ from services.accounting_service import (
     post_vat_transaction,
     post_suspense_correction,
     post_fixed_asset_depreciation,
+    post_loan_write_off,
     dispose_fixed_asset,
     scope_key,
 )
@@ -1004,3 +1006,26 @@ def loan_receivables_control(
         as_of=as_of,
         branch_id=selected_branch_id,
     )
+
+
+@router.post("/write-offs/loans", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def write_off_loan_receivable(
+    payload: LoanWriteOffCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    entry = post_loan_write_off(
+        db,
+        company_id=selected_company_id,
+        loan_id=payload.loan_id,
+        write_off_date=payload.write_off_date,
+        description=payload.description,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
