@@ -20,7 +20,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
@@ -620,6 +620,19 @@ def record_reversal_accounting(db: Session, payment: PaymentTransaction) -> Jour
             user_id=payment.initiated_by_user_id,
             reason=f"payment {payment.id}",
         )
+        if payment.loan_id:
+            case = db.query(CollectionCase).filter(
+                CollectionCase.company_id == payment.company_id,
+                CollectionCase.loan_id == payment.loan_id,
+                CollectionCase.write_off_at.is_not(None),
+            ).first()
+            if case:
+                case.recovered_amount = _written_off_recovery_balance(
+                    db,
+                    company_id=payment.company_id,
+                    loan_id=payment.loan_id,
+                )
+                db.add(case)
 
     platform_key, _ = scope_key(None)
     if _journal_for_reference(db, platform_key, "payment_transaction", str(payment.id)):
@@ -2532,6 +2545,44 @@ def transaction_accounting_coverage(
     }
 
 
+def _written_off_recovery_balance(db: Session, *, company_id, loan_id) -> Decimal:
+    """Net posted recovery income for one written-off loan, including reversals."""
+    key, _ = scope_key(company_id)
+    recovery_income = account_by_code(db, key, "4300")
+    payment_ids = [
+        str(row[0])
+        for row in db.query(PaymentTransaction.id).filter(
+            PaymentTransaction.company_id == company_id,
+            PaymentTransaction.loan_id == loan_id,
+        ).all()
+    ]
+    conditions = [
+        and_condition
+        for and_condition in [
+            JournalEntry.reference_id.like(f"{loan_id}:%"),
+            JournalEntry.reference_id.like(f"reversal:written_off_loan_recovery:{loan_id}:%"),
+        ]
+    ]
+    if payment_ids:
+        conditions.extend([
+            JournalEntry.reference_id.in_(payment_ids),
+            JournalEntry.reference_id.in_([f"reversal:payment_transaction:{pid}" for pid in payment_ids]),
+        ])
+    value = (
+        db.query(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .filter(
+            JournalLine.account_id == recovery_income.id,
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            or_(*conditions),
+        )
+        .scalar()
+        or 0
+    )
+    return max(_money(value), Decimal("0.00"))
+
+
 def record_written_off_loan_recovery(
     db: Session,
     *,
@@ -2587,30 +2638,10 @@ def record_written_off_loan_recovery(
         raise HTTPException(status_code=422, detail="Recovery amount must be greater than zero")
 
     written_off_principal = _money(writeoff.total_credit)
-    recovery_income = account_by_code(db, key, "4300")
-    recovery_payment_ids = [
-        str(row[0])
-        for row in db.query(PaymentTransaction.id).filter(
-            PaymentTransaction.company_id == company_id,
-            PaymentTransaction.loan_id == loan_id,
-            PaymentTransaction.status.in_([PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED]),
-        ).all()
-    ]
-    recovery_reference_filter = JournalEntry.reference_id.like(f"{loan_id}:%")
-    if recovery_payment_ids:
-        recovery_reference_filter = recovery_reference_filter | JournalEntry.reference_id.in_(recovery_payment_ids)
-    recovered_to_date = _money(
-        db.query(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
-        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
-        .filter(
-            JournalLine.account_id == recovery_income.id,
-            JournalEntry.scope_key == key,
-            JournalEntry.status == "posted",
-            JournalEntry.reference_type.in_(["written_off_loan_recovery", "payment_transaction"]),
-            recovery_reference_filter,
-        )
-        .scalar()
-        or 0
+    recovered_to_date = _written_off_recovery_balance(
+        db,
+        company_id=company_id,
+        loan_id=loan_id,
     )
     if recovered_to_date + amount > written_off_principal:
         raise HTTPException(
