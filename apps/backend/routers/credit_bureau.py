@@ -29,10 +29,11 @@ from services.credential_service import encrypt_credential
 from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_experian_enquiry
 from services.credit_bureau_payg_service import (
     accrue_successful_enquiry,
-    assert_live_credit_available,
+    cancel_enquiry_reservation,
     company_transactions,
     list_invoices,
     require_approved_subscription,
+    reserve_enquiry_charge,
     usage_summary,
 )
 from services.experian_service import (
@@ -323,11 +324,6 @@ def run_experian_credit_check(
     selected_environment = str(company_policy.get("environment") or company_integration.environment or "sandbox")
     selected_environment = "live" if selected_environment.lower() in {"live", "production"} else "sandbox"
     platform_integration = _platform_integration(db, environment=selected_environment)
-    assert_live_credit_available(
-        db,
-        subscription=subscription,
-        environment=selected_environment,
-    )
 
     identity = borrower_identity(db, application.borrower_id)
     if not identity.get("national_id") and not identity.get("passport_number"):
@@ -385,6 +381,13 @@ def run_experian_credit_check(
     db.commit()
     db.refresh(enquiry)
 
+    reserve_enquiry_charge(
+        db,
+        subscription=subscription,
+        enquiry_id=enquiry.id,
+        environment=selected_environment,
+    )
+
     gender_value = str(identity.get("gender") or "").strip().lower()
     gender = "M" if gender_value in {"m", "male", "gender.male"} else "F" if gender_value in {"f", "female", "gender.female"} else None
     provider_context = {
@@ -427,9 +430,19 @@ def run_experian_credit_check(
         normalized, raw = run_bureau_enquiry(platform_integration, context=provider_context)
     except ExperianConfigurationError as error:
         _fail_enquiry(db, enquiry, code="experian_configuration_error", message=str(error))
+        cancel_enquiry_reservation(
+            db,
+            enquiry_id=enquiry.id,
+            reason="experian_configuration_error",
+        )
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ExperianRequestError as error:
         _fail_enquiry(db, enquiry, code=error.code, message=str(error))
+        cancel_enquiry_reservation(
+            db,
+            enquiry_id=enquiry.id,
+            reason=error.code,
+        )
         raise HTTPException(status_code=502, detail=str(error)) from error
 
     defaults_count = int(normalized.get("defaults_count") or 0)
