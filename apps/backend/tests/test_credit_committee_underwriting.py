@@ -146,3 +146,22 @@ def test_committee_uses_same_application_scoped_external_evidence_as_decision_ce
     assert '"external_underwriting_evidence": external_evidence' in service
     assert "available_deduction_capacity" in external
     assert "cdas_existing_deductions_are_capacity_only" in external
+
+
+
+def test_committee_approval_revalidates_current_integrations_and_final_evidence():
+    service = (ROOT / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+
+    assert "final_integration_readiness = assert_application_integration_readiness_for_approval(" in service
+    assert "final_evidence_snapshot = build_evidence_snapshot(db, application)" in service
+    assert 'decision in {"approved", "conditionally_approved"}' in service
+    assert '"final_integration_readiness": final_integration_readiness' in service
+    assert '"final_evidence_snapshot": final_evidence_snapshot' in service
+    assert '"final_evidence_captured_at": (' in service
+
+
+def test_committee_revalidation_uses_assessed_installment():
+    service = (ROOT / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+
+    assert "proposed_installment=(" in service
+    assert "Decimal(assessment.proposed_installment)" in service
