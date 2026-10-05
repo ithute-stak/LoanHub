@@ -28,12 +28,14 @@ _ROUTING_ENV = {
     "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
+    "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
+    "rust_portfolio_risk": "shadow",
     "java_event_processing": "shadow",
 }
 _ROUTING_MODES = {"off", "shadow", "prefer-worker"}
@@ -424,5 +426,21 @@ def java_event_batch_summary(*, events: list[dict]) -> dict | None:
     if value.get("authoritative") is not False:
         return None
     if not isinstance(value.get("counts_by_type"), dict):
+        return None
+    return value
+
+
+def rust_portfolio_risk_summary(*, rows: list[dict]) -> dict | None:
+    """Delegate batched deterministic portfolio-risk aggregation to Rust."""
+    base_url = rust_compute_url()
+    if not base_url or workload_routing_mode("rust_portfolio_risk") == "off":
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/portfolio-risk-summary",
+        {"rows": rows},
+        timeout=2.0,
+    )
+    if value is None or value.get("authoritative") is not False:
         return None
     return value

@@ -21,6 +21,11 @@ from database.models.loan_product import LoanProduct
 from database.models.portfolio_risk import PortfolioRiskRun, PortfolioRiskSnapshot
 from database.models.professional_lending import DirectLoanApplication
 from database.models.repayment import RepaymentInstallment
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_portfolio_risk_summary,
+    workload_routing_mode,
+)
 
 
 MONEY = Decimal("0.01")
@@ -284,6 +289,64 @@ def _active_rows(rows: list[PortfolioRiskSnapshot]) -> list[PortfolioRiskSnapsho
     return [row for row in rows if row.loan_status in active_names and money(row.outstanding_balance) > 0 and not row.is_written_off]
 
 
+def _rust_risk_rows(rows: list[PortfolioRiskSnapshot]) -> list[dict[str, Any]]:
+    active_names = {item.value for item in ACTIVE_STATUSES}
+    return [
+        {
+            "outstanding_balance": str(money(row.outstanding_balance)),
+            "days_past_due": int(row.days_past_due or 0),
+            "active": (
+                row.loan_status in active_names
+                and money(row.outstanding_balance) > 0
+                and not row.is_written_off
+            ),
+            "first_payment_due": bool(row.evidence_snapshot.get("first_payment_due")),
+            "first_payment_default": bool(row.first_payment_default),
+            "branch_label": str(row.branch_label or "Unknown"),
+            "product_label": str(row.product_label or "Unknown"),
+            "employer_label": str(row.employer_label or "Unknown"),
+        }
+        for row in rows
+    ]
+
+
+def _normalized_rust_group(group: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "label": str(group.get("label") or "Unknown"),
+        "loan_count": int(group.get("loan_count") or 0),
+        "exposure": float(money(group.get("exposure"))),
+        "share_percent": float(money(group.get("share_percent"))),
+        "par_30": float(money(group.get("par_30"))),
+        "fpd_rate": float(money(group.get("fpd_rate"))),
+    }
+
+
+def _normalized_rust_concentration(value: dict[str, Any]) -> dict[str, Any]:
+    groups = [_normalized_rust_group(item) for item in list(value.get("groups") or [])]
+    return {
+        "hhi": float(money(value.get("hhi"))),
+        "top_share_percent": float(money(value.get("top_share_percent"))),
+        "group_count": int(value.get("group_count") or 0),
+        "groups": groups,
+    }
+
+
+def _normalized_rust_risk(value: dict[str, Any]) -> dict[str, Any]:
+    par: dict[str, Any] = {
+        "active_exposure": float(money(value.get("active_exposure"))),
+        "active_loans": int(value.get("active_loans") or 0),
+    }
+    for threshold in (1, 7, 30, 60, 90):
+        par[f"par_{threshold}_amount"] = float(money(value.get(f"par_{threshold}_amount")))
+        par[f"par_{threshold}"] = float(money(value.get(f"par_{threshold}")))
+    return {
+        "par": par,
+        "branch": _normalized_rust_concentration(dict(value.get("branch") or {})),
+        "product": _normalized_rust_concentration(dict(value.get("product") or {})),
+        "employer": _normalized_rust_concentration(dict(value.get("employer") or {})),
+    }
+
+
 def _par_metrics(rows: list[PortfolioRiskSnapshot]) -> dict[str, Any]:
     active = _active_rows(rows)
     exposure = sum((money(row.outstanding_balance) for row in active), Decimal("0.00"))
@@ -471,7 +534,60 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
     if branch_id:
         query = query.filter(PortfolioRiskSnapshot.branch_id == branch_id)
     rows = query.all()
-    par = _par_metrics(rows)
+    python_par = _par_metrics(rows)
+    python_branch = _group_risk(rows, "branch_label")
+    python_product = _group_risk(rows, "product_label")
+    python_employer = _group_risk(rows, "employer_label")
+    python_concentration = {
+        "branch": _concentration(rows, "branch_label"),
+        "product": _concentration(rows, "product_label"),
+        "employer": _concentration(rows, "employer_label"),
+    }
+
+    routing_mode = workload_routing_mode("rust_portfolio_risk")
+    delegated = (
+        rust_portfolio_risk_summary(rows=_rust_risk_rows(rows))
+        if routing_mode != "off"
+        else None
+    )
+    delegated_normalized = None
+    parity_passed = False
+    if delegated:
+        try:
+            delegated_normalized = _normalized_rust_risk(delegated)
+            parity_passed = (
+                delegated_normalized["par"] == python_par
+                and delegated_normalized["branch"]["groups"] == python_branch
+                and delegated_normalized["product"]["groups"] == python_product
+                and delegated_normalized["employer"]["groups"] == python_employer
+                and delegated_normalized["branch"] == python_concentration["branch"]
+                and delegated_normalized["product"] == python_concentration["product"]
+                and delegated_normalized["employer"] == python_concentration["employer"]
+            )
+        except (TypeError, ValueError):
+            parity_passed = False
+        if not parity_passed:
+            record_parity_mismatch("rust_compute")
+
+    use_rust = (
+        routing_mode == "prefer-worker"
+        and parity_passed
+        and delegated_normalized is not None
+    )
+    par = delegated_normalized["par"] if use_rust else python_par
+    branch_risk = delegated_normalized["branch"]["groups"] if use_rust else python_branch
+    product_risk = delegated_normalized["product"]["groups"] if use_rust else python_product
+    employer_risk = delegated_normalized["employer"]["groups"] if use_rust else python_employer
+    concentration = (
+        {
+            "branch": delegated_normalized["branch"],
+            "product": delegated_normalized["product"],
+            "employer": delegated_normalized["employer"],
+        }
+        if use_rust
+        else python_concentration
+    )
+
     fpd_eligible = [row for row in rows if row.evidence_snapshot.get("first_payment_due") and row.origination_month and row.origination_month <= as_of]
     written_off = [row for row in rows if row.is_written_off]
     write_off_amount = sum((money(row.outstanding_balance) for row in written_off), Decimal("0.00"))
@@ -508,13 +624,25 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
         "roll_and_cure": _transitions(db, company_id, rows, as_of, branch_id),
         "vintages": _vintages(rows),
         "top_up_performance": _top_up_performance(rows),
-        "branch_risk": _group_risk(rows, "branch_label"),
-        "product_risk": _group_risk(rows, "product_label"),
-        "employer_risk": _group_risk(rows, "employer_label"),
-        "concentration": {
-            "branch": _concentration(rows, "branch_label"),
-            "product": _concentration(rows, "product_label"),
-            "employer": _concentration(rows, "employer_label"),
+        "branch_risk": branch_risk,
+        "product_risk": product_risk,
+        "employer_risk": employer_risk,
+        "concentration": concentration,
+        "compute_runtime": {
+            "python_authoritative": True,
+            "rust_routing_mode": routing_mode,
+            "rust_used": use_rust,
+            "rust_shadow": routing_mode == "shadow" and parity_passed,
+            "rust_parity": (
+                "passed"
+                if parity_passed
+                else "off"
+                if routing_mode == "off"
+                else "unavailable"
+                if delegated is None
+                else "mismatch"
+            ),
+            "fallback": not use_rust,
         },
         "projected_cash_flow": _projected_cash_flow(db, company_id, as_of, branch_id),
         "methodology": {

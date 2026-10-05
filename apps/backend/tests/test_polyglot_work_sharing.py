@@ -466,3 +466,30 @@ def test_polyglot_benchmark_caps_iterations(monkeypatch) -> None:
     result = benchmark.run_polyglot_benchmarks(iterations=999)
     assert result["iterations"] == 20
     assert all(item["iterations"] == 20 for item in result["results"])
+
+
+def test_rust_portfolio_risk_batch_kernel_is_shadow_routed() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    portfolio = (ROOT / "services/portfolio_risk_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/portfolio-risk-summary"' in rust
+    assert "struct PortfolioRiskRequest" in rust
+    assert "fn portfolio_risk_summary(" in rust
+    assert '"rust_portfolio_risk": "shadow"' in runtime
+    assert "def rust_portfolio_risk_summary(" in runtime
+    assert 'workload_routing_mode("rust_portfolio_risk")' in portfolio
+    assert 'record_parity_mismatch("rust_compute")' in portfolio
+    assert "LOANHUB_RUST_PORTFOLIO_RISK_MODE=shadow" in env
+
+
+def test_portfolio_risk_keeps_activity_policy_in_python() -> None:
+    portfolio = (ROOT / "services/portfolio_risk_service.py").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert '"active": (' in portfolio
+    assert "row.loan_status in active_names" in portfolio
+    assert "money(row.outstanding_balance) > 0" in portfolio
+    assert "not row.is_written_off" in portfolio
+    assert "row.active" in rust
