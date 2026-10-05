@@ -75,7 +75,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["enquiry_id"], ["credit_bureau_enquiries.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("enquiry_id", name="uq_credit_bureau_payg_enquiry"),
-        sa.UniqueConstraint("transaction_reference"),
     )
     op.create_index("ix_platform_credit_bureau_transactions_provider", "platform_credit_bureau_transactions", ["provider"])
     op.create_index("ix_platform_credit_bureau_transactions_company_id", "platform_credit_bureau_transactions", ["company_id"])
