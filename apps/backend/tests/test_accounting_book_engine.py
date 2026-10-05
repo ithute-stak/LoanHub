@@ -245,3 +245,13 @@ def test_direct_debit_requires_allocations_before_repayment_accounting():
     service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
     assert "payment.purpose == PaymentPurpose.DIRECT_DEBIT" in service
     assert "PaymentAllocation.payment_id == payment.id" in service
+
+
+def test_provider_invoice_settlements_are_in_transaction_coverage():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "PlatformCreditBureauInvoice" in service
+    assert "PlatformCdasInvoice" in service
+    assert '"credit_bureau_invoice_payments"' in service
+    assert '"credit_bureau_platform_receipts"' in service
+    assert '"cdas_invoice_payments"' in service
+    assert '"cdas_platform_receipts"' in service
