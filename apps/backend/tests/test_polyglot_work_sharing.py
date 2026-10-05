@@ -449,6 +449,29 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
             "authoritative": False,
         },
     )
+    import base64
+
+    expected_csv = (
+        "\ufeffLoanHub Report,Operational Report - Maseru\r\n"
+        "Developed by,Ithute Solutions\r\n"
+        "Reference,RPT-BENCHMARK\r\n"
+        "Scope,Maseru\r\n"
+        "Period start,2026-10-01\r\n"
+        "Period end,2026-10-01\r\n"
+        "\r\n"
+        "Metric,Value\r\n"
+        "Active Loans,12\r\n"
+        "Collections,1234.5\r\n"
+        "Healthy,True\r\n"
+    ).encode("utf-8")
+    monkeypatch.setattr(
+        benchmark,
+        "java_report_csv",
+        lambda **kwargs: {
+            "content_base64": base64.b64encode(expected_csv).decode("ascii"),
+            "sha256": hashlib.sha256(expected_csv).hexdigest(),
+        },
+    )
     java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
     canonical = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
     monkeypatch.setattr(
@@ -466,7 +489,7 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     assert result["iterations"] == 2
     assert result["non_authoritative"] is True
     assert result["changes_routing"] is False
-    assert len(result["results"]) == 5
+    assert len(result["results"]) == 6
     assert all(item["parity_passed"] == 2 for item in result["results"])
     assert all(item["promotion_candidate"] is True for item in result["results"])
 
@@ -856,3 +879,98 @@ def test_rust_portfolio_risk_normalizer_matches_python_contract() -> None:
     }
 
     assert portfolio._normalized_rust_risk(rust_value) == python_value
+
+
+def test_go_mobile_push_uses_short_lived_python_credentials_and_no_shadow_double_send() -> None:
+    go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    push = (ROOT / "services/mobile_push_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/push/fcm-deliver-batch"' in go
+    assert "firebaseProjectIDPattern" in go
+    assert '"go_mobile_push": "off"' in runtime
+    assert "def go_mobile_push_batch(" in runtime
+    assert "def _firebase_access_token(" in push
+    assert "credential.refresh(GoogleAuthRequest())" in push
+    assert 'workload_routing_mode("go_mobile_push")' in push
+    assert "not replaying through Python to avoid duplicate notifications" in push
+    assert "LOANHUB_GO_MOBILE_PUSH_MODE=off" in env
+
+
+def test_go_mobile_push_prepares_bounded_jobs(monkeypatch) -> None:
+    from services import mobile_push_service as push
+
+    captured: list[dict] = []
+    monkeypatch.setattr(push, "_firebase_access_token", lambda: ("loanhub-prod", "short-lived"))
+    monkeypatch.setattr(push, "_active_tokens", lambda db, user_ids: ["token-a", "token-b"])
+    monkeypatch.setattr(
+        push,
+        "go_mobile_push_batch",
+        lambda **kwargs: captured.append(kwargs) or [
+            {"job_id": item["job_id"], "status_code": 200, "duration_ms": 1}
+            for item in kwargs["jobs"]
+        ],
+    )
+
+    event = {
+        "event_id": "evt-1",
+        "type": "TEST",
+        "domain": "system",
+        "notification": {
+            "title": "LoanHub",
+            "body": "Update",
+            "category": "general",
+            "route": "home",
+        },
+    }
+
+    assert push._send_via_go(object(), ["11111111-1111-1111-1111-111111111111"], event) is True
+    assert len(captured) == 1
+    assert captured[0]["project_id"] == "loanhub-prod"
+    assert captured[0]["access_token"] == "short-lived"
+    assert len(captured[0]["jobs"]) == 2
+    assert all(item["channel_id"] == "loanhub_events" for item in captured[0]["jobs"])
+
+
+def test_java_report_csv_shadow_requires_byte_parity(monkeypatch) -> None:
+    import base64
+    import hashlib
+    from datetime import date
+
+    from services import reporting_service as reporting
+
+    metrics = {"active_loans": 12, "healthy": True}
+    metadata = {
+        "title": "Operational Report - Maseru",
+        "reference": "RPT-TEST",
+        "scope_name": "Maseru",
+        "period_start": date(2026, 10, 1),
+        "period_end": date(2026, 10, 1),
+    }
+    expected = reporting._build_csv_python(metrics, metadata)
+
+    monkeypatch.setenv("LOANHUB_JAVA_REPORT_CSV_MODE", "shadow")
+    monkeypatch.setattr(
+        reporting,
+        "java_report_csv",
+        lambda **kwargs: {
+            "content_base64": base64.b64encode(expected).decode("ascii"),
+            "sha256": hashlib.sha256(expected).hexdigest(),
+        },
+    )
+    assert reporting.build_csv(metrics, metadata) == expected
+
+
+def test_java_report_csv_contract_is_registered() -> None:
+    java = (REPO / "services/worker-java/src/main/java/ls/co/loanhub/worker/EventWorker.java").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    reporting = (ROOT / "services/reporting_service.py").read_text(encoding="utf-8")
+
+    assert '"/v1/reports/render-csv"' in java
+    assert "renderReportCsv" in java
+    assert "def java_report_csv(" in runtime
+    assert '"java_report_csv": "shadow"' in runtime
+    assert "def _build_csv_python(" in reporting
+    assert 'workload_routing_mode("java_report_csv")' in reporting
+    assert "record_parity_mismatch("java_worker")" in reporting
