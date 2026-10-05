@@ -2050,6 +2050,61 @@ def period_close_pack(
         branch_id=branch_id,
     )
 
+    bank_account = account_by_code(db, key, "1010")
+    bank_activity_q = db.query(JournalLine.id).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        JournalLine.account_id == bank_account.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(period_start, period_end),
+    )
+    if branch_id:
+        bank_activity_q = bank_activity_q.filter(JournalEntry.branch_id == branch_id)
+    bank_activity_count = bank_activity_q.count()
+    bank_opening = _cash_balance_at(
+        db,
+        key=key,
+        cash_ids={bank_account.id},
+        before_date=period_start,
+        branch_id=branch_id,
+    )
+    bank_closing = _cash_balance_at(
+        db,
+        key=key,
+        cash_ids={bank_account.id},
+        to_date=period_end,
+        branch_id=branch_id,
+    )
+    bank_reconciliation_required = bool(
+        bank_activity_count or bank_opening != 0 or bank_closing != 0
+    )
+
+    bank_batch_q = db.query(ReconciliationBatch).filter(
+        ReconciliationBatch.company_id == company_id,
+        ReconciliationBatch.source_type == "bank_statement",
+        ReconciliationBatch.period_start == period_start,
+        ReconciliationBatch.period_end == period_end,
+        ReconciliationBatch.status == "closed",
+    )
+    if branch_id:
+        bank_batch_q = bank_batch_q.filter(ReconciliationBatch.branch_id == branch_id)
+    else:
+        bank_batch_q = bank_batch_q.filter(ReconciliationBatch.branch_id.is_(None))
+    bank_batch = bank_batch_q.order_by(ReconciliationBatch.closed_at.desc()).first()
+    bank_balance_control = {
+        "required": bank_reconciliation_required,
+        "configured": False,
+        "balanced": not bank_reconciliation_required,
+        "reason": "No bank activity in this period" if not bank_reconciliation_required else "Closed bank reconciliation batch not found",
+    }
+    if bank_batch is not None:
+        from services.reconciliation_service import bank_statement_balance_reconciliation
+        bank_balance_control = {
+            "required": bank_reconciliation_required,
+            **bank_statement_balance_reconciliation(db, bank_batch),
+        }
+
     checks = {
         "trial_balance_balanced": total_debit == total_credit,
         "suspense_cleared": suspense == 0,
@@ -2063,6 +2118,9 @@ def period_close_pack(
         "electronic_clearing_reconciled": bool(electronic_clearing["balanced"]),
         "electronic_clearing_has_no_stale_items": not bool(electronic_clearing_age["has_stale_items"]),
         "clearing_settlements_bank_matched": bool(settlement_chain["complete"]),
+        "bank_statement_balance_reconciled": (
+            not bank_reconciliation_required or bool(bank_balance_control.get("balanced"))
+        ),
         "fixed_asset_depreciation_complete": len(asset_depreciation_due) == 0,
         "credit_loss_provision_posted": active_loan_count == 0 or provision_posted,
     }
@@ -2079,6 +2137,7 @@ def period_close_pack(
             "pending_approvals": approvals.count(),
             "active_loans": active_loan_count,
             "fixed_assets_needing_depreciation": len(asset_depreciation_due),
+            "bank_ledger_activity": bank_activity_count,
         },
         "balances": {
             "trial_debit": float(total_debit),
@@ -2090,6 +2149,8 @@ def period_close_pack(
             "net_vat_payable": float(_money((-vat_payable_signed) - vat_receivable)),
             "accruals": float(-accruals_signed),
             "prepayments": float(prepayments),
+            "bank_opening": float(bank_opening),
+            "bank_closing": float(bank_closing),
         },
         "loan_receivables_control": receivables_control,
         "cash_flow": cash_flow,
@@ -2097,6 +2158,7 @@ def period_close_pack(
         "electronic_clearing": electronic_clearing,
         "electronic_clearing_aging": electronic_clearing_age,
         "bank_settlement_chain": settlement_chain,
+        "bank_statement_balance_reconciliation": bank_balance_control,
         "fixed_asset_ids_needing_depreciation": asset_depreciation_due,
         "credit_loss_provision_run_id": str(provision.first().id) if provision.first() else None,
     }
