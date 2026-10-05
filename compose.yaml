@@ -53,6 +53,23 @@ services:
       retries: 20
     networks: [loanhub]
 
+  db-role-bootstrap:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      DB_NAME: ${DB_NAME:-loanhub}
+      DB_USER: ${DB_USER:-loanhub}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.production}
+      DB_RUNTIME_USER: ${DB_RUNTIME_USER:-loanhub_app}
+      DB_RUNTIME_PASSWORD: ${DB_RUNTIME_PASSWORD:?Set DB_RUNTIME_PASSWORD in .env.production}
+    command: ["/bin/sh", "/loanhub-scripts/ensure_database_runtime_role.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/loanhub-scripts:ro
+    networks: [loanhub]
+
   migrate:
     <<: *backend
     restart: "no"
@@ -61,8 +78,8 @@ services:
       <<: *backend-environment
     command: ["alembic", "upgrade", "head"]
     depends_on:
-      db:
-        condition: service_healthy
+      db-role-bootstrap:
+        condition: service_completed_successfully
     volumes:
       - ./secrets:/app/secrets:ro
     networks: [loanhub]
@@ -73,6 +90,8 @@ services:
     env_file: ${LOANHUB_ENV_FILE:-.env.production}
     environment:
       <<: *backend-environment
+      DB_USER: ${DB_RUNTIME_USER:-loanhub_app}
+      DB_PASSWORD: ${DB_RUNTIME_PASSWORD:?Set DB_RUNTIME_PASSWORD in .env.production}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       LOANHUB_RUST_COMPUTE_URL: ${LOANHUB_RUST_COMPUTE_URL:-}
       LOANHUB_GO_WORKER_URL: ${LOANHUB_GO_WORKER_URL:-}
@@ -101,6 +120,8 @@ services:
     env_file: ${LOANHUB_ENV_FILE:-.env.production}
     environment:
       <<: *backend-environment
+      DB_USER: ${DB_RUNTIME_USER:-loanhub_app}
+      DB_PASSWORD: ${DB_RUNTIME_PASSWORD:?Set DB_RUNTIME_PASSWORD in .env.production}
     command: ["python", "docker/maintenance.py"]
     depends_on:
       backend:
