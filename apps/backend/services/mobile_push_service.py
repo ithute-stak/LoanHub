@@ -58,7 +58,8 @@ def _firebase_access_token() -> tuple[str, str] | None:
             app = firebase_admin.initialize_app(options={"projectId": project_id})
 
         credential = app.credential.get_credential()
-        credential.refresh(GoogleAuthRequest())
+        if not getattr(credential, "valid", False):
+            credential.refresh(GoogleAuthRequest())
         token = str(getattr(credential, "token", "") or "").strip()
         if not token:
             return None
