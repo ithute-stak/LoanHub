@@ -87,6 +87,7 @@ COMPANY_CHART = [
     ("4000", "Interest Income", "revenue", "credit"),
     ("4100", "Loan Fee Income", "revenue", "credit"),
     ("4200", "Penalty and Collection Income", "revenue", "credit"),
+    ("4300", "Recoveries of Written-off Loans", "revenue", "credit"),
     ("4900", "Other Operating Income", "revenue", "credit"),
     ("4910", "Gain on Disposal of Property and Equipment", "revenue", "credit"),
     ("5000", "Cost of Services", "expense", "debit"),
@@ -597,8 +598,6 @@ def record_reversal_accounting(db: Session, payment: PaymentTransaction) -> Jour
             user_id=payment.initiated_by_user_id,
             reason=f"payment {payment.id}",
         )
-    return company_result
-
 
 def record_treasury_entry_accounting(db: Session, treasury_entry) -> JournalEntry | None:
     if treasury_entry.payment_transaction_id or treasury_entry.is_voided:
@@ -2293,3 +2292,86 @@ def transaction_accounting_coverage(
         "missing_counts": {name: len(values) for name, values in missing.items()},
         "missing_source_ids": missing,
     }
+
+
+def record_written_off_loan_recovery(
+    db: Session,
+    *,
+    company_id,
+    loan_id,
+    amount,
+    recovery_date: date,
+    payment_method: str,
+    proof_reference: str | None,
+    description: str,
+    user_id,
+) -> JournalEntry:
+    """Recognise cash recovered after a loan has already been written off.
+
+    Recovery does not recreate the old receivable. It recognises income when
+    value is recovered, while the operational loan and collection history stay
+    intact for audit.
+    """
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    case = db.query(CollectionCase).filter(
+        CollectionCase.company_id == company_id,
+        CollectionCase.loan_id == loan_id,
+    ).with_for_update().first()
+    if not case or not case.write_off_at:
+        raise HTTPException(status_code=409, detail="Loan has not been written off operationally")
+
+    key, _ = scope_key(company_id)
+    writeoff = _journal_for_reference(db, key, "loan_write_off", str(loan_id))
+    if not writeoff:
+        raise HTTPException(status_code=409, detail="Accounting write-off journal does not exist")
+
+    method = payment_method.strip().lower()
+    settlement_code = {
+        "cash": "1000",
+        "bank": "1010",
+        "electronic": "1020",
+    }.get(method)
+    if not settlement_code:
+        raise HTTPException(status_code=422, detail="Unsupported recovery payment method")
+    if method != "cash" and not (proof_reference or "").strip():
+        raise HTTPException(status_code=422, detail="Non-cash recoveries require proof_reference")
+
+    amount = _money(amount)
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="Recovery amount must be greater than zero")
+
+    written_off_principal = _money(writeoff.total_credit)
+    recovered_to_date = _money(case.recovered_amount)
+    if recovered_to_date + amount > written_off_principal:
+        raise HTTPException(
+            status_code=409,
+            detail="Recovery exceeds the principal amount derecognised by the write-off journal",
+        )
+
+    reference_id = f"{loan_id}:{recovery_date.isoformat()}:{proof_reference or method}:{amount}"
+    existing = _journal_for_reference(db, key, "written_off_loan_recovery", reference_id)
+    if existing:
+        return existing
+
+    entry = post_codes(
+        db,
+        company_id=company_id,
+        branch_id=loan.branch_id,
+        debit_code=settlement_code,
+        credit_code="4300",
+        amount=amount,
+        description=description,
+        reference_type="written_off_loan_recovery",
+        reference_id=reference_id,
+        user_id=user_id,
+        entry_date=recovery_date,
+    )
+    case.recovered_amount = _money(recovered_to_date + amount)
+    db.add(case)
+    return entry
