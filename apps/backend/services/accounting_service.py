@@ -2384,7 +2384,20 @@ def record_written_off_loan_recovery(
         raise HTTPException(status_code=422, detail="Recovery amount must be greater than zero")
 
     written_off_principal = _money(writeoff.total_credit)
-    recovered_to_date = _money(case.recovered_amount)
+    recovery_income = account_by_code(db, key, "4300")
+    recovered_to_date = _money(
+        db.query(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .filter(
+            JournalLine.account_id == recovery_income.id,
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.reference_type == "written_off_loan_recovery",
+            JournalEntry.reference_id.like(f"{loan_id}:%"),
+        )
+        .scalar()
+        or 0
+    )
     if recovered_to_date + amount > written_off_principal:
         raise HTTPException(
             status_code=409,
