@@ -15,6 +15,7 @@ from services.polyglot_runtime_service import (
     go_digest,
     java_canonicalize_event,
     rust_loan_preview,
+    rust_portfolio_risk_summary,
     rust_variance_classification,
     workload_routing_mode,
 )
@@ -42,6 +43,7 @@ _THRESHOLDS_MS = {
     "go_reconciliation_hash": 100.0,
     "rust_reconciliation": 100.0,
     "rust_loan_calculation": 250.0,
+    "rust_portfolio_risk": 250.0,
     "java_event_processing": 250.0,
 }
 
@@ -144,6 +146,90 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             and schedule == expected_schedule
         )
 
+    portfolio_rows = [
+        {
+            "outstanding_balance": "10000.00",
+            "principal_amount": "10000.00",
+            "days_past_due": 0,
+            "active": True,
+            "is_written_off": False,
+            "is_top_up": False,
+            "cdas_collection_enabled": True,
+            "first_payment_due": True,
+            "first_payment_default": False,
+            "origination_month": "2026-01-01",
+            "delinquency_bucket": "current",
+            "branch_label": "Maseru",
+            "product_label": "Standard",
+            "employer_label": "Employer A",
+        },
+        {
+            "outstanding_balance": "5000.00",
+            "principal_amount": "6000.00",
+            "days_past_due": 35,
+            "active": True,
+            "is_written_off": False,
+            "is_top_up": True,
+            "cdas_collection_enabled": False,
+            "first_payment_due": True,
+            "first_payment_default": True,
+            "origination_month": "2026-02-01",
+            "delinquency_bucket": "31-60",
+            "branch_label": "Maseru",
+            "product_label": "Standard",
+            "employer_label": "Employer B",
+        },
+        {
+            "outstanding_balance": "2000.00",
+            "principal_amount": "3000.00",
+            "days_past_due": 95,
+            "active": False,
+            "is_written_off": True,
+            "is_top_up": False,
+            "cdas_collection_enabled": False,
+            "first_payment_due": True,
+            "first_payment_default": True,
+            "origination_month": "2026-01-01",
+            "delinquency_bucket": "90+",
+            "branch_label": "Berea",
+            "product_label": "Legacy",
+            "employer_label": "Employer A",
+        },
+    ]
+
+    def benchmark_rust_portfolio() -> tuple[bool, bool]:
+        result = rust_portfolio_risk_summary(rows=portfolio_rows)
+        if result is None:
+            return False, False
+        try:
+            delinquency = {
+                str(item["bucket"]): (
+                    int(item["loan_count"]),
+                    f"{float(item['exposure']):.2f}",
+                )
+                for item in result.get("delinquency_buckets", [])
+            }
+            vintages = list(result.get("vintages") or [])
+            top_up = list(result.get("top_up_performance") or [])
+            parity = (
+                f"{float(result.get('active_exposure')):.2f}" == "15000.00"
+                and int(result.get("active_loans") or 0) == 2
+                and f"{float(result.get('par_30_amount')):.2f}" == "5000.00"
+                and f"{float(result.get('par_30')):.2f}" == "33.33"
+                and delinquency.get("current") == (1, "10000.00")
+                and delinquency.get("31-60") == (1, "5000.00")
+                and len(vintages) == 2
+                and vintages[0].get("vintage") == "2026-02"
+                and f"{float(vintages[0].get('par_30')):.2f}" == "100.00"
+                and len(top_up) == 2
+                and f"{float(result.get('top_up_exposure')):.2f}" == "5000.00"
+                and f"{float(result.get('cdas_exposure')):.2f}" == "10000.00"
+                and result.get("authoritative") is False
+            )
+        except (KeyError, TypeError, ValueError):
+            parity = False
+        return True, parity
+
     java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
     java_expected = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
     java_hash = hashlib.sha256(java_expected.encode("utf-8")).hexdigest()
@@ -179,6 +265,12 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
             worker="rust_compute",
             iterations=iterations,
             operation=benchmark_rust_loan,
+        ),
+        _run_case(
+            workload="rust_portfolio_risk",
+            worker="rust_compute",
+            iterations=iterations,
+            operation=benchmark_rust_portfolio,
         ),
         _run_case(
             workload="java_event_processing",
