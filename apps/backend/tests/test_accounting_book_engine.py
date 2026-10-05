@@ -357,3 +357,23 @@ def test_period_close_blocks_stale_electronic_clearing_items():
     service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
     assert '"electronic_clearing_has_no_stale_items": not bool(electronic_clearing_age["has_stale_items"])' in service
     assert '"electronic_clearing_aging": electronic_clearing_age' in service
+
+
+def test_bank_reconciliation_matches_clearing_settlements_by_evidence():
+    reconciliation = (ROOT / "backend" / "services" / "reconciliation_service.py").read_text(encoding="utf-8")
+    assert "def _match_bank_line_to_clearing_settlement(" in reconciliation
+    assert '"exact_clearing_settlement_provider_reference"' in reconciliation
+    assert '"exact_clearing_settlement_proof_reference"' in reconciliation
+    assert '"CLEARING_DIRECTION_MISMATCH"' in reconciliation
+    assert '"MISSING_BANK_SETTLEMENT"' in reconciliation
+    assert "missing_clearing_settlements_added" in reconciliation
+
+
+def test_period_close_requires_clearing_settlement_bank_traceability():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def bank_settlement_chain(" in service
+    assert '"bank_statement_matched"' in service
+    assert '"clearing_settlements_bank_matched": bool(settlement_chain["complete"])' in service
+    assert '"bank_settlement_chain": settlement_chain' in service
+    assert '@router.get("/controls/bank-settlement-chain")' in router
