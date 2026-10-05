@@ -32,6 +32,7 @@ from database.models.governance_control import ApprovalRequest, BankStatementLin
 from database.models.reconciliation import ReconciliationBatch
 from database.models.enums import (
     PaymentDirection,
+    PaymentMethod,
     PaymentPurpose,
     PaymentStatus,
     TreasuryDirection,
@@ -44,6 +45,12 @@ from database.models.treasury import TreasurySettings
 
 
 MONEY = Decimal("0.01")
+
+
+def settlement_account_code(payment_method) -> str:
+    """Map a payment/treasury channel to the ledger account holding the funds."""
+    value = getattr(payment_method, "value", payment_method)
+    return "1000" if value == PaymentMethod.CASH.value else "1010"
 
 # A lending-specific chart mapped to the five conventional financial-statement
 # classes.  Control/adjustment accounts make the ledger useful beyond a simple
@@ -386,7 +393,7 @@ def _post_company_loan_repayment(db: Session, payment: PaymentTransaction) -> Jo
         return _journal_for_reference(db, key, "payment_transaction", str(payment.id))
 
     ensure_chart(db, company_id=payment.company_id)
-    cash = account_by_code(db, key, "1000")
+    cash = account_by_code(db, key, settlement_account_code(payment.payment_method))
     principal_receivable = account_by_code(db, key, "1100")
     interest_income = account_by_code(db, key, "4000")
     fee_income = account_by_code(db, key, "4100")
@@ -457,6 +464,10 @@ def record_payment_accounting(db: Session, payment: PaymentTransaction) -> None:
     if payment.company_id:
         if payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
             _post_company_loan_repayment(db, payment)
+        elif payment.purpose == PaymentPurpose.DIRECT_DEBIT and db.query(PaymentAllocation.id).filter(
+            PaymentAllocation.payment_id == payment.id
+        ).first():
+            _post_company_loan_repayment(db, payment)
         else:
             debit_code, credit_code, description = COMPANY_PAYMENT_RULES.get(
                 payment.purpose,
@@ -464,6 +475,9 @@ def record_payment_accounting(db: Session, payment: PaymentTransaction) -> None:
                 if payment.direction == PaymentDirection.OUTBOUND
                 else ("1000", "2990", f"Unclassified inbound payment: {payment.purpose.value}"),
             )
+            settlement_code = settlement_account_code(payment.payment_method)
+            debit_code = settlement_code if debit_code == "1000" else debit_code
+            credit_code = settlement_code if credit_code == "1000" else credit_code
             post_codes(
                 db,
                 company_id=payment.company_id,
@@ -481,12 +495,15 @@ def record_payment_accounting(db: Session, payment: PaymentTransaction) -> None:
 
     rule = PLATFORM_PAYMENT_RULES.get(payment.purpose)
     if rule:
+        settlement_code = settlement_account_code(payment.payment_method)
+        platform_debit = settlement_code if rule[0] == "1000" else rule[0]
+        platform_credit = settlement_code if rule[1] == "1000" else rule[1]
         post_codes(
             db,
             company_id=None,
             branch_id=None,
-            debit_code=rule[0],
-            credit_code=rule[1],
+            debit_code=platform_debit,
+            credit_code=platform_credit,
             amount=amount,
             description=rule[2],
             reference_type="payment_transaction",
@@ -590,18 +607,19 @@ def record_treasury_entry_accounting(db: Session, treasury_entry) -> JournalEntr
         return None  # internal transfer; no consolidated income/expense
 
     direction_in = treasury_entry.direction == TreasuryDirection.MONEY_IN
+    settlement_code = settlement_account_code(treasury_entry.payment_method)
     if treasury_entry.entry_type == TreasuryEntryType.OWNER_CONTRIBUTION:
-        rule = ("1000", "3000")
+        rule = (settlement_code, "3000")
     elif treasury_entry.entry_type == TreasuryEntryType.EXPENSE:
-        rule = ("6500", "1000")
+        rule = ("6500", settlement_code)
     elif treasury_entry.entry_type == TreasuryEntryType.MANUAL_INCOME and direction_in:
-        rule = ("1000", "4900")
+        rule = (settlement_code, "4900")
     elif treasury_entry.entry_type == TreasuryEntryType.REFUND:
-        rule = ("6300", "1000") if not direction_in else ("1000", "2300")
+        rule = ("6300", settlement_code) if not direction_in else (settlement_code, "2300")
     elif direction_in:
-        rule = ("1000", "2990")
+        rule = (settlement_code, "2990")
     else:
-        rule = ("2990", "1000")
+        rule = ("2990", settlement_code)
 
     return post_codes(
         db,
@@ -631,7 +649,7 @@ def record_opening_source_accounting(db: Session, source) -> JournalEntry | None
         db,
         company_id=source.company_id,
         branch_id=source.branch_id,
-        debit_code="1000",
+        debit_code=settlement_account_code(source.payment_method),
         credit_code=credit,
         amount=source.amount,
         description=f"Opening source: {source.description}",
