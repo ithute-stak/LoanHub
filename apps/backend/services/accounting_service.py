@@ -748,3 +748,137 @@ def ledger_rows(db: Session, key: str, account_id, *, from_date=None, to_date=No
     if branch_id:
         query = query.filter(JournalEntry.branch_id == branch_id)
     return query.order_by(JournalEntry.entry_date.asc(), JournalEntry.created_at.asc()).all()
+
+
+def post_depreciation_adjustment(
+    db: Session, *, company_id, branch_id, amount, description: str,
+    reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 21 treatment: Dr depreciation expense / Cr accumulated depreciation."""
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code="5400", credit_code="1510", amount=amount,
+        description=description, reference_type="depreciation_adjustment",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def post_accrual_adjustment(
+    db: Session, *, company_id, branch_id, amount, expense_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 22 treatment: Dr expense / Cr accrued expenses."""
+    if not expense_account_code.startswith(("5", "6")):
+        raise HTTPException(status_code=422, detail="Accruals must debit an expense account")
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code=expense_account_code, credit_code="2100", amount=amount,
+        description=description, reference_type="accrual_adjustment",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def post_prepayment_adjustment(
+    db: Session, *, company_id, branch_id, amount, expense_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 22 treatment: Dr prepayments / Cr expense."""
+    if not expense_account_code.startswith(("5", "6")):
+        raise HTTPException(status_code=422, detail="Prepayments must credit an expense account")
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code="1400", credit_code=expense_account_code, amount=amount,
+        description=description, reference_type="prepayment_adjustment",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def post_doubtful_debt_allowance(
+    db: Session, *, company_id, branch_id, amount, direction: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 19 allowance movement.
+
+    Increase: Dr bad debt expense / Cr allowance.
+    Decrease: Dr allowance / Cr bad debt expense.
+    """
+    if direction not in {"increase", "decrease"}:
+        raise HTTPException(status_code=422, detail="Allowance direction must be increase or decrease")
+    debit_code, credit_code = ("5500", "1210") if direction == "increase" else ("1210", "5500")
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code=debit_code, credit_code=credit_code, amount=amount,
+        description=description, reference_type="doubtful_debt_allowance",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def cash_flow_statement(
+    db: Session, *, company_id, from_date: date, to_date: date, branch_id=None,
+) -> dict:
+    """Summarise posted cash/bank movements into the book's three IAS 7 sections.
+
+    LoanHub's policy layer classifies fixed-asset movements as investing,
+    owner/equity funding as financing, and the remaining cash movements as
+    operating. This keeps the accounting textbook's three-section structure
+    while making classification explicit in code.
+    """
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    cash_ids = {
+        account_by_code(db, key, "1000").id,
+        account_by_code(db, key, "1010").id,
+    }
+    rows = db.query(JournalEntry).options(
+        joinedload(JournalEntry.lines).joinedload(JournalLine.account)
+    ).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date >= from_date,
+        JournalEntry.entry_date <= to_date,
+    )
+    if branch_id:
+        rows = rows.filter(JournalEntry.branch_id == branch_id)
+
+    sections = {"operating": Decimal("0.00"), "investing": Decimal("0.00"), "financing": Decimal("0.00")}
+    details = []
+    for entry in rows.order_by(JournalEntry.entry_date.asc()).all():
+        cash_movement = Decimal("0.00")
+        counterpart_codes = set()
+        for line in entry.lines:
+            if line.account_id in cash_ids:
+                cash_movement += _money(line.debit) - _money(line.credit)
+            elif line.account is not None:
+                counterpart_codes.add(line.account.code)
+        if not cash_movement:
+            continue
+        if counterpart_codes & {"1500", "1510"}:
+            section = "investing"
+        elif counterpart_codes & {"3000", "3100", "3200"}:
+            section = "financing"
+        else:
+            section = "operating"
+        sections[section] += cash_movement
+        details.append({
+            "entry_id": str(entry.id),
+            "entry_number": entry.entry_number,
+            "entry_date": entry.entry_date.isoformat(),
+            "description": entry.description,
+            "section": section,
+            "amount": float(cash_movement),
+        })
+
+    net_change = sum(sections.values(), Decimal("0.00"))
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "operating_activities": float(sections["operating"]),
+        "investing_activities": float(sections["investing"]),
+        "financing_activities": float(sections["financing"]),
+        "net_change_in_cash": float(net_change),
+        "details": details,
+    }
