@@ -331,3 +331,18 @@ class LoanWriteOffCreate(BaseModel):
 class PeriodAdjustmentReversalCreate(BaseModel):
     reversal_date: date
     description: str = Field(min_length=5, max_length=1000)
+
+
+class WrittenOffLoanRecoveryCreate(BaseModel):
+    loan_id: UUID
+    amount: Decimal = Field(gt=0)
+    recovery_date: date
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+    description: str = Field(min_length=5, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_recovery_evidence(self):
+        if self.payment_method != "cash" and not (self.proof_reference or "").strip():
+            raise ValueError("Non-cash recoveries require a proof_reference")
+        return self
