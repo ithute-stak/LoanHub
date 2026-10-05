@@ -70,6 +70,11 @@ def test_platform_database_management_is_read_only_and_owner_scoped() -> None:
     assert "pg_stat_user_indexes" in service
     assert "pg_constraint" in service
     assert "pg_stat_replication" in service
+    assert "pg_policies" in service
+    assert "rolbypassrls" in service
+    assert "relrowsecurity" in service
+    assert "runtime_owns_rls_table" in service
+    assert "enforcement_ready" in service
     assert "platform_database.router" in api_router
 
 
@@ -87,6 +92,9 @@ def test_database_management_ui_surfaces_workload_and_integrity_signals() -> Non
     assert "Largest / busiest user tables" in page
     assert "Largest indexes" in page
     assert "Integrity validation queue" in page
+    assert "Row-level security enforcement" in page
+    assert "Runtime role has row-security override capability." in page
+    assert "Runtime role owns an RLS-protected table." in page
     assert "Blocked PostgreSQL sessions detected." in page
     assert "Long-running transactions over 60 seconds detected." in page
     assert 'slug: "database-management"' in controls
