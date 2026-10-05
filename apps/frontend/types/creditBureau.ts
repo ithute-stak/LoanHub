@@ -27,6 +27,11 @@ export type CreditBureauSubscription = {
   suspended_at: string | null;
   rejection_reason: string | null;
   notes?: string | null;
+  credit_limit?: number | null;
+  warning_threshold?: number | null;
+  auto_suspend_on_limit?: boolean;
+  billing_due_days?: number;
+  usage?: CreditBureauUsage;
   company?: { id: string; name: string; registration_number?: string | null; license_number?: string | null };
 };
 
@@ -158,4 +163,40 @@ export type CreditBureauDecisionContext = {
   defaults_count: number | null;
   latest_enquiry_id: string | null;
   latest_enquiry_status: string | null;
+};
+
+
+export type CreditBureauUsage = {
+  status: string;
+  currency: string;
+  price_per_live_transaction: number | null;
+  sandbox_price: number;
+  month_transaction_count: number;
+  month_amount: number;
+  outstanding_balance: number;
+  credit_limit: number | null;
+  remaining_credit: number | null;
+  warning_threshold: number | null;
+  auto_suspend_on_limit: boolean;
+  billing_due_days: number;
+};
+
+export type CreditBureauInvoice = {
+  id: string;
+  company_id: string;
+  subscription_id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  transaction_count: number;
+  subtotal: number;
+  waived_amount: number;
+  amount_due: number;
+  currency: string;
+  status: string;
+  issued_at: string;
+  due_at: string;
+  paid_at: string | null;
+  notes: string | null;
+  snapshot: Record<string, unknown>;
 };
