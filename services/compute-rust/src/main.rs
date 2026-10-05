@@ -407,6 +407,164 @@ fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     })
 }
 
+
+#[derive(Debug, Deserialize)]
+struct PortfolioRiskRow {
+    outstanding_balance: String,
+    days_past_due: i64,
+    is_written_off: bool,
+    branch_label: Option<String>,
+    product_label: Option<String>,
+    employer_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PortfolioRiskRequest {
+    rows: Vec<PortfolioRiskRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct RiskGroupSummary {
+    label: String,
+    loan_count: usize,
+    exposure: String,
+    share_percent: String,
+    par_30: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RiskConcentrationSummary {
+    hhi: String,
+    top_share_percent: String,
+    group_count: usize,
+    groups: Vec<RiskGroupSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct PortfolioRiskResponse {
+    active_exposure: String,
+    active_loans: usize,
+    par_1_amount: String,
+    par_1: String,
+    par_7_amount: String,
+    par_7: String,
+    par_30_amount: String,
+    par_30: String,
+    par_60_amount: String,
+    par_60: String,
+    par_90_amount: String,
+    par_90: String,
+    branch: RiskConcentrationSummary,
+    product: RiskConcentrationSummary,
+    employer: RiskConcentrationSummary,
+    authoritative: bool,
+}
+
+fn percent(numerator: Decimal, denominator: Decimal) -> Decimal {
+    if denominator.is_zero() {
+        Decimal::ZERO
+    } else {
+        (numerator / denominator * Decimal::from(100_i64))
+            .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+    }
+}
+
+fn concentration(
+    rows: &[PortfolioRiskRow],
+    selector: fn(&PortfolioRiskRow) -> Option<&String>,
+    total: Decimal,
+) -> Result<RiskConcentrationSummary, String> {
+    use std::collections::BTreeMap;
+    let mut grouped: BTreeMap<String, (usize, Decimal, Decimal)> = BTreeMap::new();
+    for row in rows.iter().filter(|row| !row.is_written_off) {
+        let balance = money(decimal(&row.outstanding_balance)?);
+        let label = selector(row).cloned().unwrap_or_else(|| "Unknown".to_string());
+        let entry = grouped.entry(label).or_insert((0, Decimal::ZERO, Decimal::ZERO));
+        entry.0 += 1;
+        entry.1 += balance;
+        if row.days_past_due >= 30 {
+            entry.2 += balance;
+        }
+    }
+
+    let mut groups: Vec<RiskGroupSummary> = grouped
+        .into_iter()
+        .map(|(label, (loan_count, exposure, par30_amount))| {
+            let exposure = money(exposure);
+            RiskGroupSummary {
+                label,
+                loan_count,
+                exposure: exposure.to_string(),
+                share_percent: percent(exposure, total).to_string(),
+                par_30: percent(par30_amount, exposure).to_string(),
+            }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| {
+        let left = decimal(&a.exposure).unwrap_or(Decimal::ZERO);
+        let right = decimal(&b.exposure).unwrap_or(Decimal::ZERO);
+        right.cmp(&left).then_with(|| a.label.cmp(&b.label))
+    });
+
+    let hhi = groups.iter().fold(Decimal::ZERO, |acc, group| {
+        let share = decimal(&group.share_percent).unwrap_or(Decimal::ZERO) / Decimal::from(100_i64);
+        acc + share * share
+    }) * Decimal::from(10_000_i64);
+
+    Ok(RiskConcentrationSummary {
+        hhi: hhi.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero).to_string(),
+        top_share_percent: groups
+            .first()
+            .map(|group| group.share_percent.clone())
+            .unwrap_or_else(|| "0".to_string()),
+        group_count: groups.len(),
+        groups,
+    })
+}
+
+fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskResponse, String> {
+    let active: Vec<&PortfolioRiskRow> = req.rows.iter().filter(|row| !row.is_written_off).collect();
+    let exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
+        Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+    })?);
+
+    fn par_amount(rows: &[&PortfolioRiskRow], threshold: i64) -> Result<Decimal, String> {
+        Ok(money(rows.iter().try_fold(Decimal::ZERO, |acc, row| {
+            if row.days_past_due >= threshold {
+                Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+            } else {
+                Ok::<Decimal, String>(acc)
+            }
+        })?))
+    }
+
+    let par1 = par_amount(&active, 1)?;
+    let par7 = par_amount(&active, 7)?;
+    let par30 = par_amount(&active, 30)?;
+    let par60 = par_amount(&active, 60)?;
+    let par90 = par_amount(&active, 90)?;
+
+    Ok(PortfolioRiskResponse {
+        active_exposure: exposure.to_string(),
+        active_loans: active.len(),
+        par_1_amount: par1.to_string(),
+        par_1: percent(par1, exposure).to_string(),
+        par_7_amount: par7.to_string(),
+        par_7: percent(par7, exposure).to_string(),
+        par_30_amount: par30.to_string(),
+        par_30: percent(par30, exposure).to_string(),
+        par_60_amount: par60.to_string(),
+        par_60: percent(par60, exposure).to_string(),
+        par_90_amount: par90.to_string(),
+        par_90: percent(par90, exposure).to_string(),
+        branch: concentration(&req.rows, |row| row.branch_label.as_ref(), exposure)?,
+        product: concentration(&req.rows, |row| row.product_label.as_ref(), exposure)?,
+        employer: concentration(&req.rows, |row| row.employer_label.as_ref(), exposure)?,
+        authoritative: false,
+    })
+}
+
 fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     if req.term_months == 0 || req.term_months > 120 || req.due_dates.len() != req.term_months {
         return Err("invalid term or due_dates".to_string());
@@ -438,6 +596,28 @@ fn main() {
 
         if request.method() == &Method::Get && url == "/health/ready" {
             let _ = request.respond(json_response(200, r#"{"status":"ready","runtime":"rust"}"#.to_string()));
+            continue;
+        }
+
+        if request.method() == &Method::Post && url == "/v1/portfolio-risk-summary" {
+            let mut body = String::new();
+            if request.as_reader().read_to_string(&mut body).is_err() {
+                let _ = request.respond(json_response(400, r#"{"error":"invalid_body"}"#.to_string()));
+                continue;
+            }
+            match serde_json::from_str::<PortfolioRiskRequest>(&body)
+                .map_err(|_| "invalid_json".to_string())
+                .and_then(|payload| portfolio_risk_summary(&payload))
+            {
+                Ok(result) => {
+                    let body = serde_json::to_string(&result).unwrap();
+                    let _ = request.respond(json_response(200, body));
+                }
+                Err(error) => {
+                    let body = serde_json::json!({"error": error}).to_string();
+                    let _ = request.respond(json_response(422, body));
+                }
+            }
             continue;
         }
 
