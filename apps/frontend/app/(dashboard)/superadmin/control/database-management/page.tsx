@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import api from "@/lib/api";
+import { api } from "@/lib/api";
 
 type TableStat = {
   table_name: string;
