@@ -71,3 +71,25 @@ exposure and CDAS exposure in one cross-process request.
 This distinction is intentional: continuing to recompute the entire Python aggregate
 after promotion would preserve correctness evidence but would not deliver the intended
 CPU-efficiency gain.
+
+
+## Predictive intelligence migration status
+
+Loan-level transparent predictive scoring now has a batched Rust path.
+
+Python continues to own:
+- company/branch scope and snapshot selection;
+- collection work-item selection;
+- evidence construction and advisory-only policy;
+- database persistence and auditability;
+- all actual credit and collection decisions.
+
+Rust owns the deterministic scoring inner loop: DPD scoring, deterioration,
+bucket-worsening, first-payment-default/top-up stress, collection-priority scoring,
+risk-band classification, projected PAR30 entry and 30-day stress bucket.
+
+The workload starts in `shadow`. After benchmark/parity evidence supports promotion,
+`prefer-worker` uses valid Rust rows directly and falls back to Python only for
+missing or invalid worker output. This is the intended efficiency model: once promoted,
+LoanHub should not keep paying for the same CPU-heavy Python calculation solely for
+live parity on every request.
