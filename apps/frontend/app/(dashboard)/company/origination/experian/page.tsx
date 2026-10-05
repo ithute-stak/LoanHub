@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, LENDING_ROLES, hasRole } from "@/types/auth";
-import type { CreditBureauDecisionContext, CreditBureauEnquiry, ExperianCompanyConfiguration } from "@/types/creditBureau";
+import type { CreditBureauDecisionContext, CreditBureauEnquiry, CreditBureauInvoice, CreditBureauUsage, ExperianCompanyConfiguration } from "@/types/creditBureau";
 import type { OriginationApplication } from "@/types/origination";
 import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
@@ -44,6 +44,8 @@ export default function ExperianCreditBureauPage() {
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [enquiries, setEnquiries] = useState<CreditBureauEnquiry[]>([]);
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
+  const [usage, setUsage] = useState<CreditBureauUsage | null>(null);
+  const [invoices, setInvoices] = useState<CreditBureauInvoice[]>([]);
 
   const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
@@ -86,12 +88,16 @@ export default function ExperianCreditBureauPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [config, apps, products] = await Promise.all([
+      const [config, apps, products, billingUsage, billingInvoices] = await Promise.all([
         creditBureauApi.getExperianConfiguration(),
         originationApi.listApplications(),
         listLoanProducts(),
+        creditBureauApi.getExperianUsage(),
+        creditBureauApi.listExperianInvoices(),
       ]);
       applyConfiguration(config);
+      setUsage(billingUsage);
+      setInvoices(billingInvoices);
       const requestedApplicationId = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("application")
         : null;
@@ -223,6 +229,7 @@ export default function ExperianCreditBureauPage() {
       setAddress2("");
       setForceRefresh(false);
       await loadApplicationBureau(selectedApplicationId);
+      setUsage(await creditBureauApi.getExperianUsage());
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian credit check could not be completed."));
       await loadApplicationBureau(selectedApplicationId);
@@ -448,6 +455,25 @@ export default function ExperianCreditBureauPage() {
           </div>
 
           <LoadingButton loading={running} disabled={!canRun || !companyReady || !selectedApplicationId || !consentConfirmed || !postalCode.trim()} onClick={() => void runCreditCheck()}><Play className="h-4 w-4" />Run Experian credit check</LoadingButton>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <InfoCard label="This month" value={usage ? `${usage.month_transaction_count} checks · ${formatMoney(usage.month_amount)}` : "—"} />
+        <InfoCard label="Outstanding" value={usage ? formatMoney(usage.outstanding_balance) : "—"} />
+        <InfoCard label="Credit limit" value={usage?.credit_limit == null ? "Unlimited" : formatMoney(usage.credit_limit)} />
+        <InfoCard label="Remaining credit" value={usage?.remaining_credit == null ? "Unlimited" : formatMoney(usage.remaining_credit)} />
+      </div>
+
+      <Card className="rounded-3xl overflow-hidden">
+        <CardHeader><CardTitle>Credit Bureau billing</CardTitle><CardDescription>Sandbox enquiries are free. Only successful fresh Live enquiries are billable.</CardDescription></CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Period</TableHead><TableHead>Transactions</TableHead><TableHead>Amount due</TableHead><TableHead>Status</TableHead><TableHead>Due</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {invoices.length ? invoices.map((invoice) => <TableRow key={invoice.id}><TableCell>{invoice.invoice_number}</TableCell><TableCell>{formatDate(invoice.period_start)} – {formatDate(invoice.period_end)}</TableCell><TableCell>{invoice.transaction_count}</TableCell><TableCell>{formatMoney(invoice.amount_due)}</TableCell><TableCell><Badge variant={invoice.status === "paid" ? "default" : "secondary"}>{titleCase(invoice.status)}</Badge></TableCell><TableCell>{formatDate(invoice.due_at)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No Credit Bureau invoices yet.</TableCell></TableRow>}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 
