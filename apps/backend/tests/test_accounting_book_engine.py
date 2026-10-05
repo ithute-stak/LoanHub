@@ -466,3 +466,11 @@ def test_post_writeoff_payments_route_to_recovery_income_not_receivable():
     assert 'reference_type="payment_transaction"' in service
     assert 'credit_code="4300"' in service
     assert "recovery_payment_ids" in service
+
+
+def test_written_off_recovery_balance_is_ledger_net_of_reversals():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def _written_off_recovery_balance(" in service
+    assert 'JournalEntry.reference_id.like(f"reversal:written_off_loan_recovery:{loan_id}:%")' in service
+    assert 'f"reversal:payment_transaction:{pid}"' in service
+    assert "case.recovered_amount = _written_off_recovery_balance(" in service
