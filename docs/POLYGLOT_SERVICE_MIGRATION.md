@@ -53,3 +53,21 @@ CDAS mutation safety, and final persistence.
 ## Rollout
 
 Every migrated workload progresses through `off -> shadow -> prefer-worker` where shadow is safe. Side-effecting delivery workloads are an exception: `shadow` remains Python-only so LoanHub never sends duplicate external requests merely to compare runtimes. Promotion requires parity or contract tests, bounded latency, circuit-breaker fallback, and benchmark/history evidence. Cross-process calls should be coarse/batched; do not replace cheap local Python arithmetic with one HTTP request per row.
+
+
+## Portfolio risk migration status
+
+The Rust portfolio batch now covers PAR thresholds, grouped branch/product/employer
+risk, concentration/HHI, delinquency buckets, vintages, top-up performance, top-up
+exposure and CDAS exposure in one cross-process request.
+
+- `off`: Python computes the portfolio analytics.
+- `shadow`: Python and Rust both compute the same batch and LoanHub records exact
+  parity/mismatch evidence.
+- `prefer-worker`: Rust computes the migrated aggregate first. Python keeps tenant
+  scope and persistence authority and performs the heavy Python calculation only if
+  the Rust worker is unavailable or its response is invalid.
+
+This distinction is intentional: continuing to recompute the entire Python aggregate
+after promotion would preserve correctness evidence but would not deliver the intended
+CPU-efficiency gain.

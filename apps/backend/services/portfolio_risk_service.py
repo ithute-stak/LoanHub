@@ -294,14 +294,20 @@ def _rust_risk_rows(rows: list[PortfolioRiskSnapshot]) -> list[dict[str, Any]]:
     return [
         {
             "outstanding_balance": str(money(row.outstanding_balance)),
+            "principal_amount": str(money(row.principal_amount)),
             "days_past_due": int(row.days_past_due or 0),
             "active": (
                 row.loan_status in active_names
                 and money(row.outstanding_balance) > 0
                 and not row.is_written_off
             ),
+            "is_written_off": bool(row.is_written_off),
+            "is_top_up": bool(row.is_top_up),
+            "cdas_collection_enabled": bool(row.cdas_collection_enabled),
             "first_payment_due": bool(row.evidence_snapshot.get("first_payment_due")),
             "first_payment_default": bool(row.first_payment_default),
+            "origination_month": row.origination_month.isoformat() if row.origination_month else None,
+            "delinquency_bucket": str(row.delinquency_bucket or "current"),
             "branch_label": str(row.branch_label or "Unknown"),
             "product_label": str(row.product_label or "Unknown"),
             "employer_label": str(row.employer_label or "Unknown"),
@@ -331,6 +337,38 @@ def _normalized_rust_concentration(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalized_rust_bucket(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bucket": str(value.get("bucket") or "current"),
+        "loan_count": int(value.get("loan_count") or 0),
+        "exposure": float(money(value.get("exposure"))),
+    }
+
+
+def _normalized_rust_vintage(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vintage": str(value.get("vintage") or ""),
+        "loan_count": int(value.get("loan_count") or 0),
+        "originated_principal": float(money(value.get("originated_principal"))),
+        "outstanding_balance": float(money(value.get("outstanding_balance"))),
+        "par_30": float(money(value.get("par_30"))),
+        "fpd_rate": float(money(value.get("fpd_rate"))),
+        "write_off_count": int(value.get("write_off_count") or 0),
+        "top_up_count": int(value.get("top_up_count") or 0),
+    }
+
+
+def _normalized_rust_top_up(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "label": str(value.get("label") or ""),
+        "loan_count": int(value.get("loan_count") or 0),
+        "active_exposure": float(money(value.get("active_exposure"))),
+        "par_30": float(money(value.get("par_30"))),
+        "fpd_rate": float(money(value.get("fpd_rate"))),
+        "write_off_count": int(value.get("write_off_count") or 0),
+    }
+
+
 def _normalized_rust_risk(value: dict[str, Any]) -> dict[str, Any]:
     par: dict[str, Any] = {
         "active_exposure": float(money(value.get("active_exposure"))),
@@ -344,6 +382,20 @@ def _normalized_rust_risk(value: dict[str, Any]) -> dict[str, Any]:
         "branch": _normalized_rust_concentration(dict(value.get("branch") or {})),
         "product": _normalized_rust_concentration(dict(value.get("product") or {})),
         "employer": _normalized_rust_concentration(dict(value.get("employer") or {})),
+        "delinquency_buckets": [
+            _normalized_rust_bucket(item)
+            for item in list(value.get("delinquency_buckets") or [])
+        ],
+        "vintages": [
+            _normalized_rust_vintage(item)
+            for item in list(value.get("vintages") or [])
+        ],
+        "top_up_performance": [
+            _normalized_rust_top_up(item)
+            for item in list(value.get("top_up_performance") or [])
+        ],
+        "top_up_exposure": float(money(value.get("top_up_exposure"))),
+        "cdas_exposure": float(money(value.get("cdas_exposure"))),
     }
 
 
@@ -525,6 +577,62 @@ def _projected_cash_flow(db: Session, company_id: UUID, as_of: date, branch_id: 
     ]
 
 
+def _python_risk_aggregation(rows: list[PortfolioRiskSnapshot]) -> dict[str, Any]:
+    active = _active_rows(rows)
+    delinquency = [
+        {
+            "bucket": bucket,
+            "loan_count": sum(row.delinquency_bucket == bucket for row in active),
+            "exposure": float(
+                money(
+                    sum(
+                        (
+                            money(row.outstanding_balance)
+                            for row in active
+                            if row.delinquency_bucket == bucket
+                        ),
+                        Decimal("0.00"),
+                    )
+                )
+            ),
+        }
+        for bucket in BUCKET_ORDER
+    ]
+    return {
+        "par": _par_metrics(rows),
+        "branch": _concentration(rows, "branch_label"),
+        "product": _concentration(rows, "product_label"),
+        "employer": _concentration(rows, "employer_label"),
+        "delinquency_buckets": delinquency,
+        "vintages": _vintages(rows),
+        "top_up_performance": _top_up_performance(rows),
+        "top_up_exposure": float(
+            money(
+                sum(
+                    (
+                        money(row.outstanding_balance)
+                        for row in active
+                        if row.is_top_up
+                    ),
+                    Decimal("0.00"),
+                )
+            )
+        ),
+        "cdas_exposure": float(
+            money(
+                sum(
+                    (
+                        money(row.outstanding_balance)
+                        for row in active
+                        if row.cdas_collection_enabled
+                    ),
+                    Decimal("0.00"),
+                )
+            )
+        ),
+    }
+
+
 def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_of: date) -> dict[str, Any]:
     ensure_today_snapshot(db, company_id, as_of)
     query = db.query(PortfolioRiskSnapshot).filter(
@@ -534,16 +642,6 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
     if branch_id:
         query = query.filter(PortfolioRiskSnapshot.branch_id == branch_id)
     rows = query.all()
-    python_par = _par_metrics(rows)
-    python_branch = _group_risk(rows, "branch_label")
-    python_product = _group_risk(rows, "product_label")
-    python_employer = _group_risk(rows, "employer_label")
-    python_concentration = {
-        "branch": _concentration(rows, "branch_label"),
-        "product": _concentration(rows, "product_label"),
-        "employer": _concentration(rows, "employer_label"),
-    }
-
     routing_mode = workload_routing_mode("rust_portfolio_risk")
     delegated = (
         rust_portfolio_risk_summary(rows=_rust_risk_rows(rows))
@@ -551,42 +649,52 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
         else None
     )
     delegated_normalized = None
-    parity_passed = False
+    delegated_invalid = False
     if delegated:
         try:
             delegated_normalized = _normalized_rust_risk(delegated)
-            parity_passed = (
-                delegated_normalized["par"] == python_par
-                and delegated_normalized["branch"]["groups"] == python_branch
-                and delegated_normalized["product"]["groups"] == python_product
-                and delegated_normalized["employer"]["groups"] == python_employer
-                and delegated_normalized["branch"] == python_concentration["branch"]
-                and delegated_normalized["product"] == python_concentration["product"]
-                and delegated_normalized["employer"] == python_concentration["employer"]
-            )
         except (TypeError, ValueError):
-            parity_passed = False
-        if not parity_passed:
+            delegated_invalid = True
             record_parity_mismatch("rust_compute")
 
-    use_rust = (
-        routing_mode == "prefer-worker"
-        and parity_passed
-        and delegated_normalized is not None
-    )
-    par = delegated_normalized["par"] if use_rust else python_par
-    branch_risk = delegated_normalized["branch"]["groups"] if use_rust else python_branch
-    product_risk = delegated_normalized["product"]["groups"] if use_rust else python_product
-    employer_risk = delegated_normalized["employer"]["groups"] if use_rust else python_employer
-    concentration = (
-        {
-            "branch": delegated_normalized["branch"],
-            "product": delegated_normalized["product"],
-            "employer": delegated_normalized["employer"],
-        }
-        if use_rust
-        else python_concentration
-    )
+    python_aggregate = None
+    parity_passed = False
+    use_rust = routing_mode == "prefer-worker" and delegated_normalized is not None
+
+    if use_rust:
+        selected = delegated_normalized
+        parity_status = "promoted_no_live_parity"
+    else:
+        python_aggregate = _python_risk_aggregation(rows)
+        selected = python_aggregate
+        if routing_mode == "shadow" and delegated_normalized is not None:
+            parity_passed = delegated_normalized == python_aggregate
+            parity_status = "passed" if parity_passed else "mismatch"
+            if not parity_passed:
+                record_parity_mismatch("rust_compute")
+        elif routing_mode == "off":
+            parity_status = "off"
+        elif delegated is None:
+            parity_status = "unavailable"
+        elif delegated_invalid:
+            parity_status = "mismatch"
+        else:
+            parity_status = "fallback"
+
+    par = selected["par"]
+    branch_risk = selected["branch"]["groups"]
+    product_risk = selected["product"]["groups"]
+    employer_risk = selected["employer"]["groups"]
+    concentration = {
+        "branch": selected["branch"],
+        "product": selected["product"],
+        "employer": selected["employer"],
+    }
+    delinquency_buckets = selected["delinquency_buckets"]
+    vintages = selected["vintages"]
+    top_up_performance = selected["top_up_performance"]
+    top_up_exposure = selected["top_up_exposure"]
+    cdas_exposure = selected["cdas_exposure"]
 
     fpd_eligible = [row for row in rows if row.evidence_snapshot.get("first_payment_due") and row.origination_month and row.origination_month <= as_of]
     written_off = [row for row in rows if row.is_written_off]
@@ -609,21 +717,14 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
             "write_off_count": len(written_off),
             "write_off_amount": float(money(write_off_amount)),
             "write_off_rate": safe_percent(write_off_amount, active_exposure + write_off_amount),
-            "top_up_exposure": float(money(sum((money(row.outstanding_balance) for row in _active_rows(rows) if row.is_top_up), Decimal("0.00")))),
-            "cdas_exposure": float(money(sum((money(row.outstanding_balance) for row in _active_rows(rows) if row.cdas_collection_enabled), Decimal("0.00")))),
+            "top_up_exposure": top_up_exposure,
+            "cdas_exposure": cdas_exposure,
             "open_recovery_work_items": open_recovery_query.count(),
         },
-        "delinquency_buckets": [
-            {
-                "bucket": bucket,
-                "loan_count": sum(row.delinquency_bucket == bucket for row in _active_rows(rows)),
-                "exposure": float(money(sum((money(row.outstanding_balance) for row in _active_rows(rows) if row.delinquency_bucket == bucket), Decimal("0.00")))),
-            }
-            for bucket in BUCKET_ORDER
-        ],
+        "delinquency_buckets": delinquency_buckets,
         "roll_and_cure": _transitions(db, company_id, rows, as_of, branch_id),
-        "vintages": _vintages(rows),
-        "top_up_performance": _top_up_performance(rows),
+        "vintages": vintages,
+        "top_up_performance": top_up_performance,
         "branch_risk": branch_risk,
         "product_risk": product_risk,
         "employer_risk": employer_risk,
@@ -633,15 +734,7 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
             "rust_routing_mode": routing_mode,
             "rust_used": use_rust,
             "rust_shadow": routing_mode == "shadow" and parity_passed,
-            "rust_parity": (
-                "passed"
-                if parity_passed
-                else "off"
-                if routing_mode == "off"
-                else "unavailable"
-                if delegated is None
-                else "mismatch"
-            ),
+            "rust_parity": parity_status,
             "fallback": not use_rust,
         },
         "projected_cash_flow": _projected_cash_flow(db, company_id, as_of, branch_id),

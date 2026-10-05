@@ -411,10 +411,16 @@ fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
 #[derive(Debug, Deserialize)]
 struct PortfolioRiskRow {
     outstanding_balance: String,
+    principal_amount: String,
     days_past_due: i64,
     active: bool,
+    is_written_off: bool,
+    is_top_up: bool,
+    cdas_collection_enabled: bool,
     first_payment_due: bool,
     first_payment_default: bool,
+    origination_month: Option<String>,
+    delinquency_bucket: String,
     branch_label: Option<String>,
     product_label: Option<String>,
     employer_label: Option<String>,
@@ -444,6 +450,35 @@ struct RiskConcentrationSummary {
 }
 
 #[derive(Debug, Serialize)]
+struct DelinquencyBucketSummary {
+    bucket: String,
+    loan_count: usize,
+    exposure: String,
+}
+
+#[derive(Debug, Serialize)]
+struct VintageSummary {
+    vintage: String,
+    loan_count: usize,
+    originated_principal: String,
+    outstanding_balance: String,
+    par_30: String,
+    fpd_rate: String,
+    write_off_count: usize,
+    top_up_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct TopUpPerformanceSummary {
+    label: String,
+    loan_count: usize,
+    active_exposure: String,
+    par_30: String,
+    fpd_rate: String,
+    write_off_count: usize,
+}
+
+#[derive(Debug, Serialize)]
 struct PortfolioRiskResponse {
     active_exposure: String,
     active_loans: usize,
@@ -460,6 +495,11 @@ struct PortfolioRiskResponse {
     branch: RiskConcentrationSummary,
     product: RiskConcentrationSummary,
     employer: RiskConcentrationSummary,
+    delinquency_buckets: Vec<DelinquencyBucketSummary>,
+    vintages: Vec<VintageSummary>,
+    top_up_performance: Vec<TopUpPerformanceSummary>,
+    top_up_exposure: String,
+    cdas_exposure: String,
     authoritative: bool,
 }
 
@@ -533,6 +573,166 @@ fn concentration(
     })
 }
 
+fn delinquency_buckets(
+    rows: &[PortfolioRiskRow],
+) -> Result<Vec<DelinquencyBucketSummary>, String> {
+    use std::collections::BTreeMap;
+    let mut grouped: BTreeMap<String, (usize, Decimal)> = BTreeMap::new();
+    for row in rows.iter().filter(|row| row.active) {
+        let balance = money(decimal(&row.outstanding_balance)?);
+        let entry = grouped
+            .entry(row.delinquency_bucket.clone())
+            .or_insert((0, Decimal::ZERO));
+        entry.0 += 1;
+        entry.1 += balance;
+    }
+
+    Ok(["current", "1-7", "8-30", "31-60", "61-90", "90+"]
+        .into_iter()
+        .map(|bucket| {
+            let (loan_count, exposure) = grouped
+                .get(bucket)
+                .copied()
+                .unwrap_or((0, Decimal::ZERO));
+            DelinquencyBucketSummary {
+                bucket: bucket.to_string(),
+                loan_count,
+                exposure: money(exposure).to_string(),
+            }
+        })
+        .collect())
+}
+
+fn vintage_summaries(rows: &[PortfolioRiskRow]) -> Result<Vec<VintageSummary>, String> {
+    use std::collections::BTreeMap;
+    let mut grouped: BTreeMap<
+        String,
+        (usize, Decimal, Decimal, Decimal, i64, i64, usize, usize),
+    > = BTreeMap::new();
+
+    for row in rows {
+        let Some(month) = row.origination_month.as_ref() else {
+            continue;
+        };
+        let principal = money(decimal(&row.principal_amount)?);
+        let outstanding = money(decimal(&row.outstanding_balance)?);
+        let entry = grouped.entry(month.clone()).or_insert((
+            0,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            0,
+            0,
+            0,
+            0,
+        ));
+        entry.0 += 1;
+        entry.1 += principal;
+        if !row.is_written_off {
+            entry.2 += outstanding;
+            if row.days_past_due >= 30 {
+                entry.3 += outstanding;
+            }
+        }
+        if row.first_payment_due {
+            entry.4 += 1;
+            if row.first_payment_default {
+                entry.5 += 1;
+            }
+        }
+        if row.is_written_off {
+            entry.6 += 1;
+        }
+        if row.is_top_up {
+            entry.7 += 1;
+        }
+    }
+
+    let mut result: Vec<VintageSummary> = grouped
+        .into_iter()
+        .map(
+            |(
+                month,
+                (
+                    loan_count,
+                    originated,
+                    outstanding,
+                    par30_amount,
+                    fpd_eligible,
+                    fpd_count,
+                    write_off_count,
+                    top_up_count,
+                ),
+            )| {
+                let outstanding = money(outstanding);
+                VintageSummary {
+                    vintage: month.get(..7).unwrap_or(&month).to_string(),
+                    loan_count,
+                    originated_principal: money(originated).to_string(),
+                    outstanding_balance: outstanding.to_string(),
+                    par_30: percent(par30_amount, outstanding).to_string(),
+                    fpd_rate: percent(
+                        Decimal::from(fpd_count),
+                        Decimal::from(fpd_eligible),
+                    )
+                    .to_string(),
+                    write_off_count,
+                    top_up_count,
+                }
+            },
+        )
+        .collect();
+
+    result.sort_by(|left, right| right.vintage.cmp(&left.vintage));
+    result.truncate(18);
+    Ok(result)
+}
+
+fn top_up_performance(
+    rows: &[PortfolioRiskRow],
+) -> Result<Vec<TopUpPerformanceSummary>, String> {
+    let mut result = Vec::with_capacity(2);
+    for (is_top_up, label) in [
+        (false, "New / non-top-up"),
+        (true, "Top-up"),
+    ] {
+        let group: Vec<&PortfolioRiskRow> =
+            rows.iter().filter(|row| row.is_top_up == is_top_up).collect();
+        let active: Vec<&PortfolioRiskRow> =
+            group.iter().copied().filter(|row| row.active).collect();
+
+        let exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
+            Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+        })?);
+        let par30 = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
+            if row.days_past_due >= 30 {
+                Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+            } else {
+                Ok::<Decimal, String>(acc)
+            }
+        })?);
+        let fpd_eligible = group.iter().filter(|row| row.first_payment_due).count();
+        let fpd_count = group
+            .iter()
+            .filter(|row| row.first_payment_due && row.first_payment_default)
+            .count();
+
+        result.push(TopUpPerformanceSummary {
+            label: label.to_string(),
+            loan_count: group.len(),
+            active_exposure: exposure.to_string(),
+            par_30: percent(par30, exposure).to_string(),
+            fpd_rate: percent(
+                Decimal::from(fpd_count as i64),
+                Decimal::from(fpd_eligible as i64),
+            )
+            .to_string(),
+            write_off_count: group.iter().filter(|row| row.is_written_off).count(),
+        });
+    }
+    Ok(result)
+}
+
 fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskResponse, String> {
     let active: Vec<&PortfolioRiskRow> = req.rows.iter().filter(|row| row.active).collect();
     let exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
@@ -554,6 +754,20 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
     let par30 = par_amount(&active, 30)?;
     let par60 = par_amount(&active, 60)?;
     let par90 = par_amount(&active, 90)?;
+    let top_up_exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
+        if row.is_top_up {
+            Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+        } else {
+            Ok::<Decimal, String>(acc)
+        }
+    })?);
+    let cdas_exposure = money(active.iter().try_fold(Decimal::ZERO, |acc, row| {
+        if row.cdas_collection_enabled {
+            Ok::<Decimal, String>(acc + money(decimal(&row.outstanding_balance)?))
+        } else {
+            Ok::<Decimal, String>(acc)
+        }
+    })?);
 
     Ok(PortfolioRiskResponse {
         active_exposure: exposure.to_string(),
@@ -571,6 +785,11 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
         branch: concentration(&req.rows, |row| row.branch_label.as_ref(), exposure)?,
         product: concentration(&req.rows, |row| row.product_label.as_ref(), exposure)?,
         employer: concentration(&req.rows, |row| row.employer_label.as_ref(), exposure)?,
+        delinquency_buckets: delinquency_buckets(&req.rows)?,
+        vintages: vintage_summaries(&req.rows)?,
+        top_up_performance: top_up_performance(&req.rows)?,
+        top_up_exposure: top_up_exposure.to_string(),
+        cdas_exposure: cdas_exposure.to_string(),
         authoritative: false,
     })
 }
