@@ -127,7 +127,7 @@ export default function PlatformCdasPage() {
         }
     }, [environment, hydrateCommercial, hydrateProfile, selectedCompanyId]);
 
-    useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { void load(); }, [load]);
 
     function chooseCompany(companyId: string) {
         setSelectedCompanyId(companyId);
