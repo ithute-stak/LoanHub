@@ -27,6 +27,7 @@ _runtime_state: dict[str, dict[str, float | int | str | None]] = {}
 _ROUTING_ENV = {
     "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
     "go_webhook_delivery": "LOANHUB_GO_WEBHOOK_DELIVERY_MODE",
+    "go_mobile_push": "LOANHUB_GO_MOBILE_PUSH_MODE",
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
@@ -35,6 +36,7 @@ _ROUTING_ENV = {
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
     "go_webhook_delivery": "off",
+    "go_mobile_push": "off",
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
@@ -463,6 +465,41 @@ def go_webhook_delivery_batch(*, jobs: list[dict]) -> list[dict] | None:
         "go_worker",
         f"{base_url}/v1/webhooks/deliver-batch",
         {"jobs": jobs},
+        timeout=35.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]
+
+
+def go_mobile_push_batch(
+    *,
+    project_id: str,
+    access_token: str,
+    jobs: list[dict],
+) -> list[dict] | None:
+    """Fan out prepared FCM v1 messages through Go.
+
+    Python remains responsible for recipient selection, notification policy,
+    and minting the short-lived OAuth token. Go receives no long-lived
+    Firebase credential and performs no automatic retry.
+    """
+    if workload_routing_mode("go_mobile_push") != "prefer-worker":
+        return None
+    base_url = go_worker_url()
+    if not base_url or not project_id or not access_token or not jobs:
+        return None
+    value = _guarded_post_json(
+        "go_worker",
+        f"{base_url}/v1/push/fcm-deliver-batch",
+        {
+            "project_id": project_id,
+            "access_token": access_token,
+            "jobs": jobs,
+        },
         timeout=35.0,
     )
     if value is None or value.get("authoritative") is not False:
