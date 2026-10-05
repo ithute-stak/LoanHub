@@ -40,6 +40,7 @@ from database.schemas.accounting import (
     LedgerRead,
     LoanWriteOffCreate,
     PrepaymentAdjustmentCreate,
+    PeriodAdjustmentReversalCreate,
     TrialBalanceLine,
     TrialBalanceRead,
     SuspenseCorrectionCreate,
@@ -63,6 +64,7 @@ from services.accounting_service import (
     post_doubtful_debt_allowance,
     post_expense,
     post_prepayment_adjustment,
+    reverse_period_adjustment,
     post_vat_transaction,
     post_suspense_correction,
     post_fixed_asset_depreciation,
@@ -1079,3 +1081,27 @@ def depreciate_assets_for_period(
     )
     db.commit()
     return result
+
+
+@router.post("/adjustments/{entry_id}/reverse", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def reverse_adjustment_next_period(
+    entry_id: UUID,
+    payload: PeriodAdjustmentReversalCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    entry = reverse_period_adjustment(
+        db,
+        company_id=selected_company_id,
+        journal_entry_id=entry_id,
+        reversal_date=payload.reversal_date,
+        description=payload.description,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
