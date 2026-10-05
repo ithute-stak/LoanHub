@@ -336,3 +336,24 @@ def test_electronic_clearing_reconciliation_includes_non_payment_sources():
     assert '"opening_source_net"' in service
     assert '"electronic_provider_invoice_payments"' in service
     assert '"electronic_provider_refunds"' in service
+
+
+def test_electronic_clearing_aging_identifies_stale_fifo_open_items():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+
+    assert "ELECTRONIC_CLEARING_STALE_DAYS = 5" in service
+    assert "def electronic_clearing_aging(" in service
+    assert '"method": "fifo_open_item_aging"' in service
+    assert '"age_basis": "calendar_days"' in service
+    assert '"receivable_from_provider"' in service
+    assert '"provider_prefunding_or_outbound"' in service
+    assert '"stale_item_count"' in service
+    assert '"has_stale_items": stale_count > 0' in service
+    assert '@router.get("/controls/electronic-clearing/aging")' in router
+
+
+def test_period_close_blocks_stale_electronic_clearing_items():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"electronic_clearing_has_no_stale_items": not bool(electronic_clearing_age["has_stale_items"])' in service
+    assert '"electronic_clearing_aging": electronic_clearing_age' in service
