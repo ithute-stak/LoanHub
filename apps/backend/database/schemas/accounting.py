@@ -326,3 +326,8 @@ class LoanWriteOffCreate(BaseModel):
     loan_id: UUID
     write_off_date: date
     description: str = Field(min_length=5, max_length=1000)
+
+
+class PeriodAdjustmentReversalCreate(BaseModel):
+    reversal_date: date
+    description: str = Field(min_length=5, max_length=1000)
