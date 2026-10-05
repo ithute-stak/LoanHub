@@ -86,59 +86,7 @@ type pushDeliveryBatchResponse struct {
 	Results       []pushDeliveryResult `json:"results"`
 }
 
-var firebaseProjectIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{4,62}[a-z0-9]package main
-
-import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"net"
-	"net/http"
-	"net/url"
-	"regexp"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-)
-
-type digestRequest struct {
-	CorrelationID string `json:"correlation_id"`
-	Payload       string `json:"payload"`
-}
-
-type digestResponse struct {
-	CorrelationID string `json:"correlation_id"`
-	SHA256        string `json:"sha256"`
-}
-
-type webhookDeliveryJob struct {
-	JobID     string            `json:"job_id"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	Body      string            `json:"body"`
-	TimeoutMS int               `json:"timeout_ms"`
-}
-
-type webhookDeliveryBatchRequest struct {
-	Jobs []webhookDeliveryJob `json:"jobs"`
-}
-
-type webhookDeliveryResult struct {
-	JobID              string `json:"job_id"`
-	StatusCode         int    `json:"status_code"`
-	ResponseBodySHA256 string `json:"response_body_sha256,omitempty"`
-	Error              string `json:"error,omitempty"`
-	DurationMS         int64  `json:"duration_ms"`
-}
-
-)
+var firebaseProjectIDPattern = regexp.MustCompile("^[a-z0-9][a-z0-9-]{4,62}[a-z0-9]$")
 
 func clampInt(value, minimum, maximum int) int {
 	if value < minimum {
