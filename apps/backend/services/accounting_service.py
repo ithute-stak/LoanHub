@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.enums import (
     PaymentDirection,
@@ -50,6 +51,7 @@ COMPANY_CHART = [
     ("1100", "Loans Receivable - Principal", "asset", "debit"),
     ("1110", "Interest Receivable", "asset", "debit"),
     ("1120", "Fees Receivable", "asset", "debit"),
+    ("1150", "Allowance for Credit Losses", "asset", "credit"),
     ("1200", "Trade Receivables", "asset", "debit"),
     ("1210", "Allowance for Doubtful Debts", "asset", "credit"),
     ("1300", "Inventory and Consumables", "asset", "debit"),
@@ -77,6 +79,7 @@ COMPANY_CHART = [
     ("5300", "Administration Expense", "expense", "debit"),
     ("5400", "Depreciation Expense", "expense", "debit"),
     ("5500", "Bad Debt Expense", "expense", "debit"),
+    ("5510", "Credit Loss Provision Expense", "expense", "debit"),
     ("5600", "Bank and Payment Charges", "expense", "debit"),
     ("6100", "LoanHub Subscription Expense", "expense", "debit"),
     ("6200", "Marketplace Access Expense", "expense", "debit"),
@@ -438,7 +441,7 @@ def record_payment_accounting(db: Session, payment: PaymentTransaction) -> None:
     making the exception visible to finance staff while preserving balanced
     books and a complete audit trail.
     """
-    if payment.status not in {PaymentStatus.SUCCEEDED, getattr(PaymentStatus, "PROCESSING", PaymentStatus.SUCCEEDED)}:
+    if payment.status != PaymentStatus.SUCCEEDED:
         return
     amount = _money(payment.amount)
     if amount <= 0:
@@ -1307,3 +1310,79 @@ def dispose_fixed_asset(
     asset.status = "disposed"
     db.add(asset)
     return entry
+
+
+def loan_receivables_control_reconciliation(
+    db: Session,
+    *,
+    company_id,
+    as_of: date,
+    branch_id=None,
+) -> dict:
+    """Reconcile the loan principal control account to the payment/loan subledger.
+
+    The general ledger side is account 1100. The source-side balance is derived
+    independently from successful loan disbursements less the principal portion
+    of successful repayments, so a missing or duplicated journal is visible.
+    """
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    principal_account = account_by_code(db, key, "1100")
+
+    ledger_q = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == principal_account.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= as_of,
+    )
+    if branch_id:
+        ledger_q = ledger_q.filter(JournalEntry.branch_id == branch_id)
+    ledger_debit, ledger_credit = ledger_q.first()
+    ledger_balance = _money(Decimal(ledger_debit) - Decimal(ledger_credit))
+
+    payments = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+        PaymentTransaction.purpose.in_([
+            PaymentPurpose.LOAN_DISBURSEMENT,
+            PaymentPurpose.LOAN_REPAYMENT,
+        ]),
+        func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)) <= as_of,
+    )
+    if branch_id:
+        payments = payments.join(
+            ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id
+        ).filter(ClientCompanyLoan.branch_id == branch_id)
+
+    disbursed = Decimal("0.00")
+    principal_repaid = Decimal("0.00")
+    disbursement_count = repayment_count = 0
+    for payment in payments.all():
+        if payment.purpose == PaymentPurpose.LOAN_DISBURSEMENT:
+            disbursed += _money(payment.amount)
+            disbursement_count += 1
+        elif payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+            principal, _, _ = _loan_repayment_components(db, payment)
+            principal_repaid += principal
+            repayment_count += 1
+
+    subledger_balance = _money(disbursed - principal_repaid)
+    variance = _money(ledger_balance - subledger_balance)
+    return {
+        "as_of": as_of.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ledger_account_code": "1100",
+        "ledger_principal_receivable": float(ledger_balance),
+        "source_disbursements": float(_money(disbursed)),
+        "source_principal_repayments": float(_money(principal_repaid)),
+        "source_principal_receivable": float(subledger_balance),
+        "variance": float(variance),
+        "balanced": variance == 0,
+        "source_counts": {
+            "disbursements": disbursement_count,
+            "repayments": repayment_count,
+        },
+    }
