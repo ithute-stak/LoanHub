@@ -1,10 +1,16 @@
+from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from database.schemas.accounting import VatTransactionCreate
-from services.accounting_service import COMPANY_CHART, PLATFORM_CHART
+from database.schemas.accounting import FixedAssetCreate, VatTransactionCreate
+from services.accounting_service import (
+    COMPANY_CHART,
+    PLATFORM_CHART,
+    calculate_fixed_asset_depreciation,
+)
 
 
 ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
@@ -72,3 +78,60 @@ def test_period_close_requires_reconciliation_batches_closed():
     assert "ReconciliationBatch" in source
     assert '"reconciliation_batches_closed"' in source
     assert '"open_reconciliation_batches"' in source
+
+
+def test_fixed_asset_schema_requires_rate_for_reducing_balance():
+    with pytest.raises(ValidationError):
+        FixedAssetCreate(
+            reference="FA-001",
+            name="Laptop",
+            acquisition_date=date(2026, 1, 1),
+            cost=Decimal("12000.00"),
+            residual_value=Decimal("0"),
+            useful_life_years=3,
+            depreciation_method="reducing_balance",
+        )
+
+
+def test_straight_line_asset_depreciation_uses_cost_less_residual_value():
+    asset = SimpleNamespace(
+        amount=Decimal("22000.00"),
+        status="active",
+        data={
+            "acquisition_date": "2026-01-01",
+            "residual_value": "2000.00",
+            "useful_life_years": 4,
+            "depreciation_method": "straight_line",
+            "depreciation_rate": None,
+            "accumulated_depreciation": "0.00",
+            "last_depreciation_date": None,
+        },
+    )
+    assert calculate_fixed_asset_depreciation(
+        asset, period_start=date(2026, 1, 1), period_end=date(2026, 12, 31)
+    ) == Decimal("5000.00")
+
+
+def test_reducing_balance_asset_depreciation_uses_opening_carrying_amount():
+    asset = SimpleNamespace(
+        amount=Decimal("10000.00"),
+        status="active",
+        data={
+            "acquisition_date": "2026-01-01",
+            "residual_value": "0.00",
+            "useful_life_years": 10,
+            "depreciation_method": "reducing_balance",
+            "depreciation_rate": "20",
+            "accumulated_depreciation": "2000.00",
+            "last_depreciation_date": "2026-12-31",
+        },
+    )
+    assert calculate_fixed_asset_depreciation(
+        asset, period_start=date(2027, 1, 1), period_end=date(2027, 12, 31)
+    ) == Decimal("1600.00")
+
+
+def test_fixed_asset_disposal_accounts_exist():
+    chart = _chart_map(COMPANY_CHART)
+    assert chart["4910"][1:] == ("revenue", "credit")
+    assert chart["6510"][1:] == ("expense", "debit")
