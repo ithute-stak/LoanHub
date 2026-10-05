@@ -73,6 +73,7 @@ from services.accounting_service import (
     post_loan_write_off,
     record_written_off_loan_recovery,
     dispose_fixed_asset,
+    electronic_clearing_aging,
     electronic_clearing_reconciliation,
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
@@ -1289,3 +1290,26 @@ def post_electronic_clearing_settlement(
     )
     db.commit()
     return result
+
+
+@router.get("/controls/electronic-clearing/aging")
+def electronic_clearing_aging_control(
+    as_of: date = Query(...),
+    stale_after_days: int = Query(default=5, ge=0, le=365),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return electronic_clearing_aging(
+        db,
+        company_id=selected_company_id,
+        as_of=as_of,
+        branch_id=selected_branch_id,
+        stale_after_days=stale_after_days,
+    )
