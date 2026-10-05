@@ -19,7 +19,7 @@ from database.models.credit_loss_provisioning import (
     CreditLossProvisionRun,
 )
 from database.models.portfolio_risk import PortfolioRiskSnapshot
-from services.accounting_service import account_by_code, create_entry, ensure_chart, scope_key
+from services.accounting_service import account_by_code, create_entry, ensure_chart, loan_source_principal_outstanding, scope_key
 
 
 MONEY = Decimal("0.01")
@@ -217,8 +217,17 @@ def generate_run(
     write_off_candidates = 0
     candidate_dpd = int((policy.rates or {}).get("write_off_candidate_dpd", DEFAULT_POLICY_RATES["write_off_candidate_dpd"]))
 
+    recognized_rows = []
     for row in eligible:
-        exposure = money(row.outstanding_balance)
+        exposure = loan_source_principal_outstanding(
+            db,
+            company_id=context.company_id,
+            loan_id=row.loan_id,
+            as_of=as_of_date,
+        )
+        if exposure <= 0:
+            continue
+        recognized_rows.append(row)
         stage = stage_for_snapshot(row)
         rate = rate_for_snapshot(row, policy)
         allowance = money(exposure * rate)
@@ -252,6 +261,9 @@ def generate_run(
                 "delinquency_bucket": row.delinquency_bucket,
                 "loan_status": row.loan_status,
                 "overdue_amount": str(money(row.overdue_amount)),
+                "risk_snapshot_outstanding_balance": str(money(row.outstanding_balance)),
+                "recognized_principal_exposure": str(exposure),
+                "exposure_basis": "successful_disbursements_less_principal_repayments",
                 "first_payment_default": bool(row.first_payment_default),
                 "collection_channel": row.collection_channel,
                 "employer_label": row.employer_label,
@@ -270,7 +282,7 @@ def generate_run(
     )
     required = max(money(base_total + overlay), Decimal("0.00"))
     run.status = "draft"
-    run.loan_count = len(eligible)
+    run.loan_count = len(recognized_rows)
     run.gross_exposure = money(gross)
     run.required_allowance = required
     run.prior_allowance = prior
@@ -284,6 +296,7 @@ def generate_run(
     run.summary = {
         "method": "configurable_dpd_stage_policy",
         "prior_allowance_basis": "actual_posted_1150_ledger_balance",
+        "exposure_basis": "recognized_principal_control_subledger",
         "policy_name": policy.name,
         "policy_version": policy.version,
         "rates": policy.rates,
