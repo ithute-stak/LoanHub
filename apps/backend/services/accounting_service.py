@@ -190,6 +190,43 @@ def ensure_chart(db: Session, *, company_id=None) -> list[AccountingAccount]:
 
     existing = db.query(AccountingAccount).filter(AccountingAccount.scope_key == key).all()
     by_code = {row.code: row for row in existing}
+
+    # Historical LoanHub builds used 6700 for credit-loss provision expense.
+    # Preserve those journal meanings when upgrading the chart: first reuse the
+    # old system account as 5510 when possible, then move only legacy provision
+    # journal lines if both accounts already exist. This is an idempotent chart
+    # migration; debit/credit amounts and journal identities are unchanged.
+    if company_id:
+        legacy_6700 = by_code.get("6700")
+        provision_5510 = by_code.get("5510")
+        if (
+            legacy_6700
+            and legacy_6700.is_system
+            and "credit loss" in str(legacy_6700.name or "").lower()
+            and provision_5510 is None
+        ):
+            legacy_6700.code = "5510"
+            legacy_6700.name = "Credit Loss Provision Expense"
+            legacy_6700.account_type = "expense"
+            legacy_6700.normal_balance = "debit"
+            db.flush()
+            by_code.pop("6700", None)
+            by_code["5510"] = legacy_6700
+            provision_5510 = legacy_6700
+
+        if legacy_6700 and provision_5510 and legacy_6700.id != provision_5510.id:
+            legacy_provision_journals = db.query(JournalEntry.id).filter(
+                JournalEntry.scope_key == key,
+                JournalEntry.reference_type == "credit_loss_provision_run",
+            )
+            db.query(JournalLine).filter(
+                JournalLine.account_id == legacy_6700.id,
+                JournalLine.journal_entry_id.in_(legacy_provision_journals),
+            ).update(
+                {JournalLine.account_id: provision_5510.id},
+                synchronize_session=False,
+            )
+
     for code, name, account_type, normal_balance in (COMPANY_CHART if company_id else PLATFORM_CHART):
         account = by_code.get(code)
         if account:
