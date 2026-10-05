@@ -515,6 +515,56 @@ def waive_transaction(
     return row
 
 
+def refund_transaction(
+    db: Session,
+    *,
+    transaction_id: UUID,
+    reason: str,
+    payment_method: str,
+    proof_reference: str | None,
+) -> PlatformCreditBureauTransaction:
+    row = db.query(PlatformCreditBureauTransaction).filter(
+        PlatformCreditBureauTransaction.id == transaction_id
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
+    if row.status == "refunded":
+        return row
+    if row.status != "settled":
+        raise HTTPException(status_code=409, detail="Only a settled Credit Bureau transaction can be refunded")
+    method = payment_method.strip().lower()
+    if method not in {"cash", "bank", "electronic"}:
+        raise HTTPException(status_code=422, detail="Unsupported refund payment method")
+    if method != "cash" and not (proof_reference or "").strip():
+        raise HTTPException(status_code=422, detail="Non-cash refunds require proof_reference")
+
+    refunded_at = datetime.now(timezone.utc)
+    metadata = dict(row.metadata_json or {})
+    metadata["refund"] = {
+        "payment_method": method,
+        "proof_reference": (proof_reference or "").strip() or None,
+        "reason": reason.strip(),
+        "recorded_at": refunded_at.isoformat(),
+    }
+    row.metadata_json = metadata
+    row.status = "refunded"
+
+    from services.accounting_service import record_credit_bureau_transaction_refund
+    record_credit_bureau_transaction_refund(db, row)
+    _notify_company_owners(
+        db,
+        company_id=row.company_id,
+        title="Credit Bureau charge refunded",
+        message=f"Charge {row.transaction_reference} for {row.currency} {_money(row.amount):.2f} has been refunded.",
+        event_type="credit_bureau.transaction.refunded",
+        entity_type="credit_bureau_transaction",
+        entity_id=str(row.id),
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def create_invoice(
     db: Session,
     *,
