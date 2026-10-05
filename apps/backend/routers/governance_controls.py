@@ -52,6 +52,7 @@ from database.schemas.governance_control import (
     PaymentAdjustmentCreate,
 )
 from database.session import get_db
+from services.accounting_service import period_close_pack
 from services.governance_control_service import (
     approve_payment_adjustment,
     bank_line_fingerprint,
@@ -207,9 +208,23 @@ def lock_accounting_period(period_id: UUID, payload: AccountingPeriodAction, db:
     item = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id, AccountingPeriod.company_id == context.company_id).with_for_update().first()
     if not item or item.status != "open":
         raise HTTPException(status_code=409, detail="Only an open company period can be locked")
-    drafts = db.query(JournalEntry.id).filter(JournalEntry.company_id == context.company_id, JournalEntry.entry_date.between(item.period_start, item.period_end), JournalEntry.status == "draft").count()
-    if drafts:
-        raise HTTPException(status_code=409, detail=f"Resolve {drafts} draft journal entries before locking the period")
+    pack = period_close_pack(
+        db,
+        company_id=context.company_id,
+        period_start=item.period_start,
+        period_end=item.period_end,
+        branch_id=item.branch_id,
+    )
+    if not pack["ready_to_lock"]:
+        failed = [name for name, passed in pack["checks"].items() if not passed]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Accounting period is not ready to lock",
+                "failed_checks": failed,
+                "close_pack": pack,
+            },
+        )
     item.status = "locked"
     item.locked_by_user_id = context.user.id
     item.locked_at = _now()
