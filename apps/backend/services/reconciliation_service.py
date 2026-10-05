@@ -22,6 +22,7 @@ from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatu
 from database.models.governance_control import ApprovalRequest, PaymentAdjustment
 from database.models.payment import PaymentTransaction
 from database.models.reconciliation import ReconciliationBatch, ReconciliationEvent, ReconciliationLine
+from services.governance_control_service import create_approval, decide_approval
 from services.polyglot_runtime_service import (
     record_parity_mismatch,
     rust_variance_classification,
@@ -650,6 +651,211 @@ def resolve_line(db: Session, context: TenantContext, batch: ReconciliationBatch
     db.commit()
     db.refresh(line)
     return line
+
+
+def request_bank_statement_accounting_adjustment(
+    db: Session,
+    context: TenantContext,
+    batch: ReconciliationBatch,
+    line: ReconciliationLine,
+    *,
+    counterpart_account_code: str,
+    description: str,
+) -> ApprovalRequest:
+    """Request maker/checker posting for a genuine bank-statement item absent from the ledger."""
+    if batch.source_type != "bank_statement":
+        raise HTTPException(status_code=422, detail="Bank accounting adjustments require a bank-statement batch")
+    if batch.status == "closed":
+        raise HTTPException(status_code=409, detail="Closed reconciliation batches are immutable")
+    if line.source_kind != "external":
+        raise HTTPException(status_code=422, detail="Only external bank-statement lines can create bank accounting adjustments")
+    if line.status not in {"unmatched", "adjustment_required"}:
+        raise HTTPException(status_code=409, detail="Only unresolved bank-statement lines can create an accounting adjustment")
+    if not description.strip():
+        raise HTTPException(status_code=422, detail="A detailed accounting adjustment description is required")
+
+    from services.accounting_service import account_by_code, ensure_chart, scope_key
+
+    key, _ = scope_key(batch.company_id)
+    ensure_chart(db, company_id=batch.company_id)
+    counterpart = account_by_code(db, key, counterpart_account_code.strip())
+    if counterpart.code in {"1000", "1010", "1020"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Choose the actual income, expense, receivable, payable or equity counterpart account",
+        )
+
+    payload = {
+        "batch_id": str(batch.id),
+        "line_id": str(line.id),
+        "transaction_date": line.transaction_date.isoformat(),
+        "direction": line.direction,
+        "amount": str(money(line.amount)),
+        "currency": line.currency,
+        "bank_reference": line.reference,
+        "counterpart_account_code": counterpart.code,
+        "counterpart_account_name": counterpart.name,
+        "description": description.strip(),
+    }
+    approval = create_approval(
+        db,
+        company_id=batch.company_id,
+        branch_id=batch.branch_id,
+        action_type="bank_statement_accounting_adjustment",
+        resource_type="reconciliation_line",
+        resource_id=str(line.id),
+        payload=payload,
+        idempotency_key=f"bank-statement-adjustment:{batch.id}:{line.id}",
+        requested_by_user_id=context.user.id,
+    )
+    line.status = "adjustment_required"
+    line.exception_code = "BANK_ITEM_REQUIRES_ACCOUNTING"
+    line.exception_reason = "Bank statement item is awaiting maker/checker accounting recognition"
+    line.resolution_note = description.strip()
+    source_payload = dict(line.source_payload or {})
+    source_payload["bank_accounting_approval_id"] = str(approval.id)
+    source_payload["counterpart_account_code"] = counterpart.code
+    line.source_payload = source_payload
+    _event(
+        db,
+        batch,
+        "bank_accounting_adjustment_requested",
+        context.user.id,
+        line_id=line.id,
+        payload={"approval_id": str(approval.id), **payload},
+    )
+    db.flush()
+    recalculate_batch(db, batch)
+    db.commit()
+    db.refresh(approval)
+    return approval
+
+
+def decide_bank_statement_accounting_adjustment(
+    db: Session,
+    context: TenantContext,
+    batch: ReconciliationBatch,
+    line: ReconciliationLine,
+    *,
+    approval_id: UUID,
+    approved: bool,
+    reason: str,
+) -> dict[str, Any]:
+    """Approve/reject and, on approval, post the exact bank-statement item to account 1010."""
+    if batch.source_type != "bank_statement":
+        raise HTTPException(status_code=422, detail="Bank accounting adjustments require a bank-statement batch")
+    if batch.status == "closed":
+        raise HTTPException(status_code=409, detail="Closed reconciliation batches are immutable")
+    approval = db.query(ApprovalRequest).filter(
+        ApprovalRequest.id == approval_id,
+        ApprovalRequest.company_id == batch.company_id,
+        ApprovalRequest.resource_type == "reconciliation_line",
+        ApprovalRequest.resource_id == str(line.id),
+        ApprovalRequest.action_type == "bank_statement_accounting_adjustment",
+    ).with_for_update().first()
+    if not approval:
+        raise HTTPException(status_code=404, detail="Bank accounting approval request was not found")
+
+    decide_approval(
+        db,
+        approval=approval,
+        user_id=context.user.id,
+        approved=approved,
+        reason=reason,
+    )
+
+    if not approved:
+        line.status = "unmatched"
+        line.exception_code = "BANK_ITEM_ACCOUNTING_REJECTED"
+        line.exception_reason = reason.strip()
+        line.resolution_note = reason.strip()
+        _event(
+            db,
+            batch,
+            "bank_accounting_adjustment_rejected",
+            context.user.id,
+            line_id=line.id,
+            payload={"approval_id": str(approval.id), "reason": reason.strip()},
+        )
+        db.flush()
+        recalculate_batch(db, batch)
+        db.commit()
+        return {
+            "approval_id": str(approval.id),
+            "status": approval.status,
+            "journal_entry_id": None,
+            "line_status": line.status,
+        }
+
+    from services.accounting_service import post_codes
+
+    payload = dict(approval.payload or {})
+    counterpart_code = str(payload.get("counterpart_account_code") or "").strip()
+    if not counterpart_code:
+        raise HTTPException(status_code=409, detail="Approval payload is missing the counterpart account")
+
+    amount = money(line.amount)
+    if line.direction == "credit":
+        debit_code, credit_code = "1010", counterpart_code
+    elif line.direction == "debit":
+        debit_code, credit_code = counterpart_code, "1010"
+    else:
+        raise HTTPException(status_code=422, detail="Bank statement line direction must be credit or debit")
+
+    journal = post_codes(
+        db,
+        company_id=batch.company_id,
+        branch_id=batch.branch_id,
+        debit_code=debit_code,
+        credit_code=credit_code,
+        amount=amount,
+        description=str(payload.get("description") or line.description or "Bank statement accounting adjustment"),
+        reference_type="bank_statement_accounting_adjustment",
+        reference_id=str(line.id),
+        user_id=context.user.id,
+        entry_date=line.transaction_date,
+    )
+
+    line.status = "matched"
+    line.expected_amount = amount
+    line.variance_amount = Decimal("0.00")
+    line.match_method = "maker_checker_bank_accounting"
+    line.match_confidence = Decimal("1.000")
+    line.matched_at = datetime.now(timezone.utc)
+    line.exception_code = None
+    line.exception_reason = None
+    line.resolution_note = reason.strip()
+    source_payload = dict(line.source_payload or {})
+    source_payload["bank_accounting_journal_entry_id"] = str(journal.id)
+    source_payload["bank_accounting_approval_id"] = str(approval.id)
+    line.source_payload = source_payload
+
+    _event(
+        db,
+        batch,
+        "bank_accounting_adjustment_posted",
+        context.user.id,
+        line_id=line.id,
+        payload={
+            "approval_id": str(approval.id),
+            "journal_entry_id": str(journal.id),
+            "debit_code": debit_code,
+            "credit_code": credit_code,
+            "amount": str(amount),
+        },
+    )
+    db.flush()
+    recalculate_batch(db, batch)
+    db.commit()
+    return {
+        "approval_id": str(approval.id),
+        "status": approval.status,
+        "journal_entry_id": str(journal.id),
+        "line_status": line.status,
+        "debit_code": debit_code,
+        "credit_code": credit_code,
+        "amount": float(amount),
+    }
 
 
 def request_adjustment(db: Session, context: TenantContext, batch: ReconciliationBatch, line: ReconciliationLine, *, adjustment_type: str, amount: Decimal, reason: str) -> PaymentAdjustment:
