@@ -37,6 +37,10 @@ from services.maturity_recovery_scheduler import (
 )
 from services.treasury_scheduler import start_treasury_scheduler, stop_treasury_scheduler
 from services.webhook_outbox_scheduler import start_webhook_outbox_scheduler, stop_webhook_outbox_scheduler
+from services.credit_bureau_billing_scheduler import (
+    start_credit_bureau_billing_scheduler,
+    stop_credit_bureau_billing_scheduler,
+)
 
 
 def _seed_central_work_groups() -> None:
@@ -58,6 +62,7 @@ async def lifespan(_: FastAPI):
     treasury_started = False
     maturity_started = False
     webhook_started = False
+    credit_bureau_billing_started = False
     _seed_central_work_groups()
     await manager.start()
     try:
@@ -66,6 +71,8 @@ async def lifespan(_: FastAPI):
             maturity_started = True
             await start_webhook_outbox_scheduler(10)
             webhook_started = True
+            await start_credit_bureau_billing_scheduler(21600)
+            credit_bureau_billing_started = True
             if settings.TREASURY_AUTO_SUBMIT_ENABLED:
                 await start_treasury_scheduler(settings.TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS)
                 treasury_started = True
@@ -75,6 +82,8 @@ async def lifespan(_: FastAPI):
             await stop_treasury_scheduler()
         if maturity_started:
             await stop_maturity_recovery_scheduler()
+        if credit_bureau_billing_started:
+            await stop_credit_bureau_billing_scheduler()
         if webhook_started:
             await stop_webhook_outbox_scheduler()
         await response_cache.close()
