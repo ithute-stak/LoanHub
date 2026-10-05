@@ -2493,10 +2493,16 @@ def record_electronic_clearing_settlement(
     if not provider_reference.strip() or not proof_reference.strip():
         raise HTTPException(status_code=422, detail="Provider and proof references are required")
 
-    duplicate = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
+    duplicate_q = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
         CompanyOperatingRecord.record_type == "electronic_clearing_settlement",
         CompanyOperatingRecord.reference == provider_reference.strip(),
-    ).first()
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if branch_id:
+        duplicate_q = duplicate_q.filter(CompanyOperatingRecord.branch_id == branch_id)
+    duplicate = duplicate_q.first()
     if duplicate:
         raise HTTPException(status_code=409, detail="Clearing settlement provider reference already exists")
 
