@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"os"
 	"strconv"
 	"strings"
@@ -53,6 +54,91 @@ type webhookDeliveryBatchResponse struct {
 	Authoritative bool                    `json:"authoritative"`
 	Results       []webhookDeliveryResult `json:"results"`
 }
+
+type pushNotification struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type pushDeliveryJob struct {
+	JobID       string            `json:"job_id"`
+	Token       string            `json:"token"`
+	Data        map[string]string `json:"data"`
+	Notification pushNotification `json:"notification"`
+	ChannelID   string            `json:"channel_id"`
+}
+
+type pushDeliveryBatchRequest struct {
+	ProjectID   string            `json:"project_id"`
+	AccessToken string            `json:"access_token"`
+	Jobs        []pushDeliveryJob  `json:"jobs"`
+}
+
+type pushDeliveryResult struct {
+	JobID      string `json:"job_id"`
+	StatusCode int    `json:"status_code"`
+	Error      string `json:"error,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+type pushDeliveryBatchResponse struct {
+	Authoritative bool                 `json:"authoritative"`
+	Results       []pushDeliveryResult `json:"results"`
+}
+
+var firebaseProjectIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{4,62}[a-z0-9]package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type digestRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	Payload       string `json:"payload"`
+}
+
+type digestResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	SHA256        string `json:"sha256"`
+}
+
+type webhookDeliveryJob struct {
+	JobID     string            `json:"job_id"`
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers"`
+	Body      string            `json:"body"`
+	TimeoutMS int               `json:"timeout_ms"`
+}
+
+type webhookDeliveryBatchRequest struct {
+	Jobs []webhookDeliveryJob `json:"jobs"`
+}
+
+type webhookDeliveryResult struct {
+	JobID              string `json:"job_id"`
+	StatusCode         int    `json:"status_code"`
+	ResponseBodySHA256 string `json:"response_body_sha256,omitempty"`
+	Error              string `json:"error,omitempty"`
+	DurationMS         int64  `json:"duration_ms"`
+}
+
+)
 
 func clampInt(value, minimum, maximum int) int {
 	if value < minimum {
@@ -254,6 +340,131 @@ func handleWebhookDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func deliverPush(
+	client *http.Client,
+	projectID string,
+	accessToken string,
+	job pushDeliveryJob,
+) pushDeliveryResult {
+	started := time.Now()
+	result := pushDeliveryResult{JobID: job.JobID}
+
+	message := map[string]any{
+		"message": map[string]any{
+			"token": job.Token,
+			"data":  job.Data,
+			"notification": map[string]string{
+				"title": job.Notification.Title,
+				"body":  job.Notification.Body,
+			},
+			"android": map[string]any{
+				"priority": "high",
+				"notification": map[string]any{
+					"channel_id":              job.ChannelID,
+					"sound":                   "default",
+					"default_vibrate_timings": true,
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(message)
+	if err != nil {
+		result.Error = "encode_message"
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	endpoint := "https://fcm.googleapis.com/v1/projects/" + projectID + "/messages:send"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	if err != nil {
+		result.Error = "build_request"
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "LoanHub-Go-Push/1.0")
+
+	response, err := client.Do(request)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+	result.StatusCode = response.StatusCode
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		result.Error = fmt.Sprintf("FCM returned HTTP %d", response.StatusCode)
+	}
+	result.DurationMS = time.Since(started).Milliseconds()
+	return result
+}
+
+func handlePushDeliveryBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+
+	var req pushDeliveryBatchRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !firebaseProjectIDPattern.MatchString(strings.TrimSpace(req.ProjectID)) {
+		http.Error(w, "invalid project_id", http.StatusUnprocessableEntity)
+		return
+	}
+	if strings.TrimSpace(req.AccessToken) == "" {
+		http.Error(w, "access_token required", http.StatusUnprocessableEntity)
+		return
+	}
+	if len(req.Jobs) == 0 || len(req.Jobs) > 500 {
+		http.Error(w, "jobs must contain between 1 and 500 items", http.StatusUnprocessableEntity)
+		return
+	}
+
+	seen := make(map[string]struct{}, len(req.Jobs))
+	for _, job := range req.Jobs {
+		if strings.TrimSpace(job.JobID) == "" || strings.TrimSpace(job.Token) == "" {
+			http.Error(w, "job_id and token are required", http.StatusUnprocessableEntity)
+			return
+		}
+		if _, exists := seen[job.JobID]; exists {
+			http.Error(w, "duplicate job_id", http.StatusUnprocessableEntity)
+			return
+		}
+		seen[job.JobID] = struct{}{}
+	}
+
+	client := webhookHTTPClient()
+	results := make([]pushDeliveryResult, len(req.Jobs))
+	semaphore := make(chan struct{}, webhookConcurrency())
+	var wait sync.WaitGroup
+	for index, job := range req.Jobs {
+		index := index
+		job := job
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			results[index] = deliverPush(client, req.ProjectID, req.AccessToken, job)
+		}()
+	}
+	wait.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pushDeliveryBatchResponse{
+		Authoritative: false,
+		Results:       results,
+	})
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
 		response, err := http.Get("http://127.0.0.1:8081/health/ready")
@@ -288,6 +499,7 @@ func main() {
 		})
 	})
 	mux.HandleFunc("/v1/webhooks/deliver-batch", handleWebhookDeliveryBatch)
+	mux.HandleFunc("/v1/push/fcm-deliver-batch", handlePushDeliveryBatch)
 
 	addr := os.Getenv("LOANHUB_GO_WORKER_ADDR")
 	if addr == "" {
