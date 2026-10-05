@@ -56,6 +56,7 @@ from services.accounting_service import (
     cash_flow_statement,
     fixed_asset_query,
     ledger_rows,
+    loan_receivables_control_reconciliation,
     post_accrual_adjustment,
     post_depreciation_adjustment,
     post_doubtful_debt_allowance,
@@ -982,3 +983,24 @@ def dispose_registered_fixed_asset(
     db.commit()
     db.refresh(asset)
     return {"asset": asset_payload(asset), "journal_entry_id": str(entry.id)}
+
+
+@router.get("/controls/loan-receivables")
+def loan_receivables_control(
+    company_id: UUID | None = None,
+    as_of: date = Query(default_factory=date.today),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return loan_receivables_control_reconciliation(
+        db,
+        company_id=selected_company_id,
+        as_of=as_of,
+        branch_id=selected_branch_id,
+    )
