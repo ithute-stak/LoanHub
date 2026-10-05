@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -204,3 +205,28 @@ class CreditBureauDecisionContext(BaseModel):
     defaults_count: int | None
     latest_enquiry_id: str | None
     latest_enquiry_status: str | None
+
+
+class ExperianSubscriptionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approved", "rejected", "suspended"]
+    price_per_transaction: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    reason: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=2000)
+    credit_limit: float | None = Field(default=None, ge=0)
+    warning_threshold: float | None = Field(default=None, ge=0)
+    auto_suspend_on_limit: bool | None = None
+    billing_due_days: int | None = Field(default=None, ge=1, le=90)
+
+
+class CreditBureauTransactionWaiver(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CreditBureauInvoiceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    period_start: date
+    period_end: date

@@ -13,10 +13,51 @@ export type ExperianUsageConfiguration = {
   require_identity_match?: boolean;
 };
 
+export type CreditBureauSubscription = {
+  id?: string;
+  provider: "experian";
+  company_id?: string;
+  status: "not_subscribed" | "pending" | "approved" | "rejected" | "suspended" | string;
+  approved: boolean;
+  price_per_transaction: number | null;
+  currency: string;
+  requested_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  suspended_at: string | null;
+  rejection_reason: string | null;
+  notes?: string | null;
+  credit_limit?: number | null;
+  warning_threshold?: number | null;
+  auto_suspend_on_limit?: boolean;
+  billing_due_days?: number;
+  usage?: CreditBureauUsage;
+  company?: { id: string; name: string; registration_number?: string | null; license_number?: string | null };
+};
+
+export type CreditBureauPaygTransaction = {
+  id: string;
+  provider: "experian";
+  company_id: string;
+  subscription_id: string;
+  enquiry_id: string;
+  transaction_reference: string;
+  unit_price: number;
+  amount: number;
+  currency: string;
+  status: string;
+  accrued_at: string;
+  settled_at: string | null;
+  waived_at: string | null;
+  waiver_reason: string | null;
+  metadata: Record<string, unknown>;
+};
+
 export type ExperianCompanyConfiguration = {
   provider: "experian";
   scope: "company";
   is_enabled: boolean;
+  subscription: CreditBureauSubscription;
   configuration: ExperianUsageConfiguration;
   platform: {
     configured: boolean;
@@ -122,4 +163,40 @@ export type CreditBureauDecisionContext = {
   defaults_count: number | null;
   latest_enquiry_id: string | null;
   latest_enquiry_status: string | null;
+};
+
+
+export type CreditBureauUsage = {
+  status: string;
+  currency: string;
+  price_per_live_transaction: number | null;
+  sandbox_price: number;
+  month_transaction_count: number;
+  month_amount: number;
+  outstanding_balance: number;
+  credit_limit: number | null;
+  remaining_credit: number | null;
+  warning_threshold: number | null;
+  auto_suspend_on_limit: boolean;
+  billing_due_days: number;
+};
+
+export type CreditBureauInvoice = {
+  id: string;
+  company_id: string;
+  subscription_id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  transaction_count: number;
+  subtotal: number;
+  waived_amount: number;
+  amount_due: number;
+  currency: string;
+  status: string;
+  issued_at: string;
+  due_at: string;
+  paid_at: string | null;
+  notes: string | null;
+  snapshot: Record<string, unknown>;
 };

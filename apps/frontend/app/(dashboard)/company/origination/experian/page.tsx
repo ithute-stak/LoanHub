@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck } from "lucide-react";
+import { CircleAlert, Play, RefreshCcw, Save, ShieldCheck, WalletCards } from "lucide-react";
 
 import { creditBureauApi } from "@/api/creditBureau";
 import { originationApi } from "@/api/origination";
@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, LENDING_ROLES, hasRole } from "@/types/auth";
-import type { CreditBureauDecisionContext, CreditBureauEnquiry, ExperianCompanyConfiguration } from "@/types/creditBureau";
+import type { CreditBureauDecisionContext, CreditBureauEnquiry, CreditBureauInvoice, CreditBureauUsage, ExperianCompanyConfiguration } from "@/types/creditBureau";
 import type { OriginationApplication } from "@/types/origination";
 import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
@@ -31,10 +31,12 @@ const RUN_ROLES = [...LENDING_ROLES, "risk_manager", "compliance_officer"] as co
 export default function ExperianCreditBureauPage() {
   const { activeRole } = useTenant();
   const canConfigure = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
+  const canSwitchEnvironment = activeRole === "company_owner";
   const canRun = hasRole(activeRole, RUN_ROLES);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [requestingSubscription, setRequestingSubscription] = useState(false);
   const [running, setRunning] = useState(false);
   const [configuration, setConfiguration] = useState<ExperianCompanyConfiguration | null>(null);
   const [applications, setApplications] = useState<OriginationApplication[]>([]);
@@ -42,8 +44,9 @@ export default function ExperianCreditBureauPage() {
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [enquiries, setEnquiries] = useState<CreditBureauEnquiry[]>([]);
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
+  const [usage, setUsage] = useState<CreditBureauUsage | null>(null);
+  const [invoices, setInvoices] = useState<CreditBureauInvoice[]>([]);
 
-  const [enabled, setEnabled] = useState(false);
   const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
   const [requirementMode, setRequirementMode] = useState<"optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products">("optional");
@@ -67,7 +70,6 @@ export default function ExperianCreditBureauPage() {
 
   const applyConfiguration = useCallback((row: ExperianCompanyConfiguration) => {
     setConfiguration(row);
-    setEnabled(Boolean(row.is_enabled));
     setEnvironment(row.configuration.environment === "live" ? "live" : "sandbox");
     setMaxReportAgeHours(Number(row.configuration.max_report_age_hours ?? 24));
     const requirement = row.configuration.requirement_mode;
@@ -86,12 +88,16 @@ export default function ExperianCreditBureauPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [config, apps, products] = await Promise.all([
+      const [config, apps, products, billingUsage, billingInvoices] = await Promise.all([
         creditBureauApi.getExperianConfiguration(),
         originationApi.listApplications(),
         listLoanProducts(),
+        creditBureauApi.getExperianUsage(),
+        creditBureauApi.listExperianInvoices(),
       ]);
       applyConfiguration(config);
+      setUsage(billingUsage);
+      setInvoices(billingInvoices);
       const requestedApplicationId = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("application")
         : null;
@@ -142,14 +148,16 @@ export default function ExperianCreditBureauPage() {
     (configuration?.configuration.environment === environment && configuration?.platform.ready_for_company_use),
   );
   const platformReady = selectedEnvironmentReady;
-  const companyReady = selectedEnvironmentReady && enabled;
+  const subscription = configuration?.subscription;
+  const subscriptionApproved = subscription?.status === "approved";
+  const companyReady = selectedEnvironmentReady && subscriptionApproved;
 
   async function saveCompanySettings() {
     if (!canConfigure) return;
     setSaving(true);
     try {
       const updated = await creditBureauApi.updateExperianConfiguration({
-        is_enabled: enabled,
+        is_enabled: subscriptionApproved,
         configuration: {
           environment,
           max_report_age_hours: Math.max(1, Number(maxReportAgeHours || 24)),
@@ -173,6 +181,22 @@ export default function ExperianCreditBureauPage() {
       toast.error(getErrorMessage(error, "Experian company policy could not be saved."));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function requestSubscription() {
+    if (!canConfigure) return;
+    setRequestingSubscription(true);
+    try {
+      await creditBureauApi.requestExperianSubscription();
+      toast.success("Credit Bureau subscription requested", {
+        description: "The LoanHub Platform Owner must approve your company before any paid bureau enquiry can run.",
+      });
+      applyConfiguration(await creditBureauApi.getExperianConfiguration());
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Credit Bureau subscription request could not be submitted."));
+    } finally {
+      setRequestingSubscription(false);
     }
   }
 
@@ -205,6 +229,7 @@ export default function ExperianCreditBureauPage() {
       setAddress2("");
       setForceRefresh(false);
       await loadApplicationBureau(selectedApplicationId);
+      setUsage(await creditBureauApi.getExperianUsage());
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Experian credit check could not be completed."));
       await loadApplicationBureau(selectedApplicationId);
@@ -223,7 +248,7 @@ export default function ExperianCreditBureauPage() {
             <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Credit bureau integration</p>
             <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Experian</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Use LoanHub&apos;s centrally secured Experian connection. Your company controls participation and its credit-risk policy; the Platform Owner controls the central Experian Lesotho credentials and connection.
+              Use LoanHub&apos;s centrally secured Experian connection. Your company requests access; the Platform Owner approves the subscription, controls the provider connection and charges your company per successful fresh bureau transaction.
             </p>
           </div>
           <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
@@ -243,7 +268,7 @@ export default function ExperianCreditBureauPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Central Experian connection ready</AlertTitle>
           <AlertDescription>
-            {titleCase(environment)} mode · connection {configuration?.platform.environments?.[environment]?.last_test_status === "connected" ? "tested" : "not tested"}. Your company can enable Experian and run consented checks.
+            {titleCase(environment)} mode · connection {configuration?.platform.environments?.[environment]?.last_test_status === "connected" ? "tested" : "not tested"}. Paid checks can run only after Platform Owner subscription approval.
           </AlertDescription>
         </Alert>
       )}
@@ -270,14 +295,28 @@ export default function ExperianCreditBureauPage() {
             <CardDescription>These settings apply only to your lending company and never contain Experian secrets.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <label className="flex items-start gap-3 rounded-2xl border p-4">
-              <Checkbox checked={enabled} onCheckedChange={(value) => setEnabled(value === true)} disabled={!canConfigure || !platformReady} />
-              <span><strong>Enable Experian for this company</strong><span className="mt-1 block text-xs text-muted-foreground">Requires the selected Experian mode to be configured and tested by the Platform Owner.</span></span>
-            </label>
+            <div className="rounded-2xl border p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="flex items-center gap-2 font-black"><WalletCards className="h-4 w-4 text-primary" />Credit Bureau PAYG subscription</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Status: <strong>{titleCase(subscription?.status || "not subscribed")}</strong>
+                    {subscription?.price_per_transaction != null ? ` · ${formatMoney(subscription.price_per_transaction)} per successful fresh enquiry` : ""}
+                  </p>
+                  {subscription?.rejection_reason ? <p className="mt-2 text-xs text-destructive">{subscription.rejection_reason}</p> : null}
+                </div>
+                {canConfigure && subscription?.status !== "approved" && subscription?.status !== "pending" ? (
+                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()}>
+                    Request subscription
+                  </LoadingButton>
+                ) : null}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">Approval is controlled only by the LoanHub Platform Owner. Reusing a still-fresh report is not charged; forcing or requiring a fresh provider enquiry creates one PAYG transaction.</p>
+            </div>
 
             <div className="rounded-2xl border p-4">
               <Field label="Experian mode for this company">
-                <Select value={environment} onValueChange={(value) => setEnvironment(value as "sandbox" | "live")} disabled={!canConfigure}>
+                <Select value={environment} onValueChange={(value) => setEnvironment(value as "sandbox" | "live")} disabled={!canSwitchEnvironment}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="sandbox">Sandbox · training and demonstrations</SelectItem>
@@ -286,7 +325,7 @@ export default function ExperianCreditBureauPage() {
                 </Select>
               </Field>
               <p className="mt-2 text-xs text-muted-foreground">
-                Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions.
+                Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions. Only the Loan Company Owner can switch this mode.
                 {" "}Selected mode status: <strong>{selectedEnvironmentReady ? "ready" : "not ready"}</strong>.
               </p>
             </div>
@@ -353,7 +392,7 @@ export default function ExperianCreditBureauPage() {
               <Toggle label="Require identity match" checked={requireIdentityMatch} onChange={setRequireIdentityMatch} disabled={!canConfigure} />
             </div>
 
-            {canConfigure ? <LoadingButton loading={saving} onClick={() => void saveCompanySettings()}><Save className="h-4 w-4" />Save company policy</LoadingButton> : null}
+            {canConfigure ? <LoadingButton loading={saving} onClick={() => void saveCompanySettings()} disabled={!subscriptionApproved}><Save className="h-4 w-4" />Save company policy</LoadingButton> : null}
           </CardContent>
         </Card>
       </div>
@@ -416,6 +455,25 @@ export default function ExperianCreditBureauPage() {
           </div>
 
           <LoadingButton loading={running} disabled={!canRun || !companyReady || !selectedApplicationId || !consentConfirmed || !postalCode.trim()} onClick={() => void runCreditCheck()}><Play className="h-4 w-4" />Run Experian credit check</LoadingButton>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <InfoCard label="This month" value={usage ? `${usage.month_transaction_count} checks · ${formatMoney(usage.month_amount)}` : "—"} />
+        <InfoCard label="Outstanding" value={usage ? formatMoney(usage.outstanding_balance) : "—"} />
+        <InfoCard label="Credit limit" value={usage?.credit_limit == null ? "Unlimited" : formatMoney(usage.credit_limit)} />
+        <InfoCard label="Remaining credit" value={usage?.remaining_credit == null ? "Unlimited" : formatMoney(usage.remaining_credit)} />
+      </div>
+
+      <Card className="rounded-3xl overflow-hidden">
+        <CardHeader><CardTitle>Credit Bureau billing</CardTitle><CardDescription>Sandbox enquiries are free. Only successful fresh Live enquiries are billable.</CardDescription></CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Period</TableHead><TableHead>Transactions</TableHead><TableHead>Amount due</TableHead><TableHead>Status</TableHead><TableHead>Due</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {invoices.length ? invoices.map((invoice) => <TableRow key={invoice.id}><TableCell>{invoice.invoice_number}</TableCell><TableCell>{formatDate(invoice.period_start)} – {formatDate(invoice.period_end)}</TableCell><TableCell>{invoice.transaction_count}</TableCell><TableCell>{formatMoney(invoice.amount_due)}</TableCell><TableCell><Badge variant={invoice.status === "paid" ? "default" : "secondary"}>{titleCase(invoice.status)}</Badge></TableCell><TableCell>{formatDate(invoice.due_at)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No Credit Bureau invoices yet.</TableCell></TableRow>}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 

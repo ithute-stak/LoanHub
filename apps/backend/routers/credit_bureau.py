@@ -27,6 +27,14 @@ from database.session import get_db
 from routers.credit_bureau_configuration import company_experian_preview
 from services.credential_service import encrypt_credential
 from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_experian_enquiry
+from services.credit_bureau_payg_service import (
+    accrue_successful_enquiry,
+    assert_live_credit_available,
+    company_transactions,
+    list_invoices,
+    require_approved_subscription,
+    usage_summary,
+)
 from services.experian_service import (
     ExperianConfigurationError,
     ExperianRequestError,
@@ -78,7 +86,7 @@ def _company_integration(db: Session, *, context: TenantContext) -> OriginationI
     if not row:
         raise HTTPException(
             status_code=409,
-            detail="Experian is available from the platform, but this lending company has not enabled it",
+            detail="This lending company does not yet have an approved Credit Bureau subscription",
         )
     return row
 
@@ -307,13 +315,19 @@ def run_experian_credit_check(
 ):
     require_tenant_roles(context, BUREAU_RUN_ROLES)
     application = _application(db, application_id=application_id, context=context)
+    subscription = require_approved_subscription(db, company_id=context.company_id)
     company_integration = _company_integration(db, context=context)
     if not company_integration.is_enabled:
-        raise HTTPException(status_code=409, detail="Experian is not enabled for this lending company")
+        raise HTTPException(status_code=409, detail="Credit Bureau access is not active for this lending company")
     company_policy = dict(company_integration.configuration or {})
     selected_environment = str(company_policy.get("environment") or company_integration.environment or "sandbox")
     selected_environment = "live" if selected_environment.lower() in {"live", "production"} else "sandbox"
     platform_integration = _platform_integration(db, environment=selected_environment)
+    assert_live_credit_available(
+        db,
+        subscription=subscription,
+        environment=selected_environment,
+    )
 
     identity = borrower_identity(db, application.borrower_id)
     if not identity.get("national_id") and not identity.get("passport_number"):
@@ -438,6 +452,41 @@ def run_experian_credit_check(
     )
     db.add(enquiry)
     db.add(provider_payload)
+    accrue_successful_enquiry(
+        db,
+        subscription=subscription,
+        enquiry_id=enquiry.id,
+        environment=selected_environment,
+    )
     db.commit()
     db.refresh(enquiry)
     return _enquiry_payload(enquiry)
+
+
+@router.get("/experian/transactions")
+def list_company_experian_transactions(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+    limit: int = 100,
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return company_transactions(db, company_id=context.company_id, limit=limit)
+
+
+@router.get("/experian/usage")
+def get_company_experian_usage(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return usage_summary(db, company_id=context.company_id)
+
+
+@router.get("/experian/invoices")
+def list_company_experian_invoices(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+    limit: int = 100,
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return list_invoices(db, company_id=context.company_id, limit=limit)

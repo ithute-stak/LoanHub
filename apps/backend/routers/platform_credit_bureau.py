@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,9 +17,19 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.audit_log import AuditLog
-from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
+from database.models.platform_credit_bureau import (
+    PlatformCreditBureauConfiguration,
+    PlatformCreditBureauSubscription,
+    PlatformCreditBureauTransaction,
+)
+from database.models.company import LoanCompany
 from database.models.user import User
-from database.schemas.credit_bureau import ExperianConfigurationUpdate
+from database.schemas.credit_bureau import (
+    CreditBureauInvoiceCreate,
+    CreditBureauTransactionWaiver,
+    ExperianConfigurationUpdate,
+    ExperianSubscriptionDecision,
+)
 from database.session import get_db
 from services.credential_service import decrypt_credential, encrypt_credential
 from services.experian_service import (
@@ -29,6 +41,17 @@ from services.experian_service import (
     has_credentials_for_environment,
     public_configuration,
     test_connection,
+)
+from services.credit_bureau_payg_service import (
+    create_invoice,
+    invoice_payload,
+    list_invoices,
+    mark_invoice_paid,
+    review_subscription,
+    subscription_payload,
+    transaction_payload,
+    usage_summary,
+    waive_transaction,
 )
 
 
@@ -302,3 +325,139 @@ def test_platform_experian_connection(
     )
     db.commit()
     return result
+
+
+@router.get("/experian/subscriptions")
+def list_experian_subscriptions(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    rows = (
+        db.query(PlatformCreditBureauSubscription, LoanCompany)
+        .join(LoanCompany, LoanCompany.id == PlatformCreditBureauSubscription.company_id)
+        .filter(PlatformCreditBureauSubscription.provider == "experian")
+        .order_by(PlatformCreditBureauSubscription.requested_at.desc())
+        .all()
+    )
+    result = []
+    for subscription, company in rows:
+        item = subscription_payload(subscription, db=db)
+        item["company"] = {
+            "id": str(company.id),
+            "name": company.name,
+            "registration_number": company.registration_number,
+            "license_number": company.license_number,
+        }
+        result.append(item)
+    return result
+
+
+@router.post("/experian/subscriptions/{company_id}/decision")
+def decide_experian_subscription(
+    company_id: UUID,
+    payload: ExperianSubscriptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_platform_owner),
+):
+    platform = _get_row(db)
+    if payload.decision == "approved":
+        if not platform or not platform.is_enabled:
+            raise HTTPException(status_code=409, detail="Enable the platform Experian service before approving companies")
+        price = payload.price_per_transaction
+        if price is None:
+            price = float(dict(platform.configuration or {}).get("default_price_per_transaction") or 0)
+        if price <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Set a positive PAYG price per successful Credit Bureau transaction before approval",
+            )
+    else:
+        price = payload.price_per_transaction
+
+    row = review_subscription(
+        db,
+        company_id=company_id,
+        reviewer_user_id=current_user.id,
+        decision=payload.decision,
+        price_per_transaction=Decimal(str(price)) if price is not None else None,
+        currency=payload.currency,
+        reason=payload.reason,
+        notes=payload.notes,
+        credit_limit=Decimal(str(payload.credit_limit)) if payload.credit_limit is not None else None,
+        warning_threshold=Decimal(str(payload.warning_threshold)) if payload.warning_threshold is not None else None,
+        auto_suspend_on_limit=payload.auto_suspend_on_limit,
+        billing_due_days=payload.billing_due_days,
+    )
+    return subscription_payload(row)
+
+
+@router.get("/experian/transactions")
+def list_experian_payg_transactions(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+    limit: int = 200,
+):
+    rows = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(PlatformCreditBureauTransaction.provider == "experian")
+        .order_by(PlatformCreditBureauTransaction.accrued_at.desc())
+        .limit(max(1, min(limit, 1000)))
+        .all()
+    )
+    return [transaction_payload(row) for row in rows]
+
+
+@router.get("/experian/usage/{company_id}")
+def get_experian_company_usage(
+    company_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return usage_summary(db, company_id=company_id)
+
+
+@router.post("/experian/transactions/{transaction_id}/waive")
+def waive_experian_transaction(
+    transaction_id: UUID,
+    payload: CreditBureauTransactionWaiver,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        waive_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )
+
+
+@router.post("/experian/invoices/{company_id}")
+def issue_experian_invoice(
+    company_id: UUID,
+    payload: CreditBureauInvoiceCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(
+        create_invoice(
+            db,
+            company_id=company_id,
+            period_start=payload.period_start,
+            period_end=payload.period_end,
+        )
+    )
+
+
+@router.get("/experian/invoices")
+def list_experian_invoices(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+    limit: int = 200,
+):
+    return list_invoices(db, limit=limit)
+
+
+@router.post("/experian/invoices/{invoice_id}/paid")
+def mark_experian_invoice_paid(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))

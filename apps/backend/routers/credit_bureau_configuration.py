@@ -10,10 +10,16 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.origination import OriginationIntegrationConfiguration
+from database.models.enums import UserRole
 from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
 from database.schemas.credit_bureau import ExperianCompanySettingsUpdate, ExperianCompanyUsageConfiguration
 from database.session import get_db
 from services.experian_service import environment_test_status, has_credentials_for_environment
+from services.credit_bureau_payg_service import (
+    get_subscription,
+    request_subscription,
+    subscription_payload,
+)
 
 
 router = APIRouter(prefix="/credit-bureau", tags=["Credit Bureau Configuration"])
@@ -81,10 +87,12 @@ def company_experian_preview(
         platform_configuration,
         environment=selected_environment,
     )
+    subscription = get_subscription(db, company_id=company_id)
     return {
         "provider": "experian",
         "scope": "company",
-        "is_enabled": bool(company.is_enabled) if company else False,
+        "is_enabled": bool(company and company.is_enabled and subscription and subscription.status == "approved"),
+        "subscription": subscription_payload(subscription),
         "configuration": company_configuration,
         "platform": {
             "configured": bool(platform),
@@ -122,16 +130,33 @@ def update_experian_configuration(
     """Save company usage policy only; Experian secrets are Platform Owner data."""
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
 
-    if payload.is_enabled:
-        preview = company_experian_preview(db, company_id=context.company_id)
-        if not preview["platform"]["ready_for_company_use"]:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Experian cannot be enabled for this company until the Platform Owner "
-                    "has completed and enabled the central Experian connection."
-                ),
-            )
+    preview = company_experian_preview(db, company_id=context.company_id)
+    subscription = preview["subscription"]
+    existing_row = _company_row(db, context.company_id)
+    existing_environment = str(
+        (existing_row.configuration or {}).get("environment")
+        if existing_row and isinstance(existing_row.configuration, dict)
+        else existing_row.environment if existing_row else "sandbox"
+    ).strip().lower()
+    requested_environment = str(payload.configuration.environment).strip().lower()
+    if requested_environment != existing_environment and context.role != UserRole.COMPANY_OWNER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the Loan Company Owner can switch Credit Bureau between Sandbox and Live.",
+        )
+    if payload.is_enabled and subscription.get("status") != "approved":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "A lending company cannot enable Experian directly. Request a Credit Bureau "
+                "subscription and wait for Platform Owner approval."
+            ),
+        )
+    if subscription.get("status") == "approved" and not preview["platform"]["ready_for_company_use"]:
+        raise HTTPException(
+            status_code=409,
+            detail="The platform Experian connection is temporarily not ready for company use.",
+        )
 
     row = _company_row(db, context.company_id)
     if not row:
@@ -143,7 +168,7 @@ def update_experian_configuration(
         db.add(row)
 
     row.environment = payload.configuration.environment
-    row.is_enabled = payload.is_enabled
+    row.is_enabled = subscription.get("status") == "approved"
     row.configuration = payload.configuration.model_dump()
     row.configured_by_user_id = context.user.id
     # Defence in depth: tenant Experian credentials were retired by migration,
@@ -155,3 +180,31 @@ def update_experian_configuration(
     db.commit()
     db.refresh(row)
     return company_experian_preview(db, company_id=context.company_id)
+
+
+@router.post("/experian/subscription")
+def subscribe_to_experian(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Request PAYG access. Only the Platform Owner can approve/activate it."""
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    if not context.company_id:
+        raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+    row = request_subscription(
+        db,
+        company_id=context.company_id,
+        requested_by_user_id=context.user.id,
+    )
+    return subscription_payload(row)
+
+
+@router.get("/experian/subscription")
+def get_experian_subscription(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    if not context.company_id:
+        raise HTTPException(status_code=403, detail="A company-scoped membership is required")
+    return subscription_payload(get_subscription(db, company_id=context.company_id))
