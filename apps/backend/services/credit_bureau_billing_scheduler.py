@@ -5,6 +5,7 @@ import logging
 
 from database.session import SessionLocal
 from services.credit_bureau_payg_service import (
+    reconcile_payg_reservations,
     run_monthly_invoice_cycle,
     suspend_overdue_accounts,
 )
@@ -20,8 +21,15 @@ async def _run(interval_seconds: int) -> None:
     while not _stop.is_set():
         db = SessionLocal()
         try:
+            reservations = await asyncio.to_thread(reconcile_payg_reservations, db)
             issued = await asyncio.to_thread(run_monthly_invoice_cycle, db)
             suspended = await asyncio.to_thread(suspend_overdue_accounts, db)
+            if reservations["finalized"] or reservations["cancelled"]:
+                logger.info(
+                    "Reconciled Credit Bureau PAYG reservations: %s finalized, %s cancelled",
+                    reservations["finalized"],
+                    reservations["cancelled"],
+                )
             if issued:
                 logger.info("Issued %s automatic Credit Bureau invoice(s)", issued)
             if suspended:
