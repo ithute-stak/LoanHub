@@ -41,7 +41,7 @@ from database.models.enums import (
 )
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
-from database.models.treasury import TreasurySettings
+from database.models.treasury import TreasuryEntry, TreasurySettings
 
 
 MONEY = Decimal("0.01")
@@ -2469,3 +2469,180 @@ def record_written_off_loan_recovery(
     case.recovered_amount = _money(recovered_to_date + amount)
     db.add(case)
     return entry
+
+
+def record_electronic_clearing_settlement(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    settlement_date: date,
+    amount,
+    direction: str,
+    provider_reference: str,
+    proof_reference: str,
+    notes: str | None,
+    user_id,
+) -> dict:
+    """Move verified gateway clearing balances between account 1020 and bank 1010."""
+    amount = _money(amount)
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="Settlement amount must be greater than zero")
+    if direction not in {"provider_to_bank", "bank_to_provider"}:
+        raise HTTPException(status_code=422, detail="Unsupported clearing settlement direction")
+    if not provider_reference.strip() or not proof_reference.strip():
+        raise HTTPException(status_code=422, detail="Provider and proof references are required")
+
+    duplicate = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
+        CompanyOperatingRecord.record_type == "electronic_clearing_settlement",
+        CompanyOperatingRecord.reference == provider_reference.strip(),
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Clearing settlement provider reference already exists")
+
+    debit_code, credit_code = (
+        ("1010", "1020") if direction == "provider_to_bank" else ("1020", "1010")
+    )
+    entry = post_codes(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        debit_code=debit_code,
+        credit_code=credit_code,
+        amount=amount,
+        description=notes or f"Electronic clearing settlement {provider_reference}",
+        reference_type="electronic_clearing_settlement",
+        reference_id=provider_reference.strip(),
+        user_id=user_id,
+        entry_date=settlement_date,
+    )
+    record = CompanyOperatingRecord(
+        company_id=company_id,
+        branch_id=branch_id,
+        module="accounting",
+        record_type="electronic_clearing_settlement",
+        reference=provider_reference.strip(),
+        title=f"Electronic clearing settlement {provider_reference.strip()}",
+        description=(notes or "").strip() or None,
+        status="posted",
+        created_by_user_id=user_id,
+        amount=amount,
+        currency="LSL",
+        data={
+            "settlement_date": settlement_date.isoformat(),
+            "direction": direction,
+            "proof_reference": proof_reference.strip(),
+            "journal_entry_id": str(entry.id),
+        },
+    )
+    db.add(record)
+    db.flush()
+    return {
+        "id": str(record.id),
+        "journal_entry_id": str(entry.id),
+        "provider_reference": record.reference,
+        "proof_reference": proof_reference.strip(),
+        "direction": direction,
+        "amount": float(amount),
+        "settlement_date": settlement_date.isoformat(),
+    }
+
+
+def electronic_clearing_reconciliation(
+    db: Session,
+    *,
+    company_id,
+    as_of: date,
+    branch_id=None,
+) -> dict:
+    """Reconcile account 1020 to unsettled electronic-source activity."""
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    ledger_balance = _account_signed_balance(
+        db,
+        scope_key_value=key,
+        account_code="1020",
+        to_date=as_of,
+        branch_id=branch_id,
+    )
+
+    payment_q = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+        PaymentTransaction.payment_method.notin_([PaymentMethod.CASH, PaymentMethod.BANK]),
+        func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)) <= as_of,
+    )
+    if branch_id:
+        payment_q = payment_q.outerjoin(
+            ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id
+        ).filter(
+            (ClientCompanyLoan.branch_id == branch_id) | (PaymentTransaction.loan_id.is_(None))
+        )
+    source_payments = payment_q.all()
+    source_payment_net = Decimal("0.00")
+    for row in source_payments:
+        amount = _money(row.amount)
+        source_payment_net += amount if row.direction == PaymentDirection.INBOUND else -amount
+
+    treasury_q = db.query(TreasuryEntry).filter(
+        TreasuryEntry.company_id == company_id,
+        TreasuryEntry.payment_transaction_id.is_(None),
+        TreasuryEntry.is_voided.is_(False),
+        TreasuryEntry.approval_status.in_([
+            TreasuryEntryApprovalStatus.POSTED,
+            TreasuryEntryApprovalStatus.APPROVED,
+        ]),
+        TreasuryEntry.payment_method.notin_([PaymentMethod.CASH, PaymentMethod.BANK]),
+        func.date(TreasuryEntry.occurred_at) <= as_of,
+    )
+    if branch_id:
+        treasury_q = treasury_q.filter(TreasuryEntry.branch_id == branch_id)
+    source_treasury = Decimal("0.00")
+    treasury_rows = treasury_q.all()
+    for row in treasury_rows:
+        amount = _money(row.amount)
+        source_treasury += amount if row.direction == TreasuryDirection.MONEY_IN else -amount
+
+    settlement_q = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "electronic_clearing_settlement",
+        CompanyOperatingRecord.status == "posted",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if branch_id:
+        settlement_q = settlement_q.filter(CompanyOperatingRecord.branch_id == branch_id)
+    provider_to_bank = Decimal("0.00")
+    bank_to_provider = Decimal("0.00")
+    settlement_rows = []
+    for row in settlement_q.all():
+        data = dict(row.data or {})
+        settlement_date_text = data.get("settlement_date")
+        if not settlement_date_text or date.fromisoformat(settlement_date_text) > as_of:
+            continue
+        amount = _money(row.amount)
+        if data.get("direction") == "provider_to_bank":
+            provider_to_bank += amount
+        elif data.get("direction") == "bank_to_provider":
+            bank_to_provider += amount
+        settlement_rows.append(row)
+
+    expected = _money(source_payment_net + source_treasury - provider_to_bank + bank_to_provider)
+    variance = _money(ledger_balance - expected)
+    return {
+        "as_of": as_of.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ledger_clearing_balance": float(ledger_balance),
+        "source_payment_net": float(_money(source_payment_net)),
+        "source_treasury_net": float(_money(source_treasury)),
+        "provider_to_bank_settlements": float(_money(provider_to_bank)),
+        "bank_to_provider_settlements": float(_money(bank_to_provider)),
+        "expected_clearing_balance": float(expected),
+        "variance": float(variance),
+        "balanced": variance == 0,
+        "source_counts": {
+            "electronic_payments": len(source_payments),
+            "manual_electronic_treasury_entries": len(treasury_rows),
+            "clearing_settlements": len(settlement_rows),
+        },
+    }
