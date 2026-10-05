@@ -162,7 +162,14 @@ def _guarded_get_json(name: str, url: str, timeout: float) -> dict | None:
     return value
 
 
-def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> dict | None:
+def _guarded_post_json(
+    name: str,
+    url: str,
+    payload: dict,
+    timeout: float,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict | None:
     if not _worker_allowed(name):
         with _runtime_lock:
             state = _runtime_state.setdefault(name, {})
@@ -170,7 +177,12 @@ def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> di
         return None
     started = monotonic()
     try:
-        value = _post_json(url, payload, timeout=timeout)
+        value = _post_json(
+            url,
+            payload,
+            timeout=timeout,
+            max_response_bytes=max_response_bytes,
+        )
     except (OSError, TypeError, ValueError, urllib.error.URLError) as exc:
         _record_failure(name, started, exc)
         return None
@@ -188,7 +200,13 @@ def _get_json(url: str, timeout: float = 0.8) -> dict:
     return value
 
 
-def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
+def _post_json(
+    url: str,
+    payload: dict,
+    timeout: float = 1.0,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -196,8 +214,11 @@ def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    limit = max(1024, int(max_response_bytes))
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read(64 * 1024)
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("worker response exceeds configured limit")
     value = json.loads(body.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("worker response must be an object")
@@ -588,6 +609,7 @@ def rust_predictive_signal_batch(*, rows: list[dict]) -> list[dict] | None:
         f"{base_url}/v1/predictive-signal-batch",
         {"rows": rows},
         timeout=2.5,
+        max_response_bytes=8 * 1024 * 1024,
     )
     if value is None or value.get("authoritative") is not False:
         return None
