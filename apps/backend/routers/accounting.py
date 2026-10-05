@@ -73,6 +73,7 @@ from services.accounting_service import (
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
     scope_key,
+    transaction_accounting_coverage,
 )
 
 
@@ -1185,3 +1186,26 @@ def statement_of_changes_in_equity(
         "drawings_and_distributions": distributions,
         "closing_equity": closing_total_equity,
     }
+
+
+@router.get("/controls/transaction-coverage")
+def accounting_transaction_coverage(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return transaction_accounting_coverage(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
