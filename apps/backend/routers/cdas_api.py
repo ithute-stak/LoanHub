@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ from database.models.cdas_official import (
     CdasProviderOperation,
 )
 from database.models.client_loan_company import ClientCompanyLoan
-from database.models.enums import LoanStatus
+from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
 from database.models.professional_lending import DirectLoanApplication
 from database.session import get_db
@@ -40,8 +40,8 @@ from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
     get_configuration,
-    test_company_configuration,
-    update_configuration,
+    get_company_item_code,
+    update_selected_environment,
 )
 from services.cdas_operation_ledger import (
     CdasDuplicateOperationError,
@@ -51,6 +51,15 @@ from services.cdas_operation_ledger import (
     reconcile_provider_operation,
 )
 from services.cdas_request_budget import get_cdas_request_budget_status
+from services.platform_cdas_service import (
+    assert_live_credit_available,
+    get_subscription as get_cdas_subscription,
+    list_transactions as list_cdas_payg_transactions,
+    record_successful_operation,
+    request_subscription as request_cdas_subscription,
+    require_approved_subscription as require_cdas_subscription,
+    subscription_payload as cdas_subscription_payload,
+)
 
 router = APIRouter(prefix="/cdas", tags=["CDAS"])
 
@@ -64,6 +73,10 @@ class CdasConfigurationUpdateRequest(BaseModel):
     password: str | None = Field(default=None, max_length=500)
     clear_password: bool = False
     timeout_seconds: float = Field(default=20.0, ge=1, le=120)
+
+
+class CdasEnvironmentSwitchRequest(BaseModel):
+    environment: Literal["test", "live"]
 
 
 class CdasEmployeeLookupRequest(BaseModel):
@@ -213,6 +226,22 @@ async def _execute_tracked_mutation(
 ) -> dict[str, Any]:
     assert context.company_id is not None
     environment = _company_cdas_environment(db, context.company_id)
+    subscription = require_cdas_subscription(db, company_id=context.company_id)
+    billing_operation = (
+        "registration"
+        if int(provider_request.get("RequestType") or 0) == 1
+        else "settlement"
+        if "settle" in operation_type
+        else "modification"
+        if "modify" in operation_type
+        else "lifecycle"
+    )
+    assert_live_credit_available(
+        db,
+        subscription=subscription,
+        environment=environment,
+        operation_type=billing_operation,
+    )
     try:
         result, operation = await execute_provider_operation(
             db,
@@ -240,6 +269,17 @@ async def _execute_tracked_mutation(
             },
         )
         raise _cdas_http_error(exc.provider_error, operation=exc.operation) from exc
+
+    record_successful_operation(
+        db,
+        company_id=context.company_id,
+        environment=environment,
+        operation_type=billing_operation,
+        actor_user_id=context.user.id,
+        billing_key=f"cdas-mutation:{operation.id}",
+        source_reference=str(operation.id),
+        metadata={"provider_operation_type": operation_type},
+    )
 
     reconciled = False
     try:
@@ -282,48 +322,74 @@ def get_cdas_configuration(
 ):
     _require_company_manager(context)
     assert context.company_id is not None
-    return configuration_summary(get_configuration(db, context.company_id))
+    return configuration_summary(
+        get_configuration(db, context.company_id),
+        db=db,
+        company_id=context.company_id,
+    )
 
 
-@router.put("/configuration")
-def put_cdas_configuration(
-    payload: CdasConfigurationUpdateRequest,
+@router.post("/subscription")
+def subscribe_to_cdas(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
     _require_company_manager(context)
     assert context.company_id is not None
+    row = request_cdas_subscription(
+        db,
+        company_id=context.company_id,
+        requested_by_user_id=context.user.id,
+    )
+    return cdas_subscription_payload(row, db=db)
+
+
+@router.put("/environment")
+def switch_cdas_environment(
+    payload: CdasEnvironmentSwitchRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    if context.role != UserRole.COMPANY_OWNER:
+        raise HTTPException(status_code=403, detail="Only the Loan Company Owner can switch CDAS between Test and Live.")
+    assert context.company_id is not None
     try:
-        row = update_configuration(
+        row = update_selected_environment(
             db,
             company_id=context.company_id,
             configured_by_user_id=context.user.id,
             environment=payload.environment,
-            enabled=payload.enabled,
-            base_url=payload.base_url,
-            username=payload.username,
-            item_code=payload.item_code,
-            password=payload.password,
-            clear_password=payload.clear_password,
-            timeout_seconds=payload.timeout_seconds,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return configuration_summary(row)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return configuration_summary(row, db=db, company_id=context.company_id)
+
+
+@router.put("/configuration")
+def reject_company_cdas_credentials(
+    payload: CdasConfigurationUpdateRequest,
+    context: TenantContext = Depends(get_tenant_context),
+):
+    _require_company_manager(context)
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "CDAS credentials, Item Code and provider endpoints are controlled by the LoanHub Platform Owner. "
+            "The Loan Company Owner may only switch the approved company between Test and Live."
+        ),
+    )
 
 
 @router.post("/configuration/test")
-async def test_cdas_configuration(
+async def reject_company_cdas_test(
     context: TenantContext = Depends(get_tenant_context),
-    db: Session = Depends(get_db),
 ):
     _require_company_manager(context)
-    assert context.company_id is not None
-    try:
-        configuration = await test_company_configuration(db, company_id=context.company_id)
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-    return {"ok": True, "configuration": configuration}
+    raise HTTPException(
+        status_code=403,
+        detail="CDAS credential testing is controlled by the LoanHub Platform Owner.",
+    )
 
 
 @router.get("/reference-data")
@@ -384,9 +450,10 @@ def _loan_registration_context(
     elif not profile.verified:
         reasons.append("The borrower CDAS payroll profile has not been verified")
 
-    config = get_configuration(db, company_id)
-    config_values = dict(config.configuration or {}) if config and isinstance(config.configuration, dict) else {}
-    item_code = str(config_values.get("item_code") or "").strip()
+    try:
+        item_code = get_company_item_code(db, company_id)
+    except Exception:
+        item_code = ""
     if not item_code:
         reasons.append("Configure the company's CDAS Item Code before registration")
 
@@ -1368,3 +1435,14 @@ async def get_cdas_document(
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
     return {"ok": True, "document": document}
+
+
+@router.get("/transactions")
+def get_company_cdas_transactions(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+    limit: int = 200,
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    return list_cdas_payg_transactions(db, company_id=context.company_id, limit=limit)
