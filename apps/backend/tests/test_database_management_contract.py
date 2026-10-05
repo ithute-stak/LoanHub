@@ -92,6 +92,10 @@ def test_database_management_ui_surfaces_workload_and_integrity_signals() -> Non
     assert "Largest / busiest user tables" in page
     assert "Largest indexes" in page
     assert "Integrity validation queue" in page
+    assert "Tenant isolation enforcement" in page
+    assert "Protected-table ownership" in page
+    assert "Role override" in page
+    assert "Review required" in page
     assert "Blocked PostgreSQL sessions detected." in page
     assert "Long-running transactions over 60 seconds detected." in page
     assert 'slug: "database-management"' in controls
