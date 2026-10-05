@@ -249,12 +249,11 @@ def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
 
 def get_company_item_code(db: Session, company_id: UUID) -> str:
     row = _configuration_row(db, company_id)
-    credentials = _credentials_from_profile(
-        db,
-        company_id=company_id,
-        environment=selected_environment(row),
-    )
-    return credentials.item_code
+    environment = selected_environment(row)
+    profile = get_profile(db, company_id=company_id, environment=environment)
+    if not profile:
+        raise CdasConfigurationError(503, f"The Platform Owner has not configured this company's CDAS {environment.title()} profile")
+    return str(profile.item_code or "").strip()
 
 
 async def test_company_configuration(db: Session, *, company_id: UUID) -> dict[str, Any]:
