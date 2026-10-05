@@ -427,6 +427,9 @@ def accrue_successful_enquiry(
     )
     db.add(transaction)
     db.flush()
+    if is_live and price > 0:
+        from services.accounting_service import record_credit_bureau_transaction_accrual
+        record_credit_bureau_transaction_accrual(db, transaction)
 
     if is_live and subscription.warning_threshold is not None:
         projected = outstanding_balance(db, company_id=subscription.company_id)
@@ -493,6 +496,8 @@ def waive_transaction(
     row.status = "waived"
     row.waived_at = datetime.now(timezone.utc)
     row.waiver_reason = reason.strip()
+    from services.accounting_service import reverse_credit_bureau_transaction_accrual
+    reverse_credit_bureau_transaction_accrual(db, row)
     _notify_company_owners(
         db,
         company_id=row.company_id,
@@ -573,8 +578,9 @@ def create_invoice(
     )
     db.add(invoice)
     db.flush()
-    from services.accounting_service import record_credit_bureau_invoice_accrual
-    record_credit_bureau_invoice_accrual(db, invoice)
+    # Usage is accrued at the successful provider transaction; invoice
+    # creation groups those already-recognised charges and must not duplicate
+    # expense/revenue recognition.
     for row in rows:
         if row.status == "accrued":
             row.status = "invoiced"
