@@ -422,6 +422,32 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     )
     monkeypatch.setattr(
         benchmark,
+        "rust_affordability_assessment",
+        lambda **kwargs: {
+            "passed": True,
+            "monthly_income": "5500.00",
+            "maximum_affordable_installment": "1600.00",
+            "affordability_headroom": "900.00",
+            "disposable_after_installment": "2200.00",
+            "dti_percent": "23.636",
+            "authoritative": False,
+        },
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "java_underwriting_rules",
+        lambda **kwargs: {
+            "passed": True,
+            "decision": "pass",
+            "reasons": [
+                {"severity": "pass", "code": "income_ok", "message": "Monthly income meets the lender's configured minimum."},
+                {"severity": "pass", "code": "installment_within_limit", "message": "The proposed installment is within the calculated affordability limit."},
+            ],
+            "authoritative": False,
+        },
+    )
+    monkeypatch.setattr(
+        benchmark,
         "rust_portfolio_risk_summary",
         lambda **kwargs: {
             "active_exposure": "15000.00",
@@ -466,7 +492,7 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     assert result["iterations"] == 2
     assert result["non_authoritative"] is True
     assert result["changes_routing"] is False
-    assert len(result["results"]) == 5
+    assert len(result["results"]) == 7
     assert all(item["parity_passed"] == 2 for item in result["results"])
     assert all(item["promotion_candidate"] is True for item in result["results"])
 
@@ -856,3 +882,47 @@ def test_rust_portfolio_risk_normalizer_matches_python_contract() -> None:
     }
 
     assert portfolio._normalized_rust_risk(rust_value) == python_value
+
+
+
+def test_polyglot_underwriting_routes_rust_math_and_java_rules() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    java = (REPO / "services/worker-java/src/main/java/ls/co/loanhub/worker/EventWorker.java").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    affordability = (ROOT / "services/quick_loan_affordability_service.py").read_text(encoding="utf-8")
+    benchmark = (ROOT / "services/polyglot_benchmark_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/affordability-assessment"' in rust
+    assert "struct AffordabilityAssessmentRequest" in rust
+    assert "fn affordability_assessment(" in rust
+    assert '"/v1/underwriting/rules"' in java
+    assert "underwritingRules(" in java
+    assert "BigDecimal" in java
+    assert "def rust_affordability_assessment(" in runtime
+    assert "def java_underwriting_rules(" in runtime
+    assert 'workload_routing_mode("rust_affordability")' in affordability
+    assert 'workload_routing_mode("java_underwriting_rules")' in affordability
+    assert 'record_parity_mismatch("rust_compute")' in affordability
+    assert 'record_parity_mismatch("java_worker")' in affordability
+    assert '"rust_affordability": 100.0' in benchmark
+    assert '"java_underwriting_rules": 100.0' in benchmark
+    assert "LOANHUB_RUST_AFFORDABILITY_MODE=shadow" in env
+    assert "LOANHUB_JAVA_UNDERWRITING_MODE=shadow" in env
+
+
+def test_polyglot_language_roles_are_not_decorative() -> None:
+    architecture = (REPO / "docs/POLYGLOT_WORK_SHARING.md").read_text(encoding="utf-8")
+    go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert "deterministic affordability math" in architecture
+    assert "deterministic underwriting/business-rule evaluation" in architecture
+    assert "bounded concurrent network/background work" in architecture
+    assert "exact integer-cents numerical kernels" in architecture
+    assert "sync.WaitGroup" in go
+    assert "/v1/webhooks/deliver-batch" in go
+    assert "simple-interest" in native
+    assert "round_ratio_half_up" in native
+    assert "cpp_simple_interest_cents(" in rust
