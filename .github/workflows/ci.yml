@@ -44,6 +44,8 @@ jobs:
       DB_NAME: loan_db
       DB_USER: loanhub
       DB_PASSWORD: ci-only-postgres-password
+      DB_RUNTIME_USER: loanhub_app
+      DB_RUNTIME_PASSWORD: ci-only-runtime-postgres-password
       LOANHUB_VALIDATE_LIVE_MIGRATIONS: 'true'
 
     steps:
