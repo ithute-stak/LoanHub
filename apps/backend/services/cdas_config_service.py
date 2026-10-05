@@ -4,8 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
-from urllib.parse import urlparse
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -17,12 +16,17 @@ from integrations.cdas_compatible import CdasCompatibleClient as CdasClient
 from integrations.cdas_session import CdasSessionBroker
 from services.cdas_request_budget import consume_cdas_request_budget
 from services.cdas_session_broker import RedisCdasSessionBroker
-from services.crypto_service import decrypt_control_secret, encrypt_control_secret
+from services.platform_cdas_service import (
+    decrypt_profile_password,
+    get_profile,
+    get_subscription,
+    public_profile_state,
+    require_approved_subscription,
+    subscription_payload,
+)
+
 
 CDAS_PROVIDER = "cdas"
-DEFAULT_TEST_BASE_URL = "https://test-cdas-thirdpartyapi.sentraptt.com"
-DEFAULT_TEST_HOST = (urlparse(DEFAULT_TEST_BASE_URL).hostname or "").lower()
-PASSWORD_PURPOSE = b"loanhub-cdas-password-v1"
 ALLOWED_ENVIRONMENTS = {"test", "live"}
 
 
@@ -31,6 +35,7 @@ class CdasCompanyCredentials:
     base_url: str
     username: str
     password: str
+    item_code: str
     timeout_seconds: float
     environment: str
 
@@ -53,108 +58,95 @@ def get_configuration(db: Session, company_id: UUID) -> OriginationIntegrationCo
     return _configuration_row(db, company_id)
 
 
-def _validate_base_url(value: str) -> str:
-    normalized = value.strip().rstrip("/")
-    parsed = urlparse(normalized)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError("CDAS base URL must be a valid HTTPS URL")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("CDAS base URL must not contain credentials, a query string or fragment")
-    return normalized
+def selected_environment(row: OriginationIntegrationConfiguration | None) -> str:
+    if not row:
+        return "test"
+    environment = str(row.environment or "test").strip().lower()
+    return environment if environment in ALLOWED_ENVIRONMENTS else "test"
 
 
-def _validate_environment_base_url(environment: str, base_url: str) -> None:
-    if environment == "test" and base_url != DEFAULT_TEST_BASE_URL:
-        raise ValueError(f"CDAS Test environment must use the official test URL {DEFAULT_TEST_BASE_URL}")
-    if environment == "live" and (urlparse(base_url).hostname or "").lower() == DEFAULT_TEST_HOST:
-        raise ValueError("CDAS Live environment cannot use the CDAS test host")
+def selected_profile(db: Session, company_id: UUID):
+    row = _configuration_row(db, company_id)
+    return get_profile(db, company_id=company_id, environment=selected_environment(row))
 
 
-def _values(row: OriginationIntegrationConfiguration) -> dict[str, Any]:
-    return row.configuration if isinstance(row.configuration, dict) else {}
-
-
-def _username(row: OriginationIntegrationConfiguration) -> str:
-    return str(_values(row).get("username") or "").strip()
-
-
-def _assert_username_isolated(db: Session, *, company_id: UUID, environment: str, username: str) -> None:
-    rows: Iterable[OriginationIntegrationConfiguration] = db.query(OriginationIntegrationConfiguration).filter(
-        OriginationIntegrationConfiguration.provider == CDAS_PROVIDER,
-        OriginationIntegrationConfiguration.environment == environment,
-        OriginationIntegrationConfiguration.company_id != company_id,
-    ).all()
-    candidate = username.strip().casefold()
-    if any(_username(row).casefold() == candidate for row in rows):
-        raise ValueError("This CDAS API username is already assigned to another LoanHub company in the selected environment")
-
-
-def _serialize_password(password: str) -> str:
-    ciphertext, nonce, version = encrypt_control_secret(password, PASSWORD_PURPOSE)
-    return json.dumps(
-        {"ciphertext": ciphertext, "nonce": nonce, "version": version},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def _deserialize_password(value: str | None) -> str | None:
-    if not value:
-        return None
-    try:
-        payload = json.loads(value)
-        return decrypt_control_secret(
-            str(payload["ciphertext"]),
-            str(payload["nonce"]),
-            str(payload["version"]),
-            PASSWORD_PURPOSE,
-        )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise CdasConfigurationError(503, "The stored CDAS credential could not be verified") from exc
-
-
-def configuration_summary(row: OriginationIntegrationConfiguration | None) -> dict[str, Any]:
-    if row is None:
-        return {
-            "provider": CDAS_PROVIDER,
-            "environment": "test",
-            "enabled": False,
-            "base_url": DEFAULT_TEST_BASE_URL,
-            "username": "",
-            "item_code": "",
-            "timeout_seconds": float(settings.CDAS_TIMEOUT_SECONDS),
-            "password_configured": False,
-            "configured": False,
-            "last_test_status": None,
-            "last_tested_at": None,
-            "shared_session_enabled": bool(settings.REDIS_URL),
-            "reintegration_phase": "manual_documented_operations",
-        }
-    cfg = _values(row)
-    base_url = str(cfg.get("base_url") or "").strip()
-    username = str(cfg.get("username") or "").strip()
-    item_code = str(cfg.get("item_code") or "").strip()
-    timeout = float(cfg.get("timeout_seconds") or settings.CDAS_TIMEOUT_SECONDS)
-    password_ok = bool(row.encrypted_credentials)
-    return {
+def configuration_summary(
+    row: OriginationIntegrationConfiguration | None,
+    *,
+    db: Session | None = None,
+    company_id: UUID | None = None,
+) -> dict[str, Any]:
+    environment = selected_environment(row)
+    result = {
         "provider": CDAS_PROVIDER,
-        "environment": row.environment or "test",
-        "enabled": bool(row.is_enabled),
-        "base_url": base_url,
-        "username": username,
-        "item_code": item_code,
-        "timeout_seconds": timeout,
-        "password_configured": password_ok,
-        "configured": bool(base_url and username and password_ok),
-        "last_test_status": row.last_test_status,
-        "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
+        "environment": environment,
+        "enabled": bool(row.is_enabled) if row else False,
+        "configured": False,
+        "last_test_status": None,
+        "last_tested_at": None,
         "shared_session_enabled": bool(settings.REDIS_URL),
         "reintegration_phase": "manual_documented_operations",
+        "profiles": {
+            "test": {"configured": False, "last_test_status": None, "last_tested_at": None},
+            "live": {"configured": False, "last_test_status": None, "last_tested_at": None},
+        },
     }
+    if db is None or company_id is None:
+        return result
+    profiles = {
+        env: public_profile_state(get_profile(db, company_id=company_id, environment=env))
+        for env in ("test", "live")
+    }
+    current = profiles[environment]
+    subscription = get_subscription(db, company_id=company_id)
+    result.update(
+        {
+            "enabled": bool(subscription and subscription.status == "approved"),
+            "configured": bool(current["configured"]),
+            "last_test_status": current["last_test_status"],
+            "last_tested_at": current["last_tested_at"],
+            "profiles": profiles,
+            "subscription": subscription_payload(subscription, db=db),
+        }
+    )
+    return result
 
 
-def invalidate_company_client(company_id: UUID) -> None:
-    _client_cache.pop(str(company_id), None)
+def update_selected_environment(
+    db: Session,
+    *,
+    company_id: UUID,
+    configured_by_user_id: UUID,
+    environment: str,
+) -> OriginationIntegrationConfiguration:
+    environment = environment.strip().lower()
+    if environment not in ALLOWED_ENVIRONMENTS:
+        raise ValueError("CDAS environment must be either test or live")
+    subscription = require_approved_subscription(db, company_id=company_id)
+    profile = get_profile(db, company_id=company_id, environment=environment)
+    if not profile:
+        raise ValueError(f"The Platform Owner has not configured this company's CDAS {environment.title()} profile")
+    if environment == "live" and profile.last_test_status != "connected":
+        raise ValueError("The Platform Owner must successfully test this company's CDAS Live profile before Live can be selected")
+    row = _configuration_row(db, company_id)
+    if not row:
+        row = OriginationIntegrationConfiguration(
+            company_id=company_id,
+            provider=CDAS_PROVIDER,
+            configuration={},
+        )
+        db.add(row)
+    row.environment = environment
+    row.is_enabled = subscription.status == "approved"
+    row.configuration = {"selected_environment": environment}
+    row.encrypted_credentials = None
+    row.configured_by_user_id = configured_by_user_id
+    row.last_test_status = profile.last_test_status
+    row.last_tested_at = profile.last_tested_at
+    db.commit()
+    db.refresh(row)
+    invalidate_company_client(company_id)
+    return row
 
 
 def update_configuration(
@@ -171,102 +163,45 @@ def update_configuration(
     clear_password: bool,
     timeout_seconds: float,
 ) -> OriginationIntegrationConfiguration:
-    environment = environment.strip().lower()
-    if environment not in ALLOWED_ENVIRONMENTS:
-        raise ValueError("CDAS environment must be either test or live")
-    base_url = _validate_base_url(base_url)
-    _validate_environment_base_url(environment, base_url)
-    username = username.strip()
-    if not username:
-        raise ValueError("CDAS username is required")
-    item_code = str(item_code or "").strip()
-    if len(item_code) > 100:
-        raise ValueError("CDAS Item Code must be 100 characters or fewer")
-    if not 1 <= timeout_seconds <= 120:
-        raise ValueError("CDAS timeout must be between 1 and 120 seconds")
-    if clear_password and password:
-        raise ValueError("Provide a new password or clear the existing password, not both")
-    _assert_username_isolated(
-        db,
-        company_id=company_id,
-        environment=environment,
-        username=username,
+    raise ValueError(
+        "CDAS credentials, Item Code and provider endpoints are controlled by the LoanHub Platform Owner. "
+        "The Loan Company Owner may only switch the approved company between Test and Live."
     )
-    row = _configuration_row(db, company_id)
-    previous_env = str(row.environment or "test").strip().lower() if row else None
-    environment_changed = row is not None and previous_env != environment
-    if row is None:
-        row = OriginationIntegrationConfiguration(company_id=company_id, provider=CDAS_PROVIDER)
-        db.add(row)
-    encrypted = None if environment_changed else row.encrypted_credentials
-    if clear_password:
-        encrypted = None
-    elif password:
-        encrypted = _serialize_password(password)
-    if enabled and not encrypted:
-        raise ValueError("A CDAS password must be configured before authentication can be enabled")
-    row.environment = environment
-    row.is_enabled = enabled
-    row.configuration = {
-        "base_url": base_url,
-        "username": username,
-        "item_code": item_code,
-        "timeout_seconds": float(timeout_seconds),
-    }
-    row.encrypted_credentials = encrypted
-    row.configured_by_user_id = configured_by_user_id
-    row.last_test_status = None
-    row.last_tested_at = None
-    db.commit()
-    db.refresh(row)
-    invalidate_company_client(company_id)
-    return row
 
 
-def _credentials_from_row(
-    row: OriginationIntegrationConfiguration | None,
-    *,
-    require_enabled: bool,
-) -> CdasCompanyCredentials:
-    if row is None:
-        raise CdasConfigurationError(503, "CDAS authentication is not configured for this company")
-    if require_enabled and not row.is_enabled:
-        raise CdasConfigurationError(503, "CDAS authentication is disabled for this company")
-    cfg = _values(row)
+def invalidate_company_client(company_id: UUID) -> None:
+    _client_cache.pop(str(company_id), None)
+
+
+def _credentials_from_profile(db: Session, *, company_id: UUID, environment: str) -> CdasCompanyCredentials:
+    profile = get_profile(db, company_id=company_id, environment=environment)
+    if not profile:
+        raise CdasConfigurationError(503, f"The Platform Owner has not configured this company's CDAS {environment.title()} profile")
     try:
-        base_url = _validate_base_url(str(cfg.get("base_url") or ""))
-    except ValueError as exc:
-        raise CdasConfigurationError(503, "This company's CDAS base URL is invalid") from exc
-    username = str(cfg.get("username") or "").strip()
-    password = _deserialize_password(row.encrypted_credentials)
-    if not username:
-        raise CdasConfigurationError(503, "This company's CDAS username is not configured")
-    if not password:
-        raise CdasConfigurationError(503, "This company's CDAS password is not configured")
-    try:
-        timeout = float(cfg.get("timeout_seconds") or settings.CDAS_TIMEOUT_SECONDS)
-    except (TypeError, ValueError) as exc:
-        raise CdasConfigurationError(503, "This company's CDAS timeout is invalid") from exc
-    environment = str(row.environment or "test").strip().lower()
-    if environment not in ALLOWED_ENVIRONMENTS:
-        raise CdasConfigurationError(503, "This company's CDAS environment is invalid")
-    try:
-        _validate_environment_base_url(environment, base_url)
-    except ValueError as exc:
-        raise CdasConfigurationError(503, "This company's CDAS environment and base URL do not match") from exc
-    return CdasCompanyCredentials(base_url, username, password, timeout, environment)
+        password = decrypt_profile_password(profile)
+    except Exception as exc:
+        raise CdasConfigurationError(503, "The stored CDAS credential could not be verified") from exc
+    return CdasCompanyCredentials(
+        base_url=profile.base_url,
+        username=profile.username,
+        password=password,
+        item_code=str(profile.item_code or "").strip(),
+        timeout_seconds=float(profile.timeout_seconds or settings.CDAS_TIMEOUT_SECONDS),
+        environment=environment,
+    )
 
 
-def _client_signature(row: OriginationIntegrationConfiguration) -> str:
+def _client_signature(credentials: CdasCompanyCredentials) -> str:
     material = json.dumps(
         {
-            "environment": row.environment,
-            "enabled": bool(row.is_enabled),
-            "configuration": _values(row),
-            "encrypted_credentials": row.encrypted_credentials or "",
+            "environment": credentials.environment,
+            "base_url": credentials.base_url,
+            "username": credentials.username,
+            "item_code": credentials.item_code,
+            "timeout_seconds": credentials.timeout_seconds,
+            "password": credentials.password,
         },
         sort_keys=True,
-        default=str,
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(material).hexdigest()
@@ -291,10 +226,11 @@ def _shared_session_broker(
 
 
 def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
+    require_approved_subscription(db, company_id=company_id)
     row = _configuration_row(db, company_id)
-    credentials = _credentials_from_row(row, require_enabled=True)
-    assert row is not None
-    signature = _client_signature(row)
+    environment = selected_environment(row)
+    credentials = _credentials_from_profile(db, company_id=company_id, environment=environment)
+    signature = _client_signature(credentials)
     key = str(company_id)
     cached = _client_cache.get(key)
     if cached is not None and cached[0] == signature:
@@ -304,37 +240,49 @@ def get_company_cdas_client(db: Session, company_id: UUID) -> CdasClient:
         username=credentials.username,
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
-        request_guard=_request_guard(company_id, credentials.environment),
+        request_guard=_request_guard(company_id, environment),
         session_broker=_shared_session_broker(credentials, generation=signature),
     )
     _client_cache[key] = (signature, client)
     return client
 
 
-async def test_company_configuration(db: Session, *, company_id: UUID) -> dict[str, Any]:
+def get_company_item_code(db: Session, company_id: UUID) -> str:
     row = _configuration_row(db, company_id)
-    credentials = _credentials_from_row(row, require_enabled=False)
-    assert row is not None
-    signature = _client_signature(row)
+    environment = selected_environment(row)
+    profile = get_profile(db, company_id=company_id, environment=environment)
+    if not profile:
+        raise CdasConfigurationError(503, f"The Platform Owner has not configured this company's CDAS {environment.title()} profile")
+    return str(profile.item_code or "").strip()
+
+
+async def test_company_configuration(db: Session, *, company_id: UUID) -> dict[str, Any]:
+    """Compatibility helper. Testing remains Platform Owner controlled at the HTTP boundary."""
+    row = _configuration_row(db, company_id)
+    environment = selected_environment(row)
+    profile = get_profile(db, company_id=company_id, environment=environment)
+    if not profile:
+        raise CdasConfigurationError(503, "CDAS credential profile is not configured")
+    credentials = _credentials_from_profile(db, company_id=company_id, environment=environment)
+    signature = _client_signature(credentials)
     client = CdasClient(
         base_url=credentials.base_url,
         username=credentials.username,
         password=credentials.password,
         timeout_seconds=credentials.timeout_seconds,
-        request_guard=_request_guard(company_id, credentials.environment),
+        request_guard=_request_guard(company_id, environment),
         session_broker=_shared_session_broker(credentials, generation=signature),
     )
     try:
         await client.check_connection()
     except CdasError:
-        row.last_test_status = "failed"
-        row.last_tested_at = _utcnow()
+        profile.last_test_status = "failed"
+        profile.last_tested_at = _utcnow()
         db.commit()
-        invalidate_company_client(company_id)
         raise
-    row.last_test_status = "connected"
-    row.last_tested_at = _utcnow()
+    profile.last_test_status = "connected"
+    profile.last_tested_at = _utcnow()
     db.commit()
-    db.refresh(row)
+    db.refresh(profile)
     invalidate_company_client(company_id)
-    return configuration_summary(row)
+    return configuration_summary(row, db=db, company_id=company_id)

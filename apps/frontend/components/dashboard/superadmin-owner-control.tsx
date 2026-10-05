@@ -263,6 +263,10 @@ const modules: ControlModule[] = [
             "Surface payment, SMS and email provider incidents.",
             "Allow controlled isolation of a failing integration without changing unrelated tenants.",
         ],
+        links: [
+            { label: "Experian Credit Bureau", href: "/superadmin/control/integrations/experian" },
+            { label: "CDAS platform service", href: "/superadmin/control/integrations/cdas" },
+        ],
     },
     {
         slug: "system-health",

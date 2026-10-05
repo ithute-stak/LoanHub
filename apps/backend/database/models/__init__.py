@@ -60,6 +60,11 @@ from database.models.platform_credit_bureau import (
     PlatformCreditBureauTransaction,
     PlatformCreditBureauInvoice,
 )
+from database.models.platform_cdas import (
+    PlatformCdasSubscription,
+    PlatformCdasCredentialProfile,
+    PlatformCdasTransaction,
+)
 from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from database.models.early_settlement import LoanEarlySettlement
 from database.models.loan_payment_operations import (
@@ -168,6 +173,9 @@ __all__ = [
     "PlatformCreditBureauSubscription",
     "PlatformCreditBureauTransaction",
     "PlatformCreditBureauInvoice",
+    "PlatformCdasSubscription",
+    "PlatformCdasCredentialProfile",
+    "PlatformCdasTransaction",
     "PolyglotBenchmarkRun",
     "LoanEarlySettlement",
     "AccountingExport",
