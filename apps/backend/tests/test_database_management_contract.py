@@ -70,6 +70,11 @@ def test_platform_database_management_is_read_only_and_owner_scoped() -> None:
     assert "pg_stat_user_indexes" in service
     assert "pg_constraint" in service
     assert "pg_stat_replication" in service
+    assert "pg_policies" in service
+    assert "rolbypassrls" in service
+    assert "runtime_owns_protected_table" in service
+    assert "tables_without_policy" in service
+    assert "enforcement_ready" in service
     assert "platform_database.router" in api_router
 
 
