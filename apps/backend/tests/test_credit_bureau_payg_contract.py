@@ -101,3 +101,60 @@ def test_only_company_owner_can_switch_experian_environment() -> None:
     assert "Only the Loan Company Owner can switch Credit Bureau between Sandbox and Live." in router
     assert 'const canSwitchEnvironment = activeRole === "company_owner";' in company_page
     assert "Only the Loan Company Owner can switch this mode." in company_page
+
+
+def test_sandbox_is_free_and_live_uses_price_snapshot() -> None:
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+    router = _read(ROOT / "routers/credit_bureau.py")
+
+    assert 'is_live = str(environment).strip().lower() == "live"' in service
+    assert 'price = _money(subscription.price_per_transaction) if is_live else Decimal("0.00")' in service
+    assert '"charge_trigger": "successful_fresh_provider_enquiry" if is_live else "sandbox_free"' in service
+    assert '"price_snapshot": float(price)' in service
+    assert "accrue_successful_enquiry(" in router
+    failure_block = router.split("except ExperianRequestError", 1)[1].split("defaults_count", 1)[0]
+    assert "accrue_successful_enquiry" not in failure_block
+
+
+def test_credit_limit_is_checked_before_live_provider_call() -> None:
+    router = _read(ROOT / "routers/credit_bureau.py")
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+
+    gate_pos = router.index("assert_live_credit_available(")
+    provider_pos = router.index("run_bureau_enquiry(platform_integration")
+    assert gate_pos < provider_pos
+    assert "outstanding + price <= limit" in service
+    assert 'subscription.status = "suspended"' in service
+    assert "Credit Bureau credit limit reached" in service
+
+
+def test_monthly_invoices_waivers_notifications_and_overdue_suspension_exist() -> None:
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+    scheduler = _read(ROOT / "services/credit_bureau_billing_scheduler.py")
+    main = _read(ROOT / "main.py")
+    platform_router = _read(ROOT / "routers/platform_credit_bureau.py")
+
+    assert "def create_invoice(" in service
+    assert "def waive_transaction(" in service
+    assert "def run_monthly_invoice_cycle(" in service
+    assert "def suspend_overdue_accounts(" in service
+    assert "Notification(" in service
+    assert "start_credit_bureau_billing_scheduler" in main
+    assert "stop_credit_bureau_billing_scheduler" in main
+    assert "run_monthly_invoice_cycle" in scheduler
+    assert '@router.post("/experian/transactions/{transaction_id}/waive")' in platform_router
+    assert '@router.post("/experian/invoices/{company_id}")' in platform_router
+    assert '@router.post("/experian/invoices/{invoice_id}/paid")' in platform_router
+
+
+def test_bureau_invoices_post_double_entry_accounting() -> None:
+    accounting = _read(ROOT / "services/accounting_service.py")
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+
+    assert '("6700", "Credit Bureau Expense", "expense", "debit")' in accounting
+    assert '("4500", "Credit Bureau Revenue", "revenue", "credit")' in accounting
+    assert '("1200", "Tenant Receivables", "asset", "debit")' in accounting
+    assert "def record_credit_bureau_invoice_accrual" in accounting
+    assert "def record_credit_bureau_invoice_payment" in accounting
+    assert "record_credit_bureau_invoice_accrual(db, invoice)" in service
+    assert "record_credit_bureau_invoice_payment(db, invoice)" in service
