@@ -27,6 +27,9 @@ from database.models.accounting import AccountingAccount, JournalEntry, JournalL
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.lending_operations import CollectionCase
+from database.models.credit_loss_provisioning import CreditLossProvisionRun
+from database.models.governance_control import ApprovalRequest, BankStatementLine
+from database.models.reconciliation import ReconciliationBatch
 from database.models.enums import (
     PaymentDirection,
     PaymentPurpose,
@@ -1517,3 +1520,230 @@ def post_loan_write_off(
         status_value="posted",
         lines=lines,
     )
+
+
+def _account_signed_balance(
+    db: Session,
+    *,
+    scope_key_value: str,
+    account_code: str,
+    to_date: date,
+    branch_id=None,
+) -> Decimal:
+    account = account_by_code(db, scope_key_value, account_code)
+    query = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == account.id,
+        JournalEntry.scope_key == scope_key_value,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= to_date,
+    )
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+    debit, credit = query.first()
+    return _money(Decimal(debit) - Decimal(credit))
+
+
+def period_close_pack(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Evidence pack and hard checks used before locking an accounting period.
+
+    The pack does not invent adjustments. It verifies that source records,
+    reconciliations and deterministic period-end postings are complete enough
+    for finance to lock the books.
+    """
+    if period_end < period_start:
+        raise HTTPException(status_code=422, detail="Period end must be on or after period start")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+
+    trial = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= period_end,
+    )
+    if branch_id:
+        trial = trial.filter(JournalEntry.branch_id == branch_id)
+    total_debit, total_credit = trial.first()
+    total_debit = _money(total_debit)
+    total_credit = _money(total_credit)
+
+    suspense = _account_signed_balance(
+        db, scope_key_value=key, account_code="2990", to_date=period_end, branch_id=branch_id
+    )
+    vat_receivable = _account_signed_balance(
+        db, scope_key_value=key, account_code="1600", to_date=period_end, branch_id=branch_id
+    )
+    vat_payable_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2200", to_date=period_end, branch_id=branch_id
+    )
+    accruals_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2100", to_date=period_end, branch_id=branch_id
+    )
+    prepayments = _account_signed_balance(
+        db, scope_key_value=key, account_code="1400", to_date=period_end, branch_id=branch_id
+    )
+
+    drafts = db.query(JournalEntry.id).filter(
+        JournalEntry.company_id == company_id,
+        JournalEntry.entry_date.between(period_start, period_end),
+        JournalEntry.status == "draft",
+    )
+    bank_unmatched = db.query(BankStatementLine.id).filter(
+        BankStatementLine.company_id == company_id,
+        BankStatementLine.transaction_date.between(period_start, period_end),
+        BankStatementLine.status == "unmatched",
+    )
+    approvals = db.query(ApprovalRequest.id).filter(
+        ApprovalRequest.company_id == company_id,
+        ApprovalRequest.status == "pending",
+    )
+    reconciliation_open = db.query(ReconciliationBatch.id).filter(
+        ReconciliationBatch.company_id == company_id,
+        ReconciliationBatch.period_end <= period_end,
+        ReconciliationBatch.period_end >= period_start,
+        ReconciliationBatch.status != "closed",
+    )
+    if branch_id:
+        drafts = drafts.filter(JournalEntry.branch_id == branch_id)
+        bank_unmatched = bank_unmatched.filter(BankStatementLine.branch_id == branch_id)
+        approvals = approvals.filter(
+            (ApprovalRequest.branch_id == branch_id) | (ApprovalRequest.branch_id.is_(None))
+        )
+        reconciliation_open = reconciliation_open.filter(
+            (ReconciliationBatch.branch_id == branch_id) | (ReconciliationBatch.branch_id.is_(None))
+        )
+
+    loan_query = db.query(ClientCompanyLoan.id).filter(
+        ClientCompanyLoan.company_id == company_id,
+        ClientCompanyLoan.balance > 0,
+    )
+    if branch_id:
+        loan_query = loan_query.filter(ClientCompanyLoan.branch_id == branch_id)
+    active_loan_count = loan_query.count()
+
+    provision = db.query(CreditLossProvisionRun).filter(
+        CreditLossProvisionRun.company_id == company_id,
+        CreditLossProvisionRun.as_of_date == period_end,
+        CreditLossProvisionRun.status == "posted",
+    )
+    if branch_id:
+        provision = provision.filter(CreditLossProvisionRun.branch_id == branch_id)
+    else:
+        provision = provision.filter(CreditLossProvisionRun.branch_scope_key == "ALL")
+    provision_posted = provision.first() is not None
+
+    assets = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
+        CompanyOperatingRecord.status == "active"
+    ).all()
+    asset_depreciation_due = []
+    for asset in assets:
+        data = _asset_data(asset)
+        acquired = date.fromisoformat(data["acquisition_date"])
+        if acquired > period_end:
+            continue
+        last = date.fromisoformat(data["last_depreciation_date"]) if data.get("last_depreciation_date") else None
+        if last is None or last < period_end:
+            asset_depreciation_due.append(str(asset.id))
+
+    receivables_control = loan_receivables_control_reconciliation(
+        db, company_id=company_id, as_of=period_end, branch_id=branch_id
+    )
+
+    checks = {
+        "trial_balance_balanced": total_debit == total_credit,
+        "suspense_cleared": suspense == 0,
+        "draft_journals_cleared": drafts.count() == 0,
+        "bank_statement_exceptions_cleared": bank_unmatched.count() == 0,
+        "reconciliation_batches_closed": reconciliation_open.count() == 0,
+        "pending_financial_approvals_cleared": approvals.count() == 0,
+        "loan_receivables_control_balanced": bool(receivables_control["balanced"]),
+        "fixed_asset_depreciation_complete": len(asset_depreciation_due) == 0,
+        "credit_loss_provision_posted": active_loan_count == 0 or provision_posted,
+    }
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ready_to_lock": all(checks.values()),
+        "checks": checks,
+        "counts": {
+            "draft_journals": drafts.count(),
+            "unmatched_bank_lines": bank_unmatched.count(),
+            "open_reconciliation_batches": reconciliation_open.count(),
+            "pending_approvals": approvals.count(),
+            "active_loans": active_loan_count,
+            "fixed_assets_needing_depreciation": len(asset_depreciation_due),
+        },
+        "balances": {
+            "trial_debit": float(total_debit),
+            "trial_credit": float(total_credit),
+            "trial_difference": float(_money(total_debit - total_credit)),
+            "suspense": float(suspense),
+            "vat_receivable": float(vat_receivable),
+            "vat_payable": float(-vat_payable_signed),
+            "net_vat_payable": float(_money((-vat_payable_signed) - vat_receivable)),
+            "accruals": float(-accruals_signed),
+            "prepayments": float(prepayments),
+        },
+        "loan_receivables_control": receivables_control,
+        "fixed_asset_ids_needing_depreciation": asset_depreciation_due,
+        "credit_loss_provision_run_id": str(provision.first().id) if provision.first() else None,
+    }
+
+
+def depreciate_all_fixed_assets_for_period(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+    user_id=None,
+) -> dict:
+    assets = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
+        CompanyOperatingRecord.status == "active"
+    ).all()
+    posted = []
+    skipped = []
+    total = Decimal("0.00")
+    for asset in assets:
+        data = _asset_data(asset)
+        if date.fromisoformat(data["acquisition_date"]) > period_end:
+            skipped.append(str(asset.id))
+            continue
+        amount = calculate_fixed_asset_depreciation(
+            asset, period_start=period_start, period_end=period_end
+        )
+        if amount <= 0:
+            skipped.append(str(asset.id))
+            continue
+        entry = post_fixed_asset_depreciation(
+            db,
+            asset=asset,
+            period_start=period_start,
+            period_end=period_end,
+            user_id=user_id,
+        )
+        if entry:
+            posted.append({"asset_id": str(asset.id), "journal_entry_id": str(entry.id), "amount": float(amount)})
+            total += amount
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "posted": posted,
+        "skipped_asset_ids": skipped,
+        "total_depreciation": float(_money(total)),
+    }
