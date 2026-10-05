@@ -68,6 +68,8 @@ from services.accounting_service import (
     post_fixed_asset_depreciation,
     post_loan_write_off,
     dispose_fixed_asset,
+    depreciate_all_fixed_assets_for_period,
+    period_close_pack,
     scope_key,
 )
 
@@ -1029,3 +1031,51 @@ def write_off_loan_receivable(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/period-close-pack")
+def accounting_period_close_pack(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return period_close_pack(
+        db,
+        company_id=selected_company_id,
+        period_start=from_date,
+        period_end=to_date,
+        branch_id=selected_branch_id,
+    )
+
+
+@router.post("/assets/depreciate-period")
+def depreciate_assets_for_period(
+    payload: FixedAssetDepreciationRun,
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    result = depreciate_all_fixed_assets_for_period(
+        db,
+        company_id=selected_company_id,
+        period_start=payload.period_start,
+        period_end=payload.period_end,
+        branch_id=selected_branch_id,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return result
