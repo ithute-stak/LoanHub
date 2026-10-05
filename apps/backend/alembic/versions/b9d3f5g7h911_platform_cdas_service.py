@@ -169,6 +169,29 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore the selected environment's platform-owned profile to the legacy
+    # company configuration before removing the new custody tables.
+    op.execute(
+        """
+        UPDATE origination_integration_configurations AS o
+        SET
+            configuration = jsonb_build_object(
+                'base_url', p.base_url,
+                'username', p.username,
+                'item_code', COALESCE(p.item_code, ''),
+                'timeout_seconds', p.timeout_seconds
+            ),
+            encrypted_credentials = p.encrypted_password,
+            last_test_status = p.last_test_status,
+            last_tested_at = p.last_tested_at,
+            configured_by_user_id = p.configured_by_user_id
+        FROM platform_cdas_credential_profiles AS p
+        WHERE o.provider = 'cdas'
+          AND p.company_id = o.company_id
+          AND p.environment = CASE WHEN lower(o.environment) = 'live' THEN 'live' ELSE 'test' END
+        """
+    )
+
     op.drop_index("ix_platform_cdas_transactions_source_reference", table_name="platform_cdas_transactions")
     op.drop_index("ix_platform_cdas_transactions_status", table_name="platform_cdas_transactions")
     op.drop_index("ix_platform_cdas_transactions_reference", table_name="platform_cdas_transactions")
