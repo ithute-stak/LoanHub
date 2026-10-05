@@ -294,14 +294,20 @@ def _rust_risk_rows(rows: list[PortfolioRiskSnapshot]) -> list[dict[str, Any]]:
     return [
         {
             "outstanding_balance": str(money(row.outstanding_balance)),
+            "principal_amount": str(money(row.principal_amount)),
             "days_past_due": int(row.days_past_due or 0),
             "active": (
                 row.loan_status in active_names
                 and money(row.outstanding_balance) > 0
                 and not row.is_written_off
             ),
+            "is_written_off": bool(row.is_written_off),
+            "is_top_up": bool(row.is_top_up),
+            "cdas_collection_enabled": bool(row.cdas_collection_enabled),
             "first_payment_due": bool(row.evidence_snapshot.get("first_payment_due")),
             "first_payment_default": bool(row.first_payment_default),
+            "origination_month": row.origination_month.isoformat() if row.origination_month else None,
+            "delinquency_bucket": str(row.delinquency_bucket or "current"),
             "branch_label": str(row.branch_label or "Unknown"),
             "product_label": str(row.product_label or "Unknown"),
             "employer_label": str(row.employer_label or "Unknown"),
@@ -331,6 +337,38 @@ def _normalized_rust_concentration(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalized_rust_bucket(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bucket": str(value.get("bucket") or "current"),
+        "loan_count": int(value.get("loan_count") or 0),
+        "exposure": float(money(value.get("exposure"))),
+    }
+
+
+def _normalized_rust_vintage(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vintage": str(value.get("vintage") or ""),
+        "loan_count": int(value.get("loan_count") or 0),
+        "originated_principal": float(money(value.get("originated_principal"))),
+        "outstanding_balance": float(money(value.get("outstanding_balance"))),
+        "par_30": float(money(value.get("par_30"))),
+        "fpd_rate": float(money(value.get("fpd_rate"))),
+        "write_off_count": int(value.get("write_off_count") or 0),
+        "top_up_count": int(value.get("top_up_count") or 0),
+    }
+
+
+def _normalized_rust_top_up(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "label": str(value.get("label") or ""),
+        "loan_count": int(value.get("loan_count") or 0),
+        "active_exposure": float(money(value.get("active_exposure"))),
+        "par_30": float(money(value.get("par_30"))),
+        "fpd_rate": float(money(value.get("fpd_rate"))),
+        "write_off_count": int(value.get("write_off_count") or 0),
+    }
+
+
 def _normalized_rust_risk(value: dict[str, Any]) -> dict[str, Any]:
     par: dict[str, Any] = {
         "active_exposure": float(money(value.get("active_exposure"))),
@@ -344,6 +382,20 @@ def _normalized_rust_risk(value: dict[str, Any]) -> dict[str, Any]:
         "branch": _normalized_rust_concentration(dict(value.get("branch") or {})),
         "product": _normalized_rust_concentration(dict(value.get("product") or {})),
         "employer": _normalized_rust_concentration(dict(value.get("employer") or {})),
+        "delinquency_buckets": [
+            _normalized_rust_bucket(item)
+            for item in list(value.get("delinquency_buckets") or [])
+        ],
+        "vintages": [
+            _normalized_rust_vintage(item)
+            for item in list(value.get("vintages") or [])
+        ],
+        "top_up_performance": [
+            _normalized_rust_top_up(item)
+            for item in list(value.get("top_up_performance") or [])
+        ],
+        "top_up_exposure": float(money(value.get("top_up_exposure"))),
+        "cdas_exposure": float(money(value.get("cdas_exposure"))),
     }
 
 
