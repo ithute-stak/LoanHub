@@ -31,6 +31,8 @@ def upgrade() -> None:
         "platform_cdas_subscriptions",
         sa.Column("billing_due_days", sa.Integer(), nullable=False, server_default="14"),
     )
+    op.add_column("platform_cdas_transactions", sa.Column("refunded_at", sa.DateTime(), nullable=True))
+    op.add_column("platform_cdas_transactions", sa.Column("refund_reason", sa.Text(), nullable=True))
     op.create_table(
         "platform_cdas_invoices",
         *_audit_columns(),
@@ -72,4 +74,6 @@ def downgrade() -> None:
     op.drop_index("ix_platform_cdas_invoices_subscription_id", table_name="platform_cdas_invoices")
     op.drop_index("ix_platform_cdas_invoices_company_id", table_name="platform_cdas_invoices")
     op.drop_table("platform_cdas_invoices")
+    op.drop_column("platform_cdas_transactions", "refund_reason")
+    op.drop_column("platform_cdas_transactions", "refunded_at")
     op.drop_column("platform_cdas_subscriptions", "billing_due_days")
