@@ -33,7 +33,7 @@ def test_credit_loss_approval_has_maker_checker_and_posts_balanced_journal():
     assert "Maker-checker control requires a different user" in source
     assert 'reference_type="credit_loss_provision_run"' in source
     assert '"1150"' in bootstrap
-    assert '"6700"' in bootstrap
+    assert '"5510"' in bootstrap
     assert "Allowance for Credit Losses" in bootstrap
     assert "Credit Loss Provision Expense" in bootstrap
 
