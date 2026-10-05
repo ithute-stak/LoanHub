@@ -44,7 +44,6 @@ export default function ExperianCreditBureauPage() {
   const [enquiries, setEnquiries] = useState<CreditBureauEnquiry[]>([]);
   const [decisionContext, setDecisionContext] = useState<CreditBureauDecisionContext | null>(null);
 
-  const [enabled, setEnabled] = useState(false);
   const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [maxReportAgeHours, setMaxReportAgeHours] = useState(24);
   const [requirementMode, setRequirementMode] = useState<"optional" | "before_affordability" | "before_approval" | "amount_threshold" | "selected_products">("optional");
@@ -68,7 +67,6 @@ export default function ExperianCreditBureauPage() {
 
   const applyConfiguration = useCallback((row: ExperianCompanyConfiguration) => {
     setConfiguration(row);
-    setEnabled(Boolean(row.is_enabled));
     setEnvironment(row.configuration.environment === "live" ? "live" : "sandbox");
     setMaxReportAgeHours(Number(row.configuration.max_report_age_hours ?? 24));
     const requirement = row.configuration.requirement_mode;
@@ -300,11 +298,6 @@ export default function ExperianCreditBureauPage() {
                   {subscription?.rejection_reason ? <p className="mt-2 text-xs text-destructive">{subscription.rejection_reason}</p> : null}
                 </div>
                 {canConfigure && subscription?.status !== "approved" && subscription?.status !== "pending" ? (
-                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()} disabled={!platformReady}>
-                    Request subscription
-                  </LoadingButton>
-                ) : null}
-                {canConfigure && (!subscription || subscription.status === "not_subscribed") ? (
                   <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()} disabled={!platformReady}>
                     Request subscription
                   </LoadingButton>
