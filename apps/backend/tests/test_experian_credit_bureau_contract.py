@@ -210,11 +210,15 @@ def test_company_experian_policy_is_enforced_by_affordability_and_approval() -> 
     assert 'stage="affordability"' in service
     assert 'bureau_policy.get("include_bureau_commitments_in_affordability")' in service
     assert 'bureau_policy.get("bureau_debt_mode")' in service
-    assert 'bureau_policy.get("decline_below_score")' in service
-    assert 'bureau_policy.get("refer_below_score")' in service
-    assert 'bureau_policy.get("block_defaults")' in service
-    assert 'bureau_policy.get("require_identity_match")' in service
-    assert '"credit_bureau": {' in service
+    external = _read(ROOT / "services/external_underwriting_evidence_service.py")
+    assert "external_evidence_snapshot(" in service
+    assert 'policy.get("decline_below_score")' in external
+    assert 'policy.get("refer_below_score")' in external
+    assert 'policy.get("block_defaults")' in external
+    assert 'policy.get("block_judgments")' in external
+    assert 'policy.get("block_collections")' in external
+    assert 'policy.get("require_identity_match")' in external
+    assert '"external_underwriting_evidence": external_evidence' in service
 
     assert '"optional"' in schema
     assert '"before_affordability"' in schema
@@ -253,3 +257,22 @@ def test_each_company_selects_its_own_experian_sandbox_or_live_mode() -> None:
     assert "Lending companies choose which mode they use" in platform_page
     assert "Credential profile" in platform_page
     assert 'environment: "sandbox" | "live";' in api
+
+
+
+def test_experian_company_can_govern_all_supported_adverse_record_types() -> None:
+    schema = _read(ROOT / "database/schemas/credit_bureau.py")
+    service = _read(ROOT / "services/external_underwriting_evidence_service.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
+    types = _read(FRONTEND_ROOT / "types/creditBureau.ts")
+
+    assert "block_defaults: bool = False" in schema
+    assert "block_judgments: bool = False" in schema
+    assert "block_collections: bool = False" in schema
+    assert "defaults_blocked" in service
+    assert "judgments_blocked" in service
+    assert "collections_blocked" in service
+    assert "Block applicants with judgments" in page
+    assert "Block applicants with collection records" in page
+    assert "block_judgments?: boolean" in types
+    assert "block_collections?: boolean" in types
