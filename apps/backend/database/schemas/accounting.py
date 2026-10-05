@@ -5,6 +5,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+ACCOUNT_TYPES = {"asset", "liability", "equity", "revenue", "expense"}
+NORMAL_BALANCES = {"debit", "credit"}
+
+
 class AccountingAccountCreate(BaseModel):
     code: str = Field(min_length=2, max_length=30)
     name: str = Field(min_length=2, max_length=180)
@@ -17,18 +21,18 @@ class AccountingAccountCreate(BaseModel):
     @field_validator("account_type")
     @classmethod
     def valid_type(cls, value: str) -> str:
-        normalized = value.lower()
-        if normalized not in {"asset", "liability", "equity", "revenue", "expense"}:
+        value = value.lower()
+        if value not in ACCOUNT_TYPES:
             raise ValueError("Invalid account type")
-        return normalized
+        return value
 
     @field_validator("normal_balance")
     @classmethod
     def valid_balance(cls, value: str) -> str:
-        normalized = value.lower()
-        if normalized not in {"debit", "credit"}:
+        value = value.lower()
+        if value not in NORMAL_BALANCES:
             raise ValueError("Normal balance must be debit or credit")
-        return normalized
+        return value
 
 
 class AccountingAccountUpdate(BaseModel):
@@ -39,7 +43,6 @@ class AccountingAccountUpdate(BaseModel):
 
 class AccountingAccountRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     scope_key: str
     scope_type: str
@@ -89,7 +92,6 @@ class JournalEntryCreate(BaseModel):
 
 class JournalLineRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     account_id: UUID
     description: str | None = None
@@ -100,7 +102,6 @@ class JournalLineRead(BaseModel):
 
 class JournalEntryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     scope_key: str
     scope_type: str
@@ -149,3 +150,47 @@ class FinancialStatementRead(BaseModel):
     to_date: date
     sections: dict[str, list[FinancialStatementLine]]
     totals: dict[str, Decimal]
+
+
+class LedgerLineRead(BaseModel):
+    entry_id: UUID
+    entry_number: str
+    entry_date: date
+    description: str
+    reference_type: str | None = None
+    reference_id: str | None = None
+    debit: Decimal
+    credit: Decimal
+    running_balance: Decimal
+
+
+class LedgerRead(BaseModel):
+    account: AccountingAccountRead
+    from_date: date | None = None
+    to_date: date | None = None
+    opening_balance: Decimal
+    closing_balance: Decimal
+    lines: list[LedgerLineRead]
+
+
+class ExpensePostCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=2, max_length=1000)
+    expense_account_code: str = Field(default="6500", min_length=4, max_length=30)
+    branch_id: UUID | None = None
+    paid_now: bool = True
+    entry_date: date | None = None
+    external_reference: str | None = Field(default=None, max_length=120)
+
+
+class AccountingDashboardRead(BaseModel):
+    as_of: date
+    cash_and_bank: Decimal
+    loans_receivable: Decimal
+    total_assets: Decimal
+    total_liabilities: Decimal
+    equity: Decimal
+    revenue: Decimal
+    expenses: Decimal
+    net_profit: Decimal
+    trial_balance_difference: Decimal
