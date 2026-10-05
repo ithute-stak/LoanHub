@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { AccountingDashboard } from "@/components/accounting/accounting-dashboard";
 
-export default function AccountingRedirectPage() {
-  redirect("/company/expense-management");
+export default function Page() {
+  return <AccountingDashboard mode="company" />;
 }
