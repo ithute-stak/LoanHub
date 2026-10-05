@@ -45,6 +45,7 @@ from database.models.treasury import TreasuryEntry, TreasurySettings
 
 
 MONEY = Decimal("0.01")
+ELECTRONIC_CLEARING_STALE_DAYS = 5
 
 
 def settlement_account_code(payment_method) -> str:
@@ -2749,4 +2750,147 @@ def electronic_clearing_reconciliation(
             "electronic_provider_refunds": provider_refund_count,
             "clearing_settlements": len(settlement_rows),
         },
+    }
+
+
+def electronic_clearing_aging(
+    db: Session,
+    *,
+    company_id,
+    as_of: date,
+    branch_id=None,
+    stale_after_days: int = ELECTRONIC_CLEARING_STALE_DAYS,
+) -> dict:
+    """Age the remaining 1020 balance by original journal date using FIFO matching.
+
+    Debit lots represent electronic funds expected from a provider. Credit lots
+    represent a provider-prefunding/outbound position. Opposite movements are
+    matched oldest-first, so the remainder shows which clearing amounts are
+    genuinely still outstanding.
+    """
+    if stale_after_days < 0 or stale_after_days > 365:
+        raise HTTPException(status_code=422, detail="stale_after_days must be between 0 and 365")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    clearing = account_by_code(db, key, "1020")
+
+    query = db.query(JournalLine, JournalEntry).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        JournalLine.account_id == clearing.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= as_of,
+    )
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+
+    rows = query.order_by(
+        JournalEntry.entry_date.asc(),
+        JournalEntry.created_at.asc(),
+        JournalLine.created_at.asc(),
+    ).all()
+
+    open_lots: list[dict] = []
+    for line, entry in rows:
+        signed = _money(Decimal(line.debit or 0) - Decimal(line.credit or 0))
+        if signed == 0:
+            continue
+
+        remaining = abs(signed)
+        sign = 1 if signed > 0 else -1
+
+        # Offset the oldest open lot on the opposite side.
+        lot_index = 0
+        while remaining > 0 and lot_index < len(open_lots):
+            lot = open_lots[lot_index]
+            if lot["sign"] == sign:
+                lot_index += 1
+                continue
+            matched = min(remaining, lot["remaining"])
+            lot["remaining"] = _money(lot["remaining"] - matched)
+            remaining = _money(remaining - matched)
+            if lot["remaining"] == 0:
+                open_lots.pop(lot_index)
+            else:
+                lot_index += 1
+
+        if remaining > 0:
+            open_lots.append({
+                "sign": sign,
+                "remaining": remaining,
+                "entry_date": entry.entry_date,
+                "entry_id": str(entry.id),
+                "entry_number": entry.entry_number,
+                "reference_type": entry.reference_type,
+                "reference_id": entry.reference_id,
+                "description": entry.description,
+            })
+
+    items = []
+    debit_total = Decimal("0.00")
+    credit_total = Decimal("0.00")
+    stale_total = Decimal("0.00")
+    stale_count = 0
+    buckets = {
+        "0_2_days": Decimal("0.00"),
+        "3_5_days": Decimal("0.00"),
+        "6_10_days": Decimal("0.00"),
+        "over_10_days": Decimal("0.00"),
+    }
+
+    for lot in open_lots:
+        age_days = max(0, (as_of - lot["entry_date"]).days)
+        signed_amount = lot["remaining"] if lot["sign"] > 0 else -lot["remaining"]
+        if lot["sign"] > 0:
+            debit_total += lot["remaining"]
+            position = "receivable_from_provider"
+        else:
+            credit_total += lot["remaining"]
+            position = "provider_prefunding_or_outbound"
+
+        if age_days <= 2:
+            bucket = "0_2_days"
+        elif age_days <= 5:
+            bucket = "3_5_days"
+        elif age_days <= 10:
+            bucket = "6_10_days"
+        else:
+            bucket = "over_10_days"
+        buckets[bucket] += abs(signed_amount)
+
+        stale = age_days > stale_after_days
+        if stale:
+            stale_count += 1
+            stale_total += abs(signed_amount)
+
+        items.append({
+            **lot,
+            "entry_date": lot["entry_date"].isoformat(),
+            "age_days": age_days,
+            "position": position,
+            "amount": float(signed_amount),
+            "absolute_amount": float(abs(signed_amount)),
+            "stale": stale,
+        })
+
+    ledger_balance = _money(debit_total - credit_total)
+    return {
+        "as_of": as_of.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "policy": {
+            "method": "fifo_open_item_aging",
+            "stale_after_days": stale_after_days,
+            "age_basis": "calendar_days",
+        },
+        "ledger_clearing_balance": float(ledger_balance),
+        "open_debit_total": float(_money(debit_total)),
+        "open_credit_total": float(_money(credit_total)),
+        "open_item_count": len(items),
+        "stale_item_count": stale_count,
+        "stale_amount": float(_money(stale_total)),
+        "has_stale_items": stale_count > 0,
+        "aging_buckets": {name: float(_money(value)) for name, value in buckets.items()},
+        "items": items,
     }
