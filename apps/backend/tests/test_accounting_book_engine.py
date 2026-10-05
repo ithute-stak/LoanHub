@@ -280,3 +280,23 @@ def test_written_off_loan_recovery_has_dedicated_income_and_evidence_controls():
     assert '@router.post("/recoveries/written-off-loans"' in router
     assert "class WrittenOffLoanRecoveryCreate" in schemas
     assert "Non-cash recoveries require a proof_reference" in schemas
+
+
+def test_provider_settlements_preserve_payment_channel_and_evidence():
+    accounting = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    bureau = (ROOT / "backend" / "services" / "credit_bureau_payg_service.py").read_text(encoding="utf-8")
+    cdas = (ROOT / "backend" / "services" / "platform_cdas_service.py").read_text(encoding="utf-8")
+    bureau_router = (ROOT / "backend" / "routers" / "platform_credit_bureau.py").read_text(encoding="utf-8")
+    cdas_router = (ROOT / "backend" / "routers" / "platform_cdas.py").read_text(encoding="utf-8")
+
+    assert 'settlement.get("payment_method")' in accounting
+    assert 'refund.get("payment_method")' in accounting
+    assert 'snapshot["settlement"]' in bureau
+    assert 'snapshot["settlement"]' in cdas
+    assert "Non-cash invoice payments require proof_reference" in bureau
+    assert "Non-cash invoice payments require proof_reference" in cdas
+    assert 'metadata["refund"]' in cdas
+    assert "Non-cash refunds require proof_reference" in cdas
+    assert "class ProviderInvoiceSettlement" in bureau_router
+    assert "class ProviderInvoiceSettlement" in cdas_router
+    assert "class CdasTransactionRefund" in cdas_router
