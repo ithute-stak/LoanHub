@@ -484,6 +484,10 @@ def record_successful_operation(
         },
     )
     db.add(row)
+    db.flush()
+    if live and rate > 0:
+        from services.accounting_service import record_cdas_transaction_accrual
+        record_cdas_transaction_accrual(db, row)
     if live and subscription.warning_threshold is not None:
         projected = outstanding_balance(db, company_id=company_id)
         threshold = _money(subscription.warning_threshold)
@@ -524,6 +528,8 @@ def waive_transaction(db: Session, *, transaction_id: UUID, reason: str) -> Plat
     row.status = "waived"
     row.waived_at = datetime.now(timezone.utc)
     row.waiver_reason = reason.strip()
+    from services.accounting_service import reverse_cdas_transaction_accrual
+    reverse_cdas_transaction_accrual(db, row)
     _notify_company_owners(
         db,
         company_id=row.company_id,
@@ -639,8 +645,8 @@ def create_invoice(db: Session, *, company_id: UUID, period_start: date, period_
     )
     db.add(invoice)
     db.flush()
-    from services.accounting_service import record_cdas_invoice_accrual
-    record_cdas_invoice_accrual(db, invoice)
+    # Successful live operations are accrued individually; invoice creation
+    # only groups those balances for settlement.
     for row in rows:
         if row.status == "accrued":
             row.status = "invoiced"
