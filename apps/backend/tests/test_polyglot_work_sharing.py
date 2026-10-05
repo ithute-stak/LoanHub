@@ -435,6 +435,21 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     )
     monkeypatch.setattr(
         benchmark,
+        "rust_predictive_signal_batch",
+        lambda **kwargs: [
+            {
+                "key": "loan-1",
+                "risk_score": "74",
+                "risk_band": "high",
+                "projected_par30_entry": True,
+                "stress_bucket_30d": "31-60",
+                "rationale": [],
+                "recommended_action": "Review",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        benchmark,
         "java_underwriting_rules",
         lambda **kwargs: {
             "passed": True,
@@ -492,7 +507,7 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     assert result["iterations"] == 2
     assert result["non_authoritative"] is True
     assert result["changes_routing"] is False
-    assert len(result["results"]) == 7
+    assert len(result["results"]) == 8
     assert all(item["parity_passed"] == 2 for item in result["results"])
     assert all(item["promotion_candidate"] is True for item in result["results"])
 
@@ -926,3 +941,94 @@ def test_polyglot_language_roles_are_not_decorative() -> None:
     assert "simple-interest" in native
     assert "round_ratio_half_up" in native
     assert "cpp_simple_interest_cents(" in rust
+
+
+def test_rust_predictive_risk_batch_is_shadow_routed() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    predictive = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/predictive-signal-batch"' in rust
+    assert "struct PredictiveSignalBatchRequest" in rust
+    assert "fn predictive_signal_batch(" in rust
+    assert '"rust_predictive_risk": "shadow"' in runtime
+    assert "def rust_predictive_signal_batch(" in runtime
+    assert 'workload_routing_mode("rust_predictive_risk")' in predictive
+    assert 'record_parity_mismatch("rust_compute")' in predictive
+    assert "LOANHUB_RUST_PREDICTIVE_RISK_MODE=shadow" in env
+
+
+def test_predictive_rust_row_contract_matches_python_rules() -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from services import predictive_intelligence_service as predictive
+
+    loan_id = uuid4()
+    current = SimpleNamespace(
+        loan_id=loan_id,
+        days_past_due=12,
+        delinquency_bucket="8-30",
+        first_payment_default=True,
+        is_top_up=True,
+    )
+    previous = SimpleNamespace(
+        days_past_due=2,
+        delinquency_bucket="1-7",
+    )
+    work_item = SimpleNamespace(
+        priority="high",
+        priority_score="75",
+    )
+
+    rows = predictive._rust_predictive_rows(
+        [current],
+        {loan_id: previous},
+        {loan_id: work_item},
+    )
+
+    assert rows == [
+        {
+            "key": str(loan_id),
+            "current_dpd": 12,
+            "previous_dpd": 2,
+            "current_bucket": "8-30",
+            "previous_bucket": "1-7",
+            "first_payment_default": True,
+            "is_top_up": True,
+            "has_work_item": True,
+            "work_priority": "high",
+            "work_priority_score": "75",
+        }
+    ]
+
+    normalized = predictive._normalized_rust_signal(
+        {
+            "risk_score": "74",
+            "risk_band": "high",
+            "projected_par30_entry": True,
+            "stress_bucket_30d": "31-60",
+            "rationale": [
+                "Loan is already 12 days past due",
+                "DPD increased by 10 days since the prior stored snapshot",
+                "Delinquency bucket worsened from 1-7 to 8-30",
+                "First-payment-default evidence is present",
+                "This is a top-up exposure already showing repayment stress",
+                "Collections already has a high-priority work item",
+            ],
+            "recommended_action": "Review the loan and active collection evidence now, then assign or reprioritise the appropriate human recovery action.",
+        }
+    )
+    python_value = predictive._score_signal(current, previous, work_item)
+
+    assert normalized == python_value
+
+
+def test_predictive_prefer_worker_avoids_python_scoring_when_rust_row_is_valid() -> None:
+    service = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+
+    assert 'routing_mode == "prefer-worker" and delegated_tuple is not None' in service
+    assert "rust_used_count += 1" in service
+    assert "python_tuple = _score_signal(current, previous, work_item)" in service
+    assert '"promoted_no_live_parity"' in service
