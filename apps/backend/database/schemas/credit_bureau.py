@@ -77,6 +77,8 @@ class ExperianCompanyUsageConfiguration(BaseModel):
     decline_below_score: int | None = Field(default=None, ge=0, le=1000)
     refer_below_score: int | None = Field(default=None, ge=0, le=1000)
     block_defaults: bool = False
+    block_judgments: bool = False
+    block_collections: bool = False
     require_identity_match: bool = False
 
     @model_validator(mode="after")
