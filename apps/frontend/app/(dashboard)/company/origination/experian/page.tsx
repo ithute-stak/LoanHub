@@ -31,6 +31,7 @@ const RUN_ROLES = [...LENDING_ROLES, "risk_manager", "compliance_officer"] as co
 export default function ExperianCreditBureauPage() {
   const { activeRole } = useTenant();
   const canConfigure = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
+  const canSwitchEnvironment = activeRole === "company_owner";
   const canRun = hasRole(activeRole, RUN_ROLES);
 
   const [loading, setLoading] = useState(true);
@@ -308,7 +309,7 @@ export default function ExperianCreditBureauPage() {
 
             <div className="rounded-2xl border p-4">
               <Field label="Experian mode for this company">
-                <Select value={environment} onValueChange={(value) => setEnvironment(value as "sandbox" | "live")} disabled={!canConfigure}>
+                <Select value={environment} onValueChange={(value) => setEnvironment(value as "sandbox" | "live")} disabled={!canSwitchEnvironment}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="sandbox">Sandbox · training and demonstrations</SelectItem>
@@ -317,7 +318,7 @@ export default function ExperianCreditBureauPage() {
                 </Select>
               </Field>
               <p className="mt-2 text-xs text-muted-foreground">
-                Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions.
+                Sandbox is intended for staff training, demonstrations and testing. Live sends real enquiries to the production Experian service and may create billable bureau transactions. Only the Loan Company Owner can switch this mode.
                 {" "}Selected mode status: <strong>{selectedEnvironmentReady ? "ready" : "not ready"}</strong>.
               </p>
             </div>
