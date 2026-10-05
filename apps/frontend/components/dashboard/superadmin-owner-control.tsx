@@ -6,6 +6,7 @@ import {
     Building2,
     ChartNoAxesCombined,
     CreditCard,
+    Database,
     FileChartColumn,
     FileText,
     GitBranch,
@@ -267,6 +268,20 @@ const modules: ControlModule[] = [
             { label: "Experian Credit Bureau", href: "/superadmin/control/integrations/experian" },
             { label: "CDAS platform service", href: "/superadmin/control/integrations/cdas" },
         ],
+    },
+    {
+        slug: "database-management",
+        title: "Database management",
+        description: "PostgreSQL workload, index, transaction, integrity and recovery visibility for production tuning.",
+        icon: Database,
+        capabilities: [
+            "Monitor connection pressure, long-running transactions, blocking and deadlocks.",
+            "Compare sequential scans with index scans on the largest LoanHub tables.",
+            "Review index size and observed usage before adding or removing indexes.",
+            "Track database size, cache-hit ratio, temporary-file pressure and tuple activity.",
+            "Review migration head, replication role and pending historical integrity validation.",
+        ],
+        links: [{ label: "Open database health", href: "/superadmin/control/database-management" }],
     },
     {
         slug: "system-health",
