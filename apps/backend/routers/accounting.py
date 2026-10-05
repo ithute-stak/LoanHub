@@ -31,6 +31,7 @@ from database.schemas.accounting import (
     FinancialStatementLine,
     FixedAssetCreate,
     FixedAssetDepreciationRun,
+    ElectronicClearingSettlementCreate,
     FixedAssetDisposeCreate,
     FixedAssetRead,
     FinancialStatementRead,
@@ -72,8 +73,10 @@ from services.accounting_service import (
     post_loan_write_off,
     record_written_off_loan_recovery,
     dispose_fixed_asset,
+    electronic_clearing_reconciliation,
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
+    record_electronic_clearing_settlement,
     scope_key,
     transaction_accounting_coverage,
 )
@@ -1237,3 +1240,52 @@ def recover_written_off_loan(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/controls/electronic-clearing")
+def electronic_clearing_control(
+    as_of: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return electronic_clearing_reconciliation(
+        db,
+        company_id=selected_company_id,
+        as_of=as_of,
+        branch_id=selected_branch_id,
+    )
+
+
+@router.post("/controls/electronic-clearing/settlements", status_code=status.HTTP_201_CREATED)
+def post_electronic_clearing_settlement(
+    payload: ElectronicClearingSettlementCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    result = record_electronic_clearing_settlement(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        settlement_date=payload.settlement_date,
+        amount=payload.amount,
+        direction=payload.direction,
+        provider_reference=payload.provider_reference,
+        proof_reference=payload.proof_reference,
+        notes=payload.notes,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return result
