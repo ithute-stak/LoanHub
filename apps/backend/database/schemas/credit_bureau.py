@@ -214,3 +214,18 @@ class ExperianSubscriptionDecision(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     reason: str | None = Field(default=None, max_length=1000)
     notes: str | None = Field(default=None, max_length=2000)
+    credit_limit: float | None = Field(default=None, ge=0)
+    warning_threshold: float | None = Field(default=None, ge=0)
+    auto_suspend_on_limit: bool | None = None
+    billing_due_days: int | None = Field(default=None, ge=1, le=90)
+
+
+class CreditBureauTransactionWaiver(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CreditBureauInvoiceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    period_start: Any
+    period_end: Any
