@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -57,6 +58,13 @@ from services.credit_bureau_payg_service import (
 
 router = APIRouter(prefix="/platform-owner/credit-bureau", tags=["Platform Owner Credit Bureau"])
 company_guard_router = APIRouter(prefix="/origination", tags=["Credit Origination Integrations"])
+
+
+class ProviderInvoiceSettlement(BaseModel):
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = Field(default=None, max_length=1000)
+
 
 
 @company_guard_router.put("/integrations/experian")
@@ -457,7 +465,14 @@ def list_experian_invoices(
 @router.post("/experian/invoices/{invoice_id}/paid")
 def mark_experian_invoice_paid(
     invoice_id: UUID,
+    payload: ProviderInvoiceSettlement,
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
 ):
-    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
+    return invoice_payload(mark_invoice_paid(
+        db,
+        invoice_id=invoice_id,
+        payment_method=payload.payment_method,
+        proof_reference=payload.proof_reference,
+        notes=payload.notes,
+    ))
