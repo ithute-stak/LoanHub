@@ -513,7 +513,12 @@ def list_transactions(db: Session, *, company_id: UUID | None = None, limit: int
 
 
 def waive_transaction(db: Session, *, transaction_id: UUID, reason: str) -> PlatformCdasTransaction:
-    row = db.query(PlatformCdasTransaction).filter(PlatformCdasTransaction.id == transaction_id).first()
+    row = (
+        db.query(PlatformCdasTransaction)
+        .filter(PlatformCdasTransaction.id == transaction_id)
+        .with_for_update()
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="CDAS transaction not found")
     if row.status != "accrued":
@@ -539,7 +544,12 @@ def waive_transaction(db: Session, *, transaction_id: UUID, reason: str) -> Plat
 
 
 def refund_transaction(db: Session, *, transaction_id: UUID, reason: str) -> PlatformCdasTransaction:
-    row = db.query(PlatformCdasTransaction).filter(PlatformCdasTransaction.id == transaction_id).first()
+    row = (
+        db.query(PlatformCdasTransaction)
+        .filter(PlatformCdasTransaction.id == transaction_id)
+        .with_for_update()
+        .first()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="CDAS transaction not found")
     if row.status == "refunded":
@@ -611,7 +621,7 @@ def create_invoice(db: Session, *, company_id: UUID, period_start: date, period_
         PlatformCdasTransaction.accrued_at >= start_dt,
         PlatformCdasTransaction.accrued_at < end_dt,
         PlatformCdasTransaction.status.in_(("accrued", "waived")),
-    ).order_by(PlatformCdasTransaction.accrued_at.asc()).all()
+    ).order_by(PlatformCdasTransaction.accrued_at.asc()).with_for_update().all()
 
     subtotal = sum((_money(row.amount) for row in rows), Decimal("0"))
     waived = sum((_money(row.amount) for row in rows if row.status == "waived"), Decimal("0"))
@@ -690,7 +700,12 @@ def list_invoices(db: Session, *, company_id: UUID | None = None, limit: int = 1
 
 
 def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCdasInvoice:
-    invoice = db.query(PlatformCdasInvoice).filter(PlatformCdasInvoice.id == invoice_id).first()
+    invoice = (
+        db.query(PlatformCdasInvoice)
+        .filter(PlatformCdasInvoice.id == invoice_id)
+        .with_for_update()
+        .first()
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="CDAS invoice not found")
     if invoice.status == "paid":
@@ -702,10 +717,16 @@ def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCdasInvoice:
     record_cdas_invoice_payment(db, invoice)
     transaction_ids = [UUID(value) for value in dict(invoice.snapshot or {}).get("transaction_ids", [])]
     if transaction_ids:
-        rows = db.query(PlatformCdasTransaction).filter(
-            PlatformCdasTransaction.id.in_(transaction_ids),
-            PlatformCdasTransaction.status == "invoiced",
-        ).all()
+        rows = (
+            db.query(PlatformCdasTransaction)
+            .filter(
+                PlatformCdasTransaction.id.in_(transaction_ids),
+                PlatformCdasTransaction.status == "invoiced",
+            )
+            .order_by(PlatformCdasTransaction.id.asc())
+            .with_for_update()
+            .all()
+        )
         for row in rows:
             row.status = "settled"
             row.settled_at = paid_at
