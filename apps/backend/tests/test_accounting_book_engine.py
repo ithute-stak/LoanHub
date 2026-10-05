@@ -155,3 +155,19 @@ def test_loan_receivables_control_endpoint_is_exposed():
     router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
     assert '@router.get("/controls/loan-receivables")' in router
     assert '@router.post("/write-offs/loans"' in router
+
+
+def test_period_close_pack_enforces_adjustments_controls_and_reconciliation():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    governance = (ROOT / "backend" / "routers" / "governance_controls.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+
+    assert "def period_close_pack(" in service
+    assert '"fixed_asset_depreciation_complete"' in service
+    assert '"credit_loss_provision_posted"' in service
+    assert '"loan_receivables_control_balanced"' in service
+    assert '"bank_statement_exceptions_cleared"' in service
+    assert '@router.get("/period-close-pack")' in router
+    assert '@router.post("/assets/depreciate-period")' in router
+    assert 'if not pack["ready_to_lock"]:' in governance
+    assert '"failed_checks"' in governance
