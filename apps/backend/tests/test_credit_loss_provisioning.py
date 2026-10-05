@@ -49,3 +49,28 @@ def test_credit_loss_api_and_workspace_are_registered():
     assert "Loan-loss allowance & impairment control" in page
     assert "Accounting-policy guardrail" in page
     assert "/company/credit-loss-provisioning" in command
+
+
+def test_credit_loss_movement_uses_actual_posted_allowance_balance():
+    source = (ROOT / "backend" / "services" / "credit_loss_provisioning_service.py").read_text(encoding="utf-8")
+    assert "def _posted_allowance_balance(" in source
+    assert 'AccountingAccount.code == "1150"' in source
+    assert "JournalLine.credit" in source
+    assert "JournalLine.debit" in source
+    assert '"prior_allowance_basis": "actual_posted_1150_ledger_balance"' in source
+    assert "_latest_approved_allowance" not in source
+
+
+def test_credit_loss_exposure_is_recognized_principal_not_generic_loan_balance():
+    source = (ROOT / "backend" / "services" / "credit_loss_provisioning_service.py").read_text(encoding="utf-8")
+    assert "loan_source_principal_outstanding(" in source
+    assert '"exposure_basis": "recognized_principal_control_subledger"' in source
+    assert '"recognized_principal_exposure"' in source
+    assert '"risk_snapshot_outstanding_balance"' in source
+
+
+def test_credit_loss_scope_cannot_double_count_company_and_branch_runs():
+    source = (ROOT / "backend" / "services" / "credit_loss_provisioning_service.py").read_text(encoding="utf-8")
+    assert "def _assert_provision_scope_consistency(" in source
+    assert "Company-wide provisioning cannot overlap branch-scoped runs" in source
+    assert "Branch provisioning cannot overlap a company-wide run" in source
