@@ -171,3 +171,12 @@ def test_period_close_pack_enforces_adjustments_controls_and_reconciliation():
     assert '@router.post("/assets/depreciate-period")' in router
     assert 'if not pack["ready_to_lock"]:' in governance
     assert '"failed_checks"' in governance
+
+
+def test_period_adjustments_support_next_period_reversal():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def reverse_period_adjustment(" in service
+    assert '{"accrual_adjustment", "prepayment_adjustment"}' in service
+    assert 'reference_type="period_adjustment_reversal"' in service
+    assert '@router.post("/adjustments/{entry_id}/reverse"' in router
