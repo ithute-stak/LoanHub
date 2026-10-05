@@ -22,6 +22,7 @@ from database.models.reconciliation import ReconciliationBatch
 from database.session import get_db
 from services.reconciliation_service import (
     batch_or_404,
+    bank_statement_balance_reconciliation,
     batch_payload,
     close_batch,
     create_batch,
@@ -34,6 +35,7 @@ from services.reconciliation_service import (
     reconcile,
     request_adjustment,
     resolve_line,
+    set_bank_statement_balances,
     summarize_batch,
 )
 
@@ -71,6 +73,11 @@ class AdjustmentRequest(BaseModel):
 
 class CloseBatchRequest(BaseModel):
     note: str = Field(min_length=5, max_length=8000)
+
+
+class BankStatementBalancesRequest(BaseModel):
+    opening_balance: Decimal
+    closing_balance: Decimal
 
 
 @router.get("/dashboard")
@@ -141,6 +148,38 @@ async def import_reconciliation_csv(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Reconciliation CSV is limited to 10 MB")
     return import_csv(db, context, batch_or_404(db, context, batch_id, lock=True), content)
+
+
+@router.put("/batches/{batch_id}/bank-statement-balances")
+def record_bank_statement_balances(
+    batch_id: UUID,
+    payload: BankStatementBalancesRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, WRITE_ROLES)
+    batch = set_bank_statement_balances(
+        db,
+        context,
+        batch_or_404(db, context, batch_id, lock=True),
+        opening_balance=payload.opening_balance,
+        closing_balance=payload.closing_balance,
+    )
+    return {
+        "batch": batch_payload(batch),
+        "balance_reconciliation": bank_statement_balance_reconciliation(db, batch),
+    }
+
+
+@router.get("/batches/{batch_id}/bank-balance-reconciliation")
+def get_bank_statement_balance_reconciliation(
+    batch_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, VIEW_ROLES)
+    batch = batch_or_404(db, context, batch_id)
+    return bank_statement_balance_reconciliation(db, batch)
 
 
 @router.post("/batches/{batch_id}/reconcile")
