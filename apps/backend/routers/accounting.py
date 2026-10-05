@@ -37,6 +37,7 @@ from database.schemas.accounting import (
     PrepaymentAdjustmentCreate,
     TrialBalanceLine,
     TrialBalanceRead,
+    SuspenseCorrectionCreate,
     VatTransactionCreate,
 )
 from database.session import get_db
@@ -53,6 +54,7 @@ from services.accounting_service import (
     post_expense,
     post_prepayment_adjustment,
     post_vat_transaction,
+    post_suspense_correction,
     scope_key,
 )
 
@@ -807,3 +809,32 @@ def period_close_checklist(
             "open_reconciliation_batches": open_reconciliations.count(),
         },
     }
+
+
+@router.post("/suspense/corrections", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def suspense_correction(
+    payload: SuspenseCorrectionCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Correct an identified posting error through an auditable journal, never by deleting history."""
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_suspense_correction(
+        db,
+        company_id=selected_company_id,
+        branch_id=branch,
+        amount=payload.amount,
+        target_account_code=payload.target_account_code,
+        target_side=payload.target_side,
+        description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
