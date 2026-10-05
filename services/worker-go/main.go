@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -299,10 +298,19 @@ func pushConcurrency() int {
 
 func validProjectID(value string) bool {
 	value = strings.TrimSpace(value)
-	return value != "" &&
-		len(value) <= 128 &&
-		!strings.ContainsAny(value, "/\\?#") &&
-		!strings.ContainsAny(value, " \t\r\n")
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func pushHTTPClient() *http.Client {
@@ -359,7 +367,7 @@ func deliverPush(
 
 	endpoint := fmt.Sprintf(
 		"https://fcm.googleapis.com/v1/projects/%s/messages:send",
-		path.Clean(projectID),
+		projectID,
 	)
 	request, err := http.NewRequestWithContext(
 		ctx,
