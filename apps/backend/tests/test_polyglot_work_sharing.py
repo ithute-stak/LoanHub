@@ -1112,3 +1112,21 @@ def test_go_push_handoff_does_not_fallback_after_ambiguous_batch(monkeypatch) ->
 
     assert push._send_sync_go(["user-1"], {"event_id": "evt-1"}) is True
     assert calls["count"] == 1
+
+
+def test_predictive_shadow_requires_complete_rust_batch() -> None:
+    service = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+
+    assert "duplicate_delegated_key = False" in service
+    assert "delegated_batch_complete = (" in service
+    assert "set(delegated_by_loan) == expected_keys" in service
+    assert "len(delegated_results) == len(expected_keys)" in service
+    assert '"partial_fallback"' in service
+
+
+def test_polyglot_worker_response_limits_are_explicit() -> None:
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+
+    assert "max_response_bytes: int = 64 * 1024" in runtime
+    assert 'raise ValueError("worker response exceeds configured limit")' in runtime
+    assert "max_response_bytes=8 * 1024 * 1024" in runtime
