@@ -48,6 +48,7 @@ from services.credit_bureau_payg_service import (
     invoice_payload,
     list_invoices,
     mark_invoice_paid,
+    refund_transaction,
     review_subscription,
     subscription_payload,
     transaction_payload,
@@ -64,6 +65,11 @@ class ProviderInvoiceSettlement(BaseModel):
     payment_method: str = Field(pattern="^(cash|bank|electronic)$")
     proof_reference: str | None = Field(default=None, max_length=180)
     notes: str | None = Field(default=None, max_length=1000)
+
+class CreditBureauTransactionRefund(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+    payment_method: str = Field(pattern="^(cash|bank|electronic)$")
+    proof_reference: str | None = Field(default=None, max_length=180)
 
 
 
@@ -433,6 +439,24 @@ def waive_experian_transaction(
 ):
     return transaction_payload(
         waive_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )
+
+
+@router.post("/experian/transactions/{transaction_id}/refund")
+def refund_experian_transaction(
+    transaction_id: UUID,
+    payload: CreditBureauTransactionRefund,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        refund_transaction(
+            db,
+            transaction_id=transaction_id,
+            reason=payload.reason,
+            payment_method=payload.payment_method,
+            proof_reference=payload.proof_reference,
+        )
     )
 
 
