@@ -44,6 +44,15 @@ type ConstraintStat = {
   definition: string;
 };
 
+type RowSecurityTable = {
+  schema_name: string;
+  table_name: string;
+  rls_enabled: boolean;
+  force_rls: boolean;
+  table_owner: string;
+  policy_count: number;
+};
+
 type DatabaseHealth = {
   supported: boolean;
   database_engine: string;
@@ -80,6 +89,15 @@ type DatabaseHealth = {
   replication?: {
     is_replica: boolean;
     connected_replicas: number;
+  };
+  row_security?: {
+    runtime_role: string;
+    runtime_is_superuser: boolean;
+    runtime_bypass_rls: boolean;
+    runtime_owns_rls_table: boolean;
+    enabled_table_count: number;
+    enforcement_ready: boolean;
+    tables: RowSecurityTable[];
   };
   alembic_heads?: string[];
   unvalidated_check_constraints?: ConstraintStat[];
