@@ -26,6 +26,7 @@ _runtime_state: dict[str, dict[str, float | int | str | None]] = {}
 
 _ROUTING_ENV = {
     "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
+    "go_webhook_delivery": "LOANHUB_GO_WEBHOOK_DELIVERY_MODE",
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
@@ -33,6 +34,7 @@ _ROUTING_ENV = {
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
+    "go_webhook_delivery": "off",
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
@@ -444,3 +446,28 @@ def rust_portfolio_risk_summary(*, rows: list[dict]) -> dict | None:
     if value is None or value.get("authoritative") is not False:
         return None
     return value
+
+
+def go_webhook_delivery_batch(*, jobs: list[dict]) -> list[dict] | None:
+    """Execute a prepared webhook batch in Go.
+
+    Python must validate targets, sign payloads, own retry policy, and persist
+    all delivery state. This call performs no automatic retry.
+    """
+    if workload_routing_mode("go_webhook_delivery") != "prefer-worker":
+        return None
+    base_url = go_worker_url()
+    if not base_url or not jobs:
+        return None
+    value = _guarded_post_json(
+        "go_worker",
+        f"{base_url}/v1/webhooks/deliver-batch",
+        {"jobs": jobs},
+        timeout=35.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]

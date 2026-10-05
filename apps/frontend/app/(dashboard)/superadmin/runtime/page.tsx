@@ -335,7 +335,9 @@ export default function RuntimeControlPage() {
                 {route.mode === "off"
                   ? "Python only; worker is not called."
                   : route.mode === "shadow"
-                    ? "Worker runs for comparison, but Python result remains authoritative."
+                    ? workload === "go_webhook_delivery"
+                      ? "Side-effecting workload: Python remains the only sender in shadow mode to avoid duplicate webhooks."
+                      : "Worker runs for comparison, but Python result remains authoritative."
                     : "Worker result may be accepted only after validation/parity checks."}
               </p>
             </div>

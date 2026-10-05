@@ -28,7 +28,7 @@ bounded work that they are materially better at.
 
 ### Go
 - `mobile_push_service`: multicast/fan-out delivery after Python resolves recipients and payload.
-- `webhook_outbox_scheduler`: concurrent delivery attempts for already-authorized outbox rows.
+- `webhook_outbox_service`: concurrent delivery attempts for already-authorized, Python-signed outbox rows. Python keeps retry/persistence authority.
 - read-only provider polling and bulk network fetches with quota controls.
 - file/object-storage transfer workers and other high-concurrency I/O.
 
@@ -52,7 +52,4 @@ CDAS mutation safety, and final persistence.
 
 ## Rollout
 
-Every migrated workload progresses through `off -> shadow -> prefer-worker`.
-Promotion requires exact parity for financial results, bounded latency, circuit-breaker
-fallback, and benchmark history. Cross-process calls should be coarse/batched; do not
-replace cheap local Python arithmetic with one HTTP request per row.
+Every migrated workload progresses through `off -> shadow -> prefer-worker` where shadow is safe. Side-effecting delivery workloads are an exception: `shadow` remains Python-only so LoanHub never sends duplicate external requests merely to compare runtimes. Promotion requires parity or contract tests, bounded latency, circuit-breaker fallback, and benchmark/history evidence. Cross-process calls should be coarse/batched; do not replace cheap local Python arithmetic with one HTTP request per row.
