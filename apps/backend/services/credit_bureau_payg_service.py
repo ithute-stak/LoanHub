@@ -573,6 +573,8 @@ def create_invoice(
     )
     db.add(invoice)
     db.flush()
+    from services.accounting_service import record_credit_bureau_invoice_accrual
+    record_credit_bureau_invoice_accrual(db, invoice)
     for row in rows:
         if row.status == "accrued":
             row.status = "invoiced"
@@ -630,6 +632,8 @@ def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauI
     paid_at = datetime.now(timezone.utc)
     invoice.status = "paid"
     invoice.paid_at = paid_at
+    from services.accounting_service import record_credit_bureau_invoice_payment
+    record_credit_bureau_invoice_payment(db, invoice)
     transaction_ids = [UUID(value) for value in dict(invoice.snapshot or {}).get("transaction_ids", [])]
     if transaction_ids:
         rows = (
