@@ -2055,3 +2055,123 @@ def reverse_period_adjustment(
             for line in original.lines
         ],
     )
+
+
+def transaction_accounting_coverage(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Audit operational money sources against their accounting journals."""
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    from database.models.platform_finance import TransactionChargeLedgerEntry
+    from database.models.platform_credit_bureau import PlatformCreditBureauTransaction
+    from database.models.platform_cdas import PlatformCdasTransaction
+    from database.models.treasury import TreasuryEntry
+
+    key, _ = scope_key(company_id)
+
+    def journal_exists(reference_type: str, reference_id: str) -> bool:
+        return db.query(JournalEntry.id).filter(
+            JournalEntry.scope_key == key,
+            JournalEntry.reference_type == reference_type,
+            JournalEntry.reference_id == str(reference_id),
+            JournalEntry.status == "posted",
+        ).first() is not None
+
+    payments = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+        func.date(func.coalesce(PaymentTransaction.completed_at, PaymentTransaction.created_at)).between(from_date, to_date),
+    )
+    if branch_id:
+        payments = payments.outerjoin(
+            ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id
+        ).filter(
+            (ClientCompanyLoan.branch_id == branch_id) | (PaymentTransaction.loan_id.is_(None))
+        )
+    payment_rows = payments.all()
+    missing_payments = [
+        str(row.id) for row in payment_rows
+        if not journal_exists("payment_transaction", str(row.id))
+    ]
+
+    charges = db.query(TransactionChargeLedgerEntry).filter(
+        TransactionChargeLedgerEntry.company_id == company_id,
+        func.date(TransactionChargeLedgerEntry.accrued_at).between(from_date, to_date),
+        TransactionChargeLedgerEntry.status.in_(["accrued", "claimed", "settled"]),
+    ).all()
+    missing_transaction_charges = [
+        str(row.id) for row in charges
+        if _money(row.charge_amount) > 0
+        and not journal_exists("platform_transaction_charge_accrual", str(row.id))
+    ]
+
+    bureau = db.query(PlatformCreditBureauTransaction).filter(
+        PlatformCreditBureauTransaction.company_id == company_id,
+        func.date(PlatformCreditBureauTransaction.accrued_at).between(from_date, to_date),
+        PlatformCreditBureauTransaction.status.in_(["accrued", "invoiced", "settled"]),
+        PlatformCreditBureauTransaction.amount > 0,
+    ).all()
+    missing_credit_bureau = [
+        str(row.id) for row in bureau
+        if not journal_exists("credit_bureau_transaction_accrual", str(row.id))
+    ]
+
+    cdas = db.query(PlatformCdasTransaction).filter(
+        PlatformCdasTransaction.company_id == company_id,
+        func.date(PlatformCdasTransaction.accrued_at).between(from_date, to_date),
+        PlatformCdasTransaction.status.in_(["accrued", "invoiced", "settled"]),
+        PlatformCdasTransaction.amount > 0,
+    ).all()
+    missing_cdas = [
+        str(row.id) for row in cdas
+        if not journal_exists("cdas_transaction_accrual", str(row.id))
+    ]
+
+    treasury = db.query(TreasuryEntry).filter(
+        TreasuryEntry.company_id == company_id,
+        TreasuryEntry.payment_transaction_id.is_(None),
+        TreasuryEntry.is_voided.is_(False),
+        TreasuryEntry.approval_status.in_([
+            TreasuryEntryApprovalStatus.POSTED,
+            TreasuryEntryApprovalStatus.APPROVED,
+        ]),
+        func.date(TreasuryEntry.occurred_at).between(from_date, to_date),
+    )
+    if branch_id:
+        treasury = treasury.filter(TreasuryEntry.branch_id == branch_id)
+    treasury_rows = treasury.all()
+    missing_treasury = [
+        str(row.id) for row in treasury_rows
+        if row.entry_type != TreasuryEntryType.BRANCH_FUNDING
+        and not journal_exists("treasury_entry", str(row.id))
+    ]
+
+    missing = {
+        "successful_payments": missing_payments,
+        "platform_transaction_charges": missing_transaction_charges,
+        "credit_bureau_usage": missing_credit_bureau,
+        "cdas_usage": missing_cdas,
+        "manual_treasury_entries": missing_treasury,
+    }
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "complete": all(not values for values in missing.values()),
+        "source_counts": {
+            "successful_payments": len(payment_rows),
+            "platform_transaction_charges": len(charges),
+            "credit_bureau_usage": len(bureau),
+            "cdas_usage": len(cdas),
+            "manual_treasury_entries": len(treasury_rows),
+        },
+        "missing_counts": {name: len(values) for name, values in missing.items()},
+        "missing_source_ids": missing,
+    }
