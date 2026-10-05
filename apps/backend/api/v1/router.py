@@ -43,7 +43,6 @@ from routers import (
     folio_book_reports,
     hrms,
     institution_governance,
-    expense_management,
     files,
     finance_config,
     governance_controls,
@@ -143,7 +142,7 @@ _ROUTE_REGISTRY = (
     platform_cdas.router,
     polyglot_runtime.router,
     contract_email_otp.router, origination.router, credit_bureau_configuration.router, credit_bureau.router,
-    backdated_opening_adjustments.router, expense_management.router, workspace_document_organization.router,
+    backdated_opening_adjustments.router, workspace_document_organization.router,
     workspace_office_governance.office_router, workspace_office_governance.document_router,
     workspace_creation_policy.router, _legacy_workspace_documents_router, workspace_spreadsheets.router,
 )
