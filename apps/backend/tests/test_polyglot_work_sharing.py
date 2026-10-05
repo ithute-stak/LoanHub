@@ -183,9 +183,12 @@ def test_rust_loan_engine_supports_first_deterministic_methods() -> None:
     assert '"simple_interest" | "flat_rate" => simple_or_flat(req)' in rust
     assert '"compound_interest" => compound(req)' in rust
     assert '"reducing_balance" => reducing_balance(req)' in rust
+    assert '"daily_accrual_reducing" => daily_accrual_reducing(req)' in rust
+    assert "fn daily_segment_interest(" in rust
+    assert "fn daily_period_factor(" in rust
     rust_supported = service.split("rust_supported =", 1)[1].split("}", 1)[0]
     assert "LoanCalculationMethod.REDUCING_BALANCE" in rust_supported
-    assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" not in rust_supported
+    assert "LoanCalculationMethod.DAILY_ACCRUAL_REDUCING" in rust_supported
 
 
 def test_java_event_worker_is_registered_and_non_authoritative() -> None:
@@ -343,3 +346,47 @@ def test_go_hash_mismatch_falls_back_to_python_and_records_parity(monkeypatch) -
     expected = hashlib.sha256(b"anything").hexdigest()
     assert runtime.stable_sha256_text(correlation_id="test", payload="anything") == expected
     assert runtime.runtime_metrics()["go_worker"]["parity_mismatches"] == 1
+
+
+def test_daily_accrual_rust_shadow_receives_exact_dates_and_keeps_python_authority(monkeypatch) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from database.models.enums import LoanCalculationMethod
+    from services import interest_calculation_service as interest
+
+    captured: dict[str, object] = {}
+
+    def fake_preview(**kwargs):
+        captured.update(kwargs)
+        return {
+            "method": "daily_accrual_reducing",
+            "monthly_installment": "999.99",
+            "total_interest": "999.99",
+            "total_repayable": "999.99",
+            "schedule_amounts": ["999.99", "999.99", "999.99"],
+            "authoritative": False,
+            "native_cpp_used": False,
+        }
+
+    monkeypatch.setenv("LOANHUB_RUST_LOAN_CALC_MODE", "shadow")
+    monkeypatch.setattr(interest, "rust_loan_preview", fake_preview)
+
+    monthly, total, details = interest.calculate_loan_terms(
+        principal=Decimal("1000"),
+        rate_percent=Decimal("36"),
+        term_months=3,
+        processing_fee=Decimal("0"),
+        interest_method=LoanCalculationMethod.DAILY_ACCRUAL_REDUCING,
+        start_date=date(2024, 4, 24),
+        due_dates=[date(2024, 5, 24), date(2024, 6, 24), date(2024, 7, 24)],
+    )
+
+    assert captured["interest_start_date"] == "2024-04-24"
+    assert captured["due_dates"] == ["2024-05-24", "2024-06-24", "2024-07-24"]
+    assert monthly == Decimal(details["monthly_installment"])
+    assert total == Decimal(details["total_repayable"])
+    assert details["compute_runtime"]["rust_used"] is False
+    assert details["compute_runtime"]["rust_routing_mode"] == "shadow"
+    assert details["compute_runtime"]["rust_parity"] == "mismatch"
+    assert details["compute_runtime"]["fallback"] is True

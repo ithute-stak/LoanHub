@@ -341,6 +341,7 @@ def rust_loan_preview(
     rate_percent: str,
     term_months: int,
     processing_fee: str,
+    interest_start_date: str,
     due_dates: list[str],
 ) -> dict | None:
     """Ask Rust to compute a non-authoritative loan preview for parity checking."""
@@ -356,6 +357,7 @@ def rust_loan_preview(
             "rate_percent": rate_percent,
             "term_months": int(term_months),
             "processing_fee": processing_fee,
+            "interest_start_date": interest_start_date,
             "due_dates": list(due_dates),
         },
         timeout=1.5,

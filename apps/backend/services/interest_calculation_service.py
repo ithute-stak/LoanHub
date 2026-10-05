@@ -654,6 +654,7 @@ def calculate_loan_terms(
         LoanCalculationMethod.FLAT_RATE,
         LoanCalculationMethod.COMPOUND_INTEREST,
         LoanCalculationMethod.REDUCING_BALANCE,
+        LoanCalculationMethod.DAILY_ACCRUAL_REDUCING,
     }
     rust_routing_mode = workload_routing_mode("rust_loan_calculation")
     if rust_supported:
@@ -664,6 +665,7 @@ def calculate_loan_terms(
                 rate_percent=str(rate_value),
                 term_months=term_months,
                 processing_fee=str(fee_value),
+                interest_start_date=resolved_start.isoformat(),
                 due_dates=[item.isoformat() for item in due_dates],
             )
             if rust_routing_mode != "off"
