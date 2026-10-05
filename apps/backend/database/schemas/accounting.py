@@ -229,3 +229,16 @@ class DoubtfulDebtAllowanceCreate(BaseModel):
     branch_id: UUID | None = None
     entry_date: date | None = None
     reference_id: str | None = Field(default=None, max_length=120)
+
+
+class VatTransactionCreate(BaseModel):
+    transaction_type: str = Field(pattern="^(sale|purchase|expense|asset)$")
+    net_amount: Decimal = Field(gt=0)
+    vat_amount: Decimal = Field(ge=0)
+    account_code: str = Field(min_length=4, max_length=30)
+    settlement_account_code: str = Field(default="1000", min_length=4, max_length=30)
+    vat_registered: bool = True
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
