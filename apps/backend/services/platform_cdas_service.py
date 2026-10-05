@@ -516,8 +516,11 @@ def waive_transaction(db: Session, *, transaction_id: UUID, reason: str) -> Plat
     row = db.query(PlatformCdasTransaction).filter(PlatformCdasTransaction.id == transaction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="CDAS transaction not found")
-    if row.status in {"settled", "test"}:
-        raise HTTPException(status_code=409, detail=f"A {row.status} transaction cannot be waived")
+    if row.status != "accrued":
+        raise HTTPException(
+            status_code=409,
+            detail="Only an accrued, not-yet-invoiced CDAS transaction can be waived",
+        )
     row.status = "waived"
     row.waived_at = datetime.now(timezone.utc)
     row.waiver_reason = reason.strip()
