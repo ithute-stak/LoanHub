@@ -22,6 +22,9 @@ from database.schemas.accounting import (
     AccountingAccountRead,
     AccountingAccountUpdate,
     AccountingDashboardRead,
+    AccrualAdjustmentCreate,
+    DepreciationAdjustmentCreate,
+    DoubtfulDebtAllowanceCreate,
     ExpensePostCreate,
     FinancialStatementLine,
     FinancialStatementRead,
@@ -29,6 +32,7 @@ from database.schemas.accounting import (
     JournalEntryRead,
     LedgerLineRead,
     LedgerRead,
+    PrepaymentAdjustmentCreate,
     TrialBalanceLine,
     TrialBalanceRead,
 )
@@ -38,8 +42,13 @@ from services.accounting_service import (
     create_entry,
     ensure_chart,
     entry_query,
+    cash_flow_statement,
     ledger_rows,
+    post_accrual_adjustment,
+    post_depreciation_adjustment,
+    post_doubtful_debt_allowance,
     post_expense,
+    post_prepayment_adjustment,
     scope_key,
 )
 
@@ -563,3 +572,110 @@ def accounting_ratios(
         "cash_to_liabilities": ratio(liquid, liabilities),
         "loan_receivables_to_assets": ratio(receivables, assets),
     }
+
+
+@router.post("/adjustments/depreciation", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def depreciation_adjustment(
+    payload: DepreciationAdjustmentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_depreciation_adjustment(
+        db, company_id=selected_company_id, branch_id=branch, amount=payload.amount,
+        description=payload.description, reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id, entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/adjustments/accrual", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def accrual_adjustment(
+    payload: AccrualAdjustmentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_accrual_adjustment(
+        db, company_id=selected_company_id, branch_id=branch, amount=payload.amount,
+        expense_account_code=payload.expense_account_code, description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()), user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/adjustments/prepayment", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def prepayment_adjustment(
+    payload: PrepaymentAdjustmentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_prepayment_adjustment(
+        db, company_id=selected_company_id, branch_id=branch, amount=payload.amount,
+        expense_account_code=payload.expense_account_code, description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()), user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/adjustments/doubtful-debt-allowance", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def doubtful_debt_allowance_adjustment(
+    payload: DoubtfulDebtAllowanceCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_doubtful_debt_allowance(
+        db, company_id=selected_company_id, branch_id=branch, amount=payload.amount,
+        direction=payload.direction, description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()), user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/cash-flow")
+def statement_of_cash_flows(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+    return cash_flow_statement(
+        db, company_id=selected_company_id, from_date=from_date, to_date=to_date,
+        branch_id=selected_branch_id,
+    )
