@@ -18,6 +18,7 @@ from database.models.accounting import AccountingAccount, JournalEntry, JournalL
 from database.models.branch import CompanyBranch
 from database.models.enums import UserRole
 from database.models.governance_control import ApprovalRequest, BankStatementLine
+from database.models.reconciliation import ReconciliationBatch
 from database.schemas.accounting import (
     AccountingAccountCreate,
     AccountingAccountRead,
@@ -329,7 +330,11 @@ def trial_balance_data(db: Session, key: str, from_date=None, to_date=None, bran
     lines = []
     for account_id, code, name, account_type, normal_balance, debit, credit in rows:
         debit, credit = Decimal(debit), Decimal(credit)
-        balance = debit - credit if normal_balance == "debit" else credit - debit
+        # Trial-balance balances stay on the conventional debit-minus-credit basis.
+        # Statement presentation converts credit-balance classes later. This preserves
+        # contra-assets (e.g. accumulated depreciation) as negative assets instead of
+        # incorrectly adding them to gross assets.
+        balance = debit - credit
         lines.append(TrialBalanceLine(
             account_id=account_id,
             code=code,
@@ -443,7 +448,10 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
     for line in lines:
         if line.account_type not in account_types:
             continue
-        amount = line.balance
+        if line.account_type in {"liability", "equity", "revenue"}:
+            amount = -line.balance
+        else:
+            amount = line.balance
         sections.setdefault(line.account_type, []).append(
             FinancialStatementLine(code=line.code, name=line.name, amount=amount)
         )
@@ -517,10 +525,13 @@ def accounting_dashboard(
     key, _ = scope_key(selected_company_id)
     selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
     lines = trial_balance_data(db, key, None, as_of, selected_branch_id)
-    by_code = {line.code: line.balance for line in lines}
+    def presented(line):
+        return -line.balance if line.account_type in {"liability", "equity", "revenue"} else line.balance
+
+    by_code = {line.code: presented(line) for line in lines}
     totals = {}
     for line in lines:
-        totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + line.balance
+        totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + presented(line)
     total_debit = sum((line.debit for line in lines), Decimal("0"))
     total_credit = sum((line.credit for line in lines), Decimal("0"))
     revenue = totals.get("revenue", Decimal("0"))
@@ -551,10 +562,13 @@ def accounting_ratios(
     selected_company_id = resolve_scope(context, company_id)
     key, _ = scope_key(selected_company_id)
     lines = trial_balance_data(db, key, None, as_of)
+    def presented(line):
+        return -line.balance if line.account_type in {"liability", "equity", "revenue"} else line.balance
+
     totals = {}
-    by_code = {line.code: line.balance for line in lines}
+    by_code = {line.code: presented(line) for line in lines}
     for line in lines:
-        totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + line.balance
+        totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + presented(line)
     assets = totals.get("asset", Decimal("0"))
     liabilities = totals.get("liability", Decimal("0"))
     equity = totals.get("equity", Decimal("0"))
@@ -752,11 +766,19 @@ def period_close_checklist(
         ApprovalRequest.company_id == selected_company_id,
         ApprovalRequest.status == "pending",
     )
+    open_reconciliations = db.query(ReconciliationBatch.id).filter(
+        ReconciliationBatch.company_id == selected_company_id,
+        ReconciliationBatch.period_end <= to_date,
+        ReconciliationBatch.status != "closed",
+    )
     if selected_branch_id:
         drafts = drafts.filter(JournalEntry.branch_id == selected_branch_id)
         unmatched_bank = unmatched_bank.filter(BankStatementLine.branch_id == selected_branch_id)
         approvals = approvals.filter(
             (ApprovalRequest.branch_id == selected_branch_id) | (ApprovalRequest.branch_id.is_(None))
+        )
+        open_reconciliations = open_reconciliations.filter(
+            (ReconciliationBatch.branch_id == selected_branch_id) | (ReconciliationBatch.branch_id.is_(None))
         )
 
     checks = {
@@ -765,6 +787,7 @@ def period_close_checklist(
         "draft_journals_cleared": drafts.count() == 0,
         "bank_lines_reconciled": unmatched_bank.count() == 0,
         "pending_financial_approvals_cleared": approvals.count() == 0,
+        "reconciliation_batches_closed": open_reconciliations.count() == 0,
     }
     return {
         "as_of": to_date,
@@ -781,5 +804,6 @@ def period_close_checklist(
             "draft_journals": drafts.count(),
             "unmatched_bank_lines": unmatched_bank.count(),
             "pending_approvals": approvals.count(),
+            "open_reconciliation_batches": open_reconciliations.count(),
         },
     }
