@@ -1032,3 +1032,82 @@ def test_predictive_prefer_worker_avoids_python_scoring_when_rust_row_is_valid()
     assert "rust_used_count += 1" in service
     assert "python_tuple = _score_signal(current, previous, work_item)" in service
     assert '"promoted_no_live_parity"' in service
+
+
+def test_go_push_delivery_is_side_effect_safe_and_python_scoped() -> None:
+    go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    push = (ROOT / "services/mobile_push_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/push/deliver-batch"' in go
+    assert "pushConcurrency()" in go
+    assert "validProjectID(" in go
+    assert '"go_push_delivery": "off"' in runtime
+    assert "def go_push_delivery_batch(" in runtime
+    assert 'workload_routing_mode("go_push_delivery") == "prefer-worker"' in push
+    assert "Side-effecting push delivery is never dual-sent in shadow mode." in push
+    assert "LOANHUB_GO_PUSH_DELIVERY_MODE=off" in env
+
+
+def test_go_push_preparation_keeps_recipient_policy_in_python(monkeypatch) -> None:
+    from services import mobile_push_service as push
+
+    event = {
+        "event_id": "evt-1",
+        "type": "CHAT_MESSAGE_CREATED",
+        "domain": "chat",
+        "entity_id": "conv-1",
+        "conversation_id": "conv-1",
+        "message": {
+            "sender": {"id": "sender", "display_name": "Koetlisi"},
+            "message_type": "text",
+            "body": "Hello",
+        },
+    }
+
+    notification = push._notification_for_recipient(event, "recipient")
+    assert notification is not None
+    title, body, channel_id, data = push._push_data(event, notification)
+
+    assert title == "Koetlisi"
+    assert body == "Hello"
+    assert channel_id == "loanhub_messages"
+    assert data["event_id"] == "evt-1"
+    assert data["route"] == "chat:conv-1"
+
+
+def test_go_push_handoff_does_not_fallback_after_ambiguous_batch(monkeypatch) -> None:
+    from services import mobile_push_service as push
+
+    monkeypatch.setattr(push, "_firebase_access_token", lambda: ("loanhub-prod", "short-lived-token"))
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(push, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(push, "_active_tokens", lambda db, ids: ["token-1", "token-2"])
+    monkeypatch.setattr(
+        push,
+        "_notification_for_recipient",
+        lambda event, recipient_id: {
+            "category": "message",
+            "title": "LoanHub",
+            "body": "Update",
+            "route": "inbox",
+        },
+    )
+    calls = {"count": 0}
+
+    def ambiguous(**kwargs):
+        calls["count"] += 1
+        return None
+
+    monkeypatch.setattr(push, "go_push_delivery_batch", ambiguous)
+
+    assert push._send_sync_go(["user-1"], {"event_id": "evt-1"}) is False
+    assert calls["count"] == 1
