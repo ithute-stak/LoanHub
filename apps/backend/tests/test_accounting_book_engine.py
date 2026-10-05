@@ -230,3 +230,18 @@ def test_invoices_do_not_duplicate_usage_accruals():
     assert "record_credit_bureau_invoice_accrual(db, invoice)" not in bureau
     assert "record_cdas_invoice_accrual(db, invoice)" not in cdas
     assert "Only an accrued, not-yet-invoiced Credit Bureau transaction can be waived" in bureau
+
+
+def test_payment_channels_use_distinct_settlement_accounts():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '("1020", "Electronic Payment Clearing", "asset", "debit")' in service
+    assert 'if value == PaymentMethod.CASH.value:' in service
+    assert 'if value == PaymentMethod.BANK.value:' in service
+    assert 'return "1020"' in service
+    assert 'account_by_code(db, key, "1020").id' in service
+
+
+def test_direct_debit_requires_allocations_before_repayment_accounting():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "payment.purpose == PaymentPurpose.DIRECT_DEBIT" in service
+    assert "PaymentAllocation.payment_id == payment.id" in service
