@@ -49,11 +49,13 @@ MONEY = Decimal("0.01")
 
 def settlement_account_code(payment_method) -> str:
     """Map a payment/treasury channel to the ledger account holding the funds."""
-    value = getattr(payment_method, "value", payment_method)
+    value = str(getattr(payment_method, "value", payment_method) or "").strip().lower()
     if value == PaymentMethod.CASH.value:
         return "1000"
     if value == PaymentMethod.BANK.value:
         return "1010"
+    if value in {"electronic", "gateway", "wallet"}:
+        return "1020"
     return "1020"
 
 # A lending-specific chart mapped to the five conventional financial-statement
@@ -921,10 +923,12 @@ def record_credit_bureau_invoice_payment(db: Session, invoice) -> None:
     if amount <= 0:
         return
     when = (invoice.paid_at or datetime.now(timezone.utc)).date()
-    post_codes(db, company_id=invoice.company_id, branch_id=None, debit_code="2400", credit_code="1000",
+    settlement = dict(invoice.snapshot or {}).get("settlement") or {}
+    settlement_code = settlement_account_code(settlement.get("payment_method"))
+    post_codes(db, company_id=invoice.company_id, branch_id=None, debit_code="2400", credit_code=settlement_code,
                amount=amount, description=f"Credit Bureau invoice payment {invoice.invoice_number}",
                reference_type="credit_bureau_invoice_payment", reference_id=str(invoice.id), entry_date=when)
-    post_codes(db, company_id=None, branch_id=None, debit_code="1000", credit_code="1200",
+    post_codes(db, company_id=None, branch_id=None, debit_code=settlement_code, credit_code="1200",
                amount=amount, description=f"Credit Bureau invoice receipt {invoice.invoice_number}",
                reference_type="credit_bureau_invoice_payment", reference_id=str(invoice.id), entry_date=when)
 
@@ -946,10 +950,12 @@ def record_cdas_invoice_payment(db: Session, invoice) -> None:
     if amount <= 0:
         return
     when = (invoice.paid_at or datetime.now(timezone.utc)).date()
-    post_codes(db, company_id=invoice.company_id, branch_id=None, debit_code="2400", credit_code="1000",
+    settlement = dict(invoice.snapshot or {}).get("settlement") or {}
+    settlement_code = settlement_account_code(settlement.get("payment_method"))
+    post_codes(db, company_id=invoice.company_id, branch_id=None, debit_code="2400", credit_code=settlement_code,
                amount=amount, description=f"CDAS invoice payment {invoice.invoice_number}",
                reference_type="cdas_invoice_payment", reference_id=str(invoice.id), entry_date=when)
-    post_codes(db, company_id=None, branch_id=None, debit_code="1000", credit_code="1200",
+    post_codes(db, company_id=None, branch_id=None, debit_code=settlement_code, credit_code="1200",
                amount=amount, description=f"CDAS invoice receipt {invoice.invoice_number}",
                reference_type="cdas_invoice_payment", reference_id=str(invoice.id), entry_date=when)
 
@@ -959,10 +965,12 @@ def record_cdas_transaction_refund(db: Session, transaction) -> None:
     if amount <= 0:
         return
     when = (transaction.refunded_at or datetime.now(timezone.utc)).date()
-    post_codes(db, company_id=transaction.company_id, branch_id=None, debit_code="1000", credit_code="6800",
+    refund = dict(transaction.metadata_json or {}).get("refund") or {}
+    settlement_code = settlement_account_code(refund.get("payment_method"))
+    post_codes(db, company_id=transaction.company_id, branch_id=None, debit_code=settlement_code, credit_code="6800",
                amount=amount, description=f"CDAS transaction refund {transaction.transaction_reference}",
                reference_type="cdas_transaction_refund", reference_id=str(transaction.id), entry_date=when)
-    post_codes(db, company_id=None, branch_id=None, debit_code="4600", credit_code="1000",
+    post_codes(db, company_id=None, branch_id=None, debit_code="4600", credit_code=settlement_code,
                amount=amount, description=f"CDAS revenue reversal {transaction.transaction_reference}",
                reference_type="cdas_transaction_refund", reference_id=str(transaction.id), entry_date=when)
 
