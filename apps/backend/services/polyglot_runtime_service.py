@@ -32,6 +32,7 @@ _ROUTING_ENV = {
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
     "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
+    "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
@@ -41,6 +42,7 @@ _ROUTING_DEFAULTS = {
     "rust_portfolio_risk": "shadow",
     "rust_affordability": "shadow",
     "java_event_processing": "shadow",
+    "java_underwriting_rules": "shadow",
 }
 _ROUTING_MODES = {"off", "shadow", "prefer-worker"}
 
@@ -469,6 +471,44 @@ def java_canonicalize_event(
     if not isinstance(value.get("canonical_json"), str):
         return None
     if not isinstance(value.get("payload_sha256"), str):
+        return None
+    return value
+
+
+def java_underwriting_rules(
+    *,
+    monthly_income: str,
+    min_verified_net_income: str,
+    proposed_installment: str,
+    maximum_affordable_installment: str,
+    disposable_after_installment: str,
+    min_disposable_after_installment: str,
+) -> dict | None:
+    """Delegate deterministic lender-rule evaluation to Java.
+
+    Python remains authoritative and parity-checks the Java result before use.
+    """
+    base_url = java_worker_url()
+    if not base_url:
+        return None
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/underwriting/rules",
+        {
+            "monthly_income": monthly_income,
+            "min_verified_net_income": min_verified_net_income,
+            "proposed_installment": proposed_installment,
+            "maximum_affordable_installment": maximum_affordable_installment,
+            "disposable_after_installment": disposable_after_installment,
+            "min_disposable_after_installment": min_disposable_after_installment,
+        },
+        timeout=1.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    if value.get("decision") not in {"pass", "fail"}:
+        return None
+    if not isinstance(value.get("reasons"), list):
         return None
     return value
 
