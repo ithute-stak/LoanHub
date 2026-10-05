@@ -390,15 +390,28 @@ def generate_predictive_run(
         else None
     )
     delegated_by_loan: dict[str, dict[str, Any]] = {}
+    duplicate_delegated_key = False
     if delegated_results is not None:
         for item in delegated_results:
             key = str(item.get("key") or "")
-            if key and key not in delegated_by_loan:
-                delegated_by_loan[key] = item
+            if not key:
+                continue
+            if key in delegated_by_loan:
+                duplicate_delegated_key = True
+                continue
+            delegated_by_loan[key] = item
+
+    expected_keys = {str(row.loan_id) for row in current_rows}
+    delegated_batch_complete = (
+        delegated_results is not None
+        and not duplicate_delegated_key
+        and set(delegated_by_loan) == expected_keys
+        and len(delegated_results) == len(expected_keys)
+    )
 
     counts = defaultdict(int)
     projected_par30 = 0
-    parity_mismatch = False
+    parity_mismatch = routing_mode == "shadow" and delegated_results is not None and not delegated_batch_complete
     rust_used_count = 0
     rust_fallback_count = 0
 
@@ -492,9 +505,11 @@ def generate_predictive_run(
                 "mismatch"
                 if parity_mismatch
                 else "passed"
-                if routing_mode == "shadow" and delegated_results is not None
+                if routing_mode == "shadow" and delegated_batch_complete
+                else "partial_fallback"
+                if routing_mode == "prefer-worker" and rust_fallback_count > 0
                 else "promoted_no_live_parity"
-                if routing_mode == "prefer-worker" and delegated_results is not None
+                if routing_mode == "prefer-worker" and delegated_batch_complete
                 else "unavailable"
                 if routing_mode != "off" and delegated_results is None
                 else "off"
