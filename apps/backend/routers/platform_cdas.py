@@ -26,6 +26,7 @@ from services.platform_cdas_service import (
     list_transactions,
     mark_invoice_paid,
     profile_payload,
+    refund_transaction,
     review_subscription,
     subscription_payload,
     transaction_payload,
@@ -241,3 +242,16 @@ def mark_cdas_invoice_paid(
     _: User = Depends(require_platform_owner),
 ):
     return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
+
+
+
+@router.post("/transactions/{transaction_id}/refund")
+def refund_cdas_transaction(
+    transaction_id: UUID,
+    payload: CdasTransactionWaiver,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        refund_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )
