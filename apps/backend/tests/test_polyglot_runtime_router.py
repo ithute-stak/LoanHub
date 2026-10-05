@@ -54,3 +54,21 @@ def test_runtime_benchmark_is_admin_only_and_read_only() -> None:
     assert 'api.post<BenchmarkResponse>("/runtime/benchmarks/run?iterations=5")' in page
     assert "Promotion benchmark" in page
     assert "Keep shadow" in page
+
+
+def test_runtime_benchmark_history_is_persisted_and_admin_only() -> None:
+    router = (ROOT / "routers/polyglot_runtime.py").read_text(encoding="utf-8")
+    service = (ROOT / "services/polyglot_benchmark_service.py").read_text(encoding="utf-8")
+    model = (ROOT / "database/models/polyglot_benchmark.py").read_text(encoding="utf-8")
+    page = ROOT.parents[1].joinpath(
+        "apps/frontend/app/(dashboard)/superadmin/runtime/page.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "persist_benchmark_run(" in router
+    assert '@router.get("/benchmarks/history")' in router
+    assert "Depends(require_platform_admin)" in router
+    assert 'class PolyglotBenchmarkRun(Base):' in model
+    assert '__tablename__ = "polyglot_benchmark_runs"' in model
+    assert "def list_benchmark_history(" in service
+    assert 'api.get<{ items: BenchmarkHistoryItem[] }>("/runtime/benchmarks/history?limit=8")' in page
+    assert "Benchmark history" in page
