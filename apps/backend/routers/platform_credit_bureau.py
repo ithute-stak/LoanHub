@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,9 +17,14 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.audit_log import AuditLog
-from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
+from database.models.platform_credit_bureau import (
+    PlatformCreditBureauConfiguration,
+    PlatformCreditBureauSubscription,
+    PlatformCreditBureauTransaction,
+)
+from database.models.company import LoanCompany
 from database.models.user import User
-from database.schemas.credit_bureau import ExperianConfigurationUpdate
+from database.schemas.credit_bureau import ExperianConfigurationUpdate, ExperianSubscriptionDecision
 from database.session import get_db
 from services.credential_service import decrypt_credential, encrypt_credential
 from services.experian_service import (
@@ -29,6 +36,11 @@ from services.experian_service import (
     has_credentials_for_environment,
     public_configuration,
     test_connection,
+)
+from services.credit_bureau_payg_service import (
+    review_subscription,
+    subscription_payload,
+    transaction_payload,
 )
 
 
@@ -302,3 +314,76 @@ def test_platform_experian_connection(
     )
     db.commit()
     return result
+
+
+@router.get("/experian/subscriptions")
+def list_experian_subscriptions(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    rows = (
+        db.query(PlatformCreditBureauSubscription, LoanCompany)
+        .join(LoanCompany, LoanCompany.id == PlatformCreditBureauSubscription.company_id)
+        .filter(PlatformCreditBureauSubscription.provider == "experian")
+        .order_by(PlatformCreditBureauSubscription.requested_at.desc())
+        .all()
+    )
+    result = []
+    for subscription, company in rows:
+        item = subscription_payload(subscription)
+        item["company"] = {
+            "id": str(company.id),
+            "name": company.name,
+            "registration_number": company.registration_number,
+            "license_number": company.license_number,
+        }
+        result.append(item)
+    return result
+
+
+@router.post("/experian/subscriptions/{company_id}/decision")
+def decide_experian_subscription(
+    company_id: UUID,
+    payload: ExperianSubscriptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_platform_owner),
+):
+    platform = _get_row(db)
+    if payload.decision == "approved":
+        if not platform or not platform.is_enabled:
+            raise HTTPException(status_code=409, detail="Enable the platform Experian service before approving companies")
+        price = payload.price_per_transaction
+        if price is None:
+            price = float(dict(platform.configuration or {}).get("default_price_per_transaction") or 0)
+        if price < 0:
+            raise HTTPException(status_code=422, detail="Transaction price cannot be negative")
+    else:
+        price = payload.price_per_transaction
+
+    row = review_subscription(
+        db,
+        company_id=company_id,
+        reviewer_user_id=current_user.id,
+        decision=payload.decision,
+        price_per_transaction=Decimal(str(price)) if price is not None else None,
+        currency=payload.currency,
+        reason=payload.reason,
+        notes=payload.notes,
+    )
+    return subscription_payload(row)
+
+
+@router.get("/experian/transactions")
+def list_experian_payg_transactions(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+    limit: int = 200,
+):
+    rows = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(PlatformCreditBureauTransaction.provider == "experian")
+        .order_by(PlatformCreditBureauTransaction.accrued_at.desc())
+        .limit(max(1, min(limit, 1000)))
+        .all()
+    )
+    return [transaction_payload(row) for row in rows]
