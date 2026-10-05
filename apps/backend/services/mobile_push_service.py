@@ -12,6 +12,7 @@ from database.models.mobile_push import MobilePushDevice
 from database.session import SessionLocal
 from services.polyglot_runtime_service import (
     go_push_delivery_batch,
+    go_worker_url,
     workload_routing_mode,
 )
 
@@ -197,6 +198,8 @@ def _send_sync_go(user_ids: list[UUID | str], event: dict) -> bool:
     allowing the caller to use the existing Python transport safely.
     """
 
+    if not go_worker_url():
+        return False
     credentials = _firebase_access_token()
     if credentials is None:
         return False
@@ -238,11 +241,9 @@ def _send_sync_go(user_ids: list[UUID | str], event: dict) -> bool:
             jobs=batch,
         )
         if results is None:
-            if not handed_off:
-                return False
             logger.warning(
-                "LoanHub Go push delivery became unavailable after a prior batch; "
-                "remaining pushes are not replayed through Python to avoid duplicates"
+                "LoanHub Go push delivery outcome is unknown; the batch is not "
+                "replayed through Python to avoid duplicate notifications"
             )
             return True
         handed_off = True
