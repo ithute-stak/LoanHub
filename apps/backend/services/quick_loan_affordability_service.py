@@ -5,6 +5,11 @@ from typing import Any
 
 from database.models.borrower import Borrower
 from database.models.origination import OriginationPolicy
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_affordability_assessment,
+    workload_routing_mode,
+)
 
 MONEY = Decimal("0.01")
 PERCENT = Decimal("0.001")
@@ -134,7 +139,7 @@ def quick_loan_affordability(
             }
         )
 
-    return {
+    result = {
         "decision": "pass" if passed else "fail",
         "passed": passed,
         "input_source": "borrower_shared_profile",
@@ -162,3 +167,86 @@ def quick_loan_affordability(
         },
         "reasons": reasons,
     }
+
+    routing_mode = workload_routing_mode("rust_affordability")
+    rust_value = None
+    if routing_mode != "off":
+        rust_value = rust_affordability_assessment(
+            base_income=str(base_income),
+            other_income=str(other_income),
+            living_expenses=str(living),
+            existing_debt_repayments=str(debt),
+            dependants=dependants,
+            dependant_allowance=str(dependant_allowance),
+            living_expense_buffer=str(buffer_amount),
+            proposed_installment=str(installment),
+            disposable_income_usage_percent=str(policy.disposable_income_usage_percent or 0),
+            max_dti_percent=str(policy.max_dti_percent or 0),
+            max_installment_income_percent=str(policy.max_installment_income_percent or 0),
+            min_verified_net_income=str(policy.min_verified_net_income or 0),
+            min_disposable_after_installment=str(minimum_after_installment),
+        )
+
+    parity_fields = {
+        "passed": passed,
+        "monthly_income": str(income),
+        "base_income": str(base_income),
+        "other_income": str(other_income),
+        "living_expenses": str(living),
+        "existing_debt_repayments": str(debt),
+        "dependant_allowance_total": str(dependant_total),
+        "configured_buffer": str(buffer_amount),
+        "disposable_before_new_loan": str(disposable_before_new_loan),
+        "proposed_installment": str(installment),
+        "maximum_affordable_installment": str(maximum_affordable_installment),
+        "affordability_headroom": str(headroom),
+        "disposable_after_installment": str(after_installment),
+        "dti_percent": str(dti),
+        "disposable_income_limit": str(disposable_limit),
+        "dti_limit": str(dti_limit),
+        "installment_income_limit": str(installment_income_limit),
+        "minimum_disposable_after_installment": str(minimum_after_installment),
+        "income_missing": income <= 0,
+        "income_below_minimum": income > 0 and income < _money(policy.min_verified_net_income),
+        "installment_above_limit": installment > maximum_affordable_installment,
+        "disposable_income_too_low": after_installment < minimum_after_installment,
+    }
+    rust_parity = bool(
+        rust_value is not None
+        and all(rust_value.get(key) == value for key, value in parity_fields.items())
+    )
+    if rust_value is not None and not rust_parity:
+        record_parity_mismatch("rust_compute")
+
+    if rust_parity and routing_mode == "prefer-worker":
+        for key in (
+            "monthly_income",
+            "base_income",
+            "other_income",
+            "living_expenses",
+            "existing_debt_repayments",
+            "dependant_allowance_total",
+            "configured_buffer",
+            "disposable_before_new_loan",
+            "proposed_installment",
+            "maximum_affordable_installment",
+            "affordability_headroom",
+            "disposable_after_installment",
+            "dti_percent",
+        ):
+            result[key] = rust_value[key]
+        result["limits"] = {
+            "disposable_income_limit": rust_value["disposable_income_limit"],
+            "dti_limit": rust_value["dti_limit"],
+            "installment_income_limit": rust_value["installment_income_limit"],
+            "minimum_disposable_after_installment": rust_value["minimum_disposable_after_installment"],
+        }
+
+    result["compute_runtime"] = {
+        "rust_routing_mode": routing_mode,
+        "rust_available": rust_value is not None,
+        "rust_parity": "match" if rust_parity else ("mismatch" if rust_value is not None else "unavailable"),
+        "rust_used": bool(rust_parity and routing_mode == "prefer-worker"),
+        "python_authority": True,
+    }
+    return result
