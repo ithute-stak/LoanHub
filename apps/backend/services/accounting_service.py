@@ -966,3 +966,47 @@ def post_vat_transaction(
         status_value="posted",
         lines=lines,
     )
+
+
+def post_suspense_correction(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    amount,
+    target_account_code: str,
+    target_side: str,
+    description: str,
+    reference_id: str,
+    user_id,
+    entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 26 correction mechanism.
+
+    Suspense is cleared only by an explicit correcting journal. If the target
+    account needs a debit, suspense is credited; if the target needs a credit,
+    suspense is debited.
+    """
+    if target_account_code == "2990":
+        raise HTTPException(status_code=422, detail="Suspense correction must target a non-suspense account")
+    if target_side not in {"debit", "credit"}:
+        raise HTTPException(status_code=422, detail="target_side must be debit or credit")
+
+    debit_code, credit_code = (
+        (target_account_code, "2990")
+        if target_side == "debit"
+        else ("2990", target_account_code)
+    )
+    return post_codes(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        debit_code=debit_code,
+        credit_code=credit_code,
+        amount=amount,
+        description=description,
+        reference_type="suspense_correction",
+        reference_id=reference_id,
+        user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
