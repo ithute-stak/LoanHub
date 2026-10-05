@@ -933,6 +933,42 @@ def record_credit_bureau_invoice_payment(db: Session, invoice) -> None:
                reference_type="credit_bureau_invoice_payment", reference_id=str(invoice.id), entry_date=when)
 
 
+def record_credit_bureau_transaction_refund(db: Session, transaction) -> None:
+    """Return a settled Credit Bureau charge using the actual refund channel."""
+    amount = _money(transaction.amount)
+    if amount <= 0:
+        return
+    metadata = dict(transaction.metadata_json or {})
+    refund = metadata.get("refund") or {}
+    refunded_at = refund.get("recorded_at")
+    when = date.fromisoformat(str(refunded_at)[:10]) if refunded_at else datetime.now(timezone.utc).date()
+    settlement_code = settlement_account_code(refund.get("payment_method"))
+    post_codes(
+        db,
+        company_id=transaction.company_id,
+        branch_id=None,
+        debit_code=settlement_code,
+        credit_code="6700",
+        amount=amount,
+        description=f"Credit Bureau transaction refund {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_refund",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+    post_codes(
+        db,
+        company_id=None,
+        branch_id=None,
+        debit_code="4500",
+        credit_code=settlement_code,
+        amount=amount,
+        description=f"Credit Bureau revenue reversal {transaction.transaction_reference}",
+        reference_type="credit_bureau_transaction_refund",
+        reference_id=str(transaction.id),
+        entry_date=when,
+    )
+
+
 def record_cdas_invoice_accrual(db: Session, invoice) -> None:
     amount = _money(invoice.amount_due)
     if amount <= 0:
