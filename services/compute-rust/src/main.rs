@@ -478,7 +478,7 @@ fn concentration(
     total: Decimal,
 ) -> Result<RiskConcentrationSummary, String> {
     use std::collections::BTreeMap;
-    let mut grouped: BTreeMap<String, (usize, Decimal, Decimal)> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, (usize, Decimal, Decimal, i64, i64)> = BTreeMap::new();
     for row in rows.iter().filter(|row| row.active) {
         let balance = money(decimal(&row.outstanding_balance)?);
         let label = selector(row).cloned().unwrap_or_else(|| "Unknown".to_string());
