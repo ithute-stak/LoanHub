@@ -1961,6 +1961,12 @@ def period_close_pack(
         BankStatementLine.transaction_date.between(period_start, period_end),
         BankStatementLine.status == "unmatched",
     )
+    canonical_bank_batch_q = db.query(ReconciliationBatch.id).filter(
+        ReconciliationBatch.company_id == company_id,
+        ReconciliationBatch.source_type == "bank_statement",
+        ReconciliationBatch.period_end >= period_start,
+        ReconciliationBatch.period_start <= period_end,
+    )
     approvals = db.query(ApprovalRequest.id).filter(
         ApprovalRequest.company_id == company_id,
         ApprovalRequest.status == "pending",
@@ -1974,6 +1980,9 @@ def period_close_pack(
     if branch_id:
         drafts = drafts.filter(JournalEntry.branch_id == branch_id)
         bank_unmatched = bank_unmatched.filter(BankStatementLine.branch_id == branch_id)
+        canonical_bank_batch_q = canonical_bank_batch_q.filter(
+            (ReconciliationBatch.branch_id == branch_id) | (ReconciliationBatch.branch_id.is_(None))
+        )
         approvals = approvals.filter(
             (ApprovalRequest.branch_id == branch_id) | (ApprovalRequest.branch_id.is_(None))
         )
@@ -2105,11 +2114,16 @@ def period_close_pack(
             **bank_statement_balance_reconciliation(db, bank_batch),
         }
 
+    legacy_bank_unmatched_count = bank_unmatched.count()
+    canonical_bank_batch_exists = canonical_bank_batch_q.first() is not None
+
     checks = {
         "trial_balance_balanced": total_debit == total_credit,
         "suspense_cleared": suspense == 0,
         "draft_journals_cleared": drafts.count() == 0,
-        "bank_statement_exceptions_cleared": bank_unmatched.count() == 0,
+        "bank_statement_exceptions_cleared": (
+            True if canonical_bank_batch_exists else legacy_bank_unmatched_count == 0
+        ),
         "reconciliation_batches_closed": reconciliation_open.count() == 0,
         "pending_financial_approvals_cleared": approvals.count() == 0,
         "loan_receivables_control_balanced": bool(receivables_control["balanced"]),
@@ -2132,7 +2146,8 @@ def period_close_pack(
         "checks": checks,
         "counts": {
             "draft_journals": drafts.count(),
-            "unmatched_bank_lines": bank_unmatched.count(),
+            "legacy_unmatched_bank_lines": legacy_bank_unmatched_count,
+            "canonical_bank_batch_exists": int(canonical_bank_batch_exists),
             "open_reconciliation_batches": reconciliation_open.count(),
             "pending_approvals": approvals.count(),
             "active_loans": active_loan_count,
