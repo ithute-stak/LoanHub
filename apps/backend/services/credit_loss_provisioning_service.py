@@ -8,10 +8,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
-from database.models.accounting import JournalEntry
+from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.credit_loss_provisioning import (
     CreditLossProvisionLine,
     CreditLossProvisionPolicy,
@@ -85,19 +86,74 @@ def rate_for_snapshot(row: PortfolioRiskSnapshot, policy: CreditLossProvisionPol
     return min(max(rate, Decimal("0")), Decimal("1"))
 
 
-def _latest_approved_allowance(db: Session, company_id: UUID, branch_scope_key: str, before_date: date) -> Decimal:
-    prior = (
-        db.query(CreditLossProvisionRun)
-        .filter(
-            CreditLossProvisionRun.company_id == company_id,
-            CreditLossProvisionRun.branch_scope_key == branch_scope_key,
-            CreditLossProvisionRun.as_of_date < before_date,
-            CreditLossProvisionRun.status.in_(["approved", "posted"]),
-        )
-        .order_by(CreditLossProvisionRun.as_of_date.desc())
-        .first()
+def _posted_allowance_balance(
+    db: Session,
+    *,
+    company_id: UUID,
+    as_of_date: date,
+    branch_id: UUID | None,
+) -> Decimal:
+    """Return the actual posted credit balance of account 1150 as of the run date.
+
+    This deliberately uses the ledger rather than the previous provision run so
+    write-offs, releases and other approved allowance movements are reflected.
+    """
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    allowance = db.query(AccountingAccount).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.code == "1150",
+        AccountingAccount.is_active.is_(True),
+    ).first()
+    if not allowance:
+        return Decimal("0.00")
+    query = db.query(
+        func.coalesce(func.sum(JournalLine.credit), 0),
+        func.coalesce(func.sum(JournalLine.debit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == allowance.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= as_of_date,
     )
-    return money(prior.required_allowance) if prior else Decimal("0.00")
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+    credit, debit = query.first()
+    return money(Decimal(credit) - Decimal(debit))
+
+
+def _assert_provision_scope_consistency(
+    db: Session,
+    *,
+    company_id: UUID,
+    branch_id: UUID | None,
+    as_of_date: date,
+) -> None:
+    """Prevent overlapping company-wide and branch-specific allowance regimes."""
+    if branch_id is None:
+        conflict = db.query(CreditLossProvisionRun.id).filter(
+            CreditLossProvisionRun.company_id == company_id,
+            CreditLossProvisionRun.as_of_date == as_of_date,
+            CreditLossProvisionRun.branch_scope_key != "ALL",
+            CreditLossProvisionRun.status.in_(["draft", "approved", "posted"]),
+        ).first()
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail="Company-wide provisioning cannot overlap branch-scoped runs for the same date",
+            )
+    else:
+        conflict = db.query(CreditLossProvisionRun.id).filter(
+            CreditLossProvisionRun.company_id == company_id,
+            CreditLossProvisionRun.as_of_date == as_of_date,
+            CreditLossProvisionRun.branch_scope_key == "ALL",
+            CreditLossProvisionRun.status.in_(["draft", "approved", "posted"]),
+        ).first()
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail="Branch provisioning cannot overlap a company-wide run for the same date",
+            )
 
 
 def generate_run(
@@ -109,6 +165,12 @@ def generate_run(
     overlay_reason: str | None = None,
 ) -> CreditLossProvisionRun:
     branch_scope_key = str(context.branch_id) if context.branch_id else "ALL"
+    _assert_provision_scope_consistency(
+        db,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        as_of_date=as_of_date,
+    )
     existing = db.query(CreditLossProvisionRun).filter(
         CreditLossProvisionRun.company_id == context.company_id,
         CreditLossProvisionRun.as_of_date == as_of_date,
@@ -200,7 +262,12 @@ def generate_run(
         base_total += allowance
         stage_totals[stage] += allowance
 
-    prior = _latest_approved_allowance(db, context.company_id, branch_scope_key, as_of_date)
+    prior = _posted_allowance_balance(
+        db,
+        company_id=context.company_id,
+        as_of_date=as_of_date,
+        branch_id=context.branch_id,
+    )
     required = max(money(base_total + overlay), Decimal("0.00"))
     run.status = "draft"
     run.loan_count = len(eligible)
@@ -216,6 +283,7 @@ def generate_run(
     run.generated_at = datetime.now(timezone.utc)
     run.summary = {
         "method": "configurable_dpd_stage_policy",
+        "prior_allowance_basis": "actual_posted_1150_ledger_balance",
         "policy_name": policy.name,
         "policy_version": policy.version,
         "rates": policy.rates,
