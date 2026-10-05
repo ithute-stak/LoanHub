@@ -632,15 +632,35 @@ def list_invoices(db: Session, *, company_id: UUID | None = None, limit: int = 1
     return [invoice_payload(row) for row in rows]
 
 
-def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauInvoice:
+def mark_invoice_paid(
+    db: Session,
+    *,
+    invoice_id: UUID,
+    payment_method: str,
+    proof_reference: str | None,
+    notes: str | None = None,
+) -> PlatformCreditBureauInvoice:
     invoice = db.query(PlatformCreditBureauInvoice).filter(PlatformCreditBureauInvoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Credit Bureau invoice not found")
     if invoice.status == "paid":
         return invoice
+    method = payment_method.strip().lower()
+    if method not in {"cash", "bank", "electronic"}:
+        raise HTTPException(status_code=422, detail="Unsupported invoice payment method")
+    if method != "cash" and not (proof_reference or "").strip():
+        raise HTTPException(status_code=422, detail="Non-cash invoice payments require proof_reference")
     paid_at = datetime.now(timezone.utc)
     invoice.status = "paid"
     invoice.paid_at = paid_at
+    snapshot = dict(invoice.snapshot or {})
+    snapshot["settlement"] = {
+        "payment_method": method,
+        "proof_reference": (proof_reference or "").strip() or None,
+        "notes": (notes or "").strip() or None,
+        "recorded_at": paid_at.isoformat(),
+    }
+    invoice.snapshot = snapshot
     from services.accounting_service import record_credit_bureau_invoice_payment
     record_credit_bureau_invoice_payment(db, invoice)
     transaction_ids = [UUID(value) for value in dict(invoice.snapshot or {}).get("transaction_ids", [])]
