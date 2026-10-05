@@ -30,9 +30,15 @@ def test_approval_uses_unified_core_bureau_cdas_gate() -> None:
     service = _read(ROOT / "services/lending_integration_service.py")
 
     assert "assert_application_integration_readiness_for_approval(" in router
-    assert "score_below_decline_threshold" in service
-    assert "defaults_blocked" in service
-    assert "identity_match_required" in service
+    external = _read(ROOT / "services/external_underwriting_evidence_service.py")
+    assert "bureau_evidence(" in service
+    assert "cdas_deduction_capacity(" in service
+    assert "score_below_decline_threshold" in external
+    assert "defaults_blocked" in external
+    assert "judgments_blocked" in external
+    assert "collections_blocked" in external
+    assert "identity_match_required" in external
+    assert "deduction_capacity_insufficient" in external
     assert "affordability_stale_after_bureau" in service
     assert "payroll_profile_not_verified" in service
 
@@ -99,3 +105,21 @@ def test_unified_decision_centre_surfaces_core_bureau_cdas_and_final_outcome() -
     assert "/company/origination/decision-centre/${application.id}" in dashboard
     assert 'new URLSearchParams(window.location.search).get("application")' in manager
     assert "openApplication(requested)" in manager
+
+
+
+def test_unified_decision_centre_shows_full_external_evidence() -> None:
+    service = _read(ROOT / "services/lending_integration_service.py")
+    page = _read(
+        FRONTEND_ROOT
+        / "app/(dashboard)/company/origination/decision-centre/[applicationId]/page.tsx"
+    )
+
+    assert '"judgments_count": bureau_snapshot["judgments_count"]' in service
+    assert '"collections_count": bureau_snapshot["collections_count"]' in service
+    assert '"available_deduction_capacity": float(cdas_capacity["available_deduction_capacity"])' in service
+    assert '"capacity_sufficient": bool(cdas_capacity["capacity_sufficient"])' in service
+    assert "Judgments" in page
+    assert "Collections" in page
+    assert "Available deduction capacity" in page
+    assert "Proposed installment" in page

@@ -57,6 +57,8 @@ export default function ExperianCreditBureauPage() {
   const [declineBelowScore, setDeclineBelowScore] = useState("");
   const [referBelowScore, setReferBelowScore] = useState("");
   const [blockDefaults, setBlockDefaults] = useState(false);
+  const [blockJudgments, setBlockJudgments] = useState(false);
+  const [blockCollections, setBlockCollections] = useState(false);
   const [requireIdentityMatch, setRequireIdentityMatch] = useState(false);
 
   const [consentConfirmed, setConsentConfirmed] = useState(false);
@@ -82,6 +84,8 @@ export default function ExperianCreditBureauPage() {
     setDeclineBelowScore(row.configuration.decline_below_score == null ? "" : String(row.configuration.decline_below_score));
     setReferBelowScore(row.configuration.refer_below_score == null ? "" : String(row.configuration.refer_below_score));
     setBlockDefaults(Boolean(row.configuration.block_defaults));
+    setBlockJudgments(Boolean(row.configuration.block_judgments));
+    setBlockCollections(Boolean(row.configuration.block_collections));
     setRequireIdentityMatch(Boolean(row.configuration.require_identity_match));
   }, []);
 
@@ -170,6 +174,8 @@ export default function ExperianCreditBureauPage() {
           decline_below_score: declineBelowScore.trim() ? Number(declineBelowScore) : null,
           refer_below_score: referBelowScore.trim() ? Number(referBelowScore) : null,
           block_defaults: blockDefaults,
+          block_judgments: blockJudgments,
+          block_collections: blockCollections,
           require_identity_match: requireIdentityMatch,
         },
       });
@@ -389,6 +395,8 @@ export default function ExperianCreditBureauPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Toggle label="Use bureau commitments in affordability" checked={includeCommitments} onChange={setIncludeCommitments} disabled={!canConfigure} />
               <Toggle label="Block applicants with defaults" checked={blockDefaults} onChange={setBlockDefaults} disabled={!canConfigure} />
+              <Toggle label="Block applicants with judgments" checked={blockJudgments} onChange={setBlockJudgments} disabled={!canConfigure} />
+              <Toggle label="Block applicants with collection records" checked={blockCollections} onChange={setBlockCollections} disabled={!canConfigure} />
               <Toggle label="Require identity match" checked={requireIdentityMatch} onChange={setRequireIdentityMatch} disabled={!canConfigure} />
             </div>
 

@@ -10,6 +10,8 @@ export type ExperianUsageConfiguration = {
   decline_below_score?: number | null;
   refer_below_score?: number | null;
   block_defaults?: boolean;
+  block_judgments?: boolean;
+  block_collections?: boolean;
   require_identity_match?: boolean;
 };
 

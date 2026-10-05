@@ -56,6 +56,8 @@ def default_experian_configuration() -> dict[str, Any]:
         "decline_below_score": None,
         "refer_below_score": None,
         "block_defaults": False,
+        "block_judgments": False,
+        "block_collections": False,
         "require_identity_match": False,
     }
 

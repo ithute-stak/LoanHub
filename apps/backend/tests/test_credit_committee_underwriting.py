@@ -131,3 +131,18 @@ def test_credit_committee_api_and_ui_cover_full_human_decision_cycle():
     assert "Committee voting" in case_page
     assert "Decision conditions" in case_page
     assert "downloadCreditMemo" in api_client
+
+
+
+def test_committee_uses_same_application_scoped_external_evidence_as_decision_centre():
+    service = (ROOT / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+    external = (ROOT / "backend" / "services" / "external_underwriting_evidence_service.py").read_text(encoding="utf-8")
+
+    assert "company_experian_policy(" in service
+    assert "latest_fresh_experian_enquiry(" in service
+    assert "application_id=application.id" in service
+    assert 'environment=str(bureau_policy.get("environment") or "sandbox")' in service
+    assert "external_evidence_snapshot(" in service
+    assert '"external_underwriting_evidence": external_evidence' in service
+    assert "available_deduction_capacity" in external
+    assert "cdas_existing_deductions_are_capacity_only" in external
