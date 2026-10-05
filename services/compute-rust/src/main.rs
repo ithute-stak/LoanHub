@@ -938,6 +938,7 @@ struct PredictiveSignalInput {
     previous_bucket: Option<String>,
     first_payment_default: bool,
     is_top_up: bool,
+    has_work_item: bool,
     work_priority: Option<String>,
     work_priority_score: Option<String>,
 }
@@ -1063,7 +1064,8 @@ fn predictive_signal(row: &PredictiveSignalInput) -> Result<PredictiveSignalOutp
         rationale.push("This is a top-up exposure already showing repayment stress".to_string());
     }
 
-    if let Some(priority) = row.work_priority.as_deref() {
+    if row.has_work_item {
+        let priority = row.work_priority.as_deref().unwrap_or("");
         if matches!(priority, "critical" | "urgent") {
             score += Decimal::from(10_i64);
             rationale.push(format!(
