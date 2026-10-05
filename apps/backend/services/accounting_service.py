@@ -1917,6 +1917,13 @@ def period_close_pack(
         to_date=period_end,
         branch_id=branch_id,
     )
+    coverage = transaction_accounting_coverage(
+        db,
+        company_id=company_id,
+        from_date=period_start,
+        to_date=period_end,
+        branch_id=branch_id,
+    )
 
     checks = {
         "trial_balance_balanced": total_debit == total_credit,
@@ -1927,6 +1934,7 @@ def period_close_pack(
         "pending_financial_approvals_cleared": approvals.count() == 0,
         "loan_receivables_control_balanced": bool(receivables_control["balanced"]),
         "cash_flow_reconciled": bool(cash_flow["reconciled"]),
+        "transaction_accounting_coverage_complete": bool(coverage["complete"]),
         "fixed_asset_depreciation_complete": len(asset_depreciation_due) == 0,
         "credit_loss_provision_posted": active_loan_count == 0 or provision_posted,
     }
@@ -1957,6 +1965,7 @@ def period_close_pack(
         },
         "loan_receivables_control": receivables_control,
         "cash_flow": cash_flow,
+        "transaction_accounting_coverage": coverage,
         "fixed_asset_ids_needing_depreciation": asset_depreciation_due,
         "credit_loss_provision_run_id": str(provision.first().id) if provision.first() else None,
     }
