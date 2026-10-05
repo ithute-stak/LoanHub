@@ -390,3 +390,79 @@ def test_daily_accrual_rust_shadow_receives_exact_dates_and_keeps_python_authori
     assert details["compute_runtime"]["rust_routing_mode"] == "shadow"
     assert details["compute_runtime"]["rust_parity"] == "mismatch"
     assert details["compute_runtime"]["fallback"] is True
+
+
+def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> None:
+    import hashlib
+    import json
+
+    from services import polyglot_benchmark_service as benchmark
+
+    monkeypatch.setattr(
+        benchmark,
+        "go_digest",
+        lambda **kwargs: {
+            "sha256": hashlib.sha256(kwargs["payload"].encode("utf-8")).hexdigest()
+        },
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "rust_variance_classification",
+        lambda **kwargs: {"status": "shortage", "variance_cents": -125},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "rust_loan_preview",
+        lambda **kwargs: {
+            "monthly_installment": "363.33",
+            "total_interest": "90.00",
+            "total_repayable": "1090.00",
+            "schedule_amounts": ["363.33", "363.33", "363.34"],
+        },
+    )
+    java_payload = {"z": 1, "a": {"y": 2, "b": 3}}
+    canonical = json.dumps(java_payload, sort_keys=True, separators=(",", ":"))
+    monkeypatch.setattr(
+        benchmark,
+        "java_canonicalize_event",
+        lambda **kwargs: {
+            "canonical_json": canonical,
+            "payload_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        },
+    )
+    monkeypatch.setattr(benchmark, "workload_routing_mode", lambda workload: "shadow")
+
+    result = benchmark.run_polyglot_benchmarks(iterations=2)
+
+    assert result["iterations"] == 2
+    assert result["non_authoritative"] is True
+    assert result["changes_routing"] is False
+    assert len(result["results"]) == 4
+    assert all(item["parity_passed"] == 2 for item in result["results"])
+    assert all(item["promotion_candidate"] is True for item in result["results"])
+
+
+def test_polyglot_benchmark_caps_iterations(monkeypatch) -> None:
+    from services import polyglot_benchmark_service as benchmark
+
+    monkeypatch.setattr(
+        benchmark,
+        "_run_case",
+        lambda **kwargs: benchmark.BenchmarkResult(
+            workload=kwargs["workload"],
+            worker=kwargs["worker"],
+            iterations=kwargs["iterations"],
+            successes=0,
+            parity_passed=0,
+            parity_failed=0,
+            avg_latency_ms=None,
+            max_latency_ms=None,
+            routing_mode="shadow",
+            promotion_candidate=False,
+            recommendation="keep_shadow_worker_unavailable",
+        ),
+    )
+
+    result = benchmark.run_polyglot_benchmarks(iterations=999)
+    assert result["iterations"] == 20
+    assert all(item["iterations"] == 20 for item in result["results"])

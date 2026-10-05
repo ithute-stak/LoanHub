@@ -48,6 +48,27 @@ type RuntimeStatus = {
   rules: Record<string, string>;
 };
 
+type BenchmarkResult = {
+  workload: string;
+  worker: string;
+  iterations: number;
+  successes: number;
+  parity_passed: number;
+  parity_failed: number;
+  avg_latency_ms: number | null;
+  max_latency_ms: number | null;
+  routing_mode: string;
+  promotion_candidate: boolean;
+  recommendation: string;
+};
+
+type BenchmarkResponse = {
+  iterations: number;
+  non_authoritative: boolean;
+  changes_routing: boolean;
+  results: BenchmarkResult[];
+};
+
 const labels: Record<string, string> = {
   rust_compute: "Rust compute",
   go_worker: "Go worker",
@@ -64,6 +85,8 @@ export default function RuntimeControlPage() {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
+  const [benchmarking, setBenchmarking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,6 +116,20 @@ export default function RuntimeControlPage() {
     () => status?.workers.filter((worker) => worker.configured).length ?? 0,
     [status],
   );
+
+  const runBenchmark = useCallback(async () => {
+    setBenchmarking(true);
+    try {
+      const response = await api.post<BenchmarkResponse>("/runtime/benchmarks/run?iterations=5");
+      setBenchmark(response.data);
+      setError(null);
+    } catch (requestError: any) {
+      const message = requestError?.response?.data?.detail ?? requestError?.message ?? "Could not run runtime benchmark";
+      setError(String(message));
+    } finally {
+      setBenchmarking(false);
+    }
+  }, []);
 
   return (
     <main className="space-y-6">
@@ -177,6 +214,51 @@ export default function RuntimeControlPage() {
           );
         })}
       </section>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2"><Activity className="h-5 w-5 text-primary" />Promotion benchmark</CardTitle>
+              <CardDescription>Run five read-only parity and latency checks before promoting a worker workload.</CardDescription>
+            </div>
+            <Button variant="outline" onClick={() => void runBenchmark()} disabled={benchmarking}>
+              <Gauge className={benchmarking ? "animate-pulse" : ""} />
+              {benchmarking ? "Benchmarking…" : "Run benchmark"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {benchmark?.results?.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {benchmark.results.map((item) => (
+                <div key={item.workload} className="rounded-2xl border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wide text-muted-foreground">{item.workload.replaceAll("_", " ")}</p>
+                      <p className="mt-1 text-sm font-black">{item.worker.replaceAll("_", " ")}</p>
+                    </div>
+                    <Badge variant={item.promotion_candidate ? "default" : "secondary"}>
+                      {item.promotion_candidate ? "Candidate" : "Keep shadow"}
+                    </Badge>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl bg-muted/40 p-2"><span className="text-muted-foreground">Success</span><p className="font-black">{item.successes}/{item.iterations}</p></div>
+                    <div className="rounded-xl bg-muted/40 p-2"><span className="text-muted-foreground">Parity</span><p className="font-black">{item.parity_passed}/{item.iterations}</p></div>
+                    <div className="rounded-xl bg-muted/40 p-2"><span className="text-muted-foreground">Avg latency</span><p className="font-black">{item.avg_latency_ms == null ? "—" : `${item.avg_latency_ms} ms`}</p></div>
+                    <div className="rounded-xl bg-muted/40 p-2"><span className="text-muted-foreground">Max latency</span><p className="font-black">{item.max_latency_ms == null ? "—" : `${item.max_latency_ms} ms`}</p></div>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-muted-foreground">{item.recommendation.replaceAll("_", " ")}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+              No benchmark has been run in this browser session.
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
