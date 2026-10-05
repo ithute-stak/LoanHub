@@ -93,3 +93,20 @@ The workload starts in `shadow`. After benchmark/parity evidence supports promot
 missing or invalid worker output. This is the intended efficiency model: once promoted,
 LoanHub should not keep paying for the same CPU-heavy Python calculation solely for
 live parity on every request.
+
+
+## Mobile push migration status
+
+Mobile push network fan-out now has a Go path.
+
+Python remains responsible for recipient selection, device-token lookup, notification
+category/channel policy, message text/data, Firebase project selection and OAuth
+credential acquisition. Only a short-lived FCM access token is handed to Go; the
+long-lived service-account private key remains with Python/Application Default
+Credentials.
+
+Go performs bounded concurrent calls to the fixed FCM v1 endpoint. The workload
+defaults to `off`. Because push is side-effecting, `shadow` remains Python-only:
+LoanHub never sends duplicate notifications merely to compare runtimes. When explicitly
+promoted to `prefer-worker`, an ambiguous Go handoff is not immediately replayed
+through Python, avoiding double delivery.
