@@ -346,3 +346,13 @@ class WrittenOffLoanRecoveryCreate(BaseModel):
         if self.payment_method != "cash" and not (self.proof_reference or "").strip():
             raise ValueError("Non-cash recoveries require a proof_reference")
         return self
+
+
+class ElectronicClearingSettlementCreate(BaseModel):
+    settlement_date: date
+    amount: Decimal = Field(gt=0)
+    direction: str = Field(pattern="^(provider_to_bank|bank_to_provider)$")
+    provider_reference: str = Field(min_length=2, max_length=180)
+    proof_reference: str = Field(min_length=2, max_length=180)
+    branch_id: UUID | None = None
+    notes: str | None = Field(default=None, max_length=1000)
