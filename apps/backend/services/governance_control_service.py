@@ -235,8 +235,11 @@ def confirm_gateway_adjustment(
     adjustment: PaymentAdjustment,
     provider_reference: str,
 ) -> PaymentAdjustment:
-    if adjustment.status != "processing":
-        raise HTTPException(status_code=409, detail="Adjustment is not awaiting gateway confirmation")
+    allowed_statuses = {"processing"}
+    if adjustment.adjustment_type == "chargeback":
+        allowed_statuses.add("under_investigation")
+    if adjustment.status not in allowed_statuses:
+        raise HTTPException(status_code=409, detail="Adjustment is not awaiting provider confirmation")
     payment = db.get(PaymentTransaction, adjustment.payment_id)
     if not payment or payment.status != PaymentStatus.SUCCEEDED:
         raise HTTPException(status_code=409, detail="Source payment is unavailable")
@@ -252,6 +255,43 @@ def confirm_gateway_adjustment(
     adjustment.completed_at = _now()
     db.add(payment)
     db.add(adjustment)
+    return adjustment
+
+
+def complete_adjustment_for_provider_reversal(
+    db: Session,
+    *,
+    payment: PaymentTransaction,
+    provider_reference: str | None,
+) -> PaymentAdjustment | None:
+    """Complete any active refund/reversal/chargeback when the provider confirms reversal."""
+    adjustment = db.query(PaymentAdjustment).filter(
+        PaymentAdjustment.payment_id == payment.id,
+        PaymentAdjustment.status.in_(["processing", "under_investigation"]),
+    ).order_by(PaymentAdjustment.created_at.desc()).first()
+    if not adjustment:
+        return None
+    adjustment.provider_reference = (provider_reference or payment.provider_reference or "").strip() or None
+    adjustment.status = "completed"
+    adjustment.completed_at = _now()
+    db.add(adjustment)
+    enqueue_webhook(
+        db,
+        company_id=adjustment.company_id,
+        event_type="payment.adjustment.updated",
+        aggregate_type="payment_adjustment",
+        aggregate_id=str(adjustment.id),
+        idempotency_key=f"payment-adjustment:{adjustment.id}:completed",
+        payload={
+            "id": str(adjustment.id),
+            "payment_id": str(adjustment.payment_id),
+            "type": adjustment.adjustment_type,
+            "amount": str(adjustment.amount),
+            "currency": adjustment.currency,
+            "status": "completed",
+            "provider_reference": adjustment.provider_reference,
+        },
+    )
     return adjustment
 
 
