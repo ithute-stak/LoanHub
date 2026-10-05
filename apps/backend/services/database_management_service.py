@@ -166,6 +166,74 @@ def database_health_snapshot(db: Session) -> dict[str, Any]:
         ),
     }
 
+    runtime_role = dict(
+        db.execute(
+            text(
+                """
+                SELECT
+                    r.rolname AS role_name,
+                    r.rolsuper AS is_superuser,
+                    r.rolbypassrls AS bypass_rls
+                FROM pg_roles r
+                WHERE r.rolname = current_user
+                """
+            )
+        ).mappings().one()
+    )
+
+    row_security_tables = [
+        dict(row)
+        for row in db.execute(
+            text(
+                """
+                SELECT
+                    n.nspname AS schema_name,
+                    c.relname AS table_name,
+                    c.relrowsecurity AS rls_enabled,
+                    c.relforcerowsecurity AS force_rls,
+                    pg_get_userbyid(c.relowner) AS table_owner,
+                    count(p.policyname) AS policy_count
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                LEFT JOIN pg_policies p
+                  ON p.schemaname = n.nspname
+                 AND p.tablename = c.relname
+                WHERE c.relkind IN ('r', 'p')
+                  AND c.relrowsecurity = true
+                  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                GROUP BY
+                    n.nspname,
+                    c.relname,
+                    c.relrowsecurity,
+                    c.relforcerowsecurity,
+                    c.relowner
+                ORDER BY n.nspname, c.relname
+                """
+            )
+        ).mappings().all()
+    ]
+
+    role_name = str(runtime_role["role_name"])
+    owns_rls_table = any(
+        str(row["table_owner"]) == role_name for row in row_security_tables
+    )
+    missing_policy = any(
+        int(row["policy_count"] or 0) == 0 for row in row_security_tables
+    )
+    row_security = {
+        "runtime_role": role_name,
+        "runtime_is_superuser": bool(runtime_role["is_superuser"]),
+        "runtime_bypass_rls": bool(runtime_role["bypass_rls"]),
+        "runtime_owns_rls_table": owns_rls_table,
+        "enabled_table_count": len(row_security_tables),
+        "tables": row_security_tables,
+        "enforcement_ready": bool(row_security_tables)
+        and not bool(runtime_role["is_superuser"])
+        and not bool(runtime_role["bypass_rls"])
+        and not owns_rls_table
+        and not missing_policy,
+    }
+
     return {
         "supported": True,
         "database_engine": "postgresql",
@@ -201,6 +269,7 @@ def database_health_snapshot(db: Session) -> dict[str, Any]:
         },
         "stats_reset": stats["stats_reset"],
         "replication": replication,
+        "row_security": row_security,
         "alembic_heads": alembic_heads,
         "unvalidated_check_constraints": constraints,
         "largest_tables": tables,
