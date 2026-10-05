@@ -24,7 +24,12 @@ from database.models.platform_credit_bureau import (
 )
 from database.models.company import LoanCompany
 from database.models.user import User
-from database.schemas.credit_bureau import ExperianConfigurationUpdate, ExperianSubscriptionDecision
+from database.schemas.credit_bureau import (
+    CreditBureauInvoiceCreate,
+    CreditBureauTransactionWaiver,
+    ExperianConfigurationUpdate,
+    ExperianSubscriptionDecision,
+)
 from database.session import get_db
 from services.credential_service import decrypt_credential, encrypt_credential
 from services.experian_service import (
@@ -38,9 +43,15 @@ from services.experian_service import (
     test_connection,
 )
 from services.credit_bureau_payg_service import (
+    create_invoice,
+    invoice_payload,
+    list_invoices,
+    mark_invoice_paid,
     review_subscription,
     subscription_payload,
     transaction_payload,
+    usage_summary,
+    waive_transaction,
 )
 
 
@@ -330,7 +341,7 @@ def list_experian_subscriptions(
     )
     result = []
     for subscription, company in rows:
-        item = subscription_payload(subscription)
+        item = subscription_payload(subscription, db=db)
         item["company"] = {
             "id": str(company.id),
             "name": company.name,
@@ -372,6 +383,10 @@ def decide_experian_subscription(
         currency=payload.currency,
         reason=payload.reason,
         notes=payload.notes,
+        credit_limit=Decimal(str(payload.credit_limit)) if payload.credit_limit is not None else None,
+        warning_threshold=Decimal(str(payload.warning_threshold)) if payload.warning_threshold is not None else None,
+        auto_suspend_on_limit=payload.auto_suspend_on_limit,
+        billing_due_days=payload.billing_due_days,
     )
     return subscription_payload(row)
 
@@ -390,3 +405,59 @@ def list_experian_payg_transactions(
         .all()
     )
     return [transaction_payload(row) for row in rows]
+
+
+@router.get("/experian/usage/{company_id}")
+def get_experian_company_usage(
+    company_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return usage_summary(db, company_id=company_id)
+
+
+@router.post("/experian/transactions/{transaction_id}/waive")
+def waive_experian_transaction(
+    transaction_id: UUID,
+    payload: CreditBureauTransactionWaiver,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        waive_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )
+
+
+@router.post("/experian/invoices/{company_id}")
+def issue_experian_invoice(
+    company_id: UUID,
+    payload: CreditBureauInvoiceCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(
+        create_invoice(
+            db,
+            company_id=company_id,
+            period_start=payload.period_start,
+            period_end=payload.period_end,
+        )
+    )
+
+
+@router.get("/experian/invoices")
+def list_experian_invoices(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+    limit: int = 200,
+):
+    return list_invoices(db, limit=limit)
+
+
+@router.post("/experian/invoices/{invoice_id}/paid")
+def mark_experian_invoice_paid(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
