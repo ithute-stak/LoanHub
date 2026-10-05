@@ -10,6 +10,7 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.origination import OriginationIntegrationConfiguration
+from database.models.enums import UserRole
 from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
 from database.schemas.credit_bureau import ExperianCompanySettingsUpdate, ExperianCompanyUsageConfiguration
 from database.session import get_db
@@ -131,6 +132,18 @@ def update_experian_configuration(
 
     preview = company_experian_preview(db, company_id=context.company_id)
     subscription = preview["subscription"]
+    existing_row = _company_row(db, context.company_id)
+    existing_environment = str(
+        (existing_row.configuration or {}).get("environment")
+        if existing_row and isinstance(existing_row.configuration, dict)
+        else existing_row.environment if existing_row else "sandbox"
+    ).strip().lower()
+    requested_environment = str(payload.configuration.environment).strip().lower()
+    if requested_environment != existing_environment and context.role != UserRole.COMPANY_OWNER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the Loan Company Owner can switch Credit Bureau between Sandbox and Live.",
+        )
     if payload.is_enabled and subscription.get("status") != "approved":
         raise HTTPException(
             status_code=403,
