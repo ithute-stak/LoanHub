@@ -7,6 +7,7 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release
 
 FROM rust:1.85-alpine AS rust-build
+RUN apk add --no-cache build-base musl-dev
 WORKDIR /src/compute-rust
 COPY compute-rust/Cargo.toml ./
 COPY compute-rust/src ./src
