@@ -827,22 +827,79 @@ def post_doubtful_debt_allowance(
     )
 
 
+def _cash_flow_section(entry: JournalEntry, counterpart_codes: set[str], *, company_id) -> tuple[str, str]:
+    """Classify a cash movement using an explicit accounting policy.
+
+    Frank Wood provides the operating/investing/financing structure. LoanHub's
+    lending-business treatment is expressed separately here so it remains
+    reviewable rather than being hidden in account heuristics.
+    """
+    if entry.reference_type in {"fixed_asset_acquisition", "fixed_asset_disposal"}:
+        return "investing", "fixed_asset_transaction"
+    if counterpart_codes & {"1500", "1510", "4910", "6510"}:
+        return "investing", "property_equipment_counterpart"
+    if counterpart_codes & {"3000", "3100", "3200"}:
+        return "financing", "owner_equity_counterpart"
+
+    # Lending is LoanHub tenants' ordinary revenue-generating activity. The
+    # classifier makes that institution-specific policy visible and testable.
+    # It should remain subject to each lender's approved reporting policy.
+    if company_id is not None and entry.reference_type == "payment_transaction":
+        if counterpart_codes & {"1100", "1110", "1120", "4000", "4100", "4200"}:
+            return "operating", "lending_business_cash_flow"
+
+    return "operating", "default_operating_activity"
+
+
+def _cash_balance_at(
+    db: Session,
+    *,
+    key: str,
+    cash_ids: set,
+    before_date: date | None = None,
+    to_date: date | None = None,
+    branch_id=None,
+) -> Decimal:
+    query = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id.in_(cash_ids),
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+    )
+    if before_date is not None:
+        query = query.filter(JournalEntry.entry_date < before_date)
+    if to_date is not None:
+        query = query.filter(JournalEntry.entry_date <= to_date)
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+    debit, credit = query.first()
+    return _money(Decimal(debit) - Decimal(credit))
+
+
 def cash_flow_statement(
     db: Session, *, company_id, from_date: date, to_date: date, branch_id=None,
 ) -> dict:
-    """Summarise posted cash/bank movements into the book's three IAS 7 sections.
+    """Summarise posted cash/bank movements into operating, investing and financing.
 
-    LoanHub's policy layer classifies fixed-asset movements as investing,
-    owner/equity funding as financing, and the remaining cash movements as
-    operating. This keeps the accounting textbook's three-section structure
-    while making classification explicit in code.
+    The three-section structure follows the textbook. Classification decisions
+    specific to a lending business are made by _cash_flow_section and are
+    returned with every detail row for auditability.
     """
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
     key, _ = scope_key(company_id)
     ensure_chart(db, company_id=company_id)
     cash_ids = {
         account_by_code(db, key, "1000").id,
         account_by_code(db, key, "1010").id,
     }
+    opening_cash = _cash_balance_at(
+        db, key=key, cash_ids=cash_ids, before_date=from_date, branch_id=branch_id
+    )
+
     rows = db.query(JournalEntry).options(
         joinedload(JournalEntry.lines).joinedload(JournalLine.account)
     ).filter(
@@ -854,9 +911,13 @@ def cash_flow_statement(
     if branch_id:
         rows = rows.filter(JournalEntry.branch_id == branch_id)
 
-    sections = {"operating": Decimal("0.00"), "investing": Decimal("0.00"), "financing": Decimal("0.00")}
+    sections = {
+        "operating": Decimal("0.00"),
+        "investing": Decimal("0.00"),
+        "financing": Decimal("0.00"),
+    }
     details = []
-    for entry in rows.order_by(JournalEntry.entry_date.asc()).all():
+    for entry in rows.order_by(JournalEntry.entry_date.asc(), JournalEntry.created_at.asc()).all():
         cash_movement = Decimal("0.00")
         counterpart_codes = set()
         for line in entry.lines:
@@ -864,35 +925,59 @@ def cash_flow_statement(
                 cash_movement += _money(line.debit) - _money(line.credit)
             elif line.account is not None:
                 counterpart_codes.add(line.account.code)
-        if not cash_movement:
+
+        cash_movement = _money(cash_movement)
+        # Cash-to-bank transfers have equal cash inflow/outflow and therefore
+        # do not belong in the statement of cash flows.
+        if cash_movement == 0:
             continue
-        if counterpart_codes & {"1500", "1510"}:
-            section = "investing"
-        elif counterpart_codes & {"3000", "3100", "3200"}:
-            section = "financing"
-        else:
-            section = "operating"
-        sections[section] += cash_movement
+
+        section, classification_basis = _cash_flow_section(
+            entry, counterpart_codes, company_id=company_id
+        )
+        sections[section] = _money(sections[section] + cash_movement)
         details.append({
             "entry_id": str(entry.id),
             "entry_number": entry.entry_number,
             "entry_date": entry.entry_date.isoformat(),
             "description": entry.description,
+            "reference_type": entry.reference_type,
+            "reference_id": entry.reference_id,
             "section": section,
+            "classification_basis": classification_basis,
+            "counterpart_account_codes": sorted(counterpart_codes),
             "amount": float(cash_movement),
         })
 
-    net_change = sum(sections.values(), Decimal("0.00"))
+    net_change = _money(sum(sections.values(), Decimal("0.00")))
+    calculated_closing_cash = _money(opening_cash + net_change)
+    ledger_closing_cash = _cash_balance_at(
+        db, key=key, cash_ids=cash_ids, to_date=to_date, branch_id=branch_id
+    )
+    reconciliation_difference = _money(ledger_closing_cash - calculated_closing_cash)
+
     return {
         "from_date": from_date.isoformat(),
         "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
         "operating_activities": float(sections["operating"]),
         "investing_activities": float(sections["investing"]),
         "financing_activities": float(sections["financing"]),
         "net_change_in_cash": float(net_change),
+        "cash_and_cash_equivalents_at_beginning": float(opening_cash),
+        "cash_and_cash_equivalents_at_end": float(ledger_closing_cash),
+        "calculated_closing_cash": float(calculated_closing_cash),
+        "reconciliation_difference": float(reconciliation_difference),
+        "reconciled": reconciliation_difference == 0,
+        "classification_policy": {
+            "structure": "operating_investing_financing",
+            "tenant_lending_cash_flows": "operating",
+            "fixed_assets": "investing",
+            "owner_equity": "financing",
+            "note": "Lending-specific classification is an explicit LoanHub policy layer and should be confirmed by each institution's approved reporting policy.",
+        },
         "details": details,
     }
-
 
 def post_vat_transaction(
     db: Session,
