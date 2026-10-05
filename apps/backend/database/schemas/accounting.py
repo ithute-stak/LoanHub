@@ -252,3 +252,71 @@ class SuspenseCorrectionCreate(BaseModel):
     branch_id: UUID | None = None
     entry_date: date | None = None
     reference_id: str | None = Field(default=None, max_length=120)
+
+
+class FixedAssetCreate(BaseModel):
+    reference: str = Field(min_length=2, max_length=100)
+    name: str = Field(min_length=2, max_length=240)
+    description: str | None = Field(default=None, max_length=2000)
+    acquisition_date: date
+    cost: Decimal = Field(gt=0)
+    residual_value: Decimal = Field(default=Decimal("0"), ge=0)
+    useful_life_years: int = Field(ge=1, le=100)
+    depreciation_method: str = Field(pattern="^(straight_line|reducing_balance)$")
+    depreciation_rate: Decimal | None = Field(default=None, gt=0, le=100)
+    branch_id: UUID | None = None
+    location: str | None = Field(default=None, max_length=240)
+    serial_number: str | None = Field(default=None, max_length=180)
+    assigned_to: str | None = Field(default=None, max_length=240)
+    settlement_account_code: str | None = Field(default=None, min_length=4, max_length=30)
+    post_acquisition: bool = False
+
+    @model_validator(mode="after")
+    def validate_asset_policy(self):
+        if self.residual_value >= self.cost:
+            raise ValueError("Residual value must be lower than cost")
+        if self.depreciation_method == "reducing_balance" and self.depreciation_rate is None:
+            raise ValueError("Reducing-balance assets require depreciation_rate")
+        return self
+
+
+class FixedAssetDepreciationRun(BaseModel):
+    period_start: date
+    period_end: date
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        if self.period_end < self.period_start:
+            raise ValueError("period_end must be on or after period_start")
+        return self
+
+
+class FixedAssetDisposeCreate(BaseModel):
+    disposal_date: date
+    proceeds: Decimal = Field(ge=0)
+    settlement_account_code: str = Field(default="1010", min_length=4, max_length=30)
+    description: str = Field(min_length=5, max_length=1000)
+
+
+class FixedAssetRead(BaseModel):
+    id: UUID
+    reference: str
+    name: str
+    description: str | None = None
+    status: str
+    branch_id: UUID | None = None
+    currency: str
+    cost: Decimal
+    acquisition_date: date
+    residual_value: Decimal
+    useful_life_years: int
+    depreciation_method: str
+    depreciation_rate: Decimal | None = None
+    accumulated_depreciation: Decimal
+    carrying_amount: Decimal
+    location: str | None = None
+    serial_number: str | None = None
+    assigned_to: str | None = None
+    last_depreciation_date: date | None = None
+    disposed_at: date | None = None
+    disposal_proceeds: Decimal | None = None
