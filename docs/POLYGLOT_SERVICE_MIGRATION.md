@@ -71,3 +71,25 @@ exposure and CDAS exposure in one cross-process request.
 This distinction is intentional: continuing to recompute the entire Python aggregate
 after promotion would preserve correctness evidence but would not deliver the intended
 CPU-efficiency gain.
+
+
+## 10/10 workload completion
+
+The remaining runtime gaps are now assigned concrete production work:
+
+- **Go mobile push:** Python resolves recipients, owns notification policy, and mints a
+  short-lived Firebase OAuth token. Go performs bounded concurrent FCM HTTP v1 fan-out.
+  Long-lived Firebase credentials never move into the Go service.
+- **Go webhooks:** Python validates/signs and owns retry/audit state; Go performs the
+  bounded concurrent HTTP delivery batch.
+- **Java CSV reports:** Java renders deterministic CSV export bytes. Shadow mode requires
+  byte-for-byte parity with Python before promotion; Java never queries LoanHub data or
+  chooses report scope.
+- **Rust:** finance, reconciliation and portfolio-risk batch compute remain the primary
+  deterministic compute engines.
+- **C++:** remains intentionally narrow behind Rust for benchmark-proven native kernels.
+  Keeping C++ small is a safety/maintenance feature, not an incomplete migration.
+
+Side-effecting transports (webhook and mobile push) default to `off` for specialized
+workers. They do not dual-send in shadow mode. Non-side-effecting Java/Rust workloads
+can use shadow parity and benchmark history before promotion.
