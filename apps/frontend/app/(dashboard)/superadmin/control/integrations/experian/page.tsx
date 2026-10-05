@@ -15,8 +15,8 @@ import { LoadingButton } from "@/components/ui/loading-button";
 import { PageLoader } from "@/components/ui/page-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { titleCase } from "@/lib/format";
-import type { CreditBureauSubscription, ExperianPlatformConfiguration } from "@/types/creditBureau";
+import { formatDate, formatMoney, titleCase } from "@/lib/format";
+import type { CreditBureauInvoice, CreditBureauSubscription, ExperianPlatformConfiguration } from "@/types/creditBureau";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
@@ -46,6 +46,11 @@ export default function PlatformExperianConfigurationPage() {
   const [configuration, setConfiguration] = useState<ExperianPlatformConfiguration | null>(null);
   const [subscriptions, setSubscriptions] = useState<CreditBureauSubscription[]>([]);
   const [decidingCompanyId, setDecidingCompanyId] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<CreditBureauInvoice[]>([]);
+  const [creditLimits, setCreditLimits] = useState<Record<string, string>>({});
+  const [warningThresholds, setWarningThresholds] = useState<Record<string, string>>({});
+  const [dueDays, setDueDays] = useState<Record<string, string>>({});
+  const [autoSuspend, setAutoSuspend] = useState<Record<string, boolean>>({});
 
   const [environment, setEnvironment] = useState<"sandbox" | "live">("sandbox");
   const [enabled, setEnabled] = useState(false);
@@ -73,12 +78,18 @@ export default function PlatformExperianConfigurationPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [config, subscriptionRows] = await Promise.all([
+      const [config, subscriptionRows, invoiceRows] = await Promise.all([
         platformCreditBureauApi.getExperianConfiguration(),
         platformCreditBureauApi.listExperianSubscriptions(),
+        platformCreditBureauApi.listExperianInvoices(),
       ]);
       applyConfiguration(config);
       setSubscriptions(subscriptionRows);
+      setInvoices(invoiceRows);
+      setCreditLimits(Object.fromEntries(subscriptionRows.map((item) => [item.company_id || "", item.credit_limit == null ? "" : String(item.credit_limit)])));
+      setWarningThresholds(Object.fromEntries(subscriptionRows.map((item) => [item.company_id || "", item.warning_threshold == null ? "" : String(item.warning_threshold)])));
+      setDueDays(Object.fromEntries(subscriptionRows.map((item) => [item.company_id || "", String(item.billing_due_days ?? 14)])));
+      setAutoSuspend(Object.fromEntries(subscriptionRows.map((item) => [item.company_id || "", item.auto_suspend_on_limit !== false])));
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Platform Experian configuration could not be loaded."));
     } finally {
@@ -140,6 +151,10 @@ export default function PlatformExperianConfigurationPage() {
         decision,
         price_per_transaction: decision === "approved" ? Math.max(0, Number(defaultTransactionPrice || 0)) : undefined,
         currency: billingCurrency.trim().toUpperCase() || "LSL",
+        credit_limit: creditLimits[companyId]?.trim() ? Number(creditLimits[companyId]) : null,
+        warning_threshold: warningThresholds[companyId]?.trim() ? Number(warningThresholds[companyId]) : null,
+        auto_suspend_on_limit: autoSuspend[companyId] !== false,
+        billing_due_days: Math.max(1, Number(dueDays[companyId] || 14)),
       });
       toast.success(`Credit Bureau subscription ${decision}`);
       setSubscriptions(await platformCreditBureauApi.listExperianSubscriptions());
@@ -286,22 +301,30 @@ export default function PlatformExperianConfigurationPage() {
         <CardContent className="space-y-3">
           {subscriptions.length ? subscriptions.map((subscription) => (
             <div key={subscription.company_id || subscription.id} className="flex flex-col gap-4 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="font-black">{subscription.company?.name || subscription.company_id || "Loan company"}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {titleCase(subscription.status)} · {subscription.price_per_transaction == null ? "Price set on approval" : `${subscription.currency} ${subscription.price_per_transaction.toFixed(2)} per successful fresh enquiry`}
+                  {titleCase(subscription.status)} · {subscription.price_per_transaction == null ? "Price set on approval" : `${subscription.currency} ${subscription.price_per_transaction.toFixed(2)} per successful Live enquiry`}
                 </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Outstanding {formatMoney(subscription.usage?.outstanding_balance ?? 0)} · Remaining {subscription.usage?.remaining_credit == null ? "Unlimited" : formatMoney(subscription.usage.remaining_credit)}
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <Input type="number" min={0} step="0.01" placeholder="Credit limit" value={creditLimits[subscription.company_id || ""] ?? ""} onChange={(event) => subscription.company_id && setCreditLimits((current) => ({ ...current, [subscription.company_id!]: event.target.value }))} />
+                  <Input type="number" min={0} step="0.01" placeholder="Warning threshold" value={warningThresholds[subscription.company_id || ""] ?? ""} onChange={(event) => subscription.company_id && setWarningThresholds((current) => ({ ...current, [subscription.company_id!]: event.target.value }))} />
+                  <Input type="number" min={1} max={90} placeholder="Due days" value={dueDays[subscription.company_id || ""] ?? "14"} onChange={(event) => subscription.company_id && setDueDays((current) => ({ ...current, [subscription.company_id!]: event.target.value }))} />
+                  <label className="flex items-center gap-2 rounded-md border px-3 text-xs font-semibold"><Checkbox checked={autoSuspend[subscription.company_id || ""] !== false} onCheckedChange={(value) => subscription.company_id && setAutoSuspend((current) => ({ ...current, [subscription.company_id!]: value === true }))} />Auto-suspend</label>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                {subscription.status !== "approved" ? (
-                  <LoadingButton loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "approved")}>
-                    Approve at {billingCurrency} {Number(defaultTransactionPrice || 0).toFixed(2)}
-                  </LoadingButton>
-                ) : (
+                <LoadingButton loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "approved")}>
+                  {subscription.status === "approved" ? "Save controls" : `Approve at ${billingCurrency} ${Number(defaultTransactionPrice || 0).toFixed(2)}`}
+                </LoadingButton>
+                {subscription.status === "approved" ? (
                   <LoadingButton variant="outline" loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "suspended")}>
                     Suspend
                   </LoadingButton>
-                )}
+                ) : null}
                 {subscription.status === "pending" ? (
                   <LoadingButton variant="outline" loading={decidingCompanyId === subscription.company_id} onClick={() => subscription.company_id && void decideSubscription(subscription.company_id, "rejected")}>
                     Reject
@@ -310,6 +333,18 @@ export default function PlatformExperianConfigurationPage() {
               </div>
             </div>
           )) : <p className="text-sm text-muted-foreground">No loan company has requested Credit Bureau access yet.</p>}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl">
+        <CardHeader><CardTitle>Credit Bureau invoices</CardTitle><CardDescription>Monthly PAYG statements preserve the transaction price used at the time of each Live enquiry.</CardDescription></CardHeader>
+        <CardContent className="space-y-2">
+          {invoices.length ? invoices.slice(0, 12).map((invoice) => (
+            <div key={invoice.id} className="flex flex-col gap-2 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div><p className="font-black">{invoice.invoice_number}</p><p className="text-xs text-muted-foreground">{formatDate(invoice.period_start)} – {formatDate(invoice.period_end)} · {invoice.transaction_count} transactions · {formatMoney(invoice.amount_due)}</p></div>
+              <span className="text-sm font-black">{titleCase(invoice.status)}</span>
+            </div>
+          )) : <p className="text-sm text-muted-foreground">No Credit Bureau invoices have been issued yet.</p>}
         </CardContent>
       </Card>
 
