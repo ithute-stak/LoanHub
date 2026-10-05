@@ -2104,8 +2104,11 @@ def transaction_accounting_coverage(
         raise HTTPException(status_code=422, detail="from_date must not be after to_date")
 
     from database.models.finance import TransactionChargeLedgerEntry
-    from database.models.platform_credit_bureau import PlatformCreditBureauTransaction
-    from database.models.platform_cdas import PlatformCdasTransaction
+    from database.models.platform_credit_bureau import (
+        PlatformCreditBureauInvoice,
+        PlatformCreditBureauTransaction,
+    )
+    from database.models.platform_cdas import PlatformCdasInvoice, PlatformCdasTransaction
     from database.models.treasury import TreasuryEntry
 
     key, _ = scope_key(company_id)
@@ -2188,6 +2191,44 @@ def transaction_accounting_coverage(
         PlatformCdasTransaction.status.in_(["accrued", "invoiced", "settled"]),
         PlatformCdasTransaction.amount > 0,
     ).all()
+
+    bureau_invoices = db.query(PlatformCreditBureauInvoice).filter(
+        PlatformCreditBureauInvoice.company_id == company_id,
+        PlatformCreditBureauInvoice.status == "paid",
+        PlatformCreditBureauInvoice.amount_due > 0,
+        func.date(PlatformCreditBureauInvoice.paid_at).between(from_date, to_date),
+    ).all()
+    missing_bureau_invoice_payments = [
+        str(row.id) for row in bureau_invoices
+        if not journal_exists("credit_bureau_invoice_payment", str(row.id))
+    ]
+    missing_platform_bureau_invoice_receipts = [
+        str(row.id) for row in bureau_invoices
+        if not journal_exists(
+            "credit_bureau_invoice_payment",
+            str(row.id),
+            journal_scope_key=platform_key,
+        )
+    ]
+
+    cdas_invoices = db.query(PlatformCdasInvoice).filter(
+        PlatformCdasInvoice.company_id == company_id,
+        PlatformCdasInvoice.status == "paid",
+        PlatformCdasInvoice.amount_due > 0,
+        func.date(PlatformCdasInvoice.paid_at).between(from_date, to_date),
+    ).all()
+    missing_cdas_invoice_payments = [
+        str(row.id) for row in cdas_invoices
+        if not journal_exists("cdas_invoice_payment", str(row.id))
+    ]
+    missing_platform_cdas_invoice_receipts = [
+        str(row.id) for row in cdas_invoices
+        if not journal_exists(
+            "cdas_invoice_payment",
+            str(row.id),
+            journal_scope_key=platform_key,
+        )
+    ]
     missing_cdas = [
         str(row.id) for row in cdas
         if not journal_exists("cdas_transaction_accrual", str(row.id))
@@ -2229,6 +2270,10 @@ def transaction_accounting_coverage(
         "credit_bureau_platform_revenue": missing_platform_credit_bureau,
         "cdas_usage": missing_cdas,
         "cdas_platform_revenue": missing_platform_cdas,
+        "credit_bureau_invoice_payments": missing_bureau_invoice_payments,
+        "credit_bureau_platform_receipts": missing_platform_bureau_invoice_receipts,
+        "cdas_invoice_payments": missing_cdas_invoice_payments,
+        "cdas_platform_receipts": missing_platform_cdas_invoice_receipts,
         "manual_treasury_entries": missing_treasury,
     }
     return {
@@ -2241,6 +2286,8 @@ def transaction_accounting_coverage(
             "platform_transaction_charges": len(charges),
             "credit_bureau_usage": len(bureau),
             "cdas_usage": len(cdas),
+            "credit_bureau_invoice_payments": len(bureau_invoices),
+            "cdas_invoice_payments": len(cdas_invoices),
             "manual_treasury_entries": len(treasury_rows),
         },
         "missing_counts": {name: len(values) for name, values in missing.items()},
