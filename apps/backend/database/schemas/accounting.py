@@ -194,3 +194,38 @@ class AccountingDashboardRead(BaseModel):
     expenses: Decimal
     net_profit: Decimal
     trial_balance_difference: Decimal
+
+
+class DepreciationAdjustmentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
+class AccrualAdjustmentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=2, max_length=1000)
+    expense_account_code: str = Field(default="6500", min_length=4, max_length=30)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
+class PrepaymentAdjustmentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=2, max_length=1000)
+    expense_account_code: str = Field(default="6500", min_length=4, max_length=30)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
+class DoubtfulDebtAllowanceCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    direction: str = Field(pattern="^(increase|decrease)$")
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
