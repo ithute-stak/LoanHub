@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from decimal import Decimal
 
+
+from services.credit_loss_provisioning_service import rate_for_snapshot, stage_for_snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -74,3 +78,44 @@ def test_credit_loss_scope_cannot_double_count_company_and_branch_runs():
     assert "def _assert_provision_scope_consistency(" in source
     assert "Company-wide provisioning cannot overlap branch-scoped runs" in source
     assert "Branch provisioning cannot overlap a company-wide run" in source
+
+
+def test_credit_loss_stage_and_rate_rules_execute_not_just_exist_in_source():
+    policy = SimpleNamespace(rates={})
+    current = SimpleNamespace(
+        loan_status="active",
+        is_written_off=False,
+        days_past_due=0,
+        first_payment_default=False,
+        delinquency_bucket="current",
+    )
+    stage_two = SimpleNamespace(
+        loan_status="active",
+        is_written_off=False,
+        days_past_due=15,
+        first_payment_default=False,
+        delinquency_bucket="8-30",
+    )
+    defaulted = SimpleNamespace(
+        loan_status="defaulted",
+        is_written_off=False,
+        days_past_due=100,
+        first_payment_default=False,
+        delinquency_bucket="90+",
+    )
+    fpd = SimpleNamespace(
+        loan_status="active",
+        is_written_off=False,
+        days_past_due=1,
+        first_payment_default=True,
+        delinquency_bucket="1-7",
+    )
+
+    assert stage_for_snapshot(current) == 1
+    assert stage_for_snapshot(stage_two) == 2
+    assert stage_for_snapshot(defaulted) == 3
+    assert stage_for_snapshot(fpd) == 2
+    assert rate_for_snapshot(current, policy) == Decimal("0.02")
+    assert rate_for_snapshot(stage_two, policy) == Decimal("0.10")
+    assert rate_for_snapshot(defaulted, policy) == Decimal("1.00")
+    assert rate_for_snapshot(fpd, policy) == Decimal("0.25")
