@@ -2042,6 +2042,13 @@ def period_close_pack(
         as_of=period_end,
         branch_id=branch_id,
     )
+    settlement_chain = bank_settlement_chain(
+        db,
+        company_id=company_id,
+        from_date=period_start,
+        to_date=period_end,
+        branch_id=branch_id,
+    )
 
     checks = {
         "trial_balance_balanced": total_debit == total_credit,
@@ -2055,6 +2062,7 @@ def period_close_pack(
         "transaction_accounting_coverage_complete": bool(coverage["complete"]),
         "electronic_clearing_reconciled": bool(electronic_clearing["balanced"]),
         "electronic_clearing_has_no_stale_items": not bool(electronic_clearing_age["has_stale_items"]),
+        "clearing_settlements_bank_matched": bool(settlement_chain["complete"]),
         "fixed_asset_depreciation_complete": len(asset_depreciation_due) == 0,
         "credit_loss_provision_posted": active_loan_count == 0 or provision_posted,
     }
@@ -2088,6 +2096,7 @@ def period_close_pack(
         "transaction_accounting_coverage": coverage,
         "electronic_clearing": electronic_clearing,
         "electronic_clearing_aging": electronic_clearing_age,
+        "bank_settlement_chain": settlement_chain,
         "fixed_asset_ids_needing_depreciation": asset_depreciation_due,
         "credit_loss_provision_run_id": str(provision.first().id) if provision.first() else None,
     }
