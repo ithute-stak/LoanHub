@@ -404,3 +404,25 @@ def test_period_close_requires_closed_balanced_bank_batch_when_bank_is_used():
     assert '"bank_statement_balance_reconciliation": bank_balance_control' in service
     assert 'ReconciliationBatch.source_type == "bank_statement"' in service
     assert 'ReconciliationBatch.status == "closed"' in service
+
+
+def test_bank_statement_missing_items_use_maker_checker_accounting():
+    reconciliation = (ROOT / "backend" / "services" / "reconciliation_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "reconciliation.py").read_text(encoding="utf-8")
+
+    assert "def request_bank_statement_accounting_adjustment(" in reconciliation
+    assert "def decide_bank_statement_accounting_adjustment(" in reconciliation
+    assert '"bank_statement_accounting_adjustment"' in reconciliation
+    assert '"BANK_ITEM_REQUIRES_ACCOUNTING"' in reconciliation
+    assert '"maker_checker_bank_accounting"' in reconciliation
+    assert 'if line.direction == "credit":' in reconciliation
+    assert 'debit_code, credit_code = "1010", counterpart_code' in reconciliation
+    assert 'debit_code, credit_code = counterpart_code, "1010"' in reconciliation
+    assert '@router.post("/batches/{batch_id}/lines/{line_id}/bank-accounting-adjustment"' in router
+    assert '"/bank-accounting-adjustment/{approval_id}/decision"' in router
+
+
+def test_bank_statement_adjustment_rejects_cash_and_clearing_as_counterparts():
+    reconciliation = (ROOT / "backend" / "services" / "reconciliation_service.py").read_text(encoding="utf-8")
+    assert 'if counterpart.code in {"1000", "1010", "1020"}:' in reconciliation
+    assert "Choose the actual income, expense, receivable, payable or equity counterpart account" in reconciliation
