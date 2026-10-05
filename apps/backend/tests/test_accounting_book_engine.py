@@ -190,3 +190,13 @@ def test_cash_flow_engine_is_explicit_and_reconciles_to_ledger_cash():
     assert '"reconciliation_difference"' in source
     assert '"reconciled": reconciliation_difference == 0' in source
     assert '"cash_flow_reconciled": bool(cash_flow["reconciled"])' in source
+
+
+def test_statement_of_financial_position_includes_unclosed_profit_in_equity():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '"current_earnings"' in router
+    assert '"total_equity"' in router
+    assert 'totals["net_assets"] - totals["total_equity"]' in router
+    assert '@router.get("/statement-of-changes-in-equity")' in router
+    assert '"profit_or_loss_for_period"' in router
+    assert '"drawings_and_distributions"' in router
