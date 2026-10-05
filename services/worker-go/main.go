@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,36 @@ type webhookDeliveryResult struct {
 type webhookDeliveryBatchResponse struct {
 	Authoritative bool                    `json:"authoritative"`
 	Results       []webhookDeliveryResult `json:"results"`
+}
+
+type pushDeliveryJob struct {
+	JobID     string            `json:"job_id"`
+	Token     string            `json:"token"`
+	Title     string            `json:"title"`
+	Body      string            `json:"body"`
+	ChannelID string            `json:"channel_id"`
+	Data      map[string]string `json:"data"`
+	TimeoutMS int               `json:"timeout_ms"`
+}
+
+type pushDeliveryBatchRequest struct {
+	ProjectID   string            `json:"project_id"`
+	AccessToken string            `json:"access_token"`
+	Jobs        []pushDeliveryJob `json:"jobs"`
+}
+
+type pushDeliveryResult struct {
+	JobID              string `json:"job_id"`
+	StatusCode         int    `json:"status_code"`
+	ResponseBodySHA256 string `json:"response_body_sha256,omitempty"`
+	ProviderMessageID  string `json:"provider_message_id,omitempty"`
+	Error              string `json:"error,omitempty"`
+	DurationMS         int64  `json:"duration_ms"`
+}
+
+type pushDeliveryBatchResponse struct {
+	Authoritative bool                 `json:"authoritative"`
+	Results       []pushDeliveryResult `json:"results"`
 }
 
 func clampInt(value, minimum, maximum int) int {
@@ -254,6 +285,188 @@ func handleWebhookDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func pushConcurrency() int {
+	raw := strings.TrimSpace(os.Getenv("LOANHUB_GO_PUSH_CONCURRENCY"))
+	if raw == "" {
+		return 32
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 32
+	}
+	return clampInt(value, 1, 128)
+}
+
+func validProjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" &&
+		len(value) <= 128 &&
+		!strings.ContainsAny(value, "/\\?#") &&
+		!strings.ContainsAny(value, " \t\r\n")
+}
+
+func pushHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        128,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     60 * time.Second,
+	}
+	return &http.Client{Transport: transport}
+}
+
+func deliverPush(
+	client *http.Client,
+	projectID string,
+	accessToken string,
+	job pushDeliveryJob,
+) pushDeliveryResult {
+	started := time.Now()
+	result := pushDeliveryResult{JobID: job.JobID}
+
+	timeoutMS := clampInt(job.TimeoutMS, 100, 30_000)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(timeoutMS)*time.Millisecond,
+	)
+	defer cancel()
+
+	payload := map[string]any{
+		"message": map[string]any{
+			"token": job.Token,
+			"notification": map[string]string{
+				"title": job.Title,
+				"body":  job.Body,
+			},
+			"data": job.Data,
+			"android": map[string]any{
+				"priority": "HIGH",
+				"notification": map[string]any{
+					"channel_id":               job.ChannelID,
+					"sound":                    "default",
+					"default_vibrate_timings": true,
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		result.Error = "encode_push_payload"
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+
+	endpoint := fmt.Sprintf(
+		"https://fcm.googleapis.com/v1/projects/%s/messages:send",
+		path.Clean(projectID),
+	)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		strings.NewReader(string(raw)),
+	)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := client.Do(request)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(started).Milliseconds()
+		return result
+	}
+	defer response.Body.Close()
+
+	result.StatusCode = response.StatusCode
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if readErr != nil {
+		result.Error = readErr.Error()
+	} else {
+		sum := sha256.Sum256(body)
+		result.ResponseBodySHA256 = hex.EncodeToString(sum[:])
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			var decoded struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(body, &decoded) == nil {
+				result.ProviderMessageID = decoded.Name
+			}
+		} else {
+			result.Error = fmt.Sprintf("FCM returned HTTP %d", response.StatusCode)
+		}
+	}
+	result.DurationMS = time.Since(started).Milliseconds()
+	return result
+}
+
+func handlePushDeliveryBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+
+	var req pushDeliveryBatchRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !validProjectID(req.ProjectID) || strings.TrimSpace(req.AccessToken) == "" {
+		http.Error(w, "project_id and access_token are required", http.StatusUnprocessableEntity)
+		return
+	}
+	if len(req.Jobs) == 0 || len(req.Jobs) > 500 {
+		http.Error(w, "jobs must contain between 1 and 500 items", http.StatusUnprocessableEntity)
+		return
+	}
+
+	seen := make(map[string]struct{}, len(req.Jobs))
+	for _, job := range req.Jobs {
+		if strings.TrimSpace(job.JobID) == "" || strings.TrimSpace(job.Token) == "" {
+			http.Error(w, "job_id and token are required", http.StatusUnprocessableEntity)
+			return
+		}
+		if len(job.Token) > 4096 || len(job.Title) > 120 || len(job.Body) > 240 {
+			http.Error(w, "push field exceeds limit", http.StatusUnprocessableEntity)
+			return
+		}
+		if _, exists := seen[job.JobID]; exists {
+			http.Error(w, "duplicate job_id", http.StatusUnprocessableEntity)
+			return
+		}
+		seen[job.JobID] = struct{}{}
+	}
+
+	client := pushHTTPClient()
+	results := make([]pushDeliveryResult, len(req.Jobs))
+	semaphore := make(chan struct{}, pushConcurrency())
+	var wait sync.WaitGroup
+	for index, job := range req.Jobs {
+		index := index
+		job := job
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			results[index] = deliverPush(client, req.ProjectID, req.AccessToken, job)
+		}()
+	}
+	wait.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pushDeliveryBatchResponse{
+		Authoritative: false,
+		Results:       results,
+	})
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
 		response, err := http.Get("http://127.0.0.1:8081/health/ready")
@@ -288,6 +501,7 @@ func main() {
 		})
 	})
 	mux.HandleFunc("/v1/webhooks/deliver-batch", handleWebhookDeliveryBatch)
+	mux.HandleFunc("/v1/push/deliver-batch", handlePushDeliveryBatch)
 
 	addr := os.Getenv("LOANHUB_GO_WORKER_ADDR")
 	if addr == "" {
