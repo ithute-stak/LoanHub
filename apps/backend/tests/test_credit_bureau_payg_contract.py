@@ -91,3 +91,13 @@ def test_payg_migration_extends_current_alembic_head() -> None:
     assert '"platform_credit_bureau_subscriptions"' in migration
     assert '"platform_credit_bureau_transactions"' in migration
     assert '"uq_credit_bureau_payg_enquiry"' in migration
+
+
+def test_only_company_owner_can_switch_experian_environment() -> None:
+    router = _read(ROOT / "routers/credit_bureau_configuration.py")
+    company_page = _read(FRONTEND_ROOT / "app/(dashboard)/company/origination/experian/page.tsx")
+
+    assert "context.role != UserRole.COMPANY_OWNER" in router
+    assert "Only the Loan Company Owner can switch Credit Bureau between Sandbox and Live." in router
+    assert 'const canSwitchEnvironment = activeRole === "company_owner";' in company_page
+    assert "Only the Loan Company Owner can switch this mode." in company_page
