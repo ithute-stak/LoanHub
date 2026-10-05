@@ -1747,3 +1747,53 @@ def depreciate_all_fixed_assets_for_period(
         "skipped_asset_ids": skipped,
         "total_depreciation": float(_money(total)),
     }
+
+
+def reverse_period_adjustment(
+    db: Session,
+    *,
+    company_id,
+    journal_entry_id,
+    reversal_date: date,
+    description: str,
+    user_id,
+) -> JournalEntry:
+    key, _ = scope_key(company_id)
+    original = entry_query(db, key).filter(JournalEntry.id == journal_entry_id).first()
+    if not original:
+        raise HTTPException(status_code=404, detail="Period adjustment journal not found")
+    if original.status != "posted":
+        raise HTTPException(status_code=409, detail="Only posted period adjustments can be reversed")
+    if original.reference_type not in {"accrual_adjustment", "prepayment_adjustment"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Only accrual and prepayment adjustments can use the period reversal workflow",
+        )
+    if reversal_date <= original.entry_date:
+        raise HTTPException(status_code=422, detail="Reversal date must be after the original adjustment date")
+
+    reversal_reference = f"{original.id}:{reversal_date.isoformat()}"
+    existing = _journal_for_reference(db, key, "period_adjustment_reversal", reversal_reference)
+    if existing:
+        return existing
+
+    return create_entry(
+        db,
+        company_id=company_id,
+        branch_id=original.branch_id,
+        created_by_user_id=user_id,
+        entry_date=reversal_date,
+        description=description,
+        reference_type="period_adjustment_reversal",
+        reference_id=reversal_reference,
+        status_value="posted",
+        lines=[
+            {
+                "account_id": line.account_id,
+                "debit": _money(line.credit),
+                "credit": _money(line.debit),
+                "description": f"Reverse {original.entry_number}",
+            }
+            for line in original.lines
+        ],
+    )
