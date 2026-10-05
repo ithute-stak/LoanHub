@@ -493,3 +493,161 @@ def test_portfolio_risk_keeps_activity_policy_in_python() -> None:
     assert "money(row.outstanding_balance) > 0" in portfolio
     assert "not row.is_written_off" in portfolio
     assert "row.active" in rust
+
+
+def test_go_webhook_delivery_is_bounded_and_python_authoritative() -> None:
+    go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    webhook = (ROOT / "services/webhook_outbox_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/webhooks/deliver-batch"' in go
+    assert "sync.WaitGroup" in go
+    assert "webhookConcurrency()" in go
+    assert "blockedIP(" in go
+    assert "http.ErrUseLastResponse" in go
+    assert '"go_webhook_delivery": "off"' in runtime
+    assert "def go_webhook_delivery_batch(" in runtime
+    assert 'workload_routing_mode("go_webhook_delivery") == "prefer-worker"' in webhook
+    assert "Shadow is deliberately Python-only" in webhook
+    assert "LOANHUB_GO_WEBHOOK_DELIVERY_MODE=off" in env
+
+
+def test_go_webhook_batch_success_updates_python_owned_state(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from services import webhook_outbox_service as webhook
+
+    event = SimpleNamespace(
+        id=uuid4(),
+        endpoint_id=uuid4(),
+        event_type="loan.approved",
+        payload={"loan_id": "123"},
+        attempt_count=0,
+        last_attempt_at=None,
+        status="pending",
+        delivered_at=None,
+        last_error=None,
+        next_attempt_at=None,
+        response_status=None,
+    )
+    endpoint = SimpleNamespace(
+        failure_count=2,
+        last_delivery_at=None,
+    )
+
+    class FakeDB:
+        def __init__(self):
+            self.added = []
+
+        def get(self, model, key):
+            return endpoint
+
+        def add(self, value):
+            self.added.append(value)
+
+    db = FakeDB()
+    monkeypatch.setattr(
+        webhook,
+        "_prepare_go_delivery_job",
+        lambda db, event: (
+            endpoint,
+            {
+                "job_id": str(event.id),
+                "url": "https://example.com/webhook",
+                "headers": {},
+                "body": "{}",
+                "timeout_ms": 1000,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        webhook,
+        "go_webhook_delivery_batch",
+        lambda **kwargs: [
+            {
+                "job_id": str(event.id),
+                "status_code": 204,
+                "response_body_sha256": "a" * 64,
+                "duration_ms": 12,
+            }
+        ],
+    )
+
+    webhook._deliver_batch_via_go(db, [event])
+
+    assert event.attempt_count == 1
+    assert event.status == "delivered"
+    assert event.response_status == 204
+    assert event.last_error is None
+    assert endpoint.failure_count == 0
+    assert endpoint.last_delivery_at is not None
+    assert db.added
+
+
+def test_go_webhook_ambiguous_worker_failure_does_not_immediately_python_replay(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from services import webhook_outbox_service as webhook
+
+    event = SimpleNamespace(
+        id=uuid4(),
+        endpoint_id=uuid4(),
+        event_type="payment.received",
+        payload={"payment_id": "123"},
+        attempt_count=0,
+        last_attempt_at=None,
+        status="pending",
+        delivered_at=None,
+        last_error=None,
+        next_attempt_at=None,
+        response_status=None,
+    )
+    endpoint = SimpleNamespace(
+        failure_count=0,
+        last_delivery_at=None,
+    )
+
+    class FakeDB:
+        def __init__(self):
+            self.added = []
+
+        def get(self, model, key):
+            return endpoint
+
+        def add(self, value):
+            self.added.append(value)
+
+    db = FakeDB()
+    python_replay_calls = {"count": 0}
+
+    def forbidden_python_replay(*args, **kwargs):
+        python_replay_calls["count"] += 1
+        raise AssertionError("must not immediately replay an ambiguous Go delivery")
+
+    monkeypatch.setattr(webhook, "_deliver", forbidden_python_replay)
+    monkeypatch.setattr(
+        webhook,
+        "_prepare_go_delivery_job",
+        lambda db, event: (
+            endpoint,
+            {
+                "job_id": str(event.id),
+                "url": "https://example.com/webhook",
+                "headers": {},
+                "body": "{}",
+                "timeout_ms": 1000,
+            },
+        ),
+    )
+    monkeypatch.setattr(webhook, "go_webhook_delivery_batch", lambda **kwargs: None)
+
+    webhook._deliver_batch_via_go(db, [event])
+
+    assert python_replay_calls["count"] == 0
+    assert event.attempt_count == 1
+    assert event.status in {"retrying", "dead_letter"}
+    assert "outcome unknown" in event.last_error
+    assert endpoint.failure_count == 1
