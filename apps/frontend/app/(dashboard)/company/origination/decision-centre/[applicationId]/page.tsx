@@ -214,6 +214,9 @@ export default function LoanDecisionCentrePage() {
                 <StateRow label="Score" value={readiness.bureau.score == null ? "—" : String(readiness.bureau.score)} />
                 <StateRow label="Risk band" value={readiness.bureau.risk_band ?? "—"} />
                 <StateRow label="Defaults" value={readiness.bureau.defaults_count == null ? "—" : String(readiness.bureau.defaults_count)} ok={readiness.bureau.defaults_count === 0} />
+                <StateRow label="Judgments" value={readiness.bureau.judgments_count == null ? "—" : String(readiness.bureau.judgments_count)} ok={readiness.bureau.judgments_count === 0} />
+                <StateRow label="Collections" value={readiness.bureau.collections_count == null ? "—" : String(readiness.bureau.collections_count)} ok={readiness.bureau.collections_count === 0} />
+                <StateRow label="Recent enquiries" value={readiness.bureau.recent_enquiries_count == null ? "—" : String(readiness.bureau.recent_enquiries_count)} />
                 <StateRow label="Identity match" value={readiness.bureau.identity_match == null ? "—" : readiness.bureau.identity_match ? "Match" : "Not matched"} ok={readiness.bureau.identity_match} />
                 <StateRow label="Monthly commitments" value={formatMoney(readiness.bureau.monthly_commitments ?? 0)} />
                 <StateRow label="Used in affordability" value={readiness.bureau.used_in_affordability ? "Yes" : "No"} />
@@ -240,6 +243,11 @@ export default function LoanDecisionCentrePage() {
                 <StateRow label="Employee verified" value={readiness.cdas.verified ? "Yes" : "No"} ok={readiness.cdas.verified} />
                 <StateRow label="Employee No" value={readiness.cdas.employee_number ?? "—"} />
                 <StateRow label="Department" value={readiness.cdas.department ?? "—"} />
+                <StateRow label="Verified net salary" value={formatMoney(readiness.cdas.net_salary)} />
+                <StateRow label="Existing payroll deductions" value={formatMoney(readiness.cdas.existing_deductions)} />
+                <StateRow label="Maximum deduction" value={formatMoney(readiness.cdas.maximum_deduction)} />
+                <StateRow label="Available deduction capacity" value={formatMoney(readiness.cdas.available_deduction_capacity)} ok={readiness.cdas.capacity_sufficient} />
+                <StateRow label="Proposed installment" value={formatMoney(readiness.cdas.proposed_installment)} ok={readiness.cdas.capacity_sufficient} />
               </>
             ) : null}
             <Button variant="outline" className="w-full" asChild>
