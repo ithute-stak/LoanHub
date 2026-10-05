@@ -232,7 +232,6 @@ def _send_sync_go(user_ids: list[UUID | str], event: dict) -> bool:
     if not jobs:
         return True
 
-    handed_off = False
     for start in range(0, len(jobs), 200):
         batch = jobs[start : start + 200]
         results = go_push_delivery_batch(
@@ -246,7 +245,6 @@ def _send_sync_go(user_ids: list[UUID | str], event: dict) -> bool:
                 "replayed through Python to avoid duplicate notifications"
             )
             return True
-        handed_off = True
         failures = [
             item
             for item in results
