@@ -16,13 +16,21 @@ def _load_migration():
     return module
 
 
-def test_rls_pilot_targets_only_internal_company_owned_tables() -> None:
+def test_rls_pilot_targets_internal_company_owned_tables() -> None:
     migration = _load_migration()
 
     assert migration._TABLES == (
         "crm_relationship_cases",
         "collateral_assets",
         "legal_recovery_matters",
+        "customer_complaint_cases",
+        "company_operation_events",
+        "procurement_vendors",
+        "procurement_requests",
+        "company_budget_plans",
+        "company_budget_lines",
+        "internal_audit_engagements",
+        "internal_audit_findings",
     )
 
 
