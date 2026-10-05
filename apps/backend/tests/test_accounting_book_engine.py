@@ -313,3 +313,26 @@ def test_credit_bureau_refunds_are_evidence_backed_and_accounted():
     assert "Non-cash refunds require proof_reference" in bureau
     assert 'metadata["refund"]' in bureau
     assert '@router.post("/experian/transactions/{transaction_id}/refund")' in router
+
+
+def test_electronic_clearing_has_settlement_reconciliation_and_close_guard():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    schemas = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+
+    assert "class ElectronicClearingSettlementCreate" in schemas
+    assert "def record_electronic_clearing_settlement(" in service
+    assert "def electronic_clearing_reconciliation(" in service
+    assert '("1010", "1020") if direction == "provider_to_bank"' in service
+    assert '"electronic_clearing_reconciled": bool(electronic_clearing["balanced"])' in service
+    assert '@router.get("/controls/electronic-clearing")' in router
+    assert '@router.post("/controls/electronic-clearing/settlements"' in router
+
+
+def test_electronic_clearing_reconciliation_includes_non_payment_sources():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"provider_invoice_net"' in service
+    assert '"provider_refund_net"' in service
+    assert '"opening_source_net"' in service
+    assert '"electronic_provider_invoice_payments"' in service
+    assert '"electronic_provider_refunds"' in service
