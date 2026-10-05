@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "alembic/versions/d1f5h7j9k123_rls_pilot_tenant_operations.py"
+MIGRATION = ROOT / "alembic/versions/e2g6i8k0l234_rls_pilot_tenant_operations.py"
 
 
 def _load_migration():
