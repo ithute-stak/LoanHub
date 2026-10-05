@@ -2084,10 +2084,11 @@ def transaction_accounting_coverage(
     from database.models.treasury import TreasuryEntry
 
     key, _ = scope_key(company_id)
+    platform_key, _ = scope_key(None)
 
-    def journal_exists(reference_type: str, reference_id: str) -> bool:
+    def journal_exists(reference_type: str, reference_id: str, *, journal_scope_key: str = key) -> bool:
         return db.query(JournalEntry.id).filter(
-            JournalEntry.scope_key == key,
+            JournalEntry.scope_key == journal_scope_key,
             JournalEntry.reference_type == reference_type,
             JournalEntry.reference_id == str(reference_id),
             JournalEntry.status == "posted",
@@ -2109,6 +2110,13 @@ def transaction_accounting_coverage(
         str(row.id) for row in payment_rows
         if not journal_exists("payment_transaction", str(row.id))
     ]
+    missing_platform_payment_journals = [
+        str(row.id) for row in payment_rows
+        if row.purpose in PLATFORM_PAYMENT_RULES
+        and not journal_exists(
+            "payment_transaction", str(row.id), journal_scope_key=platform_key
+        )
+    ]
 
     charges = db.query(TransactionChargeLedgerEntry).filter(
         TransactionChargeLedgerEntry.company_id == company_id,
@@ -2119,6 +2127,15 @@ def transaction_accounting_coverage(
         str(row.id) for row in charges
         if _money(row.charge_amount) > 0
         and not journal_exists("platform_transaction_charge_accrual", str(row.id))
+    ]
+    missing_platform_transaction_charges = [
+        str(row.id) for row in charges
+        if _money(row.charge_amount) > 0
+        and not journal_exists(
+            "platform_transaction_charge_accrual",
+            str(row.id),
+            journal_scope_key=platform_key,
+        )
     ]
 
     bureau = db.query(PlatformCreditBureauTransaction).filter(
@@ -2131,6 +2148,14 @@ def transaction_accounting_coverage(
         str(row.id) for row in bureau
         if not journal_exists("credit_bureau_transaction_accrual", str(row.id))
     ]
+    missing_platform_credit_bureau = [
+        str(row.id) for row in bureau
+        if not journal_exists(
+            "credit_bureau_transaction_accrual",
+            str(row.id),
+            journal_scope_key=platform_key,
+        )
+    ]
 
     cdas = db.query(PlatformCdasTransaction).filter(
         PlatformCdasTransaction.company_id == company_id,
@@ -2141,6 +2166,14 @@ def transaction_accounting_coverage(
     missing_cdas = [
         str(row.id) for row in cdas
         if not journal_exists("cdas_transaction_accrual", str(row.id))
+    ]
+    missing_platform_cdas = [
+        str(row.id) for row in cdas
+        if not journal_exists(
+            "cdas_transaction_accrual",
+            str(row.id),
+            journal_scope_key=platform_key,
+        )
     ]
 
     treasury = db.query(TreasuryEntry).filter(
@@ -2164,9 +2197,13 @@ def transaction_accounting_coverage(
 
     missing = {
         "successful_payments": missing_payments,
+        "platform_payment_journals": missing_platform_payment_journals,
         "platform_transaction_charges": missing_transaction_charges,
+        "platform_transaction_charge_revenue": missing_platform_transaction_charges,
         "credit_bureau_usage": missing_credit_bureau,
+        "credit_bureau_platform_revenue": missing_platform_credit_bureau,
         "cdas_usage": missing_cdas,
+        "cdas_platform_revenue": missing_platform_cdas,
         "manual_treasury_entries": missing_treasury,
     }
     return {
