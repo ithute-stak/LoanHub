@@ -204,3 +204,13 @@ class CreditBureauDecisionContext(BaseModel):
     defaults_count: int | None
     latest_enquiry_id: str | None
     latest_enquiry_status: str | None
+
+
+class ExperianSubscriptionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approved", "rejected", "suspended"]
+    price_per_transaction: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    reason: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=2000)
