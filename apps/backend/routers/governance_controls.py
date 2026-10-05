@@ -47,6 +47,7 @@ from database.schemas.governance_control import (
     DataRightsComplete,
     DataRightsCreate,
     DecisionRequest,
+    GatewayAdjustmentConfirmation,
     GuarantorCreate,
     GuarantorVerify,
     PaymentAdjustmentCreate,
@@ -55,6 +56,7 @@ from database.session import get_db
 from services.accounting_service import period_close_pack
 from services.governance_control_service import (
     approve_payment_adjustment,
+    confirm_gateway_adjustment,
     bank_line_fingerprint,
     match_bank_line,
     new_case_reference,
@@ -154,6 +156,30 @@ def approve_adjustment(adjustment_id: UUID, payload: DecisionRequest, db: Sessio
     if not item:
         raise HTTPException(status_code=404, detail="Payment adjustment not found")
     approve_payment_adjustment(db, adjustment=item, checker_user_id=context.user.id, reason=payload.reason)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.post("/payment-adjustments/{adjustment_id}/provider-confirm")
+def confirm_adjustment_provider_reversal(
+    adjustment_id: UUID,
+    payload: GatewayAdjustmentConfirmation,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
+    item = db.query(PaymentAdjustment).filter(
+        PaymentAdjustment.id == adjustment_id,
+        PaymentAdjustment.company_id == context.company_id,
+    ).with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    confirm_gateway_adjustment(
+        db,
+        adjustment=item,
+        provider_reference=payload.provider_reference,
+    )
     db.commit()
     db.refresh(item)
     return item
