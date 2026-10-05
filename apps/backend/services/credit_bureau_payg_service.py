@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from database.models.company_staff import CompanyStaff
+from database.models.enums import NotificationType, UserRole
+from database.models.notification import Notification
 from database.models.origination import OriginationIntegrationConfiguration
 from database.models.platform_credit_bureau import (
     PlatformCreditBureauConfiguration,
+    PlatformCreditBureauInvoice,
     PlatformCreditBureauSubscription,
     PlatformCreditBureauTransaction,
 )
@@ -50,7 +55,67 @@ def get_subscription(db: Session, *, company_id: UUID) -> PlatformCreditBureauSu
     )
 
 
-def subscription_payload(row: PlatformCreditBureauSubscription | None) -> dict:
+def outstanding_balance(db: Session, *, company_id: UUID) -> Decimal:
+    value = (
+        db.query(func.coalesce(func.sum(PlatformCreditBureauTransaction.amount), 0))
+        .filter(
+            PlatformCreditBureauTransaction.company_id == company_id,
+            PlatformCreditBureauTransaction.provider == "experian",
+            PlatformCreditBureauTransaction.status.in_(("accrued", "invoiced")),
+        )
+        .scalar()
+        or Decimal("0")
+    )
+    return _money(value)
+
+
+def month_usage(db: Session, *, company_id: UUID, now: datetime | None = None) -> tuple[int, Decimal]:
+    now = now or datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    if now.month == 12:
+        end = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    count, amount = (
+        db.query(
+            func.count(PlatformCreditBureauTransaction.id),
+            func.coalesce(func.sum(PlatformCreditBureauTransaction.amount), 0),
+        )
+        .filter(
+            PlatformCreditBureauTransaction.company_id == company_id,
+            PlatformCreditBureauTransaction.provider == "experian",
+            PlatformCreditBureauTransaction.accrued_at >= start,
+            PlatformCreditBureauTransaction.accrued_at < end,
+            PlatformCreditBureauTransaction.status != "waived",
+        )
+        .one()
+    )
+    return int(count or 0), _money(amount)
+
+
+def usage_summary(db: Session, *, company_id: UUID) -> dict:
+    subscription = get_subscription(db, company_id=company_id)
+    count, month_amount = month_usage(db, company_id=company_id)
+    outstanding = outstanding_balance(db, company_id=company_id)
+    credit_limit = _money(subscription.credit_limit) if subscription and subscription.credit_limit is not None else None
+    remaining = max(Decimal("0"), credit_limit - outstanding) if credit_limit is not None else None
+    return {
+        "status": subscription.status if subscription else "not_subscribed",
+        "currency": subscription.currency if subscription else DEFAULT_CURRENCY,
+        "price_per_live_transaction": float(subscription.price_per_transaction or 0) if subscription else None,
+        "sandbox_price": 0.0,
+        "month_transaction_count": count,
+        "month_amount": float(month_amount),
+        "outstanding_balance": float(outstanding),
+        "credit_limit": float(credit_limit) if credit_limit is not None else None,
+        "remaining_credit": float(remaining) if remaining is not None else None,
+        "warning_threshold": float(subscription.warning_threshold) if subscription and subscription.warning_threshold is not None else None,
+        "auto_suspend_on_limit": bool(subscription.auto_suspend_on_limit) if subscription else False,
+        "billing_due_days": int(subscription.billing_due_days or 14) if subscription else 14,
+    }
+
+
+def subscription_payload(row: PlatformCreditBureauSubscription | None, db: Session | None = None) -> dict:
     if not row:
         return {
             "provider": "experian",
@@ -58,13 +123,17 @@ def subscription_payload(row: PlatformCreditBureauSubscription | None) -> dict:
             "approved": False,
             "price_per_transaction": None,
             "currency": DEFAULT_CURRENCY,
+            "credit_limit": None,
+            "warning_threshold": None,
+            "auto_suspend_on_limit": True,
+            "billing_due_days": 14,
             "requested_at": None,
             "reviewed_at": None,
             "approved_at": None,
             "suspended_at": None,
             "rejection_reason": None,
         }
-    return {
+    payload = {
         "id": str(row.id),
         "provider": row.provider,
         "company_id": str(row.company_id),
@@ -72,6 +141,10 @@ def subscription_payload(row: PlatformCreditBureauSubscription | None) -> dict:
         "approved": row.status == "approved",
         "price_per_transaction": float(row.price_per_transaction or 0),
         "currency": row.currency,
+        "credit_limit": float(row.credit_limit) if row.credit_limit is not None else None,
+        "warning_threshold": float(row.warning_threshold) if row.warning_threshold is not None else None,
+        "auto_suspend_on_limit": bool(row.auto_suspend_on_limit),
+        "billing_due_days": int(row.billing_due_days or 14),
         "requested_at": row.requested_at,
         "reviewed_at": row.reviewed_at,
         "approved_at": row.approved_at,
@@ -79,6 +152,62 @@ def subscription_payload(row: PlatformCreditBureauSubscription | None) -> dict:
         "rejection_reason": row.rejection_reason,
         "notes": row.notes,
     }
+    if db is not None:
+        payload["usage"] = usage_summary(db, company_id=row.company_id)
+    return payload
+
+
+def _notify_company_owners(
+    db: Session,
+    *,
+    company_id: UUID,
+    title: str,
+    message: str,
+    event_type: str,
+    entity_type: str = "credit_bureau_subscription",
+    entity_id: str | None = None,
+    priority: str = "normal",
+    deduplication_key: str | None = None,
+) -> None:
+    owners = (
+        db.query(CompanyStaff)
+        .filter(
+            CompanyStaff.company_id == company_id,
+            CompanyStaff.role == UserRole.COMPANY_OWNER,
+            CompanyStaff.is_active.is_(True),
+        )
+        .all()
+    )
+    for owner in owners:
+        if deduplication_key:
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.user_id == owner.user_id,
+                    Notification.deduplication_key == f"{deduplication_key}:{owner.user_id}",
+                )
+                .first()
+            )
+            if existing:
+                continue
+        db.add(
+            Notification(
+                user_id=owner.user_id,
+                company_id=company_id,
+                title=title,
+                message=message,
+                notification_type=NotificationType.SYSTEM,
+                event_type=event_type,
+                action="view",
+                entity_type=entity_type,
+                entity_id=entity_id,
+                action_url="/company/origination/experian",
+                icon="credit-card",
+                priority=priority,
+                data={"provider": "experian"},
+                deduplication_key=f"{deduplication_key}:{owner.user_id}" if deduplication_key else None,
+            )
+        )
 
 
 def request_subscription(
@@ -129,6 +258,10 @@ def review_subscription(
     decision: str,
     price_per_transaction: Decimal | None = None,
     currency: str | None = None,
+    credit_limit: Decimal | None = None,
+    warning_threshold: Decimal | None = None,
+    auto_suspend_on_limit: bool | None = None,
+    billing_due_days: int | None = None,
     reason: str | None = None,
     notes: str | None = None,
 ) -> PlatformCreditBureauSubscription:
@@ -145,6 +278,14 @@ def review_subscription(
         row.price_per_transaction = _money(price_per_transaction)
     if currency:
         row.currency = str(currency).strip().upper()[:3]
+    if credit_limit is not None:
+        row.credit_limit = _money(credit_limit)
+    if warning_threshold is not None:
+        row.warning_threshold = _money(warning_threshold)
+    if auto_suspend_on_limit is not None:
+        row.auto_suspend_on_limit = bool(auto_suspend_on_limit)
+    if billing_due_days is not None:
+        row.billing_due_days = max(1, min(int(billing_due_days), 90))
     row.status = normalized
     row.reviewed_by_user_id = reviewer_user_id
     row.reviewed_at = now
@@ -172,6 +313,20 @@ def review_subscription(
         db.add(integration)
     integration.is_enabled = normalized == "approved"
 
+    _notify_company_owners(
+        db,
+        company_id=company_id,
+        title=f"Credit Bureau subscription {normalized}",
+        message=(
+            f"Your Credit Bureau subscription is now {normalized}. "
+            f"Live enquiries cost {row.currency} {_money(row.price_per_transaction):.2f} each."
+            if normalized == "approved"
+            else f"Your Credit Bureau subscription is now {normalized}."
+        ),
+        event_type=f"credit_bureau.subscription.{normalized}",
+        entity_id=str(row.id),
+        priority="high" if normalized in {"rejected", "suspended"} else "normal",
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -184,21 +339,53 @@ def require_approved_subscription(
 ) -> PlatformCreditBureauSubscription:
     row = get_subscription(db, company_id=company_id)
     if not row:
-        raise HTTPException(
-            status_code=402,
-            detail="This lending company has not subscribed to the LoanHub Credit Bureau service.",
-        )
+        raise HTTPException(status_code=402, detail="This lending company has not subscribed to the LoanHub Credit Bureau service.")
     if row.status == "pending":
-        raise HTTPException(
-            status_code=403,
-            detail="Credit Bureau subscription is awaiting Platform Owner approval.",
-        )
+        raise HTTPException(status_code=403, detail="Credit Bureau subscription is awaiting Platform Owner approval.")
     if row.status != "approved":
-        raise HTTPException(
-            status_code=403,
-            detail=f"Credit Bureau subscription is {row.status}. Contact the LoanHub Platform Owner.",
-        )
+        raise HTTPException(status_code=403, detail=f"Credit Bureau subscription is {row.status}. Contact the LoanHub Platform Owner.")
     return row
+
+
+def assert_live_credit_available(
+    db: Session,
+    *,
+    subscription: PlatformCreditBureauSubscription,
+    environment: str,
+) -> None:
+    if str(environment).lower() != "live":
+        return
+    if subscription.credit_limit is None:
+        return
+    outstanding = outstanding_balance(db, company_id=subscription.company_id)
+    price = _money(subscription.price_per_transaction)
+    limit = _money(subscription.credit_limit)
+    if outstanding + price <= limit:
+        return
+    if subscription.auto_suspend_on_limit:
+        subscription.status = "suspended"
+        subscription.suspended_at = datetime.now(timezone.utc)
+        _notify_company_owners(
+            db,
+            company_id=subscription.company_id,
+            title="Credit Bureau access automatically suspended",
+            message=(
+                f"Live Credit Bureau usage reached the approved credit limit of "
+                f"{subscription.currency} {limit:.2f}. Settle the outstanding balance or contact the Platform Owner."
+            ),
+            event_type="credit_bureau.credit_limit.suspended",
+            entity_id=str(subscription.id),
+            priority="high",
+            deduplication_key=f"credit-bureau-limit-{subscription.id}-{limit}",
+        )
+        db.commit()
+    raise HTTPException(
+        status_code=402,
+        detail=(
+            f"Credit Bureau credit limit reached. Outstanding {subscription.currency} {outstanding:.2f}; "
+            f"next Live enquiry {subscription.currency} {price:.2f}; limit {subscription.currency} {limit:.2f}."
+        ),
+    )
 
 
 def accrue_successful_enquiry(
@@ -216,7 +403,8 @@ def accrue_successful_enquiry(
     if existing:
         return existing
 
-    price = _money(subscription.price_per_transaction)
+    is_live = str(environment).strip().lower() == "live"
+    price = _money(subscription.price_per_transaction) if is_live else Decimal("0.00")
     transaction = PlatformCreditBureauTransaction(
         provider="experian",
         company_id=subscription.company_id,
@@ -226,16 +414,35 @@ def accrue_successful_enquiry(
         unit_price=price,
         amount=price,
         currency=subscription.currency or DEFAULT_CURRENCY,
-        status="accrued",
+        status="accrued" if is_live else "sandbox",
         accrued_at=datetime.now(timezone.utc),
         metadata_json={
             "billing_model": "pay_as_you_go",
-            "charge_trigger": "successful_fresh_provider_enquiry",
+            "charge_trigger": "successful_fresh_provider_enquiry" if is_live else "sandbox_free",
             "environment": environment,
+            "price_snapshot": float(price),
         },
     )
     db.add(transaction)
     db.flush()
+
+    if is_live and subscription.warning_threshold is not None:
+        projected = outstanding_balance(db, company_id=subscription.company_id)
+        threshold = _money(subscription.warning_threshold)
+        if projected >= threshold:
+            _notify_company_owners(
+                db,
+                company_id=subscription.company_id,
+                title="Credit Bureau spending warning",
+                message=(
+                    f"Your outstanding Live Credit Bureau usage is now {subscription.currency} {projected:.2f}, "
+                    f"which has reached the warning threshold of {subscription.currency} {threshold:.2f}."
+                ),
+                event_type="credit_bureau.credit_limit.warning",
+                entity_id=str(subscription.id),
+                priority="high",
+                deduplication_key=f"credit-bureau-warning-{subscription.id}-{datetime.now(timezone.utc).strftime('%Y-%m')}",
+            )
     return transaction
 
 
@@ -268,3 +475,187 @@ def transaction_payload(row: PlatformCreditBureauTransaction) -> dict:
         "waiver_reason": row.waiver_reason,
         "metadata": dict(row.metadata_json or {}),
     }
+
+
+def waive_transaction(
+    db: Session,
+    *,
+    transaction_id: UUID,
+    reason: str,
+) -> PlatformCreditBureauTransaction:
+    row = db.query(PlatformCreditBureauTransaction).filter(PlatformCreditBureauTransaction.id == transaction_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
+    if row.status in {"settled", "sandbox"}:
+        raise HTTPException(status_code=409, detail=f"A {row.status} transaction cannot be waived")
+    row.status = "waived"
+    row.waived_at = datetime.now(timezone.utc)
+    row.waiver_reason = reason.strip()
+    _notify_company_owners(
+        db,
+        company_id=row.company_id,
+        title="Credit Bureau charge waived",
+        message=f"Charge {row.transaction_reference} for {row.currency} {_money(row.amount):.2f} was waived.",
+        event_type="credit_bureau.transaction.waived",
+        entity_type="credit_bureau_transaction",
+        entity_id=str(row.id),
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def create_invoice(
+    db: Session,
+    *,
+    company_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> PlatformCreditBureauInvoice:
+    if period_end < period_start:
+        raise HTTPException(status_code=422, detail="Invoice period end cannot be before period start")
+    existing = (
+        db.query(PlatformCreditBureauInvoice)
+        .filter(
+            PlatformCreditBureauInvoice.company_id == company_id,
+            PlatformCreditBureauInvoice.provider == "experian",
+            PlatformCreditBureauInvoice.period_start == period_start,
+            PlatformCreditBureauInvoice.period_end == period_end,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+    subscription = get_subscription(db, company_id=company_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Credit Bureau subscription not found")
+
+    start_dt = datetime.combine(period_start, time.min, tzinfo=timezone.utc)
+    end_dt = datetime.combine(period_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    rows = (
+        db.query(PlatformCreditBureauTransaction)
+        .filter(
+            PlatformCreditBureauTransaction.company_id == company_id,
+            PlatformCreditBureauTransaction.provider == "experian",
+            PlatformCreditBureauTransaction.accrued_at >= start_dt,
+            PlatformCreditBureauTransaction.accrued_at < end_dt,
+            PlatformCreditBureauTransaction.status.in_(("accrued", "waived")),
+        )
+        .order_by(PlatformCreditBureauTransaction.accrued_at.asc())
+        .all()
+    )
+    subtotal = sum((_money(row.amount) for row in rows), Decimal("0"))
+    waived = sum((_money(row.amount) for row in rows if row.status == "waived"), Decimal("0"))
+    due = subtotal - waived
+    issued_at = datetime.now(timezone.utc)
+    invoice = PlatformCreditBureauInvoice(
+        provider="experian",
+        company_id=company_id,
+        subscription_id=subscription.id,
+        invoice_number=f"CBI-{issued_at.strftime('%Y%m')}-{uuid4().hex[:10].upper()}",
+        period_start=period_start,
+        period_end=period_end,
+        transaction_count=len(rows),
+        subtotal=_money(subtotal),
+        waived_amount=_money(waived),
+        amount_due=_money(due),
+        currency=subscription.currency,
+        status="issued" if due > 0 else "paid",
+        issued_at=issued_at,
+        due_at=issued_at + timedelta(days=int(subscription.billing_due_days or 14)),
+        paid_at=issued_at if due <= 0 else None,
+        snapshot={
+            "transaction_ids": [str(row.id) for row in rows],
+            "pricing_is_snapshotted_per_transaction": True,
+        },
+    )
+    db.add(invoice)
+    for row in rows:
+        if row.status == "accrued":
+            row.status = "invoiced"
+    _notify_company_owners(
+        db,
+        company_id=company_id,
+        title="Credit Bureau invoice issued",
+        message=f"Invoice {invoice.invoice_number} totals {invoice.currency} {_money(invoice.amount_due):.2f}.",
+        event_type="credit_bureau.invoice.issued",
+        entity_type="credit_bureau_invoice",
+        entity_id=str(invoice.id),
+        priority="high" if due > 0 else "normal",
+    )
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+def invoice_payload(row: PlatformCreditBureauInvoice) -> dict:
+    return {
+        "id": str(row.id),
+        "company_id": str(row.company_id),
+        "subscription_id": str(row.subscription_id),
+        "invoice_number": row.invoice_number,
+        "period_start": row.period_start,
+        "period_end": row.period_end,
+        "transaction_count": int(row.transaction_count or 0),
+        "subtotal": float(row.subtotal or 0),
+        "waived_amount": float(row.waived_amount or 0),
+        "amount_due": float(row.amount_due or 0),
+        "currency": row.currency,
+        "status": row.status,
+        "issued_at": row.issued_at,
+        "due_at": row.due_at,
+        "paid_at": row.paid_at,
+        "notes": row.notes,
+        "snapshot": dict(row.snapshot or {}),
+    }
+
+
+def list_invoices(db: Session, *, company_id: UUID | None = None, limit: int = 100) -> list[dict]:
+    query = db.query(PlatformCreditBureauInvoice)
+    if company_id is not None:
+        query = query.filter(PlatformCreditBureauInvoice.company_id == company_id)
+    rows = query.order_by(PlatformCreditBureauInvoice.issued_at.desc()).limit(max(1, min(limit, 500))).all()
+    return [invoice_payload(row) for row in rows]
+
+
+def mark_invoice_paid(db: Session, *, invoice_id: UUID) -> PlatformCreditBureauInvoice:
+    invoice = db.query(PlatformCreditBureauInvoice).filter(PlatformCreditBureauInvoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Credit Bureau invoice not found")
+    if invoice.status == "paid":
+        return invoice
+    paid_at = datetime.now(timezone.utc)
+    invoice.status = "paid"
+    invoice.paid_at = paid_at
+    transaction_ids = [UUID(value) for value in dict(invoice.snapshot or {}).get("transaction_ids", [])]
+    if transaction_ids:
+        rows = (
+            db.query(PlatformCreditBureauTransaction)
+            .filter(
+                PlatformCreditBureauTransaction.id.in_(transaction_ids),
+                PlatformCreditBureauTransaction.status == "invoiced",
+            )
+            .all()
+        )
+        for row in rows:
+            row.status = "settled"
+            row.settled_at = paid_at
+
+    subscription = get_subscription(db, company_id=invoice.company_id)
+    if subscription and subscription.status == "suspended" and subscription.auto_suspend_on_limit:
+        if subscription.credit_limit is None or outstanding_balance(db, company_id=invoice.company_id) < _money(subscription.credit_limit):
+            subscription.status = "approved"
+            subscription.suspended_at = None
+
+    _notify_company_owners(
+        db,
+        company_id=invoice.company_id,
+        title="Credit Bureau invoice paid",
+        message=f"Invoice {invoice.invoice_number} has been marked paid.",
+        event_type="credit_bureau.invoice.paid",
+        entity_type="credit_bureau_invoice",
+        entity_id=str(invoice.id),
+    )
+    db.commit()
+    db.refresh(invoice)
+    return invoice
