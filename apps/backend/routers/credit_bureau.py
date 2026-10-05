@@ -29,8 +29,11 @@ from services.credential_service import encrypt_credential
 from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_experian_enquiry
 from services.credit_bureau_payg_service import (
     accrue_successful_enquiry,
+    assert_live_credit_available,
     company_transactions,
+    list_invoices,
     require_approved_subscription,
+    usage_summary,
 )
 from services.experian_service import (
     ExperianConfigurationError,
@@ -320,6 +323,11 @@ def run_experian_credit_check(
     selected_environment = str(company_policy.get("environment") or company_integration.environment or "sandbox")
     selected_environment = "live" if selected_environment.lower() in {"live", "production"} else "sandbox"
     platform_integration = _platform_integration(db, environment=selected_environment)
+    assert_live_credit_available(
+        db,
+        subscription=subscription,
+        environment=selected_environment,
+    )
 
     identity = borrower_identity(db, application.borrower_id)
     if not identity.get("national_id") and not identity.get("passport_number"):
@@ -463,3 +471,22 @@ def list_company_experian_transactions(
 ):
     require_tenant_roles(context, BUREAU_VIEW_ROLES)
     return company_transactions(db, company_id=context.company_id, limit=limit)
+
+
+@router.get("/experian/usage")
+def get_company_experian_usage(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return usage_summary(db, company_id=context.company_id)
+
+
+@router.get("/experian/invoices")
+def list_company_experian_invoices(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+    limit: int = 100,
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return list_invoices(db, company_id=context.company_id, limit=limit)
