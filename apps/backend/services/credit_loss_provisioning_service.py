@@ -244,7 +244,7 @@ def approve_and_post(db: Session, context: TenantContext, run_id: UUID) -> Credi
     if movement != 0:
         ensure_chart(db, company_id=context.company_id)
         key, _ = scope_key(context.company_id)
-        expense = account_by_code(db, key, "6700")
+        expense = account_by_code(db, key, "5510")
         allowance = account_by_code(db, key, "1150")
         amount = abs(movement)
         if movement > 0:
