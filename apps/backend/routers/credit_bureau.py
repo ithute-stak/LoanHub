@@ -27,6 +27,11 @@ from database.session import get_db
 from routers.credit_bureau_configuration import company_experian_preview
 from services.credential_service import encrypt_credential
 from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_experian_enquiry
+from services.credit_bureau_payg_service import (
+    accrue_successful_enquiry,
+    company_transactions,
+    require_approved_subscription,
+)
 from services.experian_service import (
     ExperianConfigurationError,
     ExperianRequestError,
@@ -307,6 +312,7 @@ def run_experian_credit_check(
 ):
     require_tenant_roles(context, BUREAU_RUN_ROLES)
     application = _application(db, application_id=application_id, context=context)
+    subscription = require_approved_subscription(db, company_id=context.company_id)
     company_integration = _company_integration(db, context=context)
     if not company_integration.is_enabled:
         raise HTTPException(status_code=409, detail="Experian is not enabled for this lending company")
@@ -438,6 +444,22 @@ def run_experian_credit_check(
     )
     db.add(enquiry)
     db.add(provider_payload)
+    accrue_successful_enquiry(
+        db,
+        subscription=subscription,
+        enquiry_id=enquiry.id,
+        environment=selected_environment,
+    )
     db.commit()
     db.refresh(enquiry)
     return _enquiry_payload(enquiry)
+
+
+@router.get("/experian/transactions")
+def list_company_experian_transactions(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+    limit: int = 100,
+):
+    require_tenant_roles(context, BUREAU_VIEW_ROLES)
+    return company_transactions(db, company_id=context.company_id, limit=limit)
