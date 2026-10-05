@@ -2036,6 +2036,12 @@ def period_close_pack(
         as_of=period_end,
         branch_id=branch_id,
     )
+    electronic_clearing_age = electronic_clearing_aging(
+        db,
+        company_id=company_id,
+        as_of=period_end,
+        branch_id=branch_id,
+    )
 
     checks = {
         "trial_balance_balanced": total_debit == total_credit,
@@ -2048,6 +2054,7 @@ def period_close_pack(
         "cash_flow_reconciled": bool(cash_flow["reconciled"]),
         "transaction_accounting_coverage_complete": bool(coverage["complete"]),
         "electronic_clearing_reconciled": bool(electronic_clearing["balanced"]),
+        "electronic_clearing_has_no_stale_items": not bool(electronic_clearing_age["has_stale_items"]),
         "fixed_asset_depreciation_complete": len(asset_depreciation_due) == 0,
         "credit_loss_provision_posted": active_loan_count == 0 or provision_posted,
     }
@@ -2080,6 +2087,7 @@ def period_close_pack(
         "cash_flow": cash_flow,
         "transaction_accounting_coverage": coverage,
         "electronic_clearing": electronic_clearing,
+        "electronic_clearing_aging": electronic_clearing_age,
         "fixed_asset_ids_needing_depreciation": asset_depreciation_due,
         "credit_loss_provision_run_id": str(provision.first().id) if provision.first() else None,
     }
