@@ -399,6 +399,36 @@ def _loan_repayment_components(db: Session, payment: PaymentTransaction) -> tupl
 
 def _post_company_loan_repayment(db: Session, payment: PaymentTransaction) -> JournalEntry | None:
     key, _ = scope_key(payment.company_id)
+    if payment.loan_id:
+        written_off_case = db.query(CollectionCase).filter(
+            CollectionCase.company_id == payment.company_id,
+            CollectionCase.loan_id == payment.loan_id,
+            CollectionCase.write_off_at.is_not(None),
+        ).first()
+        payment_date = accounting_business_date(
+            db, payment.company_id, payment.completed_at or payment.created_at
+        )
+        if written_off_case and written_off_case.write_off_at.date() <= payment_date:
+            method = (
+                "cash"
+                if payment.payment_method == PaymentMethod.CASH
+                else "bank"
+                if payment.payment_method == PaymentMethod.BANK
+                else "electronic"
+            )
+            return record_written_off_loan_recovery(
+                db,
+                company_id=payment.company_id,
+                loan_id=payment.loan_id,
+                amount=payment.amount,
+                recovery_date=payment_date,
+                payment_method=method,
+                proof_reference=payment.provider_reference or payment.proof_reference,
+                description="Recovery received after loan write-off",
+                user_id=payment.initiated_by_user_id,
+                reference_type="payment_transaction",
+                reference_id=str(payment.id),
+            )
     if _journal_for_reference(db, key, "payment_transaction", str(payment.id)):
         return _journal_for_reference(db, key, "payment_transaction", str(payment.id))
 
@@ -2513,6 +2543,8 @@ def record_written_off_loan_recovery(
     proof_reference: str | None,
     description: str,
     user_id,
+    reference_type: str = "written_off_loan_recovery",
+    reference_id: str | None = None,
 ) -> JournalEntry:
     """Recognise cash recovered after a loan has already been written off.
 
@@ -2563,8 +2595,11 @@ def record_written_off_loan_recovery(
             JournalLine.account_id == recovery_income.id,
             JournalEntry.scope_key == key,
             JournalEntry.status == "posted",
-            JournalEntry.reference_type == "written_off_loan_recovery",
-            JournalEntry.reference_id.like(f"{loan_id}:%"),
+            JournalEntry.reference_type.in_(["written_off_loan_recovery", "payment_transaction"]),
+        )
+        .filter(
+            (JournalEntry.reference_type == "payment_transaction")
+            | (JournalEntry.reference_id.like(f"{loan_id}:%"))
         )
         .scalar()
         or 0
@@ -2575,8 +2610,8 @@ def record_written_off_loan_recovery(
             detail="Recovery exceeds the principal amount derecognised by the write-off journal",
         )
 
-    reference_id = f"{loan_id}:{recovery_date.isoformat()}:{proof_reference or method}:{amount}"
-    existing = _journal_for_reference(db, key, "written_off_loan_recovery", reference_id)
+    reference_id = reference_id or f"{loan_id}:{recovery_date.isoformat()}:{proof_reference or method}:{amount}"
+    existing = _journal_for_reference(db, key, reference_type, reference_id)
     if existing:
         return existing
 
@@ -2588,7 +2623,7 @@ def record_written_off_loan_recovery(
         credit_code="4300",
         amount=amount,
         description=description,
-        reference_type="written_off_loan_recovery",
+        reference_type=reference_type,
         reference_id=reference_id,
         user_id=user_id,
         entry_date=recovery_date,
