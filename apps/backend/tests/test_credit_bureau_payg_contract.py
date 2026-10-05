@@ -116,15 +116,19 @@ def test_sandbox_is_free_and_live_uses_price_snapshot() -> None:
     assert "accrue_successful_enquiry" not in failure_block
 
 
-def test_credit_limit_is_checked_before_live_provider_call() -> None:
+def test_live_credit_is_reserved_atomically_only_for_fresh_provider_calls() -> None:
     router = _read(ROOT / "routers/credit_bureau.py")
     service = _read(ROOT / "services/credit_bureau_payg_service.py")
 
-    gate_pos = router.index("assert_live_credit_available(")
+    reuse_pos = router.index("if not payload.force_refresh:")
+    reserve_pos = router.index("reserve_enquiry_charge(")
     provider_pos = router.index("run_bureau_enquiry(platform_integration")
-    assert gate_pos < provider_pos
-    assert "outstanding + price <= limit" in service
-    assert 'subscription.status = "suspended"' in service
+    assert reuse_pos < reserve_pos < provider_pos
+    assert "assert_live_credit_available(" not in router
+    assert ".with_for_update()" in service
+    assert 'status="reserved"' in service
+    assert 'PlatformCreditBureauTransaction.status.in_(("reserved", "accrued", "invoiced"))' in service
+    assert "outstanding + price > limit" in service
     assert "Credit Bureau credit limit reached" in service
 
 
@@ -158,3 +162,37 @@ def test_bureau_invoices_post_double_entry_accounting() -> None:
     assert "def record_credit_bureau_invoice_payment" in accounting
     assert "record_credit_bureau_invoice_accrual(db, invoice)" in service
     assert "record_credit_bureau_invoice_payment(db, invoice)" in service
+
+
+
+def test_payg_reservation_is_cancelled_on_provider_failure_and_finalized_on_success() -> None:
+    router = _read(ROOT / "routers/credit_bureau.py")
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+
+    assert "cancel_enquiry_reservation(" in router
+    assert 'reason="experian_configuration_error"' in router
+    assert "reason=error.code" in router
+    assert "def cancel_enquiry_reservation(" in service
+    assert 'row.status = "cancelled"' in service
+    assert 'if is_live and existing.status == "reserved":' in service
+    assert 'existing.status = "accrued"' in service
+
+
+def test_payg_reservations_are_self_healed_by_billing_scheduler() -> None:
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+    scheduler = _read(ROOT / "services/credit_bureau_billing_scheduler.py")
+
+    assert "def reconcile_payg_reservations(" in service
+    assert 'PlatformCreditBureauTransaction.status == "reserved"' in service
+    assert '"stale_reservation_timeout"' in service
+    assert '"reconciled": True' in service
+    assert "reconcile_payg_reservations" in scheduler
+    assert 'reservations["finalized"]' in scheduler
+    assert 'reservations["cancelled"]' in scheduler
+
+
+def test_reserved_credit_does_not_distort_monthly_usage_but_does_reduce_available_credit() -> None:
+    service = _read(ROOT / "services/credit_bureau_payg_service.py")
+
+    assert 'PlatformCreditBureauTransaction.status.notin_(("waived", "cancelled", "reserved"))' in service
+    assert 'PlatformCreditBureauTransaction.status.in_(("reserved", "accrued", "invoiced"))' in service
