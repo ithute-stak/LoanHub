@@ -298,7 +298,7 @@ export default function ExperianCreditBureauPage() {
                   {subscription?.rejection_reason ? <p className="mt-2 text-xs text-destructive">{subscription.rejection_reason}</p> : null}
                 </div>
                 {canConfigure && subscription?.status !== "approved" && subscription?.status !== "pending" ? (
-                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()} disabled={!platformReady}>
+                  <LoadingButton loading={requestingSubscription} onClick={() => void requestSubscription()}>
                     Request subscription
                   </LoadingButton>
                 ) : null}
