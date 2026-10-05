@@ -255,3 +255,28 @@ def test_provider_invoice_settlements_are_in_transaction_coverage():
     assert '"credit_bureau_platform_receipts"' in service
     assert '"cdas_invoice_payments"' in service
     assert '"cdas_platform_receipts"' in service
+
+
+def test_payment_reversal_cascades_to_transaction_charge_and_uses_original_lines():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def record_reversal_accounting(" in service
+    assert 'reference_type="platform_transaction_charge_accrual"' in service
+    assert 'charge.status = "reversed"' in service
+    assert '"accounting_reversal"' in service
+    assert '"debit": line.credit' in service
+    assert '"credit": line.debit' in service
+
+
+def test_written_off_loan_recovery_has_dedicated_income_and_evidence_controls():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    schemas = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+    chart = _chart_map(COMPANY_CHART)
+
+    assert chart["4300"][1:] == ("revenue", "credit")
+    assert "def record_written_off_loan_recovery(" in service
+    assert '"written_off_loan_recovery"' in service
+    assert '"Recovery exceeds the principal amount derecognised by the write-off journal"' in service
+    assert '@router.post("/recoveries/written-off-loans"' in router
+    assert "class WrittenOffLoanRecoveryCreate" in schemas
+    assert "Non-cash recoveries require a proof_reference" in schemas
