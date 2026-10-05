@@ -1009,7 +1009,7 @@ fn bucket_rank(value: &str) -> i64 {
 fn predictive_signal(row: &PredictiveSignalInput) -> Result<PredictiveSignalOutput, String> {
     let mut score = Decimal::ZERO;
     let mut rationale = Vec::new();
-    let dpd = row.current_dpd.max(0);
+    let dpd = row.current_dpd;
 
     if dpd >= 90 {
         score += Decimal::from(75_i64);
