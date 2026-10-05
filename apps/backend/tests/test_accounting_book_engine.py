@@ -135,3 +135,23 @@ def test_fixed_asset_disposal_accounts_exist():
     chart = _chart_map(COMPANY_CHART)
     assert chart["4910"][1:] == ("revenue", "credit")
     assert chart["6510"][1:] == ("expense", "debit")
+
+
+def test_credit_loss_accounts_are_part_of_unified_chart():
+    chart = _chart_map(COMPANY_CHART)
+    assert chart["1150"][1:] == ("asset", "credit")
+    assert chart["5510"][1:] == ("expense", "debit")
+    assert chart["6700"][0] == "Credit Bureau Expense"
+
+
+def test_payment_accounting_posts_only_successful_transactions():
+    source = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "if payment.status != PaymentStatus.SUCCEEDED:" in source
+    assert 'reference_type="loan_write_off"' in source
+    assert '"Collections must mark the loan written_off' in source
+
+
+def test_loan_receivables_control_endpoint_is_exposed():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '@router.get("/controls/loan-receivables")' in router
+    assert '@router.post("/write-offs/loans"' in router
