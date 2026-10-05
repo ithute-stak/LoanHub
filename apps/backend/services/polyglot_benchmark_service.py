@@ -7,6 +7,10 @@ from statistics import mean
 from time import monotonic
 from typing import Callable
 
+from sqlalchemy.orm import Session
+
+from database.models.polyglot_benchmark import PolyglotBenchmarkRun
+
 from services.polyglot_runtime_service import (
     go_digest,
     java_canonicalize_event,
@@ -198,3 +202,63 @@ def run_polyglot_benchmarks(*, iterations: int = 5) -> dict:
         },
         "results": [result.as_dict() for result in results],
     }
+
+
+
+def persist_benchmark_run(
+    db: Session,
+    *,
+    requested_by_user_id,
+    benchmark: dict,
+    routing: dict,
+) -> PolyglotBenchmarkRun:
+    results = list(benchmark.get("results") or [])
+    candidates = sum(1 for item in results if item.get("promotion_candidate") is True)
+    total = len(results)
+    all_candidates = total > 0 and candidates == total
+    summary = (
+        f"{candidates}/{total} workloads eligible for controlled promotion"
+        if total
+        else "No benchmark workloads completed"
+    )
+
+    record = PolyglotBenchmarkRun(
+        requested_by_user_id=requested_by_user_id,
+        iterations=int(benchmark.get("iterations") or 0),
+        all_candidates=all_candidates,
+        promotion_candidate_count=candidates,
+        summary=summary,
+        criteria=dict(benchmark.get("criteria") or {}),
+        results=results,
+        routing_snapshot=dict(routing or {}),
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def list_benchmark_history(db: Session, *, limit: int = 20) -> list[dict]:
+    rows = (
+        db.query(PolyglotBenchmarkRun)
+        .order_by(PolyglotBenchmarkRun.created_at.desc())
+        .limit(max(1, min(int(limit), 100)))
+        .all()
+    )
+    return [
+        {
+            "id": str(row.id),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "requested_by_user_id": (
+                str(row.requested_by_user_id) if row.requested_by_user_id else None
+            ),
+            "iterations": row.iterations,
+            "all_candidates": row.all_candidates,
+            "promotion_candidate_count": row.promotion_candidate_count,
+            "summary": row.summary,
+            "criteria": row.criteria,
+            "results": row.results,
+            "routing_snapshot": row.routing_snapshot,
+        }
+        for row in rows
+    ]
