@@ -66,6 +66,19 @@ type BenchmarkResponse = {
   iterations: number;
   non_authoritative: boolean;
   changes_routing: boolean;
+  history_id?: string;
+  recorded_at?: string | null;
+  results: BenchmarkResult[];
+};
+
+type BenchmarkHistoryItem = {
+  id: string;
+  created_at: string | null;
+  requested_by_user_id: string | null;
+  iterations: number;
+  all_candidates: boolean;
+  promotion_candidate_count: number;
+  summary: string;
   results: BenchmarkResult[];
 };
 
@@ -86,13 +99,18 @@ export default function RuntimeControlPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
+  const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkHistoryItem[]>([]);
   const [benchmarking, setBenchmarking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await api.get<RuntimeStatus>("/runtime/workers/status");
-      setStatus(response.data);
+      const [statusResponse, historyResponse] = await Promise.all([
+        api.get<RuntimeStatus>("/runtime/workers/status"),
+        api.get<{ items: BenchmarkHistoryItem[] }>("/runtime/benchmarks/history?limit=8"),
+      ]);
+      setStatus(statusResponse.data);
+      setBenchmarkHistory(historyResponse.data.items ?? []);
       setError(null);
     } catch (requestError: any) {
       const message = requestError?.response?.data?.detail ?? requestError?.message ?? "Could not load runtime status";
@@ -122,6 +140,8 @@ export default function RuntimeControlPage() {
     try {
       const response = await api.post<BenchmarkResponse>("/runtime/benchmarks/run?iterations=5");
       setBenchmark(response.data);
+      const historyResponse = await api.get<{ items: BenchmarkHistoryItem[] }>("/runtime/benchmarks/history?limit=8");
+      setBenchmarkHistory(historyResponse.data.items ?? []);
       setError(null);
     } catch (requestError: any) {
       const message = requestError?.response?.data?.detail ?? requestError?.message ?? "Could not run runtime benchmark";
@@ -255,6 +275,44 @@ export default function RuntimeControlPage() {
           ) : (
             <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
               No benchmark has been run in this browser session.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><TimerReset className="h-5 w-5 text-primary" />Benchmark history</CardTitle>
+          <CardDescription>Persisted promotion evidence from recent Platform Owner benchmark runs.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {benchmarkHistory.length ? (
+            <div className="space-y-3">
+              {benchmarkHistory.map((item) => (
+                <div key={item.id} className="flex flex-col gap-3 rounded-2xl border p-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={item.all_candidates ? "default" : "secondary"}>
+                        {item.all_candidates ? "All candidates" : "Review required"}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {item.created_at ? new Date(item.created_at).toLocaleString() : "Unknown time"}
+                      </span>
+                    </div>
+                    <p className="mt-2 font-black">{item.summary}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {item.promotion_candidate_count}/{item.results.length} workloads eligible · {item.iterations} iterations
+                    </p>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Run {item.id.slice(0, 8)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+              No persisted benchmark runs yet.
             </div>
           )}
         </CardContent>
