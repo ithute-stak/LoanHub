@@ -31,6 +31,7 @@ _ROUTING_ENV = {
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
     "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
+    "rust_predictive_risk": "LOANHUB_RUST_PREDICTIVE_RISK_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
     "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
@@ -41,6 +42,7 @@ _ROUTING_DEFAULTS = {
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
     "rust_affordability": "shadow",
+    "rust_predictive_risk": "shadow",
     "java_event_processing": "shadow",
     "java_underwriting_rules": "shadow",
 }
@@ -565,6 +567,25 @@ def go_webhook_delivery_batch(*, jobs: list[dict]) -> list[dict] | None:
         f"{base_url}/v1/webhooks/deliver-batch",
         {"jobs": jobs},
         timeout=35.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]
+
+
+def rust_predictive_signal_batch(*, rows: list[dict]) -> list[dict] | None:
+    """Delegate deterministic predictive risk scoring to Rust as one batch."""
+    base_url = rust_compute_url()
+    if not base_url or not rows:
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/predictive-signal-batch",
+        {"rows": rows},
+        timeout=2.5,
     )
     if value is None or value.get("authoritative") is not False:
         return None
