@@ -50,7 +50,11 @@ MONEY = Decimal("0.01")
 def settlement_account_code(payment_method) -> str:
     """Map a payment/treasury channel to the ledger account holding the funds."""
     value = getattr(payment_method, "value", payment_method)
-    return "1000" if value == PaymentMethod.CASH.value else "1010"
+    if value == PaymentMethod.CASH.value:
+        return "1000"
+    if value == PaymentMethod.BANK.value:
+        return "1010"
+    return "1020"
 
 # A lending-specific chart mapped to the five conventional financial-statement
 # classes.  Control/adjustment accounts make the ledger useful beyond a simple
@@ -59,6 +63,7 @@ def settlement_account_code(payment_method) -> str:
 COMPANY_CHART = [
     ("1000", "Cash on Hand", "asset", "debit"),
     ("1010", "Bank", "asset", "debit"),
+    ("1020", "Electronic Payment Clearing", "asset", "debit"),
     ("1100", "Loans Receivable - Principal", "asset", "debit"),
     ("1110", "Interest Receivable", "asset", "debit"),
     ("1120", "Fees Receivable", "asset", "debit"),
@@ -106,6 +111,7 @@ COMPANY_CHART = [
 PLATFORM_CHART = [
     ("1000", "Cash on Hand", "asset", "debit"),
     ("1010", "Bank", "asset", "debit"),
+    ("1020", "Electronic Payment Clearing", "asset", "debit"),
     ("1200", "Tenant Receivables", "asset", "debit"),
     ("1400", "Prepayments", "asset", "debit"),
     ("1500", "Property and Equipment", "asset", "debit"),
@@ -1077,6 +1083,7 @@ def cash_flow_statement(
     cash_ids = {
         account_by_code(db, key, "1000").id,
         account_by_code(db, key, "1010").id,
+        account_by_code(db, key, "1020").id,
     }
     opening_cash = _cash_balance_at(
         db, key=key, cash_ids=cash_ids, before_date=from_date, branch_id=branch_id
