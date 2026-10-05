@@ -44,6 +44,7 @@ type Subscription = {
     credit_limit: number | null;
     warning_threshold: number | null;
     auto_suspend_on_limit: boolean;
+    billing_due_days?: number;
     rejection_reason?: string | null;
     usage?: {
         live_transaction_count: number;
@@ -83,6 +84,7 @@ export default function PlatformCdasPage() {
     const [creditLimit, setCreditLimit] = useState("");
     const [warningThreshold, setWarningThreshold] = useState("");
     const [autoSuspend, setAutoSuspend] = useState(true);
+    const [billingDueDays, setBillingDueDays] = useState("14");
     const [savingProfile, setSavingProfile] = useState(false);
     const [testingProfile, setTestingProfile] = useState(false);
     const [savingDecision, setSavingDecision] = useState(false);
@@ -98,6 +100,7 @@ export default function PlatformCdasPage() {
         setCreditLimit(row?.credit_limit == null ? "" : String(row.credit_limit));
         setWarningThreshold(row?.warning_threshold == null ? "" : String(row.warning_threshold));
         setAutoSuspend(row?.auto_suspend_on_limit !== false);
+        setBillingDueDays(String(row?.billing_due_days ?? 14));
         setPricing(Object.fromEntries(PRICE_FIELDS.map(([key]) => [key, String(row?.pricing?.[key] ?? 0)])));
     }, []);
 
@@ -186,6 +189,7 @@ export default function PlatformCdasPage() {
                 credit_limit: creditLimit.trim() ? Number(creditLimit) : null,
                 warning_threshold: warningThreshold.trim() ? Number(warningThreshold) : null,
                 auto_suspend_on_limit: autoSuspend,
+                billing_due_days: Number(billingDueDays || 14),
             });
             toast.success(`CDAS subscription ${decision}`);
             await load();
@@ -264,10 +268,11 @@ export default function PlatformCdasPage() {
                                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                                     {PRICE_FIELDS.map(([key, label]) => <div key={key} className="space-y-2"><Label>{label}</Label><Input type="number" min={0} step="0.01" value={pricing[key] ?? "0"} onChange={(e) => setPricing((current) => ({ ...current, [key]: e.target.value }))} /></div>)}
                                 </div>
-                                <div className="grid gap-4 sm:grid-cols-3">
+                                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                                     <div className="space-y-2"><Label>Currency</Label><Input maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} /></div>
                                     <div className="space-y-2"><Label>Credit limit</Label><Input type="number" min={0} step="0.01" value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} placeholder="Unlimited" /></div>
                                     <div className="space-y-2"><Label>Warning threshold</Label><Input type="number" min={0} step="0.01" value={warningThreshold} onChange={(e) => setWarningThreshold(e.target.value)} placeholder="Optional" /></div>
+                                    <div className="space-y-2"><Label>Invoice due days</Label><Input type="number" min={1} max={90} value={billingDueDays} onChange={(e) => setBillingDueDays(e.target.value)} /></div>
                                 </div>
                                 <label className="flex items-center gap-3 rounded-2xl border p-4 text-sm font-semibold"><Checkbox checked={autoSuspend} onCheckedChange={(value) => setAutoSuspend(value === true)} />Automatically suspend Live CDAS access when the credit limit would be exceeded</label>
                                 <div className="flex flex-wrap gap-2">
