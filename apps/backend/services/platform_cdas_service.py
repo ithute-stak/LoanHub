@@ -551,6 +551,34 @@ def waive_transaction(db: Session, *, transaction_id: UUID, reason: str) -> Plat
     return row
 
 
+def refund_transaction(db: Session, *, transaction_id: UUID, reason: str) -> PlatformCdasTransaction:
+    row = db.query(PlatformCdasTransaction).filter(PlatformCdasTransaction.id == transaction_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="CDAS transaction not found")
+    if row.status == "refunded":
+        return row
+    if row.status != "settled":
+        raise HTTPException(status_code=409, detail="Only a settled CDAS transaction can be refunded")
+    row.status = "refunded"
+    row.refunded_at = datetime.now(timezone.utc)
+    row.refund_reason = reason.strip()
+    from services.accounting_service import record_cdas_transaction_refund
+    record_cdas_transaction_refund(db, row)
+    _notify_company_owners(
+        db,
+        company_id=row.company_id,
+        title="CDAS charge refunded",
+        message=f"Charge {row.transaction_reference} for {row.currency} {_money(row.amount):.2f} has been refunded.",
+        event_type="cdas.transaction.refunded",
+        entity_type="cdas_transaction",
+        entity_id=str(row.id),
+        priority="normal",
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def transaction_payload(row: PlatformCdasTransaction) -> dict:
     return {
         "id": str(row.id),
@@ -568,6 +596,8 @@ def transaction_payload(row: PlatformCdasTransaction) -> dict:
         "settled_at": row.settled_at,
         "waived_at": row.waived_at,
         "waiver_reason": row.waiver_reason,
+        "refunded_at": row.refunded_at,
+        "refund_reason": row.refund_reason,
         "metadata": dict(row.metadata_json or {}),
     }
 
