@@ -2069,7 +2069,7 @@ def transaction_accounting_coverage(
     if from_date > to_date:
         raise HTTPException(status_code=422, detail="from_date must not be after to_date")
 
-    from database.models.platform_finance import TransactionChargeLedgerEntry
+    from database.models.finance import TransactionChargeLedgerEntry
     from database.models.platform_credit_bureau import PlatformCreditBureauTransaction
     from database.models.platform_cdas import PlatformCdasTransaction
     from database.models.treasury import TreasuryEntry
