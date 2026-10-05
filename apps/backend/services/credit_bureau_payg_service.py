@@ -491,8 +491,11 @@ def waive_transaction(
     row = db.query(PlatformCreditBureauTransaction).filter(PlatformCreditBureauTransaction.id == transaction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Credit Bureau transaction not found")
-    if row.status in {"settled", "sandbox"}:
-        raise HTTPException(status_code=409, detail=f"A {row.status} transaction cannot be waived")
+    if row.status != "accrued":
+        raise HTTPException(
+            status_code=409,
+            detail="Only an accrued, not-yet-invoiced Credit Bureau transaction can be waived",
+        )
     row.status = "waived"
     row.waived_at = datetime.now(timezone.utc)
     row.waiver_reason = reason.strip()
