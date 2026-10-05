@@ -23,6 +23,14 @@ _TABLES = (
     "crm_relationship_cases",
     "collateral_assets",
     "legal_recovery_matters",
+    "customer_complaint_cases",
+    "company_operation_events",
+    "procurement_vendors",
+    "procurement_requests",
+    "company_budget_plans",
+    "company_budget_lines",
+    "internal_audit_engagements",
+    "internal_audit_findings",
 )
 
 _PLATFORM_READ_ROLES = (
