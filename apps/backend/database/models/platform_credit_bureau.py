@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -50,6 +50,10 @@ class PlatformCreditBureauSubscription(Base):
     status = Column(String(30), nullable=False, default="pending", index=True)
     price_per_transaction = Column(Numeric(15, 2), nullable=False, default=0)
     currency = Column(String(3), nullable=False, default="LSL")
+    credit_limit = Column(Numeric(15, 2), nullable=True)
+    warning_threshold = Column(Numeric(15, 2), nullable=True)
+    auto_suspend_on_limit = Column(Boolean, nullable=False, default=True)
+    billing_due_days = Column(Integer, nullable=False, default=14)
     requested_by_user_id = Column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -103,5 +107,34 @@ class PlatformCreditBureauTransaction(Base):
     waived_at = Column(DateTime, nullable=True)
     waiver_reason = Column(Text, nullable=True)
     metadata_json = Column(JSONB, nullable=False, default=dict)
+
+    subscription = relationship("PlatformCreditBureauSubscription")
+
+
+class PlatformCreditBureauInvoice(Base):
+    """Monthly PAYG statement/invoice snapshot for one lending company."""
+
+    __tablename__ = "platform_credit_bureau_invoices"
+    __table_args__ = (
+        UniqueConstraint("company_id", "provider", "period_start", "period_end", name="uq_credit_bureau_invoice_period"),
+    )
+
+    provider = Column(String(40), nullable=False, default="experian", index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("platform_credit_bureau_subscriptions.id", ondelete="RESTRICT"), nullable=False, index=True)
+    invoice_number = Column(String(100), nullable=False, unique=True, index=True)
+    period_start = Column(Date, nullable=False, index=True)
+    period_end = Column(Date, nullable=False, index=True)
+    transaction_count = Column(Integer, nullable=False, default=0)
+    subtotal = Column(Numeric(18, 2), nullable=False, default=0)
+    waived_amount = Column(Numeric(18, 2), nullable=False, default=0)
+    amount_due = Column(Numeric(18, 2), nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="LSL")
+    status = Column(String(30), nullable=False, default="issued", index=True)
+    issued_at = Column(DateTime, nullable=False)
+    due_at = Column(DateTime, nullable=False)
+    paid_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    snapshot = Column(JSONB, nullable=False, default=dict)
 
     subscription = relationship("PlatformCreditBureauSubscription")
