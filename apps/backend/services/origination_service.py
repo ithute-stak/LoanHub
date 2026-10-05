@@ -13,6 +13,7 @@ from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import InstallmentStatus, LoanCalculationMethod, LoanStatus
 from database.models.file_management import ManagedFile
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.origination import (
     AffordabilityAssessment,
     BorrowerBankAccount,
@@ -39,6 +40,7 @@ from services.company_client_service import (
     sync_borrower_external_debt_summary,
 )
 from services.credential_service import encrypt_credential
+from services.external_underwriting_evidence_service import external_evidence_snapshot
 from services.interest_calculation_service import calculate_loan_terms
 
 MONEY = Decimal("0.01")
@@ -836,6 +838,14 @@ def calculate_affordability(
 
     bureau_fresh = latest_bureau is not None
     bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
+    cdas_profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.borrower_id == borrower_id,
+        )
+        .first()
+    )
     if bureau_fresh and bureau_policy.get("include_bureau_commitments_in_affordability"):
         debt_mode = str(bureau_policy.get("bureau_debt_mode") or "max")
         if debt_mode == "bureau_only":
@@ -857,6 +867,15 @@ def calculate_affordability(
     max_installment = money(min(disposable_limit, dti_limit, installment_income_limit))
     headroom = money(max_installment - monthly)
     dti = percent((debt_installments + monthly) * Decimal("100") / verified_income) if verified_income > 0 else Decimal("100")
+
+    external_evidence = external_evidence_snapshot(
+        application_id=application.id,
+        bureau=latest_bureau,
+        bureau_policy=bureau_policy,
+        cdas_profile=cdas_profile,
+        cdas_selected=bool(application.cdas_collection_enabled),
+        proposed_installment=monthly,
+    )
 
     reasons: list[dict[str, str]] = []
     blocking = False
@@ -892,25 +911,44 @@ def calculate_affordability(
         reasons.append({"severity": "warning", "code": "enhanced_due_diligence", "message": "Enhanced due diligence is required."})
 
     if bureau_policy_row and bureau_policy_row.is_enabled and bureau_fresh and latest_bureau:
-            score = latest_bureau.score
-            decline_below = bureau_policy.get("decline_below_score")
-            refer_below = bureau_policy.get("refer_below_score")
-            if decline_below is not None and score is not None and score < int(decline_below):
-                blocking = True
-                reasons.append({"severity": "error", "code": "bureau_score_decline", "message": "Experian score is below the configured decline threshold."})
-            elif refer_below is not None and score is not None and score < int(refer_below):
-                referral = True
-                reasons.append({"severity": "warning", "code": "bureau_score_refer", "message": "Experian score is below the configured referral threshold."})
-            elif score is not None:
-                reasons.append({"severity": "pass", "code": "bureau_score_ok", "message": "Experian score meets the configured threshold."})
+        bureau_blockers = list(external_evidence["credit_bureau"]["blockers"])
+        bureau_warnings = list(external_evidence["credit_bureau"]["warnings"])
+        if bureau_blockers:
+            blocking = True
+            reasons.extend({
+                "severity": "error",
+                "code": item["code"],
+                "message": item["message"],
+            } for item in bureau_blockers)
+        if bureau_warnings:
+            referral = True
+            reasons.extend({
+                "severity": "warning",
+                "code": item["code"],
+                "message": item["message"],
+            } for item in bureau_warnings)
+        if latest_bureau.score is not None and not bureau_blockers and not bureau_warnings:
+            reasons.append({
+                "severity": "pass",
+                "code": "bureau_policy_ok",
+                "message": "Experian evidence meets the configured bureau policy.",
+            })
 
-            if bureau_policy.get("block_defaults") and int(bureau_normalized.get("defaults_count") or 0) > 0:
-                blocking = True
-                reasons.append({"severity": "error", "code": "bureau_defaults", "message": "Experian reports one or more defaults and company policy blocks approval."})
-
-            if bureau_policy.get("require_identity_match") and bureau_normalized.get("identity_match") is not True:
-                blocking = True
-                reasons.append({"severity": "error", "code": "bureau_identity_mismatch", "message": "Experian identity matching did not pass company policy."})
+    cdas_capacity = external_evidence["cdas"]
+    if application.cdas_collection_enabled and cdas_capacity["verified"]:
+        if not cdas_capacity["capacity_sufficient"]:
+            blocking = True
+            reasons.extend({
+                "severity": "error",
+                "code": item["code"],
+                "message": item["message"],
+            } for item in cdas_capacity["blockers"])
+        else:
+            reasons.append({
+                "severity": "pass",
+                "code": "cdas_deduction_capacity_ok",
+                "message": "The proposed installment fits within verified CDAS payroll deduction capacity.",
+            })
 
     blacklist = db.query(CreditBlacklist).filter(CreditBlacklist.borrower_id == borrower_id, CreditBlacklist.is_active.is_(True)).first()
     if blacklist and not policy.allow_blacklisted:
@@ -979,6 +1017,7 @@ def calculate_affordability(
                 "monthly_commitments": str(bureau_monthly_commitments),
                 "policy": bureau_policy,
             },
+            "external_underwriting_evidence": external_evidence,
             "policy": serialize(policy),
             "proposal": {
                 "principal": principal,
@@ -1008,6 +1047,7 @@ def calculate_affordability(
         "proposed_installment": str(monthly),
         "headroom": str(headroom),
         "policy_version": policy.version,
+        "external_underwriting_evidence": json_safe(external_evidence),
     }
     db.commit()
     db.refresh(assessment)
