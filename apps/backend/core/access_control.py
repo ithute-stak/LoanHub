@@ -13,6 +13,7 @@ from database.models.company_staff import CompanyStaff
 from database.models.enums import CompanyStatus, UserRole
 from database.models.user import User
 from database.session import get_db
+from database.tenant_context import bind_database_tenant_context
 
 
 PLATFORM_ROLES: set[UserRole] = {
@@ -159,6 +160,25 @@ def is_platform_role(role: UserRole | None) -> bool:
 
 def is_platform_admin_role(role: UserRole | None) -> bool:
     return bool(role and role in PLATFORM_ADMIN_ROLES)
+
+
+def _bind_database_context(db: Session, context: TenantContext) -> TenantContext:
+    if is_platform_role(context.user.role):
+        actor_scope = "platform"
+    elif context.user.role == UserRole.BORROWER and context.staff is None:
+        actor_scope = "borrower"
+    else:
+        actor_scope = "tenant"
+
+    bind_database_tenant_context(
+        db,
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        role=context.role.value,
+        actor_scope=actor_scope,
+    )
+    return context
 
 
 def get_current_active_user(
@@ -360,7 +380,10 @@ def get_tenant_context(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> TenantContext:
-    return resolve_tenant_context(db, current_user, x_company_id, x_active_role)
+    return _bind_database_context(
+        db,
+        resolve_tenant_context(db, current_user, x_company_id, x_active_role),
+    )
 
 
 def get_optional_tenant_context(
@@ -378,7 +401,7 @@ def get_optional_tenant_context(
     which records a platform role may access.
     """
     if is_platform_role(current_user.role):
-        return TenantContext(
+        context = TenantContext(
             user=current_user,
             staff=None,
             company=None,
@@ -386,8 +409,9 @@ def get_optional_tenant_context(
             branch_id=None,
             is_platform_admin=is_platform_admin_role(current_user.role),
         )
+        return _bind_database_context(db, context)
     if current_user.role == UserRole.BORROWER:
-        return TenantContext(
+        context = TenantContext(
             user=current_user,
             staff=None,
             company=None,
@@ -395,7 +419,11 @@ def get_optional_tenant_context(
             branch_id=None,
             is_platform_admin=False,
         )
-    return resolve_tenant_context(db, current_user, x_company_id, x_active_role)
+        return _bind_database_context(db, context)
+    return _bind_database_context(
+        db,
+        resolve_tenant_context(db, current_user, x_company_id, x_active_role),
+    )
 
 
 def require_tenant_roles(
@@ -451,7 +479,7 @@ def get_user_context(
 ) -> TenantContext:
     """Resolve a secure context for platform admins, borrowers and company users."""
     if current_user.role == UserRole.BORROWER:
-        return TenantContext(
+        context = TenantContext(
             user=current_user,
             staff=None,
             company=None,
@@ -459,8 +487,9 @@ def get_user_context(
             branch_id=None,
             is_platform_admin=False,
         )
+        return _bind_database_context(db, context)
     if is_platform_role(current_user.role):
-        return TenantContext(
+        context = TenantContext(
             user=current_user,
             staff=None,
             company=None,
@@ -468,4 +497,8 @@ def get_user_context(
             branch_id=None,
             is_platform_admin=is_platform_admin_role(current_user.role),
         )
-    return resolve_tenant_context(db, current_user, x_company_id, x_active_role)
+        return _bind_database_context(db, context)
+    return _bind_database_context(
+        db,
+        resolve_tenant_context(db, current_user, x_company_id, x_active_role),
+    )
