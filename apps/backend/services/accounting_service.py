@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
+from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.enums import (
     PaymentDirection,
     PaymentPurpose,
@@ -69,6 +70,7 @@ COMPANY_CHART = [
     ("4100", "Loan Fee Income", "revenue", "credit"),
     ("4200", "Penalty and Collection Income", "revenue", "credit"),
     ("4900", "Other Operating Income", "revenue", "credit"),
+    ("4910", "Gain on Disposal of Property and Equipment", "revenue", "credit"),
     ("5000", "Cost of Services", "expense", "debit"),
     ("5100", "Staff Costs", "expense", "debit"),
     ("5200", "Premises and Utilities", "expense", "debit"),
@@ -81,6 +83,7 @@ COMPANY_CHART = [
     ("6300", "Refund and Adjustment Expense", "expense", "debit"),
     ("6400", "Assisted Borrower Account Opening Expense", "expense", "debit"),
     ("6500", "Other Operating Expenses", "expense", "debit"),
+    ("6510", "Loss on Disposal of Property and Equipment", "expense", "debit"),
     ("6600", "Platform Fees and Charges", "expense", "debit"),
     ("6700", "Credit Bureau Expense", "expense", "debit"),
     ("6800", "CDAS Service Expense", "expense", "debit"),
@@ -1010,3 +1013,297 @@ def post_suspense_correction(
         user_id=user_id,
         entry_date=entry_date or accounting_business_date(db, company_id),
     )
+
+
+def fixed_asset_query(db: Session, *, company_id, branch_id=None):
+    query = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "fixed_asset",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if branch_id:
+        query = query.filter(CompanyOperatingRecord.branch_id == branch_id)
+    return query
+
+
+def _asset_data(asset: CompanyOperatingRecord) -> dict:
+    return dict(asset.data or {})
+
+
+def asset_payload(asset: CompanyOperatingRecord) -> dict:
+    data = _asset_data(asset)
+    return {
+        "id": asset.id,
+        "reference": asset.reference,
+        "name": asset.title,
+        "description": asset.description,
+        "status": asset.status,
+        "branch_id": asset.branch_id,
+        "currency": asset.currency,
+        "cost": _money(asset.amount),
+        "acquisition_date": date.fromisoformat(data["acquisition_date"]),
+        "residual_value": _money(data.get("residual_value")),
+        "useful_life_years": int(data["useful_life_years"]),
+        "depreciation_method": data["depreciation_method"],
+        "depreciation_rate": Decimal(str(data["depreciation_rate"])) if data.get("depreciation_rate") is not None else None,
+        "accumulated_depreciation": _money(data.get("accumulated_depreciation")),
+        "carrying_amount": _money(data.get("carrying_amount", asset.amount)),
+        "location": data.get("location"),
+        "serial_number": data.get("serial_number"),
+        "assigned_to": data.get("assigned_to"),
+        "last_depreciation_date": date.fromisoformat(data["last_depreciation_date"]) if data.get("last_depreciation_date") else None,
+        "disposed_at": date.fromisoformat(data["disposed_at"]) if data.get("disposed_at") else None,
+        "disposal_proceeds": _money(data["disposal_proceeds"]) if data.get("disposal_proceeds") is not None else None,
+    }
+
+
+def create_fixed_asset(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    reference: str,
+    name: str,
+    description: str | None,
+    acquisition_date: date,
+    cost,
+    residual_value,
+    useful_life_years: int,
+    depreciation_method: str,
+    depreciation_rate,
+    location: str | None,
+    serial_number: str | None,
+    assigned_to: str | None,
+    user_id,
+    settlement_account_code: str | None = None,
+    post_acquisition: bool = False,
+) -> CompanyOperatingRecord:
+    if fixed_asset_query(db, company_id=company_id).filter(CompanyOperatingRecord.reference == reference).first():
+        raise HTTPException(status_code=409, detail="Fixed asset reference already exists")
+
+    cost = _money(cost)
+    residual = _money(residual_value)
+    if residual >= cost:
+        raise HTTPException(status_code=422, detail="Residual value must be lower than asset cost")
+    if depreciation_method not in {"straight_line", "reducing_balance"}:
+        raise HTTPException(status_code=422, detail="Unsupported depreciation method")
+    if depreciation_method == "reducing_balance" and depreciation_rate is None:
+        raise HTTPException(status_code=422, detail="Reducing-balance assets require a depreciation rate")
+
+    rate = Decimal(str(depreciation_rate)) if depreciation_rate is not None else None
+    asset = CompanyOperatingRecord(
+        company_id=company_id,
+        branch_id=branch_id,
+        module="accounting",
+        record_type="fixed_asset",
+        reference=reference.strip(),
+        title=name.strip(),
+        description=(description or "").strip() or None,
+        status="active",
+        created_by_user_id=user_id,
+        amount=cost,
+        currency="LSL",
+        data={
+            "acquisition_date": acquisition_date.isoformat(),
+            "residual_value": str(residual),
+            "useful_life_years": useful_life_years,
+            "depreciation_method": depreciation_method,
+            "depreciation_rate": str(rate) if rate is not None else None,
+            "accumulated_depreciation": "0.00",
+            "carrying_amount": str(cost),
+            "location": location,
+            "serial_number": serial_number,
+            "assigned_to": assigned_to,
+            "last_depreciation_date": None,
+            "disposed_at": None,
+            "disposal_proceeds": None,
+            "depreciation_policy": "monthly_proration",
+        },
+    )
+    db.add(asset)
+    db.flush()
+
+    if post_acquisition:
+        if not settlement_account_code:
+            raise HTTPException(status_code=422, detail="settlement_account_code is required when posting acquisition")
+        key, _ = scope_key(company_id)
+        ensure_chart(db, company_id=company_id)
+        asset_account = account_by_code(db, key, "1500")
+        settlement = account_by_code(db, key, settlement_account_code)
+        if settlement.account_type not in {"asset", "liability"}:
+            raise HTTPException(status_code=422, detail="Asset acquisition settlement must use cash, bank or a payable")
+        create_entry(
+            db,
+            company_id=company_id,
+            branch_id=branch_id,
+            created_by_user_id=user_id,
+            entry_date=acquisition_date,
+            description=f"Fixed asset acquisition: {asset.title}",
+            reference_type="fixed_asset_acquisition",
+            reference_id=str(asset.id),
+            status_value="posted",
+            lines=[
+                {"account_id": asset_account.id, "debit": cost, "credit": 0},
+                {"account_id": settlement.id, "debit": 0, "credit": cost},
+            ],
+        )
+    return asset
+
+
+def _months_inclusive(start: date, end: date) -> int:
+    if end < start:
+        return 0
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
+
+
+def calculate_fixed_asset_depreciation(
+    asset: CompanyOperatingRecord, *, period_start: date, period_end: date
+) -> Decimal:
+    data = _asset_data(asset)
+    acquisition_date = date.fromisoformat(data["acquisition_date"])
+    if period_end < acquisition_date:
+        return Decimal("0.00")
+    if asset.status != "active":
+        return Decimal("0.00")
+
+    last_date = date.fromisoformat(data["last_depreciation_date"]) if data.get("last_depreciation_date") else None
+    effective_start = max(period_start, acquisition_date)
+    if last_date:
+        if effective_start <= last_date:
+            effective_start = date(last_date.year + (1 if last_date.month == 12 else 0), 1 if last_date.month == 12 else last_date.month + 1, 1)
+    if effective_start > period_end:
+        return Decimal("0.00")
+
+    cost = _money(asset.amount)
+    residual = _money(data.get("residual_value"))
+    accumulated = _money(data.get("accumulated_depreciation"))
+    carrying = _money(cost - accumulated)
+    depreciable_remaining = max(Decimal("0.00"), carrying - residual)
+    if depreciable_remaining <= 0:
+        return Decimal("0.00")
+
+    months = _months_inclusive(effective_start, period_end)
+    method = data["depreciation_method"]
+    if method == "straight_line":
+        annual = (cost - residual) / Decimal(int(data["useful_life_years"]))
+        amount = annual * Decimal(months) / Decimal("12")
+    else:
+        rate = Decimal(str(data["depreciation_rate"])) / Decimal("100")
+        amount = carrying * rate * Decimal(months) / Decimal("12")
+
+    return min(_money(amount), _money(depreciable_remaining))
+
+
+def post_fixed_asset_depreciation(
+    db: Session,
+    *,
+    asset: CompanyOperatingRecord,
+    period_start: date,
+    period_end: date,
+    user_id,
+) -> JournalEntry | None:
+    if asset.status != "active":
+        raise HTTPException(status_code=409, detail="Only active fixed assets can be depreciated")
+    amount = calculate_fixed_asset_depreciation(asset, period_start=period_start, period_end=period_end)
+    if amount <= 0:
+        return None
+
+    entry = post_depreciation_adjustment(
+        db,
+        company_id=asset.company_id,
+        branch_id=asset.branch_id,
+        amount=amount,
+        description=f"Depreciation: {asset.reference} - {asset.title}",
+        reference_id=f"{asset.id}:{period_start.isoformat()}:{period_end.isoformat()}",
+        user_id=user_id,
+        entry_date=period_end,
+    )
+    data = _asset_data(asset)
+    accumulated = _money(data.get("accumulated_depreciation")) + amount
+    carrying = max(_money(data.get("residual_value")), _money(asset.amount) - accumulated)
+    data["accumulated_depreciation"] = str(_money(accumulated))
+    data["carrying_amount"] = str(_money(carrying))
+    data["last_depreciation_date"] = period_end.isoformat()
+    asset.data = data
+    db.add(asset)
+    return entry
+
+
+def dispose_fixed_asset(
+    db: Session,
+    *,
+    asset: CompanyOperatingRecord,
+    disposal_date: date,
+    proceeds,
+    settlement_account_code: str,
+    description: str,
+    user_id,
+) -> JournalEntry:
+    if asset.status != "active":
+        raise HTTPException(status_code=409, detail="Only active fixed assets can be disposed")
+
+    data = _asset_data(asset)
+    acquisition_date = date.fromisoformat(data["acquisition_date"])
+    if disposal_date < acquisition_date:
+        raise HTTPException(status_code=422, detail="Disposal date cannot be before acquisition date")
+
+    last_date = date.fromisoformat(data["last_depreciation_date"]) if data.get("last_depreciation_date") else acquisition_date
+    pending_start = acquisition_date if not data.get("last_depreciation_date") else date(
+        last_date.year + (1 if last_date.month == 12 else 0),
+        1 if last_date.month == 12 else last_date.month + 1,
+        1,
+    )
+    if pending_start <= disposal_date:
+        post_fixed_asset_depreciation(
+            db, asset=asset, period_start=pending_start, period_end=disposal_date, user_id=user_id
+        )
+        data = _asset_data(asset)
+
+    cost = _money(asset.amount)
+    accumulated = _money(data.get("accumulated_depreciation"))
+    carrying = _money(cost - accumulated)
+    proceeds = _money(proceeds)
+    gain = max(Decimal("0.00"), proceeds - carrying)
+    loss = max(Decimal("0.00"), carrying - proceeds)
+
+    key, _ = scope_key(asset.company_id)
+    ensure_chart(db, company_id=asset.company_id)
+    settlement = account_by_code(db, key, settlement_account_code)
+    if settlement.account_type != "asset":
+        raise HTTPException(status_code=422, detail="Disposal proceeds must be received into cash/bank/receivable asset account")
+    asset_cost = account_by_code(db, key, "1500")
+    accumulated_account = account_by_code(db, key, "1510")
+
+    lines = []
+    if proceeds:
+        lines.append({"account_id": settlement.id, "debit": proceeds, "credit": 0})
+    if accumulated:
+        lines.append({"account_id": accumulated_account.id, "debit": accumulated, "credit": 0})
+    if loss:
+        lines.append({"account_id": account_by_code(db, key, "6510").id, "debit": loss, "credit": 0})
+    lines.append({"account_id": asset_cost.id, "debit": 0, "credit": cost})
+    if gain:
+        lines.append({"account_id": account_by_code(db, key, "4910").id, "debit": 0, "credit": gain})
+
+    entry = create_entry(
+        db,
+        company_id=asset.company_id,
+        branch_id=asset.branch_id,
+        created_by_user_id=user_id,
+        entry_date=disposal_date,
+        description=description,
+        reference_type="fixed_asset_disposal",
+        reference_id=str(asset.id),
+        status_value="posted",
+        lines=lines,
+    )
+    data["disposed_at"] = disposal_date.isoformat()
+    data["disposal_proceeds"] = str(proceeds)
+    data["carrying_amount"] = "0.00"
+    data["disposal_gain"] = str(_money(gain))
+    data["disposal_loss"] = str(_money(loss))
+    asset.data = data
+    asset.status = "disposed"
+    db.add(asset)
+    return entry
