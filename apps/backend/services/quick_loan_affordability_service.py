@@ -6,6 +6,7 @@ from typing import Any
 from database.models.borrower import Borrower
 from database.models.origination import OriginationPolicy
 from services.polyglot_runtime_service import (
+    java_underwriting_rules,
     record_parity_mismatch,
     rust_affordability_assessment,
     workload_routing_mode,
@@ -242,11 +243,40 @@ def quick_loan_affordability(
             "minimum_disposable_after_installment": rust_value["minimum_disposable_after_installment"],
         }
 
+    java_mode = workload_routing_mode("java_underwriting_rules")
+    java_value = None
+    if java_mode != "off":
+        java_value = java_underwriting_rules(
+            monthly_income=str(income),
+            min_verified_net_income=str(_money(policy.min_verified_net_income)),
+            proposed_installment=str(installment),
+            maximum_affordable_installment=str(maximum_affordable_installment),
+            disposable_after_installment=str(after_installment),
+            min_disposable_after_installment=str(minimum_after_installment),
+        )
+
+    java_parity = bool(
+        java_value is not None
+        and java_value.get("passed") is passed
+        and java_value.get("decision") == result["decision"]
+        and java_value.get("reasons") == reasons
+    )
+    if java_value is not None and not java_parity:
+        record_parity_mismatch("java_worker")
+    if java_parity and java_mode == "prefer-worker":
+        result["decision"] = java_value["decision"]
+        result["passed"] = java_value["passed"]
+        result["reasons"] = java_value["reasons"]
+
     result["compute_runtime"] = {
         "rust_routing_mode": routing_mode,
         "rust_available": rust_value is not None,
         "rust_parity": "match" if rust_parity else ("mismatch" if rust_value is not None else "unavailable"),
         "rust_used": bool(rust_parity and routing_mode == "prefer-worker"),
+        "java_routing_mode": java_mode,
+        "java_available": java_value is not None,
+        "java_parity": "match" if java_parity else ("mismatch" if java_value is not None else "unavailable"),
+        "java_used": bool(java_parity and java_mode == "prefer-worker"),
         "python_authority": True,
     }
     return result
