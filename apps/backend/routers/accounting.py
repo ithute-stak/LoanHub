@@ -479,8 +479,31 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
     if statement_name == "income_statement":
         totals["net_profit"] = totals.get("revenue", Decimal("0")) - totals.get("expense", Decimal("0"))
     elif statement_name == "statement_of_financial_position":
+        # Revenue and expense accounts represent profit that has increased or
+        # decreased equity even before a formal year-end transfer to retained
+        # earnings is posted. Present that unclosed result explicitly so the
+        # statement satisfies Assets = Liabilities + Equity.
+        pnl_lines = trial_balance_data(db, key, None, to_date, branch_id)
+        cumulative_revenue = sum(
+            (-line.balance for line in pnl_lines if line.account_type == "revenue"),
+            Decimal("0"),
+        )
+        cumulative_expense = sum(
+            (line.balance for line in pnl_lines if line.account_type == "expense"),
+            Decimal("0"),
+        )
+        current_earnings = cumulative_revenue - cumulative_expense
+        sections["current_earnings"] = [
+            FinancialStatementLine(
+                code="CURRENT-EARNINGS",
+                name="Cumulative unclosed profit / (loss)",
+                amount=current_earnings,
+            )
+        ]
+        totals["current_earnings"] = current_earnings
+        totals["total_equity"] = totals.get("equity", Decimal("0")) + current_earnings
         totals["net_assets"] = totals.get("asset", Decimal("0")) - totals.get("liability", Decimal("0"))
-        totals["equity_check"] = totals["net_assets"] - totals.get("equity", Decimal("0"))
+        totals["equity_check"] = totals["net_assets"] - totals["total_equity"]
     return FinancialStatementRead(
         statement=statement_name,
         from_date=from_date,
@@ -561,7 +584,7 @@ def accounting_dashboard(
         loans_receivable=by_code.get("1100", Decimal("0")) + by_code.get("1110", Decimal("0")) + by_code.get("1120", Decimal("0")),
         total_assets=totals.get("asset", Decimal("0")),
         total_liabilities=totals.get("liability", Decimal("0")),
-        equity=totals.get("equity", Decimal("0")),
+        equity=totals.get("equity", Decimal("0")) + (revenue - expenses),
         revenue=revenue,
         expenses=expenses,
         net_profit=revenue - expenses,
@@ -590,10 +613,11 @@ def accounting_ratios(
         totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + presented(line)
     assets = totals.get("asset", Decimal("0"))
     liabilities = totals.get("liability", Decimal("0"))
-    equity = totals.get("equity", Decimal("0"))
+    book_equity = totals.get("equity", Decimal("0"))
     revenue = totals.get("revenue", Decimal("0"))
     expenses = totals.get("expense", Decimal("0"))
     profit = revenue - expenses
+    equity = book_equity + profit
     liquid = by_code.get("1000", Decimal("0")) + by_code.get("1010", Decimal("0"))
     receivables = by_code.get("1100", Decimal("0")) + by_code.get("1110", Decimal("0")) + by_code.get("1120", Decimal("0"))
 
@@ -1105,3 +1129,59 @@ def reverse_adjustment_next_period(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/statement-of-changes-in-equity")
+def statement_of_changes_in_equity(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    key, _ = scope_key(selected_company_id)
+    ensure_chart(db, company_id=selected_company_id)
+    db.flush()
+
+    opening_lines = trial_balance_data(db, key, None, from_date.fromordinal(from_date.toordinal() - 1), selected_branch_id)
+    period_lines = trial_balance_data(db, key, from_date, to_date, selected_branch_id)
+
+    def presented(line):
+        return -line.balance if line.account_type in {"liability", "equity", "revenue"} else line.balance
+
+    opening_equity = sum((presented(line) for line in opening_lines if line.account_type == "equity"), Decimal("0"))
+    opening_profit = (
+        sum((presented(line) for line in opening_lines if line.account_type == "revenue"), Decimal("0"))
+        - sum((presented(line) for line in opening_lines if line.account_type == "expense"), Decimal("0"))
+    )
+    period_profit = (
+        sum((presented(line) for line in period_lines if line.account_type == "revenue"), Decimal("0"))
+        - sum((presented(line) for line in period_lines if line.account_type == "expense"), Decimal("0"))
+    )
+
+    by_code = {line.code: presented(line) for line in period_lines}
+    owner_capital_movement = by_code.get("3000", Decimal("0"))
+    retained_earnings_movement = by_code.get("3100", Decimal("0"))
+    distributions = -by_code.get("3200", Decimal("0"))
+    opening_total_equity = opening_equity + opening_profit
+    closing_total_equity = opening_total_equity + owner_capital_movement + retained_earnings_movement + period_profit - distributions
+
+    return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "branch_id": str(selected_branch_id) if selected_branch_id else None,
+        "opening_equity": opening_total_equity,
+        "owner_capital_movement": owner_capital_movement,
+        "retained_earnings_adjustments": retained_earnings_movement,
+        "profit_or_loss_for_period": period_profit,
+        "drawings_and_distributions": distributions,
+        "closing_equity": closing_total_equity,
+    }
