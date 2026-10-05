@@ -64,6 +64,7 @@ from database.models.platform_cdas import (
     PlatformCdasSubscription,
     PlatformCdasCredentialProfile,
     PlatformCdasTransaction,
+    PlatformCdasInvoice,
 )
 from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from database.models.early_settlement import LoanEarlySettlement
@@ -176,6 +177,7 @@ __all__ = [
     "PlatformCdasSubscription",
     "PlatformCdasCredentialProfile",
     "PlatformCdasTransaction",
+    "PlatformCdasInvoice",
     "PolyglotBenchmarkRun",
     "LoanEarlySettlement",
     "AccountingExport",

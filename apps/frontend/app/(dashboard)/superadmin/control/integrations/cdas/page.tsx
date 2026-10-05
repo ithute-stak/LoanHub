@@ -34,6 +34,30 @@ type Profile = {
     last_tested_at: string | null;
 };
 
+type CdasTransaction = {
+    id: string;
+    transaction_reference: string;
+    operation_type: string;
+    environment: Environment;
+    amount: number;
+    currency: string;
+    status: string;
+    accrued_at: string;
+};
+
+type CdasInvoice = {
+    id: string;
+    invoice_number: string;
+    period_start: string;
+    period_end: string;
+    transaction_count: number;
+    amount_due: number;
+    currency: string;
+    status: string;
+    due_at: string;
+    paid_at: string | null;
+};
+
 type Subscription = {
     id?: string;
     company_id?: string;
@@ -44,6 +68,7 @@ type Subscription = {
     credit_limit: number | null;
     warning_threshold: number | null;
     auto_suspend_on_limit: boolean;
+    billing_due_days?: number;
     rejection_reason?: string | null;
     usage?: {
         live_transaction_count: number;
@@ -83,9 +108,16 @@ export default function PlatformCdasPage() {
     const [creditLimit, setCreditLimit] = useState("");
     const [warningThreshold, setWarningThreshold] = useState("");
     const [autoSuspend, setAutoSuspend] = useState(true);
+    const [billingDueDays, setBillingDueDays] = useState("14");
     const [savingProfile, setSavingProfile] = useState(false);
     const [testingProfile, setTestingProfile] = useState(false);
     const [savingDecision, setSavingDecision] = useState(false);
+    const [transactions, setTransactions] = useState<CdasTransaction[]>([]);
+    const [invoices, setInvoices] = useState<CdasInvoice[]>([]);
+    const [adjustmentReason, setAdjustmentReason] = useState("");
+    const [invoiceStart, setInvoiceStart] = useState("");
+    const [invoiceEnd, setInvoiceEnd] = useState("");
+    const [billingAction, setBillingAction] = useState<string | null>(null);
 
     const selected = useMemo(
         () => subscriptions.find((item) => item.company_id === selectedCompanyId) ?? null,
@@ -98,6 +130,7 @@ export default function PlatformCdasPage() {
         setCreditLimit(row?.credit_limit == null ? "" : String(row.credit_limit));
         setWarningThreshold(row?.warning_threshold == null ? "" : String(row.warning_threshold));
         setAutoSuspend(row?.auto_suspend_on_limit !== false);
+        setBillingDueDays(String(row?.billing_due_days ?? 14));
         setPricing(Object.fromEntries(PRICE_FIELDS.map(([key]) => [key, String(row?.pricing?.[key] ?? 0)])));
     }, []);
 
@@ -110,6 +143,20 @@ export default function PlatformCdasPage() {
         setTimeoutSeconds(String(profile?.timeout_seconds ?? 20));
     }, []);
 
+    const loadBilling = useCallback(async (companyId: string) => {
+        if (!companyId) {
+            setTransactions([]);
+            setInvoices([]);
+            return;
+        }
+        const [transactionResponse, invoiceResponse] = await Promise.all([
+            api.get<CdasTransaction[]>(`/platform-owner/cdas/transactions?company_id=${companyId}&limit=30`),
+            api.get<CdasInvoice[]>(`/platform-owner/cdas/invoices?company_id=${companyId}&limit=24`),
+        ]);
+        setTransactions(transactionResponse.data);
+        setInvoices(invoiceResponse.data);
+    }, []);
+
     const load = useCallback(async () => {
         setLoading(true);
         try {
@@ -120,12 +167,13 @@ export default function PlatformCdasPage() {
             const row = response.data.find((item) => item.company_id === nextId) ?? null;
             hydrateCommercial(row);
             hydrateProfile(row, environment);
+            await loadBilling(nextId);
         } catch (error: unknown) {
             toast.error(getErrorMessage(error, "Platform CDAS service could not be loaded."));
         } finally {
             setLoading(false);
         }
-    }, [environment, hydrateCommercial, hydrateProfile, selectedCompanyId]);
+    }, [environment, hydrateCommercial, hydrateProfile, loadBilling, selectedCompanyId]);
 
     useEffect(() => { void load(); }, [load]);
 
@@ -134,6 +182,7 @@ export default function PlatformCdasPage() {
         const row = subscriptions.find((item) => item.company_id === companyId) ?? null;
         hydrateCommercial(row);
         hydrateProfile(row, environment);
+        void loadBilling(companyId);
     }
 
     function chooseEnvironment(value: Environment) {
@@ -186,6 +235,7 @@ export default function PlatformCdasPage() {
                 credit_limit: creditLimit.trim() ? Number(creditLimit) : null,
                 warning_threshold: warningThreshold.trim() ? Number(warningThreshold) : null,
                 auto_suspend_on_limit: autoSuspend,
+                billing_due_days: Number(billingDueDays || 14),
             });
             toast.success(`CDAS subscription ${decision}`);
             await load();
@@ -193,6 +243,60 @@ export default function PlatformCdasPage() {
             toast.error(getErrorMessage(error, "CDAS subscription decision could not be saved."));
         } finally {
             setSavingDecision(false);
+        }
+    }
+
+    async function createManualInvoice() {
+        if (!selectedCompanyId || !invoiceStart || !invoiceEnd) return;
+        setBillingAction("invoice");
+        try {
+            await api.post(`/platform-owner/cdas/invoices/${selectedCompanyId}`, {
+                period_start: invoiceStart,
+                period_end: invoiceEnd,
+            });
+            toast.success("CDAS invoice issued");
+            await loadBilling(selectedCompanyId);
+            await load();
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "CDAS invoice could not be issued."));
+        } finally {
+            setBillingAction(null);
+        }
+    }
+
+    async function markInvoicePaid(invoiceId: string) {
+        if (!selectedCompanyId) return;
+        setBillingAction(`paid:${invoiceId}`);
+        try {
+            await api.post(`/platform-owner/cdas/invoices/${invoiceId}/paid`);
+            toast.success("CDAS invoice marked paid");
+            await loadBilling(selectedCompanyId);
+            await load();
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "CDAS invoice payment could not be recorded."));
+        } finally {
+            setBillingAction(null);
+        }
+    }
+
+    async function adjustTransaction(transactionId: string, action: "waive" | "refund") {
+        if (!selectedCompanyId || adjustmentReason.trim().length < 3) {
+            toast.error("Enter a reason of at least 3 characters.");
+            return;
+        }
+        setBillingAction(`${action}:${transactionId}`);
+        try {
+            await api.post(`/platform-owner/cdas/transactions/${transactionId}/${action}`, {
+                reason: adjustmentReason.trim(),
+            });
+            toast.success(action === "waive" ? "CDAS charge waived" : "CDAS charge refunded");
+            setAdjustmentReason("");
+            await loadBilling(selectedCompanyId);
+            await load();
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, `CDAS charge could not be ${action === "waive" ? "waived" : "refunded"}.`));
+        } finally {
+            setBillingAction(null);
         }
     }
 
@@ -264,16 +368,51 @@ export default function PlatformCdasPage() {
                                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                                     {PRICE_FIELDS.map(([key, label]) => <div key={key} className="space-y-2"><Label>{label}</Label><Input type="number" min={0} step="0.01" value={pricing[key] ?? "0"} onChange={(e) => setPricing((current) => ({ ...current, [key]: e.target.value }))} /></div>)}
                                 </div>
-                                <div className="grid gap-4 sm:grid-cols-3">
+                                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                                     <div className="space-y-2"><Label>Currency</Label><Input maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} /></div>
                                     <div className="space-y-2"><Label>Credit limit</Label><Input type="number" min={0} step="0.01" value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} placeholder="Unlimited" /></div>
                                     <div className="space-y-2"><Label>Warning threshold</Label><Input type="number" min={0} step="0.01" value={warningThreshold} onChange={(e) => setWarningThreshold(e.target.value)} placeholder="Optional" /></div>
+                                    <div className="space-y-2"><Label>Invoice due days</Label><Input type="number" min={1} max={90} value={billingDueDays} onChange={(e) => setBillingDueDays(e.target.value)} /></div>
                                 </div>
                                 <label className="flex items-center gap-3 rounded-2xl border p-4 text-sm font-semibold"><Checkbox checked={autoSuspend} onCheckedChange={(value) => setAutoSuspend(value === true)} />Automatically suspend Live CDAS access when the credit limit would be exceeded</label>
                                 <div className="flex flex-wrap gap-2">
                                     <LoadingButton loading={savingDecision} onClick={() => void decide("approved")}>{selected.status === "approved" ? "Save controls" : "Approve subscription"}</LoadingButton>
                                     {selected.status === "approved" ? <LoadingButton loading={savingDecision} variant="outline" onClick={() => void decide("suspended")}>Suspend</LoadingButton> : null}
                                     {selected.status === "pending" ? <LoadingButton loading={savingDecision} variant="outline" onClick={() => void decide("rejected")}>Reject</LoadingButton> : null}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader><CardTitle>Billing & invoices</CardTitle><CardDescription>Issue exceptional manual invoices, record payment, and review the monthly automated billing cycle.</CardDescription></CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="grid gap-3 sm:grid-cols-3">
+                                    <div className="space-y-2"><Label>Period start</Label><Input type="date" value={invoiceStart} onChange={(e) => setInvoiceStart(e.target.value)} /></div>
+                                    <div className="space-y-2"><Label>Period end</Label><Input type="date" value={invoiceEnd} onChange={(e) => setInvoiceEnd(e.target.value)} /></div>
+                                    <div className="flex items-end"><LoadingButton className="w-full" loading={billingAction === "invoice"} disabled={!invoiceStart || !invoiceEnd} onClick={() => void createManualInvoice()}>Issue invoice</LoadingButton></div>
+                                </div>
+                                <div className="space-y-2">
+                                    {invoices.length ? invoices.map((invoice) => (
+                                        <div key={invoice.id} className="flex flex-col gap-3 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
+                                            <div><p className="font-black">{invoice.invoice_number}</p><p className="text-xs text-muted-foreground">{invoice.period_start} → {invoice.period_end} · {invoice.transaction_count} operations · due {new Date(invoice.due_at).toLocaleDateString()}</p></div>
+                                            <div className="flex items-center gap-2"><Badge variant={invoice.status === "paid" ? "default" : "secondary"}>{titleCase(invoice.status)}</Badge><strong>{formatMoney(invoice.amount_due)}</strong>{invoice.status !== "paid" ? <LoadingButton size="sm" loading={billingAction === `paid:${invoice.id}`} onClick={() => void markInvoicePaid(invoice.id)}>Mark paid</LoadingButton> : null}</div>
+                                        </div>
+                                    )) : <p className="text-sm text-muted-foreground">No CDAS invoices have been issued for this company.</p>}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader><CardTitle>Charge adjustments</CardTitle><CardDescription>Waive an unpaid charge or refund a settled charge without deleting financial history.</CardDescription></CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="space-y-2"><Label>Adjustment reason</Label><Input value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)} placeholder="Required reason for waiver or refund" /></div>
+                                <div className="space-y-2">
+                                    {transactions.length ? transactions.map((transaction) => (
+                                        <div key={transaction.id} className="flex flex-col gap-3 rounded-2xl border p-4 lg:flex-row lg:items-center lg:justify-between">
+                                            <div><p className="font-black">{titleCase(transaction.operation_type)} · {transaction.transaction_reference}</p><p className="text-xs text-muted-foreground">{transaction.environment.toUpperCase()} · {new Date(transaction.accrued_at).toLocaleString()} · {titleCase(transaction.status)}</p></div>
+                                            <div className="flex items-center gap-2"><strong>{formatMoney(transaction.amount)}</strong>{transaction.status === "accrued" ? <LoadingButton size="sm" variant="outline" loading={billingAction === `waive:${transaction.id}`} onClick={() => void adjustTransaction(transaction.id, "waive")}>Waive</LoadingButton> : null}{transaction.status === "settled" ? <LoadingButton size="sm" variant="outline" loading={billingAction === `refund:${transaction.id}`} onClick={() => void adjustTransaction(transaction.id, "refund")}>Refund</LoadingButton> : null}</div>
+                                        </div>
+                                    )) : <p className="text-sm text-muted-foreground">No metered CDAS charges for this company.</p>}
                                 </div>
                             </CardContent>
                         </Card>

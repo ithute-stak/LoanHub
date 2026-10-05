@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from core.access_control import require_platform_owner
 from database.models.company import LoanCompany
-from database.models.platform_cdas import PlatformCdasCredentialProfile, PlatformCdasSubscription
+from database.models.platform_cdas import PlatformCdasCredentialProfile, PlatformCdasSubscription, PlatformCdasTransaction
 from database.models.user import User
 from database.session import get_db
 from integrations.cdas import CdasError
@@ -19,11 +20,18 @@ from services.cdas_request_budget import consume_cdas_request_budget
 from services.platform_cdas_service import (
     decrypt_profile_password,
     get_profile,
+    create_invoice,
+    invoice_payload,
+    list_invoices,
     list_transactions,
+    mark_invoice_paid,
     profile_payload,
+    refund_transaction,
     review_subscription,
     subscription_payload,
+    transaction_payload,
     upsert_profile,
+    waive_transaction,
 )
 
 
@@ -38,6 +46,15 @@ class CdasProfileWrite(BaseModel):
     timeout_seconds: float = Field(default=20, ge=1, le=120)
 
 
+class CdasTransactionWaiver(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CdasInvoiceCreate(BaseModel):
+    period_start: date
+    period_end: date
+
+
 class CdasSubscriptionDecision(BaseModel):
     decision: Literal["approved", "rejected", "suspended"]
     currency: str = Field(default="LSL", min_length=3, max_length=3)
@@ -45,6 +62,7 @@ class CdasSubscriptionDecision(BaseModel):
     credit_limit: float | None = Field(default=None, ge=0)
     warning_threshold: float | None = Field(default=None, ge=0)
     auto_suspend_on_limit: bool = True
+    billing_due_days: int = Field(default=14, ge=1, le=90)
     reason: str | None = Field(default=None, max_length=1000)
     notes: str | None = Field(default=None, max_length=2000)
 
@@ -104,6 +122,7 @@ def decide_cdas_subscription(
         credit_limit=Decimal(str(payload.credit_limit)) if payload.credit_limit is not None else None,
         warning_threshold=Decimal(str(payload.warning_threshold)) if payload.warning_threshold is not None else None,
         auto_suspend_on_limit=payload.auto_suspend_on_limit,
+        billing_due_days=payload.billing_due_days,
         reason=payload.reason,
         notes=payload.notes,
     )
@@ -172,6 +191,69 @@ async def test_cdas_profile(
 def get_cdas_transactions(
     db: Session = Depends(get_db),
     _: User = Depends(require_platform_owner),
+    company_id: UUID | None = None,
     limit: int = 200,
 ):
-    return list_transactions(db, limit=limit)
+    return list_transactions(db, company_id=company_id, limit=limit)
+
+
+
+@router.post("/transactions/{transaction_id}/waive")
+def waive_cdas_transaction(
+    transaction_id: UUID,
+    payload: CdasTransactionWaiver,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        waive_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )
+
+
+@router.post("/invoices/{company_id}")
+def issue_cdas_invoice(
+    company_id: UUID,
+    payload: CdasInvoiceCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(
+        create_invoice(
+            db,
+            company_id=company_id,
+            period_start=payload.period_start,
+            period_end=payload.period_end,
+        )
+    )
+
+
+@router.get("/invoices")
+def get_cdas_invoices(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+    company_id: UUID | None = None,
+    limit: int = 200,
+):
+    return list_invoices(db, company_id=company_id, limit=limit)
+
+
+@router.post("/invoices/{invoice_id}/paid")
+def mark_cdas_invoice_paid(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return invoice_payload(mark_invoice_paid(db, invoice_id=invoice_id))
+
+
+
+@router.post("/transactions/{transaction_id}/refund")
+def refund_cdas_transaction(
+    transaction_id: UUID,
+    payload: CdasTransactionWaiver,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_platform_owner),
+):
+    return transaction_payload(
+        refund_transaction(db, transaction_id=transaction_id, reason=payload.reason)
+    )

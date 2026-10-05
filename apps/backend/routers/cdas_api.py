@@ -54,6 +54,7 @@ from services.cdas_request_budget import get_cdas_request_budget_status
 from services.platform_cdas_service import (
     assert_live_credit_available,
     get_subscription as get_cdas_subscription,
+    list_invoices as list_cdas_invoices,
     list_transactions as list_cdas_payg_transactions,
     record_successful_operation,
     request_subscription as request_cdas_subscription,
@@ -1516,3 +1517,15 @@ def get_company_cdas_transactions(
     _require_company_manager(context)
     assert context.company_id is not None
     return list_cdas_payg_transactions(db, company_id=context.company_id, limit=limit)
+
+
+
+@router.get("/invoices")
+def get_company_cdas_invoices(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    return list_cdas_invoices(db, company_id=context.company_id, limit=limit)
