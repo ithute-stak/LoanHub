@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import type {
   AccountingAccount,
+  FinancialBooksPack,
   FinancialStatement,
   JournalEntry,
   TrialBalance,
@@ -65,4 +66,35 @@ export async function getProfitAndLoss(filters?: AccountingFilters): Promise<Fin
 
 export async function getBalanceSheet(filters?: AccountingFilters): Promise<FinancialStatement> {
   return (await api.get<FinancialStatement>("/accounting/balance-sheet", { params: params(filters) })).data;
+}
+
+
+export async function getFinancialBooks(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  fromDate: string;
+  toDate: string;
+  includeLedgerDetail?: boolean;
+}): Promise<FinancialBooksPack> {
+  return (await api.get<FinancialBooksPack>("/accounting/financial-books", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      from_date: filters.fromDate,
+      to_date: filters.toDate,
+      include_ledger_detail: filters.includeLedgerDetail ?? true,
+    },
+  })).data;
+}
+
+export async function createOpeningBalanceMigration(payload: {
+  entry_date: string;
+  description: string;
+  migration_reference: string;
+  branch_id?: string | null;
+  lines: Array<{ account_id: string; description?: string; debit: number; credit: number }>;
+}, companyId?: string): Promise<JournalEntry> {
+  return (await api.post<JournalEntry>("/accounting/opening-balances", payload, {
+    params: { company_id: companyId },
+  })).data;
 }
