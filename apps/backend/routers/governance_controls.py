@@ -228,6 +228,72 @@ def create_accounting_period(payload: AccountingPeriodCreate, db: Session = Depe
     return item
 
 
+@router.get("/accounting-periods/{period_id}/readiness")
+def accounting_period_readiness(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
+    item = db.query(AccountingPeriod).filter(
+        AccountingPeriod.id == period_id,
+        AccountingPeriod.company_id == context.company_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Accounting period not found")
+    return {
+        "period": {
+            "id": str(item.id),
+            "period_start": item.period_start.isoformat(),
+            "period_end": item.period_end.isoformat(),
+            "status": item.status,
+            "branch_id": str(item.branch_id) if item.branch_id else None,
+        },
+        "close_pack": period_close_pack(
+            db,
+            company_id=context.company_id,
+            period_start=item.period_start,
+            period_end=item.period_end,
+            branch_id=item.branch_id,
+        ),
+    }
+
+
+@router.post("/accounting-periods/{period_id}/reopen")
+def reopen_accounting_period(
+    period_id: UUID,
+    payload: AccountingPeriodAction,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    item = db.query(AccountingPeriod).filter(
+        AccountingPeriod.id == period_id,
+        AccountingPeriod.company_id == context.company_id,
+    ).with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Accounting period not found")
+    if item.status not in {"locked", "closed"}:
+        raise HTTPException(status_code=409, detail="Only a locked or closed period can be reopened")
+    if item.status == "closed" and item.closed_by_user_id == context.user.id:
+        raise HTTPException(
+            status_code=409,
+            detail="Maker/checker control: the user who hard-closed the period cannot reopen it",
+        )
+
+    previous_status = item.status
+    stamp = _now()
+    audit_line = (
+        f"[{stamp.isoformat()}] Reopened from {previous_status} by {context.user.id}: "
+        f"{payload.note.strip()}"
+    )
+    item.status = "open"
+    item.close_note = "\n".join(filter(None, [item.close_note, audit_line]))
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 @router.post("/accounting-periods/{period_id}/lock")
 def lock_accounting_period(period_id: UUID, payload: AccountingPeriodAction, db: Session = Depends(get_db), context: TenantContext = Depends(get_tenant_context)):
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES)

@@ -74,6 +74,27 @@ class JournalLineCreate(BaseModel):
         return self
 
 
+class OpeningBalanceMigrationCreate(BaseModel):
+    entry_date: date
+    description: str = Field(min_length=5, max_length=1000)
+    migration_reference: str = Field(min_length=3, max_length=120)
+    branch_id: UUID | None = None
+    lines: list[JournalLineCreate]
+
+    @field_validator("lines")
+    @classmethod
+    def enough_opening_lines(cls, value: list[JournalLineCreate]) -> list[JournalLineCreate]:
+        if len(value) < 2:
+            raise ValueError("Opening balances need at least two lines")
+        debit = sum((line.debit for line in value), Decimal("0"))
+        credit = sum((line.credit for line in value), Decimal("0"))
+        if debit <= 0 or debit != credit:
+            raise ValueError("Opening balance debits and credits must be equal and greater than zero")
+        if len({line.account_id for line in value}) < 2:
+            raise ValueError("Opening balances must affect at least two accounts")
+        return value
+
+
 class JournalEntryCreate(BaseModel):
     entry_date: date
     description: str = Field(min_length=2, max_length=1000)
