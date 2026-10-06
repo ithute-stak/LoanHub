@@ -86,6 +86,7 @@ from services.accounting_service import (
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
     record_electronic_clearing_settlement,
+    receipts_and_payments_summary,
     scope_key,
     source_book_traceability,
     incomplete_records_control,
@@ -949,6 +950,27 @@ def incomplete_records(
     selected_company_id = resolve_scope(context, company_id)
     selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
     return incomplete_records_control(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
+
+
+@router.get("/receipts-and-payments")
+def receipts_and_payments(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return receipts_and_payments_summary(
         db,
         company_id=selected_company_id,
         from_date=from_date,

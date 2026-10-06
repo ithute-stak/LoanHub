@@ -243,6 +243,27 @@ def test_chapter_26_suspense_corrections_remain_journal_based():
     assert 'target_account_code == "2990"' in service
 
 
+def test_chapter_28_cash_equivalents_exclude_unsettled_electronic_clearing():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert 'CASH_EQUIVALENT_CODES = {"1000", "1010"}' in service
+    assert '"electronic_clearing": "excluded_until_settled_to_cash_or_bank"' in service
+    assert 'for code in CASH_EQUIVALENT_CODES' in service
+
+
+def test_chapter_29_receipts_and_payments_summary_is_cash_basis_only():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def receipts_and_payments_summary(" in service
+    assert '"basis": "cash_book_summary"' in service
+    assert "does not replace, LoanHub's accrual-basis income statement" in service
+    assert '@router.get("/receipts-and-payments")' in router
+
+
+def test_chapter_30_joint_venture_accounting_is_not_forced_into_core_lending():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "joint_venture" not in service.lower()
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
