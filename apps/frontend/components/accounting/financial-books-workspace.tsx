@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { cancelYearEndClosingDraft, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getMonthEndControlPack, listAccountingAccounts, prepareMonthEndReversalDrafts, previewYearEndClosing, type MonthEndControlPack } from "@/api/accounting";
+import { approveFinancialPlan, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, listAccountingAccounts, listFinancialPlans, prepareMonthEndReversalDrafts, previewYearEndClosing, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
 type OpeningLine = { account_id: string; debit: number; credit: number; description: string };
+type PlanningLine = { account_code: string; period_start: string; amount: number; note: string };
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
@@ -55,6 +56,18 @@ export function FinancialBooksWorkspace() {
   const [adjustmentReversalDate, setAdjustmentReversalDate] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
+  const [plans, setPlans] = useState<FinancialPlan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [planVariance, setPlanVariance] = useState<FinancialPlanVariance | null>(null);
+  const [planningWorking, setPlanningWorking] = useState(false);
+  const [planName, setPlanName] = useState(`Budget ${new Date().getFullYear()}`);
+  const [planType, setPlanType] = useState<"budget" | "forecast">("budget");
+  const [planStart, setPlanStart] = useState(yearStart());
+  const [planEnd, setPlanEnd] = useState(yearEnd());
+  const [planNotes, setPlanNotes] = useState("");
+  const [planningLines, setPlanningLines] = useState<PlanningLine[]>([
+    { account_code: "4000", period_start: yearStart(), amount: 0, note: "" },
+  ]);
   const [loading, setLoading] = useState(false);
   const [periodWorking, setPeriodWorking] = useState(false);
   const [openingWorking, setOpeningWorking] = useState(false);
@@ -103,12 +116,15 @@ export function FinancialBooksWorkspace() {
   const loadControls = useCallback(async () => {
     if (!companyId) return;
     try {
-      const [periodRows, accountRows] = await Promise.all([
+      const [periodRows, accountRows, planRows] = await Promise.all([
         governanceControlsApi.accountingPeriods(),
         listAccountingAccounts(companyId),
+        listFinancialPlans(companyId, effectiveBranchId),
       ]);
       setPeriods(periodRows);
       setAccounts(accountRows);
+      setPlans(planRows);
+      setSelectedPlanId((current) => current || planRows[0]?.id || "");
       setSelectedPeriod((current) => current || periodRows[0]?.id || "");
       if (accountRows.length >= 2) {
         setOpeningLines((current) => current.map((line, index) => ({
@@ -119,7 +135,7 @@ export function FinancialBooksWorkspace() {
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not load accounting controls"));
     }
-  }, [companyId]);
+  }, [companyId, effectiveBranchId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -224,6 +240,83 @@ export function FinancialBooksWorkspace() {
     } finally {
       setAdjustmentWorking(false);
     }
+  }
+
+  async function createPlan() {
+    if (!companyId || !planName.trim()) return;
+    setPlanningWorking(true);
+    try {
+      const row = await createFinancialPlan({
+        name: planName.trim(),
+        plan_type: planType,
+        fiscal_start: planStart,
+        fiscal_end: planEnd,
+        branch_id: effectiveBranchId,
+        notes: planNotes.trim() || undefined,
+        lines: planningLines.filter((line) => line.account_code && Number(line.amount) >= 0).map((line) => ({
+          account_code: line.account_code,
+          period_start: line.period_start,
+          amount: Number(line.amount),
+          note: line.note.trim() || undefined,
+        })),
+      }, companyId);
+      toast.success("Financial plan draft created");
+      await loadControls();
+      setSelectedPlanId(row.id);
+      setPlanVariance(null);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not create financial plan"));
+    } finally {
+      setPlanningWorking(false);
+    }
+  }
+
+  async function approvePlan() {
+    if (!companyId || !selectedPlanId) return;
+    setPlanningWorking(true);
+    try {
+      await approveFinancialPlan(selectedPlanId, companyId);
+      toast.success("Financial plan approved");
+      await loadControls();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not approve financial plan"));
+    } finally {
+      setPlanningWorking(false);
+    }
+  }
+
+  async function analyzePlan() {
+    if (!companyId || !selectedPlanId) return;
+    setPlanningWorking(true);
+    try {
+      const result = await getFinancialPlanVariance(selectedPlanId, toDate, companyId, effectiveBranchId);
+      setPlanVariance(result);
+      toast.success("Budget variance analysis refreshed");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not analyse financial plan"));
+    } finally {
+      setPlanningWorking(false);
+    }
+  }
+
+  async function rollForecast() {
+    if (!companyId || !selectedPlanId) return;
+    setPlanningWorking(true);
+    try {
+      const row = await createRollingForecast(selectedPlanId, toDate, `Rolling forecast ${toDate}`, companyId);
+      toast.success("Rolling forecast draft created");
+      await loadControls();
+      setSelectedPlanId(row.id);
+      setPlanVariance(null);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not create rolling forecast"));
+    } finally {
+      setPlanningWorking(false);
+    }
+  }
+
+  function updatePlanningLine(index: number, patch: Partial<PlanningLine>) {
+    setPlanningLines((rows) => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
   }
 
   async function createPeriod() {
@@ -416,10 +509,11 @@ export function FinancialBooksWorkspace() {
       </section>
 
       <Tabs defaultValue="books" className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-5">
           <TabsTrigger value="books">Financial books</TabsTrigger>
           <TabsTrigger value="periods">Period close</TabsTrigger>
           <TabsTrigger value="month-end">Month-end controls</TabsTrigger>
+          <TabsTrigger value="planning">Planning</TabsTrigger>
           <TabsTrigger value="opening">Opening balances</TabsTrigger>
         </TabsList>
 
@@ -609,6 +703,45 @@ export function FinancialBooksWorkspace() {
               </Card>
             </div>
           </> : null}
+        </TabsContent>
+
+        <TabsContent value="planning" className="space-y-5">
+          <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Budgeting & forecasting</CardTitle><CardDescription>Create versioned management plans without changing posted accounting truth. Approval uses maker/checker control.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Plan name"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
+                <Field label="Plan type"><Select value={planType} onValueChange={(value) => setPlanType(value as "budget" | "forecast")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="budget">Budget</SelectItem><SelectItem value="forecast">Forecast</SelectItem></SelectContent></Select></Field>
+                <Field label="Start"><Input type="date" value={planStart} onChange={(e) => setPlanStart(e.target.value)} /></Field>
+                <Field label="End"><Input type="date" value={planEnd} onChange={(e) => setPlanEnd(e.target.value)} /></Field>
+              </div>
+              <Field label="Planning notes"><Textarea value={planNotes} onChange={(e) => setPlanNotes(e.target.value)} /></Field>
+              <div className="overflow-x-auto rounded-2xl border">
+                <Table><TableHeader><TableRow><TableHead>Account</TableHead><TableHead>Month</TableHead><TableHead>Planned amount</TableHead><TableHead>Note</TableHead></TableRow></TableHeader><TableBody>{planningLines.map((line, index) => <TableRow key={index}><TableCell><Select value={line.account_code} onValueChange={(account_code) => updatePlanningLine(index, { account_code })}><SelectTrigger className="min-w-64"><SelectValue /></SelectTrigger><SelectContent>{accounts.filter((account) => ["revenue","expense","asset","liability","equity"].includes(account.account_type)).map((account) => <SelectItem key={account.id} value={account.code}>{account.code} · {account.name}</SelectItem>)}</SelectContent></Select></TableCell><TableCell><Input type="date" value={line.period_start} onChange={(e) => updatePlanningLine(index, { period_start: e.target.value })} /></TableCell><TableCell><Input type="number" min={0} step="0.01" value={line.amount || ""} onChange={(e) => updatePlanningLine(index, { amount: Number(e.target.value || 0) })} /></TableCell><TableCell><Input value={line.note} onChange={(e) => updatePlanningLine(index, { note: e.target.value })} /></TableCell></TableRow>)}</TableBody></Table>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setPlanningLines((rows) => [...rows, { account_code: accounts[0]?.code ?? "4000", period_start: planStart, amount: 0, note: "" }])}>Add plan line</Button>
+                <LoadingButton loading={planningWorking} onClick={() => void createPlan()}>Create plan draft</LoadingButton>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Plan control & variance intelligence</CardTitle><CardDescription>Actuals are recomputed from posted journal lines; explanations state observed variances only and do not invent business causes.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <Field label="Financial plan"><Select value={selectedPlanId} onValueChange={(value) => { setSelectedPlanId(value); setPlanVariance(null); }}><SelectTrigger><SelectValue placeholder="Select plan" /></SelectTrigger><SelectContent>{plans.map((plan) => <SelectItem key={plan.id} value={plan.id}>{plan.name} · {titleCase(plan.plan_type)} · {titleCase(plan.status)} · v{plan.version}</SelectItem>)}</SelectContent></Select></Field>
+              <div className="flex flex-wrap gap-2">
+                <LoadingButton loading={planningWorking} variant="outline" onClick={() => void approvePlan()}>Approve plan</LoadingButton>
+                <LoadingButton loading={planningWorking} onClick={() => void analyzePlan()}>Analyse actual vs plan</LoadingButton>
+                <LoadingButton loading={planningWorking} variant="outline" onClick={() => void rollForecast()}>Create rolling forecast</LoadingButton>
+              </div>
+              {planVariance ? <>
+                <div className="grid gap-3 md:grid-cols-3"><Metric label="Planned" value={formatMoney(planVariance.planned_total)} /><Metric label="Actual" value={formatMoney(planVariance.actual_total)} /><Metric label="Net variance" value={formatMoney(planVariance.net_variance)} /></div>
+                <p className="text-xs text-muted-foreground">{planVariance.intelligence_policy}</p>
+                <div className="space-y-2">{planVariance.top_variances.map((row) => <div key={`${row.account_code}-${row.period}`} className="rounded-xl border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{row.account_code} · {row.account_name}</p><p className="text-xs text-muted-foreground">{row.period}</p></div><Badge variant={row.favorability === "unfavorable" ? "destructive" : row.favorability === "favorable" ? "default" : "outline"}>{titleCase(row.favorability)}</Badge></div><p className="mt-2 text-sm">{row.explanation}</p></div>)}</div>
+              </> : null}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="opening" className="space-y-5">
