@@ -606,6 +606,15 @@ def disburse_cash_loan(
     notes: str | None = None,
     idempotency_key: str | None = None,
 ) -> tuple[PaymentTransaction, CashTransaction | None]:
+    # Serialize every payout attempt for this loan before reading mutable state.
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(ClientCompanyLoan.id == loan.id)
+        .with_for_update()
+        .first()
+    )
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
     if loan.status != LoanStatus.APPROVED:
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
