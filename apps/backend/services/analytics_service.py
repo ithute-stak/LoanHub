@@ -46,6 +46,7 @@ from database.models.subscription import CompanySubscription
 from database.models.system_error import SystemErrorLog
 from database.models.user import User
 from database.schemas.analytics import AnalyticsDashboardRead
+from services.portfolio_risk_service import enterprise_early_warning
 
 
 ACTIVE_PORTFOLIO_STATUSES = {
@@ -681,6 +682,175 @@ def build_company_analytics(
         **payload,
     )
 
+
+
+def build_management_command_intelligence(
+    db: Session,
+    *,
+    context: TenantContext,
+    date_from: date,
+    date_to: date,
+    branch_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Rank evidence-backed management priorities across lending, collections, finance and controls."""
+    analytics = build_company_analytics(
+        db,
+        context=context,
+        date_from=date_from,
+        date_to=date_to,
+        granularity=None,
+        branch_id=branch_id,
+    )
+    resolved_branch = UUID(analytics.scope.branch_id) if analytics.scope.branch_id else None
+    early = enterprise_early_warning(
+        db,
+        company_id=context.company_id,
+        branch_id=resolved_branch,
+        as_of=date.today(),
+    )
+
+    route_map = {
+        "credit": "/company/portfolio-risk",
+        "origination": "/company/origination",
+        "concentration": "/company/portfolio-risk",
+        "operations": "/company/branches",
+        "liquidity": "/company/accounting",
+        "finance": "/company/accounting",
+        "controls": "/company/accounting",
+    }
+    action_map = {
+        "portfolio_par30_critical": "Escalate 30+ day delinquency and review the highest-exposure overdue loans.",
+        "portfolio_par30_high": "Prioritise 30+ day arrears and confirm collection ownership.",
+        "par30_deteriorating": "Review new delinquency migrations and collection effectiveness since the previous snapshot.",
+        "first_payment_default_high": "Review recent origination quality and first-instalment collection controls.",
+        "first_payment_default_watch": "Inspect first-instalment failures before the next origination cycle.",
+        "employer_concentration_high": "Review employer concentration limits and contingency collection channels.",
+        "product_concentration_high": "Review product concentration and product-specific delinquency quality.",
+        "branch_concentration_high": "Review branch exposure concentration and funding allocation.",
+        "branch_delinquency_outlier": "Assign management review to the underperforming branch and compare collections execution.",
+        "liquidity_shortfall_forecast": "Review treasury commitments, collection assumptions and available funding before the projected shortfall.",
+        "expense_spike": "Inspect the accounts driving the latest 30-day expense increase.",
+        "margin_compression": "Review revenue and expense movements behind the margin decline.",
+        "current_ratio_below_one": "Review near-term liabilities, available cash and working-capital actions.",
+        "accounting_control_deterioration": "Resolve failed accounting controls before the next period close.",
+        "supporting_evidence_gaps": "Attach or validate supporting evidence for review-sensitive journals.",
+    }
+
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    actions = []
+    for signal in early["signals"]:
+        actions.append({
+            "id": signal["code"],
+            "source": "enterprise_early_warning",
+            "domain": signal["domain"],
+            "severity": signal["severity"],
+            "priority_score": int(signal["weight"]) * 4,
+            "title": signal["title"],
+            "why_now": signal["explanation"],
+            "recommended_action": action_map.get(signal["code"], "Review the supporting evidence and assign an accountable owner."),
+            "action_url": route_map.get(signal["domain"], "/company/command-centre"),
+            "evidence": signal["evidence"],
+            "decision_mode": "human_review",
+        })
+
+    tone_map = {"critical": "critical", "warning": "medium", "neutral": "low", "positive": "low"}
+    existing_ids = {row["id"] for row in actions}
+    for index, insight in enumerate(analytics.insights):
+        if insight.tone == "positive":
+            continue
+        synthetic_id = f"analytics_{index}_{insight.title.lower().replace(' ', '_')[:48]}"
+        if synthetic_id in existing_ids:
+            continue
+        severity = tone_map.get(insight.tone, "low")
+        actions.append({
+            "id": synthetic_id,
+            "source": "company_analytics",
+            "domain": "operations",
+            "severity": severity,
+            "priority_score": 18 if severity == "critical" else 8 if severity == "medium" else 3,
+            "title": insight.title,
+            "why_now": insight.message,
+            "recommended_action": "Open the linked operating area, verify the evidence, and assign follow-up ownership.",
+            "action_url": insight.action_url or "/company/command-centre",
+            "evidence": {},
+            "decision_mode": "human_review",
+        })
+
+    actions.sort(
+        key=lambda row: (
+            priority_order.get(row["severity"], 9),
+            -int(row["priority_score"]),
+            row["title"],
+        )
+    )
+    for rank, row in enumerate(actions, start=1):
+        row["rank"] = rank
+
+    metric_map = {item.key: item for item in analytics.metrics}
+    opportunities = []
+    collection_metric = metric_map.get("collection_rate")
+    if collection_metric and collection_metric.value >= 95:
+        opportunities.append({
+            "code": "strong_collection_performance",
+            "title": "Collection performance is strong",
+            "evidence": {"collection_rate_percent": collection_metric.value},
+            "management_option": "Consider whether liquidity capacity can support planned lending growth without weakening underwriting standards.",
+            "action_url": "/company/analytics",
+        })
+    cashflow_metric = metric_map.get("net_cashflow")
+    if cashflow_metric and cashflow_metric.value > 0:
+        opportunities.append({
+            "code": "positive_lending_cashflow",
+            "title": "Lending cash flow is positive",
+            "evidence": {"net_lending_cashflow": cashflow_metric.value},
+            "management_option": "Review treasury forecasts and approved budgets before redeploying surplus liquidity.",
+            "action_url": "/company/accounting",
+        })
+
+    critical = sum(1 for row in actions if row["severity"] == "critical")
+    high = sum(1 for row in actions if row["severity"] == "high")
+    medium = sum(1 for row in actions if row["severity"] == "medium")
+    command_status = "critical" if critical else "high" if high else "attention" if medium else "controlled"
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "branch_id": str(resolved_branch) if resolved_branch else None,
+        "command_status": command_status,
+        "enterprise_risk_score": early["risk_score"],
+        "enterprise_risk_level": early["risk_level"],
+        "priority_counts": {
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "total": len(actions),
+        },
+        "priority_actions": actions[:20],
+        "opportunities": opportunities,
+        "executive_metrics": {
+            key: {
+                "label": item.label,
+                "value": item.value,
+                "format": item.format,
+                "change_percent": item.change_percent,
+            }
+            for key, item in metric_map.items()
+            if key in {
+                "active_loans",
+                "outstanding_balance",
+                "collections",
+                "disbursements",
+                "net_cashflow",
+                "collection_rate",
+                "arrears_rate",
+            }
+        },
+        "policy_note": (
+            "Management Command Intelligence ranks evidence-backed items for human review. "
+            "It does not approve loans, move money, post journals, discipline staff or close control exceptions automatically."
+        ),
+    }
 
 def build_platform_analytics(
     db: Session,
