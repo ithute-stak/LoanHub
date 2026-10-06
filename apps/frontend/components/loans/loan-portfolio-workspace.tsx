@@ -627,7 +627,7 @@ export function LoanPortfolioWorkspace({
         suggestions={suggestions}
         minimumCharacters={1}
         maxSuggestions={12}
-        placeholder="Folio, loan, borrower, ID, phone, employer, branch, contract..."
+        placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
         suggestionLabel="Company loans by folio"
         emptyMessage="No loan or folio matches that text."
         wrapperClassName="w-full"
@@ -956,7 +956,7 @@ function LoanTable({
         <Table className={compact ? "min-w-[1160px]" : "min-w-[1480px] table-fixed"}>
             <TableHeader className={compact ? "bg-muted/20" : "sticky top-0 z-20 bg-background/95 shadow-[0_1px_0_hsl(var(--border))] backdrop-blur"}>
                 <TableRow className="hover:bg-transparent">
-                    <TableHead className={compact ? "min-w-[15rem] pl-4" : "w-[190px] pl-4"}>Loan</TableHead>
+                    <TableHead className={compact ? "min-w-[15rem] pl-4" : "w-[190px] pl-4"}>Folio / loan</TableHead>
                     <TableHead className={compact ? "min-w-[9rem]" : "w-[145px]"}>Folio No.</TableHead>
                     {!compact ? <TableHead className="w-[170px]">Borrower</TableHead> : null}
                     {!compact ? <TableHead className="w-[135px]">Branch / channel</TableHead> : null}
