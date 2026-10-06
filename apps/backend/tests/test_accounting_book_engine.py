@@ -534,6 +534,12 @@ def test_year_end_closing_supports_monthly_periods_and_protects_reopen():
     assert "This period is covered by a prepared year-end closing journal" in controls
 
 
+def test_year_end_draft_cancellation_keeps_branch_scope():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "Year-end draft is outside your branch scope" in router
+    assert "Only the draft creator or company management can cancel this year-end draft" in router
+
+
 def test_finance_workspace_exposes_exports_and_year_end_close():
     frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
     assert "Export PDF" in frontend
