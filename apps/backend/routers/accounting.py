@@ -912,11 +912,13 @@ def approve_commitment(
 ):
     require_write(context)
     selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, None)
     row = approve_treasury_commitment(
         db,
         company_id=selected_company_id,
         commitment_id=commitment_id,
         user_id=context.user.id,
+        branch_id=selected_branch_id,
     )
     db.commit()
     db.refresh(row)
