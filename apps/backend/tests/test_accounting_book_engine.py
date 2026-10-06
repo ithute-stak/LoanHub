@@ -1007,3 +1007,27 @@ def test_cash_flow_policy_executes_explicit_lending_asset_and_equity_classificat
     assert _cash_flow_section(
         ordinary_entry, {"3000"}, company_id="tenant"
     ) == ("financing", "owner_equity_counterpart")
+
+
+def test_month_end_control_pack_reconciles_subledger_and_period_controls():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "def loan_receivables_subledger(" in service
+    assert '"loan_folio_subledger_agrees_to_control_and_gl"' in service
+    assert '"folio_to_control_variance"' in service
+    assert "def month_end_control_pack(" in service
+    assert "MONTH_END_ADJUSTMENT_REFERENCE_TYPES" in service
+    assert '"fixed_asset_depreciation"' in service
+    assert '"adjustment_register"' in service
+    assert "Estimated accruals, prepayments and other judgemental adjustments remain" in service
+
+    assert '@router.get("/month-end-control-pack")' in router
+    assert "month_end_control_pack(" in router
+    assert "getMonthEndControlPack" in frontend_api
+    assert "Month-end controls" in frontend
+    assert "Loan receivables subsidiary ledger" in frontend
+    assert "Fixed-asset depreciation due" in frontend
+    assert "Adjustment register" in frontend
