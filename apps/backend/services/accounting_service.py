@@ -3813,6 +3813,268 @@ def month_end_control_pack(
         ),
     }
 
+
+MONTH_END_DRAFT_TYPES = {
+    "accrual": "accrual_adjustment",
+    "prepayment": "prepayment_adjustment",
+    "accrued_income": "accrued_income_adjustment",
+}
+
+
+def prepare_month_end_adjustment_draft(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    adjustment_type: str,
+    amount,
+    account_code: str,
+    description: str,
+    reference_id: str,
+    entry_date: date,
+    user_id,
+    reversal_date: date | None = None,
+) -> JournalEntry:
+    """Prepare, but never post, a judgemental month-end adjustment.
+
+    Accruals, prepayments and accrued income require human evidence and judgement.
+    This helper translates the approved accounting treatment into balanced lines,
+    leaves the entry in draft, and optionally records a future reversal schedule.
+    A different finance user must post the journal through the normal maker/checker
+    endpoint before it becomes ledger truth.
+    """
+    if adjustment_type not in MONTH_END_DRAFT_TYPES:
+        raise HTTPException(status_code=422, detail="Unsupported month-end adjustment type")
+    amount = _money(amount)
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="Month-end adjustment amount must be greater than zero")
+    if reversal_date is not None and reversal_date <= entry_date:
+        raise HTTPException(status_code=422, detail="Scheduled reversal date must be after the adjustment date")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+
+    if adjustment_type == "accrual":
+        if not account_code.startswith(("5", "6")):
+            raise HTTPException(status_code=422, detail="Accruals must use an expense account")
+        debit = account_by_code(db, key, account_code)
+        credit = account_by_code(db, key, "2100")
+        line_purpose = ("Accrued expense", "Accrued expenses liability")
+    elif adjustment_type == "prepayment":
+        if not account_code.startswith(("5", "6")):
+            raise HTTPException(status_code=422, detail="Prepayments must use an expense account")
+        debit = account_by_code(db, key, "1400")
+        credit = account_by_code(db, key, account_code)
+        line_purpose = ("Prepayment asset", "Expense deferred")
+    else:
+        if not account_code.startswith("4"):
+            raise HTTPException(status_code=422, detail="Accrued income must use a revenue account")
+        debit = account_by_code(db, key, "1220")
+        credit = account_by_code(db, key, account_code)
+        line_purpose = ("Accrued income asset", "Revenue accrued")
+
+    entry = create_entry(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        created_by_user_id=user_id,
+        entry_date=entry_date,
+        description=description,
+        reference_type=MONTH_END_DRAFT_TYPES[adjustment_type],
+        reference_id=reference_id,
+        status_value="draft",
+        lines=[
+            {"account_id": debit.id, "debit": amount, "credit": 0, "description": line_purpose[0]},
+            {"account_id": credit.id, "debit": 0, "credit": amount, "description": line_purpose[1]},
+        ],
+    )
+
+    if reversal_date is not None:
+        schedule_reference = f"ADJREV-{entry.id}"
+        existing_schedule = db.query(CompanyOperatingRecord).filter(
+            CompanyOperatingRecord.company_id == company_id,
+            CompanyOperatingRecord.module == "accounting",
+            CompanyOperatingRecord.record_type == "adjustment_reversal_schedule",
+            CompanyOperatingRecord.reference == schedule_reference,
+            CompanyOperatingRecord.is_archived.is_(False),
+        ).first()
+        if not existing_schedule:
+            db.add(CompanyOperatingRecord(
+                company_id=company_id,
+                branch_id=branch_id,
+                module="accounting",
+                record_type="adjustment_reversal_schedule",
+                reference=schedule_reference,
+                title=f"Scheduled reversal for {entry.entry_number}",
+                description=f"Prepare reversal after maker/checker posting: {description}",
+                status="pending",
+                created_by_user_id=user_id,
+                amount=amount,
+                currency="LSL",
+                due_at=datetime.combine(reversal_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                data={
+                    "journal_entry_id": str(entry.id),
+                    "reversal_date": reversal_date.isoformat(),
+                    "adjustment_type": adjustment_type,
+                    "source_reference_id": reference_id,
+                },
+                tags=["month_end", "scheduled_reversal"],
+            ))
+    return entry
+
+
+def prepare_due_adjustment_reversal_drafts(
+    db: Session,
+    *,
+    company_id,
+    as_of: date,
+    branch_id=None,
+    user_id=None,
+) -> dict:
+    """Prepare due reversal journals as drafts; never auto-post them."""
+    schedules = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "adjustment_reversal_schedule",
+        CompanyOperatingRecord.status == "pending",
+        CompanyOperatingRecord.is_archived.is_(False),
+        CompanyOperatingRecord.due_at <= datetime.combine(as_of, datetime.max.time()).replace(tzinfo=timezone.utc),
+    )
+    if branch_id:
+        schedules = schedules.filter(CompanyOperatingRecord.branch_id == branch_id)
+
+    prepared = []
+    waiting_for_source_post = []
+    key, _ = scope_key(company_id)
+    for schedule in schedules.order_by(CompanyOperatingRecord.due_at.asc()).all():
+        data = dict(schedule.data or {})
+        journal_id = data.get("journal_entry_id")
+        if not journal_id:
+            schedule.status = "invalid"
+            continue
+        original = entry_query(db, key).filter(JournalEntry.id == UUID(str(journal_id))).first()
+        if not original:
+            schedule.status = "invalid"
+            continue
+        if original.status != "posted":
+            waiting_for_source_post.append(str(original.id))
+            continue
+
+        reversal_date = date.fromisoformat(str(data["reversal_date"]))
+        reference = f"scheduled:{schedule.id}:{original.id}:{reversal_date.isoformat()}"
+        existing = _journal_for_reference(db, key, "period_adjustment_reversal", reference)
+        if existing:
+            schedule.status = "prepared"
+            prepared.append({
+                "schedule_id": str(schedule.id),
+                "journal_entry_id": str(existing.id),
+                "entry_number": existing.entry_number,
+                "existing": True,
+            })
+            continue
+
+        reversal = create_entry(
+            db,
+            company_id=company_id,
+            branch_id=original.branch_id,
+            created_by_user_id=user_id,
+            entry_date=reversal_date,
+            description=f"Scheduled reversal of {original.entry_number}: {original.description}",
+            reference_type="period_adjustment_reversal",
+            reference_id=reference,
+            status_value="draft",
+            lines=[
+                {
+                    "account_id": line.account_id,
+                    "debit": _money(line.credit),
+                    "credit": _money(line.debit),
+                    "description": f"Reverse {original.entry_number}",
+                }
+                for line in original.lines
+            ],
+        )
+        schedule.status = "prepared"
+        schedule.data = {
+            **data,
+            "reversal_journal_entry_id": str(reversal.id),
+            "prepared_at": datetime.now(timezone.utc).isoformat(),
+        }
+        prepared.append({
+            "schedule_id": str(schedule.id),
+            "journal_entry_id": str(reversal.id),
+            "entry_number": reversal.entry_number,
+            "existing": False,
+        })
+
+    return {
+        "as_of": as_of.isoformat(),
+        "prepared_count": len(prepared),
+        "waiting_for_source_post_count": len(waiting_for_source_post),
+        "waiting_for_source_post_entry_ids": waiting_for_source_post,
+        "prepared": prepared,
+        "policy_note": "Scheduled reversals are prepared as drafts and still require a different finance user to post them.",
+    }
+
+
+def vat_control_reconciliation(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Reconcile VAT control accounts using posted ledger entries only."""
+    if period_end < period_start:
+        raise HTTPException(status_code=422, detail="Period end must be on or after period start")
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    input_vat = account_by_code(db, key, "1600")
+    output_vat = account_by_code(db, key, "2200")
+
+    def movements(account_id):
+        q = db.query(
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+            JournalLine.account_id == account_id,
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.entry_date.between(period_start, period_end),
+        )
+        if branch_id:
+            q = q.filter(JournalEntry.branch_id == branch_id)
+        debit, credit = q.first()
+        return _money(debit), _money(credit)
+
+    input_debit, input_credit = movements(input_vat.id)
+    output_debit, output_credit = movements(output_vat.id)
+    input_balance = _account_signed_balance(
+        db, scope_key_value=key, account_code="1600", to_date=period_end, branch_id=branch_id
+    )
+    output_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2200", to_date=period_end, branch_id=branch_id
+    )
+    output_balance = _money(-output_signed)
+    net = _money(output_balance - input_balance)
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "input_vat_account": "1600",
+        "output_vat_account": "2200",
+        "period_input_vat_debits": float(input_debit),
+        "period_input_vat_credits": float(input_credit),
+        "period_output_vat_debits": float(output_debit),
+        "period_output_vat_credits": float(output_credit),
+        "closing_input_vat_receivable": float(input_balance),
+        "closing_output_vat_payable": float(output_balance),
+        "net_vat_payable": float(max(net, Decimal("0.00"))),
+        "net_vat_receivable": float(max(-net, Decimal("0.00"))),
+        "ledger_balanced": input_balance >= 0 and output_balance >= 0,
+        "policy_note": "This is a ledger reconciliation control, not a Lesotho VAT return or statutory tax determination.",
+    }
+
 def depreciate_all_fixed_assets_for_period(
     db: Session,
     *,
