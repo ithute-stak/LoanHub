@@ -472,6 +472,7 @@ export function LoanPortfolioWorkspace({
 
     const optionSets = useMemo(() => ({
         statuses: uniqueStrings(rows.map(({loan}) => loan.status)),
+        folioGroups: uniqueStrings(rows.map(({loan}) => loan.folio_group_code)),
         channels: uniqueStrings(rows.map(({loan}) => loan.origination_channel)),
         repaymentTypes: uniqueStrings(rows.map(({loan}) => loan.repayment_type)),
         calculationMethods: uniqueStrings(rows.map(({loan}) => String(loan.calculation_method))),
