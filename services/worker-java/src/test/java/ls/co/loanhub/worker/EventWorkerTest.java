@@ -23,4 +23,12 @@ class EventWorkerTest {
             EventWorker.sha256("LoanHub")
         );
     }
+
+    @Test
+    void sha256BytesMatchesTextHash() {
+        assertEquals(
+            EventWorker.sha256("LoanHub"),
+            EventWorker.sha256Bytes("LoanHub".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        );
+    }
 }
