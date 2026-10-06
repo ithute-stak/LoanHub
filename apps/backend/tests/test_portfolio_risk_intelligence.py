@@ -126,3 +126,29 @@ def test_maintenance_worker_schedules_daily_risk_snapshots_after_collection_cont
     assert "PORTFOLIO_RISK_SNAPSHOT_MINUTE: int = 45" in config
     assert "run_scheduled_portfolio_risk" in maintenance
     assert "last_portfolio_risk_snapshot_date" in maintenance
+
+
+def test_enterprise_early_warning_combines_portfolio_finance_treasury_and_control_evidence():
+    service = (ROOT / "backend" / "services" / "portfolio_risk_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "portfolio_risk.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "portfolioRisk.ts").read_text(encoding="utf-8")
+    page = (ROOT / "frontend" / "app" / "(dashboard)" / "company" / "portfolio-risk" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def enterprise_early_warning(" in service
+    assert "financial_ratio_analysis" in service
+    assert "treasury_cash_forecast" in service
+    assert "accounting_audit_compliance_pack" in service
+    assert '"portfolio_par30_critical"' in service
+    assert '"first_payment_default_high"' in service
+    assert '"branch_delinquency_outlier"' in service
+    assert '"liquidity_shortfall_forecast"' in service
+    assert '"expense_spike"' in service
+    assert '"margin_compression"' in service
+    assert '"accounting_control_deterioration"' in service
+    assert '"supporting_evidence_gaps"' in service
+    assert "does not predict default probability" in service
+
+    assert '@router.get("/early-warning")' in router
+    assert "getEnterpriseEarlyWarning" in frontend_api
+    assert "Enterprise early-warning intelligence" in page
+    assert "deterministic evidence signal" in page

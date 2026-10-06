@@ -13,6 +13,7 @@ from database.models.enums import UserRole
 from database.session import get_db
 from services.portfolio_risk_service import (
     build_overview,
+    enterprise_early_warning,
     generate_snapshot,
     overview_csv,
     risk_history,
@@ -66,6 +67,22 @@ def portfolio_risk_overview(
         raise HTTPException(status_code=422, detail="Use risk history for prior dates; live overview is generated for today")
     branch = _resolve_branch(db, context, branch_id)
     return build_overview(db, company_id=context.company_id, branch_id=branch, as_of=target)
+
+
+@router.get("/early-warning")
+def portfolio_early_warning(
+    branch_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    _scope(context)
+    branch = _resolve_branch(db, context, branch_id)
+    return enterprise_early_warning(
+        db,
+        company_id=context.company_id,
+        branch_id=branch,
+        as_of=date.today(),
+    )
 
 
 @router.post("/snapshot")

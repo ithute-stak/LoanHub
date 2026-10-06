@@ -90,6 +90,41 @@ export type PortfolioRiskHistory = Array<{
   par_90: number;
 }>;
 
+
+export type EnterpriseEarlyWarning = {
+  as_of: string;
+  branch_id?: string | null;
+  risk_score: number;
+  risk_level: "low" | "medium" | "high" | "critical";
+  signal_count: number;
+  signals: Array<{
+    code: string;
+    domain: string;
+    severity: "low" | "medium" | "high" | "critical";
+    title: string;
+    evidence: Record<string, unknown>;
+    explanation: string;
+    weight: number;
+    action: "review_required";
+  }>;
+  evidence_summary: {
+    par_30_percent: number;
+    first_payment_default_percent: number;
+    treasury_30d_minimum_cash: number;
+    current_ratio?: number | null;
+    current_net_profit_margin_percent?: number | null;
+    accounting_control_failures: number;
+    missing_supporting_evidence: number;
+  };
+  methodology: string;
+};
+
+export async function getEnterpriseEarlyWarning(branchId?: string): Promise<EnterpriseEarlyWarning> {
+  return (await api.get<EnterpriseEarlyWarning>("/portfolio-risk/early-warning", {
+    params: branchId ? { branch_id: branchId } : undefined,
+  })).data;
+}
+
 export async function getPortfolioRiskOverview(branchId?: string): Promise<PortfolioRiskOverview> {
   return (await api.get<PortfolioRiskOverview>("/portfolio-risk/overview", {
     params: branchId ? { branch_id: branchId } : undefined,

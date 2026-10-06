@@ -21,6 +21,11 @@ from database.models.loan_product import LoanProduct
 from database.models.portfolio_risk import PortfolioRiskRun, PortfolioRiskSnapshot
 from database.models.professional_lending import DirectLoanApplication
 from database.models.repayment import RepaymentInstallment
+from services.accounting_service import (
+    accounting_audit_compliance_pack,
+    financial_ratio_analysis,
+    treasury_cash_forecast,
+)
 from services.polyglot_runtime_service import (
     record_parity_mismatch,
     rust_portfolio_risk_summary,
@@ -747,6 +752,190 @@ def build_overview(db: Session, *, company_id: UUID, branch_id: UUID | None, as_
         },
     }
 
+
+
+def enterprise_early_warning(
+    db: Session,
+    *,
+    company_id: UUID,
+    branch_id: UUID | None,
+    as_of: date,
+) -> dict[str, Any]:
+    """Combine portfolio, finance, treasury and control signals into evidence-based warnings."""
+    portfolio = build_overview(db, company_id=company_id, branch_id=branch_id, as_of=as_of)
+    history = risk_history(db, company_id=company_id, branch_id=branch_id, limit=3)
+
+    current_start = as_of - timedelta(days=29)
+    previous_end = current_start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=29)
+
+    current_ratios = financial_ratio_analysis(
+        db,
+        company_id=company_id,
+        from_date=current_start,
+        to_date=as_of,
+        branch_id=branch_id,
+    )
+    previous_ratios = financial_ratio_analysis(
+        db,
+        company_id=company_id,
+        from_date=previous_start,
+        to_date=previous_end,
+        branch_id=branch_id,
+    )
+    treasury = treasury_cash_forecast(
+        db,
+        company_id=company_id,
+        from_date=as_of,
+        to_date=as_of + timedelta(days=30),
+        branch_id=branch_id,
+        minimum_cash=Decimal("0"),
+        collection_rate=Decimal("0.85"),
+        obligation_rate=Decimal("1.00"),
+        unexpected_outflow=Decimal("0"),
+    )
+    audit = accounting_audit_compliance_pack(
+        db,
+        company_id=company_id,
+        period_start=current_start,
+        period_end=as_of,
+        branch_id=branch_id,
+    )
+
+    signals: list[dict[str, Any]] = []
+
+    def add_signal(code: str, domain: str, severity: str, title: str, evidence: dict[str, Any], explanation: str, weight: int) -> None:
+        signals.append({
+            "code": code,
+            "domain": domain,
+            "severity": severity,
+            "title": title,
+            "evidence": evidence,
+            "explanation": explanation,
+            "weight": weight,
+            "action": "review_required",
+        })
+
+    par30 = float(portfolio["summary"].get("par_30", 0) or 0)
+    if par30 >= 20:
+        add_signal("portfolio_par30_critical", "credit", "critical", "PAR 30 is critically elevated", {"par_30_percent": par30}, "At least one fifth of active exposure is 30+ days past due.", 22)
+    elif par30 >= 10:
+        add_signal("portfolio_par30_high", "credit", "high", "PAR 30 is elevated", {"par_30_percent": par30}, "A material share of active exposure is 30+ days past due.", 14)
+
+    if len(history) >= 2:
+        prior = float(history[-2]["par_30"])
+        delta = round(par30 - prior, 2)
+        if delta >= 5:
+            add_signal("par30_deteriorating", "credit", "high", "PAR 30 deteriorated sharply", {"previous_percent": prior, "current_percent": par30, "change_points": delta}, "The latest stored portfolio snapshot shows a material deterioration in 30+ day delinquency.", 12)
+        elif delta >= 2:
+            add_signal("par30_deteriorating", "credit", "medium", "PAR 30 is worsening", {"previous_percent": prior, "current_percent": par30, "change_points": delta}, "The latest stored snapshot shows a rising delinquency trend.", 6)
+
+    fpd = float(portfolio["summary"].get("fpd_rate", 0) or 0)
+    if fpd >= 15:
+        add_signal("first_payment_default_high", "origination", "high", "First-payment default is high", {"fpd_percent": fpd}, "Recent origination quality requires review because first scheduled repayments are failing at a high rate.", 12)
+    elif fpd >= 8:
+        add_signal("first_payment_default_watch", "origination", "medium", "First-payment default needs attention", {"fpd_percent": fpd}, "First-payment default is above the early-warning threshold.", 6)
+
+    concentration = portfolio.get("concentration", {})
+    for dimension in ("employer", "product", "branch"):
+        item = concentration.get(dimension, {})
+        top_share = float(item.get("top_share_percent", 0) or 0)
+        hhi = float(item.get("hhi", 0) or 0)
+        if top_share >= 40 or hhi >= 2500:
+            add_signal(
+                f"{dimension}_concentration_high",
+                "concentration",
+                "high",
+                f"{dimension.title()} concentration is high",
+                {"top_share_percent": top_share, "hhi": hhi},
+                "A large share of portfolio exposure depends on a limited concentration group.",
+                9,
+            )
+
+    branch_outliers = []
+    for row in portfolio.get("branch_risk", []):
+        branch_par = float(row.get("par_30", 0) or 0)
+        share = float(row.get("share_percent", 0) or 0)
+        if share >= 5 and branch_par >= par30 + 5 and branch_par >= 10:
+            branch_outliers.append({"branch": row.get("label"), "par_30": branch_par, "portfolio_par_30": par30, "exposure_share": share})
+    if branch_outliers:
+        add_signal("branch_delinquency_outlier", "operations", "high", "One or more branches materially underperform the portfolio", {"branches": branch_outliers[:5]}, "Branch PAR 30 is materially above the company portfolio while carrying meaningful exposure.", 10)
+
+    if treasury["breach_count"] > 0 or treasury["minimum_projected_cash"] < 0:
+        add_signal(
+            "liquidity_shortfall_forecast",
+            "liquidity",
+            "critical",
+            "30-day liquidity shortfall projected",
+            {
+                "breach_count": treasury["breach_count"],
+                "minimum_projected_cash": treasury["minimum_projected_cash"],
+                "projected_closing_cash": treasury["projected_closing_cash"],
+                "collection_assumption_percent": 85,
+            },
+            "Under an 85% collection scenario, forecast available cash falls below zero.",
+            22,
+        )
+
+    current_inputs = current_ratios["inputs"]
+    previous_inputs = previous_ratios["inputs"]
+    current_expense = float(current_inputs.get("cost_of_services", 0) or 0) + max(
+        float(current_inputs.get("revenue", 0) or 0) - float(current_inputs.get("net_profit", 0) or 0) - float(current_inputs.get("cost_of_services", 0) or 0),
+        0.0,
+    )
+    previous_expense = float(previous_inputs.get("cost_of_services", 0) or 0) + max(
+        float(previous_inputs.get("revenue", 0) or 0) - float(previous_inputs.get("net_profit", 0) or 0) - float(previous_inputs.get("cost_of_services", 0) or 0),
+        0.0,
+    )
+    if previous_expense > 0:
+        expense_growth = round((current_expense - previous_expense) / previous_expense * 100, 2)
+        if expense_growth >= 30:
+            add_signal("expense_spike", "finance", "high", "Operating costs increased sharply", {"current_30d_expense": current_expense, "previous_30d_expense": previous_expense, "growth_percent": expense_growth}, "Posted ledger expenses for the latest 30 days materially exceed the preceding 30-day period.", 10)
+
+    current_margin = current_ratios["profitability"].get("net_profit_margin_percent")
+    previous_margin = previous_ratios["profitability"].get("net_profit_margin_percent")
+    if current_margin is not None and previous_margin is not None:
+        margin_delta = round(float(current_margin) - float(previous_margin), 2)
+        if margin_delta <= -8:
+            add_signal("margin_compression", "finance", "high", "Net profit margin compressed materially", {"current_margin_percent": current_margin, "previous_margin_percent": previous_margin, "change_points": margin_delta}, "Posted accounting results show a material decline in net profit margin versus the previous 30 days.", 10)
+
+    current_ratio = current_ratios["liquidity"].get("current_ratio")
+    if current_ratio is not None and float(current_ratio) < 1:
+        add_signal("current_ratio_below_one", "liquidity", "high", "Current liabilities exceed current assets", {"current_ratio": current_ratio}, "The accounting current ratio is below 1.0 and warrants liquidity review.", 9)
+
+    if audit["control_fail_count"] > 0:
+        add_signal("accounting_control_deterioration", "controls", "high" if audit["control_fail_count"] >= 3 else "medium", "Accounting control exceptions are open", {"failed_controls": [key for key, passed in audit["controls"].items() if not passed], "control_fail_count": audit["control_fail_count"]}, "The audit/compliance pack contains unresolved finance control exceptions.", 10 if audit["control_fail_count"] >= 3 else 5)
+
+    if audit["journal_review"]["evidence_missing_count"] > 0:
+        add_signal("supporting_evidence_gaps", "controls", "medium", "Supporting evidence is missing for review-sensitive journals", {"missing_evidence_count": audit["journal_review"]["evidence_missing_count"]}, "One or more journals requiring audit support have no linked evidence file.", 5)
+
+    score = min(100, sum(int(row["weight"]) for row in signals))
+    level = "critical" if score >= 60 else "high" if score >= 35 else "medium" if score >= 15 else "low"
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    signals.sort(key=lambda row: (severity_order.get(row["severity"], 9), -row["weight"], row["code"]))
+
+    return {
+        "as_of": as_of.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "risk_score": score,
+        "risk_level": level,
+        "signal_count": len(signals),
+        "signals": signals,
+        "evidence_summary": {
+            "par_30_percent": par30,
+            "first_payment_default_percent": fpd,
+            "treasury_30d_minimum_cash": treasury["minimum_projected_cash"],
+            "current_ratio": current_ratio,
+            "current_net_profit_margin_percent": current_margin,
+            "accounting_control_failures": audit["control_fail_count"],
+            "missing_supporting_evidence": audit["journal_review"]["evidence_missing_count"],
+        },
+        "methodology": (
+            "The score is deterministic and additive. It uses observed portfolio snapshots, posted accounting, "
+            "approved treasury commitments and accounting-control evidence. It does not predict default probability, "
+            "accuse staff, change credit decisions or post accounting entries."
+        ),
+    }
 
 def risk_history(db: Session, *, company_id: UUID, branch_id: UUID | None, limit: int = 120) -> list[dict[str, Any]]:
     dates_query = db.query(PortfolioRiskSnapshot.snapshot_date).filter(PortfolioRiskSnapshot.company_id == company_id)

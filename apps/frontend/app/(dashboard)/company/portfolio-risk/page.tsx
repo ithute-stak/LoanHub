@@ -16,8 +16,10 @@ import {
 import {
   createPortfolioRiskSnapshot,
   downloadPortfolioRiskCsv,
+  getEnterpriseEarlyWarning,
   getPortfolioRiskHistory,
   getPortfolioRiskOverview,
+  type EnterpriseEarlyWarning,
   type PortfolioRiskHistory,
   type PortfolioRiskOverview,
   type RiskGroup,
@@ -68,6 +70,7 @@ function GroupTable({ title, description, rows }: { title: string; description: 
 export default function PortfolioRiskPage() {
   const [overview, setOverview] = useState<PortfolioRiskOverview | null>(null);
   const [history, setHistory] = useState<PortfolioRiskHistory>([]);
+  const [earlyWarning, setEarlyWarning] = useState<EnterpriseEarlyWarning | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,12 +80,14 @@ export default function PortfolioRiskPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextOverview, nextHistory] = await Promise.all([
+      const [nextOverview, nextHistory, nextEarlyWarning] = await Promise.all([
         getPortfolioRiskOverview(),
         getPortfolioRiskHistory(),
+        getEnterpriseEarlyWarning(),
       ]);
       setOverview(nextOverview);
       setHistory(nextHistory);
+      setEarlyWarning(nextEarlyWarning);
     } catch (nextError) {
       setError(errorText(nextError));
     } finally {
@@ -129,6 +134,31 @@ export default function PortfolioRiskPage() {
 
       {error ? <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm font-bold text-destructive">{error}</div> : null}
       {notice ? <div className="rounded-2xl border border-primary/25 bg-primary/5 p-4 text-sm font-bold">{notice}</div> : null}
+
+      {earlyWarning ? <Card className={earlyWarning.risk_level === "critical" ? "border-destructive/50" : earlyWarning.risk_level === "high" ? "border-amber-500/40" : ""}>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" /> Enterprise early-warning intelligence</CardTitle>
+              <CardDescription className="mt-2">{earlyWarning.methodology}</CardDescription>
+            </div>
+            <div className="flex items-center gap-2"><Badge variant={earlyWarning.risk_level === "critical" ? "destructive" : earlyWarning.risk_level === "high" ? "outline" : "secondary"}>{titleCase(earlyWarning.risk_level)}</Badge><span className="text-2xl font-black">{earlyWarning.risk_score}/100</span></div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <Metric label="PAR 30" value={`${earlyWarning.evidence_summary.par_30_percent.toFixed(2)}%`} />
+            <Metric label="FPD" value={`${earlyWarning.evidence_summary.first_payment_default_percent.toFixed(2)}%`} />
+            <Metric label="30-day minimum cash" value={formatMoney(earlyWarning.evidence_summary.treasury_30d_minimum_cash)} />
+            <Metric label="Current ratio" value={earlyWarning.evidence_summary.current_ratio == null ? "—" : Number(earlyWarning.evidence_summary.current_ratio).toFixed(2)} />
+            <Metric label="Margin" value={earlyWarning.evidence_summary.current_net_profit_margin_percent == null ? "—" : `${Number(earlyWarning.evidence_summary.current_net_profit_margin_percent).toFixed(2)}%`} />
+            <Metric label="Control failures" value={String(earlyWarning.evidence_summary.accounting_control_failures)} />
+          </div>
+          <div className="space-y-2">
+            {earlyWarning.signals.length ? earlyWarning.signals.map((signal) => <div key={signal.code} className="rounded-2xl border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{signal.title}</p><p className="text-xs text-muted-foreground">{titleCase(signal.domain)} · deterministic evidence signal</p></div><Badge variant={signal.severity === "critical" ? "destructive" : signal.severity === "high" ? "outline" : "secondary"}>{titleCase(signal.severity)}</Badge></div><p className="mt-2 text-sm leading-6">{signal.explanation}</p></div>) : <div className="rounded-2xl border bg-emerald-500/5 p-4 text-sm font-bold">No enterprise early-warning thresholds are currently breached.</div>}
+          </div>
+        </CardContent>
+      </Card> : null}
 
       {overview ? <>
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
