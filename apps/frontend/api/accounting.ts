@@ -447,9 +447,6 @@ export type AccountingAuditCompliancePack = {
     evidence_missing_count: number;
     policy_note: string;
     flagged_entries: AuditJournalReviewEntry[];
-
-      review_status: string;
-    }>;
   };
   audit_sample: AuditJournalReviewEntry[];
   vat_control: {
