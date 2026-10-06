@@ -117,6 +117,30 @@ def test_trial_balance_keeps_debit_minus_credit_and_statements_present_credit_cl
     assert 'line.account_type in {"liability", "equity", "revenue"}' in source
 
 
+def test_income_statement_exposes_gross_result_and_operating_expenses():
+    source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'totals["gross_result"]' in source
+    assert 'totals["operating_expenses"]' in source
+    assert 'line.code == "5000"' in source
+    assert 'totals["net_profit"] = revenue_total - expense_total' in source
+
+
+def test_statement_of_financial_position_exposes_working_capital_and_equation_check():
+    source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "CURRENT_ASSET_CODES" in source
+    assert "NON_CURRENT_ASSET_CODES" in source
+    assert "CURRENT_LIABILITY_CODES" in source
+    assert 'totals["working_capital"]' in source
+    assert 'totals["accounting_equation_difference"]' in source
+    assert 'totals["equity_check"] = totals["accounting_equation_difference"]' in source
+
+
+def test_unknown_user_accounts_are_not_silently_misclassified_by_liquidity():
+    source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'return "unclassified_asset"' in source
+    assert 'return "unclassified_liability"' in source
+
+
 def test_period_close_requires_reconciliation_batches_closed():
     source = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
     assert "ReconciliationBatch" in source
