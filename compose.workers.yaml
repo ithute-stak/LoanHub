@@ -14,6 +14,7 @@ services:
       LOANHUB_RUST_PREDICTIVE_RISK_MODE: ${LOANHUB_RUST_PREDICTIVE_RISK_MODE:-shadow}
       LOANHUB_JAVA_UNDERWRITING_MODE: ${LOANHUB_JAVA_UNDERWRITING_MODE:-shadow}
       LOANHUB_JAVA_EVENT_MODE: ${LOANHUB_JAVA_EVENT_MODE:-shadow}
+      LOANHUB_JAVA_REPORT_CSV_MODE: ${LOANHUB_JAVA_REPORT_CSV_MODE:-shadow}
     depends_on:
       rust-compute:
         condition: service_healthy

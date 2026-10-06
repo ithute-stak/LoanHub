@@ -1130,3 +1130,45 @@ def test_polyglot_worker_response_limits_are_explicit() -> None:
     assert "max_response_bytes: int = 64 * 1024" in runtime
     assert 'raise ValueError("worker response exceeds configured limit")' in runtime
     assert "max_response_bytes=8 * 1024 * 1024" in runtime
+
+
+def test_java_report_csv_contract_is_registered() -> None:
+    java = (REPO / "services/worker-java/src/main/java/ls/co/loanhub/worker/EventWorker.java").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    reporting = (ROOT / "services/reporting_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/reports/render-csv"' in java
+    assert "renderReportCsv" in java
+    assert "def java_report_csv(" in runtime
+    assert '"java_report_csv": "shadow"' in runtime
+    assert "def _build_csv_python(" in reporting
+    assert 'workload_routing_mode("java_report_csv")' in reporting
+    assert 'record_parity_mismatch("java_worker")' in reporting
+    assert "LOANHUB_JAVA_REPORT_CSV_MODE=shadow" in env
+
+
+def test_java_report_csv_shadow_requires_byte_parity(monkeypatch) -> None:
+    import base64
+    import hashlib
+    from services import reporting_service as reporting
+
+    metrics = {"active_loans": 12, "healthy": True}
+    metadata = {
+        "title": "Operational Report - Maseru",
+        "reference": "RPT-TEST",
+        "scope_name": "Maseru",
+        "period_start": "2026-10-01",
+        "period_end": "2026-10-01",
+    }
+    expected = reporting._build_csv_python(metrics, metadata)
+    monkeypatch.setenv("LOANHUB_JAVA_REPORT_CSV_MODE", "shadow")
+    monkeypatch.setattr(
+        reporting,
+        "java_report_csv",
+        lambda **kwargs: {
+            "content_base64": base64.b64encode(expected).decode("ascii"),
+            "sha256": hashlib.sha256(expected).hexdigest(),
+        },
+    )
+    assert reporting.build_csv(metrics, metadata) == expected
