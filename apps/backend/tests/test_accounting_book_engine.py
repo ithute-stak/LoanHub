@@ -412,6 +412,42 @@ def test_ratio_engine_has_no_router_statement_dependency():
     assert "cumulative_rows = db.query(" in ratio_block
 
 
+def test_finance_operations_workspace_exposes_financial_books_period_close_and_opening_balances():
+    accounting_router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    controls_router = (ROOT / "backend" / "routers" / "governance_controls.py").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert '@router.get("/financial-books")' in accounting_router
+    assert '@router.post("/opening-balances"' in accounting_router
+    assert 'reference_type="opening_balance_migration"' in accounting_router
+    assert 'status_value="draft"' in accounting_router
+    assert "Opening balances cannot be dated after earlier posted accounting activity" in accounting_router
+
+    assert '@router.get("/accounting-periods/{period_id}/readiness")' in controls_router
+    assert '@router.post("/accounting-periods/{period_id}/reopen")' in controls_router
+    assert 'item.status not in {"locked", "closed"}' in controls_router
+    assert "the user who hard-closed the period cannot reopen it" in controls_router
+
+    assert "Financial Books" in frontend
+    assert "Period close" in frontend
+    assert "Opening balance migration" in frontend
+    assert "Create opening-balance draft" in frontend
+    assert "Create period" in frontend
+
+
+def test_opening_balance_schema_requires_balanced_double_entry():
+    schema = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+    assert "class OpeningBalanceMigrationCreate" in schema
+    assert "Opening balance debits and credits must be equal and greater than zero" in schema
+    assert "Opening balances must affect at least two accounts" in schema
+
+
+def test_financial_books_remain_posted_ledger_only():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'JournalEntry.status == "posted"' in router
+    assert "Draft journals are excluded" in router
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
