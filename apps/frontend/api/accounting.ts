@@ -129,6 +129,14 @@ export type MonthEndControlPack = {
       written_off: boolean;
     }>;
   };
+  vat_reconciliation: {
+    closing_input_vat_receivable: number;
+    closing_output_vat_payable: number;
+    net_vat_payable: number;
+    net_vat_receivable: number;
+    ledger_balanced: boolean;
+    policy_note: string;
+  };
   fixed_asset_depreciation: {
     asset_count_due: number;
     total_due: number;
@@ -171,6 +179,57 @@ export async function getMonthEndControlPack(filters: {
       branch_id: filters.branchId || undefined,
       period_start: filters.periodStart,
       period_end: filters.periodEnd,
+    },
+  })).data;
+}
+
+
+export async function createMonthEndAdjustmentDraft(payload: {
+  adjustment_type: "accrual" | "prepayment" | "accrued_income";
+  amount: number;
+  account_code: string;
+  description: string;
+  entry_date: string;
+  branch_id?: string | null;
+  reference_id?: string;
+  reversal_date?: string | null;
+}, companyId?: string): Promise<JournalEntry> {
+  return (await api.post<JournalEntry>("/accounting/month-end-adjustments/drafts", payload, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function prepareMonthEndReversalDrafts(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  asOf: string;
+}): Promise<{
+  prepared_count: number;
+  waiting_for_source_post_count: number;
+  prepared: Array<{ journal_entry_id: string; entry_number: string; existing: boolean }>;
+}> {
+  return (await api.post("/accounting/month-end-adjustments/prepare-reversals", null, {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      as_of: filters.asOf,
+    },
+  })).data;
+}
+
+export async function depreciateAssetsForPeriod(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<{ posted: Array<{ asset_id: string; journal_entry_id: string; amount: number }>; total_depreciation: number }> {
+  return (await api.post("/accounting/assets/depreciate-period", {
+    period_start: filters.periodStart,
+    period_end: filters.periodEnd,
+  }, {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
     },
   })).data;
 }

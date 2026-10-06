@@ -354,6 +354,23 @@ class SuspenseCorrectionCreate(BaseModel):
     reference_id: str | None = Field(default=None, max_length=120)
 
 
+
+class MonthEndAdjustmentDraftCreate(BaseModel):
+    adjustment_type: str = Field(pattern="^(accrual|prepayment|accrued_income)$")
+    amount: Decimal = Field(gt=0)
+    account_code: str = Field(min_length=4, max_length=30)
+    description: str = Field(min_length=5, max_length=1000)
+    entry_date: date
+    branch_id: UUID | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+    reversal_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_reversal_date(self):
+        if self.reversal_date is not None and self.reversal_date <= self.entry_date:
+            raise ValueError("reversal_date must be after entry_date")
+        return self
+
 class FixedAssetCreate(BaseModel):
     reference: str = Field(min_length=2, max_length=100)
     name: str = Field(min_length=2, max_length=240)
