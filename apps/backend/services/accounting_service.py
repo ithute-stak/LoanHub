@@ -3721,6 +3721,13 @@ def month_end_control_pack(
         as_of=period_end,
         branch_id=branch_id,
     )
+    vat_control = vat_control_reconciliation(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
 
     assets = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
         CompanyOperatingRecord.status == "active"
@@ -3794,6 +3801,7 @@ def month_end_control_pack(
         "failed_checks": failed,
         "checks": {**close_pack["checks"], **extended_checks},
         "loan_receivables_subledger": receivables,
+        "vat_reconciliation": vat_control,
         "fixed_asset_depreciation": {
             "asset_count_due": len(depreciation_due),
             "total_due": float(_money(depreciation_total)),
