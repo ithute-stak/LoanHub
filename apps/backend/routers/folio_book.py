@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from io import BytesIO
 from uuid import UUID
 
@@ -37,6 +38,59 @@ FOLIO_BOOK_ROLES = (
 )
 
 
+
+def _integrity(loans: list) -> dict:
+    """Compatibility integrity summary for legacy callers and tests."""
+    by_group: dict[str, list] = defaultdict(list)
+    missing: list[str] = []
+    malformed: list[str] = []
+    seen_numbers: dict[str, list[str]] = defaultdict(list)
+
+    for loan in loans:
+        if not loan.folio_number or not loan.folio_group_code or not loan.folio_sequence:
+            missing.append(str(loan.id))
+            continue
+        expected = f"{loan.folio_company_code}-{loan.folio_group_code}-{int(loan.folio_sequence):05d}"
+        if loan.folio_number != expected:
+            malformed.append(loan.folio_number)
+        seen_numbers[loan.folio_number].append(str(loan.id))
+        by_group[loan.folio_group_code].append(loan)
+
+    duplicate_numbers = {number: ids for number, ids in seen_numbers.items() if len(ids) > 1}
+    groups = []
+    total_gaps = 0
+    for group_code, rows in sorted(by_group.items()):
+        sequences = sorted({int(row.folio_sequence) for row in rows if row.folio_sequence})
+        maximum = sequences[-1] if sequences else 0
+        existing = set(sequences)
+        gaps = [value for value in range(1, maximum + 1) if value not in existing]
+        total_gaps += len(gaps)
+        company_code = rows[0].folio_company_code if rows else ""
+        groups.append({
+            "company_code": company_code,
+            "group_code": group_code,
+            "loan_count": len(rows),
+            "first_sequence": sequences[0] if sequences else None,
+            "last_sequence": maximum or None,
+            "next_sequence": maximum + 1,
+            "next_folio": f"{company_code}-{group_code}-{maximum + 1:05d}",
+            "gap_count": len(gaps),
+            "gaps": gaps[:100],
+        })
+
+    return {
+        "healthy": not missing and not malformed and not duplicate_numbers and total_gaps == 0,
+        "loan_count": len(loans),
+        "missing_folio_count": len(missing),
+        "missing_loan_ids": missing[:100],
+        "malformed_folio_count": len(malformed),
+        "malformed_folios": malformed[:100],
+        "duplicate_folio_count": len(duplicate_numbers),
+        "duplicate_folios": duplicate_numbers,
+        "gap_count": total_gaps,
+        "groups": groups,
+    }
+
 def _filters(
     search: str | None,
     group_code: str | None,
@@ -70,6 +124,45 @@ def get_folio_book(
         skip=skip,
         limit=limit,
     )
+
+
+@router.get("/integrity")
+def folio_integrity(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    payload = build_folio_book(
+        db,
+        context=context,
+        filters=FolioBookFilters(),
+        skip=0,
+        limit=100_000,
+    )
+    summary = payload["summary"]
+    groups = [
+        {
+            "company_code": item["company_code"],
+            "group_code": item["group_code"],
+            "loan_count": item["loan_count"],
+            "first_sequence": item["first_sequence"],
+            "last_sequence": item["last_sequence"],
+            "next_sequence": item["next_sequence"],
+            "next_folio": item["next_folio_number"],
+            "gap_count": item["gap_count"],
+            "gaps": item["gaps"],
+        }
+        for item in payload["sequence_books"]
+    ]
+    return {
+        "healthy": bool(summary["integrity_ok"] and summary["gap_count"] == 0),
+        "loan_count": summary["total_loans"],
+        "missing_folio_count": summary["missing_folio_count"],
+        "malformed_folio_count": summary["invalid_format_count"] + summary["component_mismatch_count"],
+        "duplicate_folio_count": summary["duplicate_folio_count"],
+        "gap_count": summary["gap_count"],
+        "groups": groups,
+    }
 
 
 @router.get("/export.csv")
