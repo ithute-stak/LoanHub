@@ -47,6 +47,7 @@ from database.schemas.accounting import (
     LedgerLineRead,
     LedgerRead,
     LoanWriteOffCreate,
+    OpeningBalanceMigrationCreate,
     WrittenOffLoanRecoveryCreate,
     PrepaymentAdjustmentCreate,
     PeriodAdjustmentReversalCreate,
@@ -258,6 +259,63 @@ def list_entries(
     if to_date:
         query = query.filter(JournalEntry.entry_date <= to_date)
     return query.order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc()).offset(skip).limit(limit).all()
+
+
+@router.post("/opening-balances", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def create_opening_balance_migration(
+    payload: OpeningBalanceMigrationCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Create a balanced opening-balance migration as a draft journal.
+
+    The normal maker/checker posting endpoint remains responsible for turning
+    this draft into official ledger truth.
+    """
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for opening balances")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    key, _ = scope_key(selected_company_id)
+    ensure_chart(db, company_id=selected_company_id)
+
+    prior_posting = db.query(JournalEntry.id).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date < payload.entry_date,
+    )
+    if selected_branch_id:
+        prior_posting = prior_posting.filter(JournalEntry.branch_id == selected_branch_id)
+    if prior_posting.first():
+        raise HTTPException(
+            status_code=409,
+            detail="Opening balances cannot be dated after earlier posted accounting activity",
+        )
+
+    duplicate = db.query(JournalEntry.id).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.reference_type == "opening_balance_migration",
+        JournalEntry.reference_id == payload.migration_reference,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="That opening-balance migration reference already exists")
+
+    entry = create_entry(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        created_by_user_id=context.user.id,
+        entry_date=payload.entry_date,
+        description=payload.description,
+        reference_type="opening_balance_migration",
+        reference_id=payload.migration_reference,
+        status_value="draft",
+        lines=[item.model_dump() for item in payload.lines],
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
 
 
 @router.post("/journal-entries", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
