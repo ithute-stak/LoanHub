@@ -402,6 +402,29 @@ export async function getTreasuryStressTest(payload: {
 }
 
 
+export type AuditJournalReviewEntry = {
+  journal_entry_id: string;
+  entry_number: string;
+  entry_date: string;
+  description: string;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  amount: number;
+  flags: string[];
+  evidence_files: Array<{
+    file_id: string;
+    reference: string;
+    name: string;
+    mime_type: string;
+    size_bytes: number;
+    checksum_sha256: string;
+    scan_status: string;
+    is_encrypted: boolean;
+    is_confidential: boolean;
+  }>;
+  review_status: string;
+};
+
 export type AccountingAuditCompliancePack = {
   period_start: string;
   period_end: string;
@@ -423,30 +446,12 @@ export type AccountingAuditCompliancePack = {
     evidence_required_count: number;
     evidence_missing_count: number;
     policy_note: string;
-    flagged_entries: Array<{
-      journal_entry_id: string;
-      entry_number: string;
-      entry_date: string;
-      description: string;
-      reference_type?: string | null;
-      reference_id?: string | null;
-      amount: number;
-      flags: string[];
-      evidence_files: Array<{
-        file_id: string;
-        reference: string;
-        name: string;
-        mime_type: string;
-        size_bytes: number;
-        checksum_sha256: string;
-        scan_status: string;
-        is_encrypted: boolean;
-        is_confidential: boolean;
-      }>;
+    flagged_entries: AuditJournalReviewEntry[];
+
       review_status: string;
     }>;
   };
-  audit_sample: AccountingAuditCompliancePack["journal_review"]["flagged_entries"];
+  audit_sample: AuditJournalReviewEntry[];
   vat_control: {
     closing_input_vat_receivable: number;
     closing_output_vat_payable: number;
