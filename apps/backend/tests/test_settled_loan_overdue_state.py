@@ -1,3 +1,4 @@
+# Settled-loan invariants are intentionally exercised on every branch CI run.
 from decimal import Decimal
 
 import pytest
