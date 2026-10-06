@@ -85,10 +85,16 @@ COMPANY_CHART = [
     ("2200", "VAT Payable", "liability", "credit"),
     ("2300", "Customer Credits and Refunds Payable", "liability", "credit"),
     ("2400", "LoanHub and Provider Payables", "liability", "credit"),
+    ("2500", "Loan Notes Payable", "liability", "credit"),
+    ("2600", "Corporation Tax Payable", "liability", "credit"),
     ("2990", "Suspense Account", "liability", "credit"),
     ("3000", "Owner Capital", "equity", "credit"),
     ("3100", "Retained Earnings / Opening Balance", "equity", "credit"),
     ("3200", "Drawings and Distributions", "equity", "debit"),
+    ("3300", "Ordinary Share Capital", "equity", "credit"),
+    ("3310", "Share Premium", "equity", "credit"),
+    ("3320", "Revaluation Reserve", "equity", "credit"),
+    ("3330", "General Reserve", "equity", "credit"),
     ("4000", "Interest Income", "revenue", "credit"),
     ("4100", "Loan Fee Income", "revenue", "credit"),
     ("4200", "Penalty and Collection Income", "revenue", "credit"),
@@ -112,6 +118,7 @@ COMPANY_CHART = [
     ("6600", "Platform Fees and Charges", "expense", "debit"),
     ("6700", "Credit Bureau Expense", "expense", "debit"),
     ("6800", "CDAS Service Expense", "expense", "debit"),
+    ("6900", "Corporation Tax Expense", "expense", "debit"),
 ]
 
 PLATFORM_CHART = [
@@ -1347,6 +1354,151 @@ def post_depreciation_adjustment(
         reference_id=reference_id, user_id=user_id,
         entry_date=entry_date or accounting_business_date(db, company_id),
     )
+
+
+def post_share_issue(
+    db: Session, *, company_id, branch_id, shares_issued: int,
+    nominal_value_per_share, issue_price_per_share, settlement_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 35: record paid-up share capital and any share premium."""
+    nominal = _money(nominal_value_per_share)
+    issue = _money(issue_price_per_share)
+    if shares_issued <= 0 or nominal <= 0 or issue <= 0 or issue < nominal:
+        raise HTTPException(status_code=422, detail="Invalid share issue terms")
+
+    total_cash = _money(issue * shares_issued)
+    share_capital = _money(nominal * shares_issued)
+    premium = _money(total_cash - share_capital)
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    settlement = account_by_code(db, key, settlement_account_code)
+    if settlement.account_type != "asset":
+        raise HTTPException(status_code=422, detail="Share issue settlement must debit an asset account")
+
+    lines = [
+        {"account_id": settlement.id, "debit": total_cash, "credit": 0},
+        {"account_id": account_by_code(db, key, "3300").id, "debit": 0, "credit": share_capital},
+    ]
+    if premium:
+        lines.append({"account_id": account_by_code(db, key, "3310").id, "debit": 0, "credit": premium})
+
+    return create_entry(
+        db, company_id=company_id, branch_id=branch_id, created_by_user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+        description=description, reference_type="share_issue", reference_id=reference_id,
+        status_value="posted", lines=lines,
+    )
+
+
+def post_dividend_payment(
+    db: Session, *, company_id, branch_id, amount, settlement_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 35: dividends are distributions of equity, not operating expenses."""
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    settlement = account_by_code(db, key, settlement_account_code)
+    if settlement.account_type != "asset":
+        raise HTTPException(status_code=422, detail="Dividend settlement must use cash or bank")
+    return create_entry(
+        db, company_id=company_id, branch_id=branch_id, created_by_user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+        description=description, reference_type="dividend_payment", reference_id=reference_id,
+        status_value="posted",
+        lines=[
+            {"account_id": account_by_code(db, key, "3200").id, "debit": _money(amount), "credit": 0},
+            {"account_id": settlement.id, "debit": 0, "credit": _money(amount)},
+        ],
+    )
+
+
+def post_corporation_tax_charge(
+    db: Session, *, company_id, branch_id, amount, description: str,
+    reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 35: Dr corporation tax expense / Cr corporation tax payable."""
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code="6900", credit_code="2600", amount=amount,
+        description=description, reference_type="corporation_tax_charge",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def post_loan_note_issue(
+    db: Session, *, company_id, branch_id, amount, settlement_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 35: issue loan notes as financing, not revenue."""
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    settlement = account_by_code(db, key, settlement_account_code)
+    if settlement.account_type != "asset":
+        raise HTTPException(status_code=422, detail="Loan-note proceeds must debit cash or bank")
+    return create_entry(
+        db, company_id=company_id, branch_id=branch_id, created_by_user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+        description=description, reference_type="loan_note_issue", reference_id=reference_id,
+        status_value="posted",
+        lines=[
+            {"account_id": settlement.id, "debit": _money(amount), "credit": 0},
+            {"account_id": account_by_code(db, key, "2500").id, "debit": 0, "credit": _money(amount)},
+        ],
+    )
+
+
+def statement_of_changes_in_equity(
+    db: Session, *, company_id, from_date: date, to_date: date, branch_id=None,
+) -> dict:
+    """Chapter 35: reconcile movements in company equity accounts."""
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+
+    accounts = db.query(AccountingAccount).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.account_type == "equity",
+        AccountingAccount.is_active.is_(True),
+    ).order_by(AccountingAccount.code.asc()).all()
+
+    movements = []
+    opening_total = Decimal("0.00")
+    closing_total = Decimal("0.00")
+    for account in accounts:
+        opening_signed = _account_signed_balance(
+            db, scope_key_value=key, account_code=account.code,
+            to_date=from_date.fromordinal(from_date.toordinal() - 1), branch_id=branch_id,
+        )
+        closing_signed = _account_signed_balance(
+            db, scope_key_value=key, account_code=account.code,
+            to_date=to_date, branch_id=branch_id,
+        )
+        opening = _money(-opening_signed if account.normal_balance == "credit" else opening_signed)
+        closing = _money(-closing_signed if account.normal_balance == "credit" else closing_signed)
+        movement = _money(closing - opening)
+        opening_total += opening
+        closing_total += closing
+        movements.append({
+            "account_code": account.code,
+            "account_name": account.name,
+            "opening_balance": float(opening),
+            "movement": float(movement),
+            "closing_balance": float(closing),
+        })
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "opening_equity": float(_money(opening_total)),
+        "closing_equity": float(_money(closing_total)),
+        "net_movement": float(_money(closing_total - opening_total)),
+        "accounts": movements,
+    }
 
 
 def value_inventory_lower_of_cost_and_nrv(items: list[dict]) -> dict:

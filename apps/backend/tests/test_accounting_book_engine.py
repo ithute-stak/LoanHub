@@ -264,6 +264,55 @@ def test_chapter_30_joint_venture_accounting_is_not_forced_into_core_lending():
     assert "joint_venture" not in service.lower()
 
 
+def test_chapters_31_34_partnership_accounting_is_not_forced_into_supported_institution_model():
+    enums = (ROOT / "backend" / "database" / "models" / "enums.py").read_text(encoding="utf-8")
+    assert 'PARTNERSHIP = "partnership"' not in enums
+    assert 'LOAN_COMPANY = "loan_company"' in enums
+    assert 'COMMERCIAL_BANK = "commercial_bank"' in enums
+    assert 'MICROFINANCE_INSTITUTION = "microfinance_institution"' in enums
+
+
+def test_chapter_35_company_chart_has_share_tax_and_loan_note_accounts():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '("2500", "Loan Notes Payable", "liability", "credit")' in service
+    assert '("2600", "Corporation Tax Payable", "liability", "credit")' in service
+    assert '("3300", "Ordinary Share Capital", "equity", "credit")' in service
+    assert '("3310", "Share Premium", "equity", "credit")' in service
+    assert '("3320", "Revaluation Reserve", "equity", "credit")' in service
+    assert '("3330", "General Reserve", "equity", "credit")' in service
+    assert '("6900", "Corporation Tax Expense", "expense", "debit")' in service
+
+
+def test_chapter_35_company_transactions_and_changes_in_equity_are_exposed():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def post_share_issue(" in service
+    assert "def post_dividend_payment(" in service
+    assert "def post_corporation_tax_charge(" in service
+    assert "def post_loan_note_issue(" in service
+    assert "def statement_of_changes_in_equity(" in service
+    assert '@router.post("/company/share-issues"' in router
+    assert '@router.post("/company/dividends"' in router
+    assert '@router.post("/company/corporation-tax"' in router
+    assert '@router.post("/company/loan-notes"' in router
+    assert '@router.get("/company/changes-in-equity")' in router
+
+
+def test_share_issue_separates_nominal_capital_from_premium():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert 'share_capital = _money(nominal * shares_issued)' in service
+    assert 'premium = _money(total_cash - share_capital)' in service
+    assert 'account_by_code(db, key, "3300")' in service
+    assert 'account_by_code(db, key, "3310")' in service
+
+
+def test_company_statement_classifies_loan_notes_as_non_current_and_tax_as_current():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'NON_CURRENT_LIABILITY_CODES = {"2500"}' in router
+    assert '"2600"' in router
+    assert '"non_current_liabilities"' in router
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
