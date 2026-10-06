@@ -4,7 +4,7 @@ from collections import defaultdict
 from io import BytesIO
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -138,6 +138,45 @@ def get_folio_book(
         skip=skip,
         limit=limit,
     )
+
+
+@router.get("/lookup/{folio_number}")
+def folio_lookup(
+    folio_number: str,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    loan = _base_query(db, context).filter(
+        ClientCompanyLoan.folio_number == folio_number.strip().upper()
+    ).first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Folio number was not found in the active company scope")
+    return _row(loan)
+
+
+@router.get("/borrowers/{borrower_id}")
+def borrower_folio_history(
+    borrower_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    loans = (
+        _base_query(db, context)
+        .filter(ClientCompanyLoan.borrower_id == borrower_id)
+        .order_by(ClientCompanyLoan.created_at.asc(), ClientCompanyLoan.folio_sequence.asc())
+        .all()
+    )
+    if not loans:
+        raise HTTPException(status_code=404, detail="Borrower has no folio history in the active company scope")
+    rows = [_row(loan) for loan in loans]
+    return {
+        "borrower_id": str(borrower_id),
+        "borrower_name": rows[0]["borrower_name"],
+        "loan_count": len(rows),
+        "folios": rows,
+    }
 
 
 @router.get("/integrity")
