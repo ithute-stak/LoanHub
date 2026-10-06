@@ -146,3 +146,18 @@ def test_linked_cdas_modify_and_settlement_use_saved_provider_identity() -> None
     assert "/cdas/loans/${selectedLoanId}/settle" in page
     assert "setModify((current) => ({" in page
     assert "setSettle((current) => ({" in page
+
+
+
+def test_cdas_collected_loan_requires_reconciled_provider_mandate_before_disbursement() -> None:
+    service = _read(ROOT / "services/loan_service.py")
+
+    assert "def assert_disbursement_governance_ready(" in service
+    assert "CDASDeductionMandate" in service
+    assert "CdasOfficialMandateState" in service
+    assert 'usable_mandate_statuses = {"registered", "approved", "active"}' in service
+    assert 'usable_lifecycle_statuses = {"registered", "approved", "active"}' in service
+    assert "state.deduction_id is None" in service
+    assert "bool(state.requires_reconciliation)" in service
+    assert "Register the mandate before disbursement." in service
+    assert "Complete provider registration/reconciliation" in service

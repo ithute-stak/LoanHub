@@ -414,13 +414,6 @@ def approve_direct(
     if not product_id:
         raise HTTPException(status_code=422, detail="Select a loan product before approving the application")
 
-    assert_application_integration_readiness_for_approval(
-        db,
-        application=application,
-        amount=Decimal(payload.approved_amount),
-        product_id=product_id,
-    )
-
     product = _company_product_or_404(
         db,
         product_id=product_id,
@@ -490,6 +483,14 @@ def approve_direct(
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+    assert_application_integration_readiness_for_approval(
+        db,
+        application=application,
+        amount=Decimal(payload.approved_amount),
+        product_id=product_id,
+        proposed_installment=monthly,
+    )
     application.installment_due_dates = [value.isoformat() for value in payload.installment_due_dates]
     application.first_payment_date = payload.installment_due_dates[0]
     application.preferred_payment_day = None

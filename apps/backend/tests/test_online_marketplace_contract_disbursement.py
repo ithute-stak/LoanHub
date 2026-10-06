@@ -100,3 +100,17 @@ def test_company_ui_never_enables_disbursement_without_signed_contract():
     assert 'contract?.status === "signed"' in source
     assert "Sign contract first" in source
     assert "Fully signed contract required" in source
+
+
+
+def test_disbursement_calls_shared_governance_gate_before_payment_creation():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "services" / "loan_service.py").read_text(encoding="utf-8")
+
+    signed_pos = source.index("_require_signed_contract_before_disbursement(db, loan)")
+    governance_pos = source.index("assert_disbursement_governance_ready(db, loan)")
+    key_pos = source.index('key = _payment_idempotency_key(f"loan-disbursement:')
+    assert signed_pos < governance_pos < key_pos
+    assert "assert_loan_disbursement_conditions(db, loan)" in source

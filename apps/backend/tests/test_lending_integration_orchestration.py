@@ -123,3 +123,19 @@ def test_unified_decision_centre_shows_full_external_evidence() -> None:
     assert "Collections" in page
     assert "Available deduction capacity" in page
     assert "Proposed installment" in page
+
+
+
+def test_direct_approval_revalidates_against_final_calculated_installment() -> None:
+    router = _read(ROOT / "routers/professional_lending.py")
+    service = _read(ROOT / "services/lending_integration_service.py")
+
+    calculate_pos = router.index("monthly, total, calculation_breakdown = calculate_loan_terms(")
+    readiness_pos = router.index("assert_application_integration_readiness_for_approval(")
+    assert calculate_pos < readiness_pos
+    approval_block = router[readiness_pos:readiness_pos + 1200]
+    assert "amount=Decimal(payload.approved_amount)" in approval_block
+    assert "product_id=product_id" in approval_block
+    assert "proposed_installment=monthly" in approval_block
+    assert "proposed_installment: Decimal | None = None" in service
+    assert "proposed_installment if proposed_installment is not None" in service
