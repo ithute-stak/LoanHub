@@ -27,20 +27,24 @@ _runtime_state: dict[str, dict[str, float | int | str | None]] = {}
 _ROUTING_ENV = {
     "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
     "go_webhook_delivery": "LOANHUB_GO_WEBHOOK_DELIVERY_MODE",
+    "go_push_delivery": "LOANHUB_GO_PUSH_DELIVERY_MODE",
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
     "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
+    "rust_predictive_risk": "LOANHUB_RUST_PREDICTIVE_RISK_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
     "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
     "go_webhook_delivery": "off",
+    "go_push_delivery": "off",
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
     "rust_affordability": "shadow",
+    "rust_predictive_risk": "shadow",
     "java_event_processing": "shadow",
     "java_underwriting_rules": "shadow",
 }
@@ -158,7 +162,14 @@ def _guarded_get_json(name: str, url: str, timeout: float) -> dict | None:
     return value
 
 
-def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> dict | None:
+def _guarded_post_json(
+    name: str,
+    url: str,
+    payload: dict,
+    timeout: float,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict | None:
     if not _worker_allowed(name):
         with _runtime_lock:
             state = _runtime_state.setdefault(name, {})
@@ -166,7 +177,12 @@ def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> di
         return None
     started = monotonic()
     try:
-        value = _post_json(url, payload, timeout=timeout)
+        value = _post_json(
+            url,
+            payload,
+            timeout=timeout,
+            max_response_bytes=max_response_bytes,
+        )
     except (OSError, TypeError, ValueError, urllib.error.URLError) as exc:
         _record_failure(name, started, exc)
         return None
@@ -184,7 +200,13 @@ def _get_json(url: str, timeout: float = 0.8) -> dict:
     return value
 
 
-def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
+def _post_json(
+    url: str,
+    payload: dict,
+    timeout: float = 1.0,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -192,8 +214,11 @@ def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    limit = max(1024, int(max_response_bytes))
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read(64 * 1024)
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("worker response exceeds configured limit")
     value = json.loads(body.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("worker response must be an object")
@@ -564,6 +589,61 @@ def go_webhook_delivery_batch(*, jobs: list[dict]) -> list[dict] | None:
         "go_worker",
         f"{base_url}/v1/webhooks/deliver-batch",
         {"jobs": jobs},
+        timeout=35.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]
+
+
+def rust_predictive_signal_batch(*, rows: list[dict]) -> list[dict] | None:
+    """Delegate deterministic predictive risk scoring to Rust as one batch."""
+    base_url = rust_compute_url()
+    if not base_url or not rows:
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/predictive-signal-batch",
+        {"rows": rows},
+        timeout=2.5,
+        max_response_bytes=8 * 1024 * 1024,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]
+
+
+def go_push_delivery_batch(
+    *,
+    project_id: str,
+    access_token: str,
+    jobs: list[dict],
+) -> list[dict] | None:
+    """Execute prepared FCM push jobs in Go.
+
+    Python owns recipient resolution, notification policy and credential
+    acquisition. Go receives only a short-lived OAuth access token and performs
+    bounded concurrent provider HTTP calls. No automatic retry occurs here.
+    """
+    if workload_routing_mode("go_push_delivery") != "prefer-worker":
+        return None
+    base_url = go_worker_url()
+    if not base_url or not jobs or not project_id or not access_token:
+        return None
+    value = _guarded_post_json(
+        "go_worker",
+        f"{base_url}/v1/push/deliver-batch",
+        {
+            "project_id": project_id,
+            "access_token": access_token,
+            "jobs": jobs,
+        },
         timeout=35.0,
     )
     if value is None or value.get("authoritative") is not False:

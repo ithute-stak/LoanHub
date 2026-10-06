@@ -159,6 +159,7 @@ services:
     environment:
       LOANHUB_GO_WORKER_ADDR: :8081
       LOANHUB_GO_HTTP_CONCURRENCY: ${LOANHUB_GO_HTTP_CONCURRENCY:-16}
+      LOANHUB_GO_PUSH_CONCURRENCY: ${LOANHUB_GO_PUSH_CONCURRENCY:-32}
     expose:
       - "8081"
     healthcheck:

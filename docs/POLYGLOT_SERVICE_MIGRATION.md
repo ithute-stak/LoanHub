@@ -71,3 +71,42 @@ exposure and CDAS exposure in one cross-process request.
 This distinction is intentional: continuing to recompute the entire Python aggregate
 after promotion would preserve correctness evidence but would not deliver the intended
 CPU-efficiency gain.
+
+
+## Predictive intelligence migration status
+
+Loan-level transparent predictive scoring now has a batched Rust path.
+
+Python continues to own:
+- company/branch scope and snapshot selection;
+- collection work-item selection;
+- evidence construction and advisory-only policy;
+- database persistence and auditability;
+- all actual credit and collection decisions.
+
+Rust owns the deterministic scoring inner loop: DPD scoring, deterioration,
+bucket-worsening, first-payment-default/top-up stress, collection-priority scoring,
+risk-band classification, projected PAR30 entry and 30-day stress bucket.
+
+The workload starts in `shadow`. After benchmark/parity evidence supports promotion,
+`prefer-worker` uses valid Rust rows directly and falls back to Python only for
+missing or invalid worker output. This is the intended efficiency model: once promoted,
+LoanHub should not keep paying for the same CPU-heavy Python calculation solely for
+live parity on every request.
+
+
+## Mobile push migration status
+
+Mobile push network fan-out now has a Go path.
+
+Python remains responsible for recipient selection, device-token lookup, notification
+category/channel policy, message text/data, Firebase project selection and OAuth
+credential acquisition. Only a short-lived FCM access token is handed to Go; the
+long-lived service-account private key remains with Python/Application Default
+Credentials.
+
+Go performs bounded concurrent calls to the fixed FCM v1 endpoint. The workload
+defaults to `off`. Because push is side-effecting, `shadow` remains Python-only:
+LoanHub never sends duplicate notifications merely to compare runtimes. When explicitly
+promoted to `prefer-worker`, an ambiguous Go handoff is not immediately replayed
+through Python, avoiding double delivery.

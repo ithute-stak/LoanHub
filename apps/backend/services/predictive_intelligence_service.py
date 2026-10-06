@@ -22,6 +22,11 @@ from database.models.predictive_intelligence import (
     PredictiveLoanSignal,
 )
 from database.models.repayment import RepaymentInstallment
+from services.polyglot_runtime_service import (
+    record_parity_mismatch,
+    rust_predictive_signal_batch,
+    workload_routing_mode,
+)
 from services.portfolio_risk_service import dpd_bucket, generate_snapshot
 
 
@@ -166,6 +171,47 @@ def _score_signal(
         action = "No predictive escalation is indicated; continue normal servicing and monitoring."
 
     return score, band, projected_par30, stress_bucket, reasons, action
+
+
+def _rust_predictive_rows(
+    current_rows: list[PortfolioRiskSnapshot],
+    previous_by_loan: dict[UUID, PortfolioRiskSnapshot],
+    work_items: dict[UUID, CollectionWorkItem],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for current in current_rows:
+        previous = previous_by_loan.get(current.loan_id)
+        work_item = work_items.get(current.loan_id)
+        rows.append(
+            {
+                "key": str(current.loan_id),
+                "current_dpd": int(current.days_past_due or 0),
+                "previous_dpd": int(previous.days_past_due) if previous else None,
+                "current_bucket": str(current.delinquency_bucket or "current"),
+                "previous_bucket": str(previous.delinquency_bucket) if previous else None,
+                "first_payment_default": bool(current.first_payment_default),
+                "is_top_up": bool(current.is_top_up),
+                "has_work_item": work_item is not None,
+                "work_priority": str(work_item.priority) if work_item and work_item.priority else None,
+                "work_priority_score": (
+                    str(work_item.priority_score)
+                    if work_item and work_item.priority_score is not None
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
+def _normalized_rust_signal(value: dict[str, Any]) -> tuple[Decimal, str, bool, str, list[str], str]:
+    return (
+        Decimal(str(value["risk_score"])),
+        str(value["risk_band"]),
+        bool(value["projected_par30_entry"]),
+        str(value["stress_bucket_30d"]),
+        [str(item) for item in list(value.get("rationale") or [])],
+        str(value["recommended_action"]),
+    )
 
 
 def _cashflow_forecasts(
@@ -335,15 +381,62 @@ def generate_predictive_run(
     db.flush()
 
     work_items = _collection_work_by_loan(db, company_id, branch_id)
+    routing_mode = workload_routing_mode("rust_predictive_risk")
+    delegated_results = (
+        rust_predictive_signal_batch(
+            rows=_rust_predictive_rows(current_rows, previous_by_loan, work_items)
+        )
+        if routing_mode != "off"
+        else None
+    )
+    delegated_by_loan: dict[str, dict[str, Any]] = {}
+    duplicate_delegated_key = False
+    if delegated_results is not None:
+        for item in delegated_results:
+            key = str(item.get("key") or "")
+            if not key:
+                continue
+            if key in delegated_by_loan:
+                duplicate_delegated_key = True
+                continue
+            delegated_by_loan[key] = item
+
+    expected_keys = {str(row.loan_id) for row in current_rows}
+    delegated_batch_complete = (
+        delegated_results is not None
+        and not duplicate_delegated_key
+        and set(delegated_by_loan) == expected_keys
+        and len(delegated_results) == len(expected_keys)
+    )
+
     counts = defaultdict(int)
     projected_par30 = 0
+    parity_mismatch = routing_mode == "shadow" and delegated_results is not None and not delegated_batch_complete
+    rust_used_count = 0
+    rust_fallback_count = 0
+
     for current in current_rows:
         previous = previous_by_loan.get(current.loan_id)
-        score, band, entering_par30, stress_bucket, reasons, action = _score_signal(
-            current,
-            previous,
-            work_items.get(current.loan_id),
-        )
+        work_item = work_items.get(current.loan_id)
+        delegated = delegated_by_loan.get(str(current.loan_id))
+        delegated_tuple = None
+        if delegated is not None:
+            try:
+                delegated_tuple = _normalized_rust_signal(delegated)
+            except (KeyError, TypeError, ValueError):
+                delegated_tuple = None
+
+        if routing_mode == "prefer-worker" and delegated_tuple is not None:
+            score, band, entering_par30, stress_bucket, reasons, action = delegated_tuple
+            rust_used_count += 1
+        else:
+            python_tuple = _score_signal(current, previous, work_item)
+            score, band, entering_par30, stress_bucket, reasons, action = python_tuple
+            rust_fallback_count += int(routing_mode == "prefer-worker")
+            if routing_mode == "shadow" and delegated_tuple is not None:
+                if delegated_tuple != python_tuple:
+                    parity_mismatch = True
+
         counts[band] += 1
         projected_par30 += int(entering_par30)
         evidence = current.evidence_snapshot or {}
@@ -380,6 +473,9 @@ def generate_predictive_run(
         )
         db.add(signal)
 
+    if parity_mismatch:
+        record_parity_mismatch("rust_compute")
+
     forecasts = _cashflow_forecasts(
         db,
         run=run,
@@ -400,6 +496,25 @@ def generate_predictive_run(
         "automatic_credit_decisions": False,
         "automatic_collection_actions": False,
         "method": "transparent rules over stored portfolio snapshots plus observed 90-day installment collection rate",
+        "compute_runtime": {
+            "python_authoritative": True,
+            "rust_routing_mode": routing_mode,
+            "rust_used_count": rust_used_count,
+            "rust_fallback_count": rust_fallback_count,
+            "rust_parity": (
+                "mismatch"
+                if parity_mismatch
+                else "passed"
+                if routing_mode == "shadow" and delegated_batch_complete
+                else "partial_fallback"
+                if routing_mode == "prefer-worker" and rust_fallback_count > 0
+                else "promoted_no_live_parity"
+                if routing_mode == "prefer-worker" and delegated_batch_complete
+                else "unavailable"
+                if routing_mode != "off" and delegated_results is None
+                else "off"
+            ),
+        },
         "employer_stress_alerts": _employer_stress_alerts(current_rows),
         "cashflow": {
             str(row.horizon_days): {

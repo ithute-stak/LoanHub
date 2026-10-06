@@ -68,3 +68,57 @@ func TestWebhookConcurrencyBounds(t *testing.T) {
 		t.Fatalf("expected invalid concurrency to fall back to 16, got %d", webhookConcurrency())
 	}
 }
+
+
+func TestValidProjectID(t *testing.T) {
+	if !validProjectID("loanhub-prod-123") {
+		t.Fatal("expected normal Firebase project id to be accepted")
+	}
+	for _, raw := range []string{"", "bad/project", "bad project", "bad?project"} {
+		if validProjectID(raw) {
+			t.Fatalf("expected %q to be rejected", raw)
+		}
+	}
+}
+
+func TestPushBatchRejectsEmptyJobs(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/push/deliver-batch",
+		strings.NewReader(`{"project_id":"loanhub-prod","access_token":"short-lived","jobs":[]}`),
+	)
+	recorder := httptest.NewRecorder()
+
+	handlePushDeliveryBatch(recorder, request)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", recorder.Code)
+	}
+}
+
+func TestPushBatchRejectsDuplicateJobIDs(t *testing.T) {
+	body := `{"project_id":"loanhub-prod","access_token":"short-lived","jobs":[
+		{"job_id":"same","token":"a","title":"LoanHub","body":"One","channel_id":"loanhub_events","data":{},"timeout_ms":1000},
+		{"job_id":"same","token":"b","title":"LoanHub","body":"Two","channel_id":"loanhub_events","data":{},"timeout_ms":1000}
+	]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/push/deliver-batch", strings.NewReader(body))
+	recorder := httptest.NewRecorder()
+
+	handlePushDeliveryBatch(recorder, request)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", recorder.Code)
+	}
+}
+
+func TestPushConcurrencyBounds(t *testing.T) {
+	t.Setenv("LOANHUB_GO_PUSH_CONCURRENCY", "999")
+	if pushConcurrency() != 128 {
+		t.Fatalf("expected push concurrency to clamp to 128, got %d", pushConcurrency())
+	}
+
+	t.Setenv("LOANHUB_GO_PUSH_CONCURRENCY", "invalid")
+	if pushConcurrency() != 32 {
+		t.Fatalf("expected invalid push concurrency to fall back to 32, got %d", pushConcurrency())
+	}
+}

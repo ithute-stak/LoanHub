@@ -928,6 +928,210 @@ fn affordability_assessment(
 }
 
 
+
+#[derive(Debug, Deserialize)]
+struct PredictiveSignalInput {
+    key: String,
+    current_dpd: i64,
+    previous_dpd: Option<i64>,
+    current_bucket: String,
+    previous_bucket: Option<String>,
+    first_payment_default: bool,
+    is_top_up: bool,
+    has_work_item: bool,
+    work_priority: Option<String>,
+    work_priority_score: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PredictiveSignalBatchRequest {
+    rows: Vec<PredictiveSignalInput>,
+}
+
+#[derive(Debug, Serialize)]
+struct PredictiveSignalOutput {
+    key: String,
+    risk_score: String,
+    risk_band: String,
+    projected_par30_entry: bool,
+    stress_bucket_30d: String,
+    rationale: Vec<String>,
+    recommended_action: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PredictiveSignalBatchResponse {
+    results: Vec<PredictiveSignalOutput>,
+    authoritative: bool,
+}
+
+fn predictive_band(score: Decimal) -> &'static str {
+    if score >= Decimal::from(80_i64) {
+        "critical"
+    } else if score >= Decimal::from(60_i64) {
+        "high"
+    } else if score >= Decimal::from(40_i64) {
+        "elevated"
+    } else if score >= Decimal::from(20_i64) {
+        "watch"
+    } else {
+        "stable"
+    }
+}
+
+fn predictive_bucket(days: i64) -> &'static str {
+    if days <= 0 {
+        "current"
+    } else if days <= 7 {
+        "1-7"
+    } else if days <= 30 {
+        "8-30"
+    } else if days <= 60 {
+        "31-60"
+    } else if days <= 90 {
+        "61-90"
+    } else {
+        "90+"
+    }
+}
+
+fn bucket_rank(value: &str) -> i64 {
+    match value {
+        "1-7" => 1,
+        "8-30" => 2,
+        "31-60" => 3,
+        "61-90" => 4,
+        "90+" => 5,
+        _ => 0,
+    }
+}
+
+fn predictive_signal(row: &PredictiveSignalInput) -> Result<PredictiveSignalOutput, String> {
+    let mut score = Decimal::ZERO;
+    let mut rationale = Vec::new();
+    let dpd = row.current_dpd;
+
+    if dpd >= 90 {
+        score += Decimal::from(75_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 60 {
+        score += Decimal::from(60_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 30 {
+        score += Decimal::from(45_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 8 {
+        score += Decimal::from(25_i64);
+        rationale.push(format!("Loan is already {dpd} days past due"));
+    } else if dpd >= 1 {
+        score += Decimal::from(12_i64);
+        rationale.push(format!("Loan is {dpd} days past due"));
+    }
+
+    let dpd_change = row.previous_dpd.map(|previous| dpd - previous);
+    if let Some(change) = dpd_change {
+        if change >= 15 {
+            score += Decimal::from(15_i64);
+            rationale.push(format!(
+                "DPD increased by {change} days since the prior stored snapshot"
+            ));
+        } else if change >= 7 {
+            score += Decimal::from(10_i64);
+            rationale.push(format!(
+                "DPD increased by {change} days since the prior stored snapshot"
+            ));
+        }
+    }
+
+    if let Some(previous_bucket) = row.previous_bucket.as_deref() {
+        if previous_bucket != row.current_bucket
+            && bucket_rank(&row.current_bucket) > bucket_rank(previous_bucket)
+        {
+            score += Decimal::from(8_i64);
+            rationale.push(format!(
+                "Delinquency bucket worsened from {previous_bucket} to {}",
+                row.current_bucket
+            ));
+        }
+    }
+
+    if row.first_payment_default {
+        score += Decimal::from(20_i64);
+        rationale.push("First-payment-default evidence is present".to_string());
+    }
+    if row.is_top_up && dpd > 0 {
+        score += Decimal::from(5_i64);
+        rationale.push("This is a top-up exposure already showing repayment stress".to_string());
+    }
+
+    if row.has_work_item {
+        let priority = row.work_priority.as_deref().unwrap_or("");
+        if matches!(priority, "critical" | "urgent") {
+            score += Decimal::from(10_i64);
+            rationale.push(format!(
+                "Collections already has a {priority} work item"
+            ));
+        } else {
+            let priority_score = row
+                .work_priority_score
+                .as_deref()
+                .map(decimal)
+                .transpose()?
+                .unwrap_or(Decimal::ZERO);
+            if priority == "high" || priority_score >= Decimal::from(70_i64) {
+                score += Decimal::from(6_i64);
+                rationale.push("Collections already has a high-priority work item".to_string());
+            }
+        }
+    }
+
+    if score > Decimal::from(100_i64) {
+        score = Decimal::from(100_i64);
+    }
+    let band = predictive_band(score);
+    let projected_par30 = (1..30).contains(&dpd)
+        && (dpd >= 8
+            || row.first_payment_default
+            || dpd_change.map(|change| change >= 7).unwrap_or(false));
+    let stress_bucket = if dpd > 0 {
+        predictive_bucket(dpd.saturating_add(30)).to_string()
+    } else {
+        row.current_bucket.clone()
+    };
+    let action = match band {
+        "critical" | "high" => "Review the loan and active collection evidence now, then assign or reprioritise the appropriate human recovery action.",
+        "elevated" => "Prioritise a human account review and borrower contact before the next repayment date or collection cycle.",
+        "watch" => "Monitor the next scheduled repayment and confirm that the collection route remains valid.",
+        _ => "No predictive escalation is indicated; continue normal servicing and monitoring.",
+    };
+
+    Ok(PredictiveSignalOutput {
+        key: row.key.clone(),
+        risk_score: score.to_string(),
+        risk_band: band.to_string(),
+        projected_par30_entry: projected_par30,
+        stress_bucket_30d: stress_bucket,
+        rationale,
+        recommended_action: action.to_string(),
+    })
+}
+
+fn predictive_signal_batch(
+    req: &PredictiveSignalBatchRequest,
+) -> Result<PredictiveSignalBatchResponse, String> {
+    if req.rows.len() > 10_000 {
+        return Err("too_many_rows".to_string());
+    }
+    let mut results = Vec::with_capacity(req.rows.len());
+    for row in &req.rows {
+        results.push(predictive_signal(row)?);
+    }
+    Ok(PredictiveSignalBatchResponse {
+        results,
+        authoritative: false,
+    })
+}
+
 fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     if req.term_months == 0 || req.term_months > 120 || req.due_dates.len() != req.term_months {
         return Err("invalid term or due_dates".to_string());
@@ -993,6 +1197,28 @@ fn main() {
             match serde_json::from_str::<AffordabilityAssessmentRequest>(&body)
                 .map_err(|_| "invalid_json".to_string())
                 .and_then(|payload| affordability_assessment(&payload))
+            {
+                Ok(result) => {
+                    let body = serde_json::to_string(&result).unwrap();
+                    let _ = request.respond(json_response(200, body));
+                }
+                Err(error) => {
+                    let body = serde_json::json!({"error": error}).to_string();
+                    let _ = request.respond(json_response(422, body));
+                }
+            }
+            continue;
+        }
+
+        if request.method() == &Method::Post && url == "/v1/predictive-signal-batch" {
+            let mut body = String::new();
+            if request.as_reader().read_to_string(&mut body).is_err() {
+                let _ = request.respond(json_response(400, r#"{"error":"invalid_body"}"#.to_string()));
+                continue;
+            }
+            match serde_json::from_str::<PredictiveSignalBatchRequest>(&body)
+                .map_err(|_| "invalid_json".to_string())
+                .and_then(|payload| predictive_signal_batch(&payload))
             {
                 Ok(result) => {
                     let body = serde_json::to_string(&result).unwrap();

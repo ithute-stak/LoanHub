@@ -435,6 +435,21 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     )
     monkeypatch.setattr(
         benchmark,
+        "rust_predictive_signal_batch",
+        lambda **kwargs: [
+            {
+                "key": "loan-1",
+                "risk_score": "74",
+                "risk_band": "high",
+                "projected_par30_entry": True,
+                "stress_bucket_30d": "31-60",
+                "rationale": [],
+                "recommended_action": "Review",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        benchmark,
         "java_underwriting_rules",
         lambda **kwargs: {
             "passed": True,
@@ -492,7 +507,7 @@ def test_polyglot_benchmark_reports_only_full_parity_candidates(monkeypatch) -> 
     assert result["iterations"] == 2
     assert result["non_authoritative"] is True
     assert result["changes_routing"] is False
-    assert len(result["results"]) == 7
+    assert len(result["results"]) == 8
     assert all(item["parity_passed"] == 2 for item in result["results"])
     assert all(item["promotion_candidate"] is True for item in result["results"])
 
@@ -926,3 +941,192 @@ def test_polyglot_language_roles_are_not_decorative() -> None:
     assert "simple-interest" in native
     assert "round_ratio_half_up" in native
     assert "cpp_simple_interest_cents(" in rust
+
+
+def test_rust_predictive_risk_batch_is_shadow_routed() -> None:
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    predictive = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/predictive-signal-batch"' in rust
+    assert "struct PredictiveSignalBatchRequest" in rust
+    assert "fn predictive_signal_batch(" in rust
+    assert '"rust_predictive_risk": "shadow"' in runtime
+    assert "def rust_predictive_signal_batch(" in runtime
+    assert 'workload_routing_mode("rust_predictive_risk")' in predictive
+    assert 'record_parity_mismatch("rust_compute")' in predictive
+    assert "LOANHUB_RUST_PREDICTIVE_RISK_MODE=shadow" in env
+
+
+def test_predictive_rust_row_contract_matches_python_rules() -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from services import predictive_intelligence_service as predictive
+
+    loan_id = uuid4()
+    current = SimpleNamespace(
+        loan_id=loan_id,
+        days_past_due=12,
+        delinquency_bucket="8-30",
+        first_payment_default=True,
+        is_top_up=True,
+    )
+    previous = SimpleNamespace(
+        days_past_due=2,
+        delinquency_bucket="1-7",
+    )
+    work_item = SimpleNamespace(
+        priority="high",
+        priority_score="75",
+    )
+
+    rows = predictive._rust_predictive_rows(
+        [current],
+        {loan_id: previous},
+        {loan_id: work_item},
+    )
+
+    assert rows == [
+        {
+            "key": str(loan_id),
+            "current_dpd": 12,
+            "previous_dpd": 2,
+            "current_bucket": "8-30",
+            "previous_bucket": "1-7",
+            "first_payment_default": True,
+            "is_top_up": True,
+            "has_work_item": True,
+            "work_priority": "high",
+            "work_priority_score": "75",
+        }
+    ]
+
+    normalized = predictive._normalized_rust_signal(
+        {
+            "risk_score": "74",
+            "risk_band": "high",
+            "projected_par30_entry": True,
+            "stress_bucket_30d": "31-60",
+            "rationale": [
+                "Loan is already 12 days past due",
+                "DPD increased by 10 days since the prior stored snapshot",
+                "Delinquency bucket worsened from 1-7 to 8-30",
+                "First-payment-default evidence is present",
+                "This is a top-up exposure already showing repayment stress",
+                "Collections already has a high-priority work item",
+            ],
+            "recommended_action": "Review the loan and active collection evidence now, then assign or reprioritise the appropriate human recovery action.",
+        }
+    )
+    python_value = predictive._score_signal(current, previous, work_item)
+
+    assert normalized == python_value
+
+
+def test_predictive_prefer_worker_avoids_python_scoring_when_rust_row_is_valid() -> None:
+    service = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+
+    assert 'routing_mode == "prefer-worker" and delegated_tuple is not None' in service
+    assert "rust_used_count += 1" in service
+    assert "python_tuple = _score_signal(current, previous, work_item)" in service
+    assert '"promoted_no_live_parity"' in service
+
+
+def test_go_push_delivery_is_side_effect_safe_and_python_scoped() -> None:
+    go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+    push = (ROOT / "services/mobile_push_service.py").read_text(encoding="utf-8")
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+
+    assert '"/v1/push/deliver-batch"' in go
+    assert "pushConcurrency()" in go
+    assert "validProjectID(" in go
+    assert '"go_push_delivery": "off"' in runtime
+    assert "def go_push_delivery_batch(" in runtime
+    assert 'workload_routing_mode("go_push_delivery") == "prefer-worker"' in push
+    assert "Side-effecting push delivery is never dual-sent in shadow mode." in push
+    assert "LOANHUB_GO_PUSH_DELIVERY_MODE=off" in env
+
+
+def test_go_push_preparation_keeps_recipient_policy_in_python(monkeypatch) -> None:
+    from services import mobile_push_service as push
+
+    event = {
+        "event_id": "evt-1",
+        "type": "CHAT_MESSAGE_CREATED",
+        "domain": "chat",
+        "entity_id": "conv-1",
+        "conversation_id": "conv-1",
+        "message": {
+            "sender": {"id": "sender", "display_name": "Koetlisi"},
+            "message_type": "text",
+            "body": "Hello",
+        },
+    }
+
+    notification = push._notification_for_recipient(event, "recipient")
+    assert notification is not None
+    title, body, channel_id, data = push._push_data(event, notification)
+
+    assert title == "Koetlisi"
+    assert body == "Hello"
+    assert channel_id == "loanhub_messages"
+    assert data["event_id"] == "evt-1"
+    assert data["route"] == "chat:conv-1"
+
+
+def test_go_push_handoff_does_not_fallback_after_ambiguous_batch(monkeypatch) -> None:
+    from services import mobile_push_service as push
+
+    monkeypatch.setattr(push, "go_worker_url", lambda: "http://go-worker:8081")
+    monkeypatch.setattr(push, "_firebase_access_token", lambda: ("loanhub-prod", "short-lived-token"))
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(push, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(push, "_active_tokens", lambda db, ids: ["token-1", "token-2"])
+    monkeypatch.setattr(
+        push,
+        "_notification_for_recipient",
+        lambda event, recipient_id: {
+            "category": "message",
+            "title": "LoanHub",
+            "body": "Update",
+            "route": "inbox",
+        },
+    )
+    calls = {"count": 0}
+
+    def ambiguous(**kwargs):
+        calls["count"] += 1
+        return None
+
+    monkeypatch.setattr(push, "go_push_delivery_batch", ambiguous)
+
+    assert push._send_sync_go(["user-1"], {"event_id": "evt-1"}) is True
+    assert calls["count"] == 1
+
+
+def test_predictive_shadow_requires_complete_rust_batch() -> None:
+    service = (ROOT / "services/predictive_intelligence_service.py").read_text(encoding="utf-8")
+
+    assert "duplicate_delegated_key = False" in service
+    assert "delegated_batch_complete = (" in service
+    assert "set(delegated_by_loan) == expected_keys" in service
+    assert "len(delegated_results) == len(expected_keys)" in service
+    assert '"partial_fallback"' in service
+
+
+def test_polyglot_worker_response_limits_are_explicit() -> None:
+    runtime = (ROOT / "services/polyglot_runtime_service.py").read_text(encoding="utf-8")
+
+    assert "max_response_bytes: int = 64 * 1024" in runtime
+    assert 'raise ValueError("worker response exceeds configured limit")' in runtime
+    assert "max_response_bytes=8 * 1024 * 1024" in runtime
