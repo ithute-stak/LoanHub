@@ -141,10 +141,8 @@ def run_maintenance(db: Session) -> MaintenanceResult:
             loan.is_overdue = True
     result.overdue_loans = len(overdue_loans)
 
-    # Current delinquency and historical delinquency are different concepts.
-    # A zero-balance loan is settled even if it was previously late. Reconcile
-    # all zero-balance rows, including records that are already COMPLETED but
-    # still carry a stale persisted is_overdue flag from an older payment path.
+    # Reconcile all settled rows, including loans that are already COMPLETED
+    # but still carry a stale current-overdue flag from an older payment path.
     settled_loans = (
         db.query(ClientCompanyLoan)
         .filter(ClientCompanyLoan.balance <= 0)

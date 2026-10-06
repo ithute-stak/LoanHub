@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 
 from database.base import Base
 from database.models.enums import LoanStatus, RepaymentType, RiskLevel
+from services.loan_folio import assign_loan_folio
 
 
 class ClientCompanyLoan(Base):
@@ -13,6 +14,12 @@ class ClientCompanyLoan(Base):
     __table_args__ = (
         UniqueConstraint("loan_request_id", name="uq_client_loan_request"),
         UniqueConstraint("loan_offer_id", name="uq_client_loan_offer"),
+        UniqueConstraint(
+            "company_id",
+            "folio_group_code",
+            "folio_sequence",
+            name="uq_client_loan_folio_sequence",
+        ),
     )
 
     loan_request_id = Column(
@@ -46,6 +53,13 @@ class ClientCompanyLoan(Base):
     )
 
     loan_reference = Column(String(100), unique=True, nullable=False, index=True)
+    # Human sequence-book identity. The borrower/client does not own a folio;
+    # every loan receives one immutable folio when the loan row is first created.
+    folio_number = Column(String(40), nullable=False, index=True)
+    folio_company_code = Column(String(8), nullable=False)
+    folio_group_code = Column(String(8), nullable=False, index=True)
+    folio_sequence = Column(Integer, nullable=False)
+
     origination_channel = Column(String(30), nullable=False, default="marketplace", index=True)
     direct_application_id = Column(UUID(as_uuid=True), ForeignKey("direct_loan_applications.id", ondelete="SET NULL"), nullable=True, unique=True)
     is_top_up = Column(Boolean, nullable=False, default=False, index=True)
@@ -138,12 +152,7 @@ _TERMINAL_NON_OVERDUE_STATUSES = {
 
 
 def loan_can_be_currently_overdue(*, balance, status: LoanStatus | str | None) -> bool:
-    """Return whether a loan is eligible to carry a *current* overdue flag.
-
-    Historical lateness remains in the installment/payment history. A settled
-    balance or terminal loan state can never represent current delinquency.
-    """
-
+    """Return whether a loan is eligible to carry a current overdue flag."""
     current_balance = Decimal(str(balance or 0))
     try:
         current_status = status if isinstance(status, LoanStatus) else LoanStatus(status)
@@ -157,3 +166,6 @@ def loan_can_be_currently_overdue(*, balance, status: LoanStatus | str | None) -
 def _clear_stale_current_overdue_flag(_mapper, _connection, loan: ClientCompanyLoan) -> None:
     if not loan_can_be_currently_overdue(balance=loan.balance, status=loan.status):
         loan.is_overdue = False
+
+
+event.listen(ClientCompanyLoan, "before_insert", assign_loan_folio)

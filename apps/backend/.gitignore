@@ -1,3 +1,0 @@
-# Production secrets
-apps/backend/.env
-apps/backend/secrets/

@@ -1,9 +1,0 @@
-.git
-.env
-.env.*
-node_modules
-.next
-coverage
-*.log
-*.pem
-*.key
