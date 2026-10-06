@@ -16,7 +16,7 @@ scoped to either a tenant company or the LoanHub platform.
 import hashlib
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
@@ -4083,6 +4083,323 @@ def vat_control_reconciliation(
         "ledger_balanced": input_balance >= 0 and output_balance >= 0,
         "policy_note": "This is a ledger reconciliation control, not a Lesotho VAT return or statutory tax determination.",
     }
+
+
+def create_financial_plan(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    name: str,
+    plan_type: str,
+    fiscal_start: date,
+    fiscal_end: date,
+    notes: str | None,
+    lines: list[dict],
+    user_id,
+) -> CompanyOperatingRecord:
+    """Create a versioned planning record that never alters posted accounting."""
+    if plan_type not in {"budget", "forecast"}:
+        raise HTTPException(status_code=422, detail="plan_type must be budget or forecast")
+    if fiscal_end < fiscal_start:
+        raise HTTPException(status_code=422, detail="Invalid financial plan period")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    normalised = []
+    seen = set()
+    total = Decimal("0.00")
+    for raw in lines:
+        code = str(raw["account_code"]).strip().upper()
+        account = account_by_code(db, key, code)
+        period = raw["period_start"]
+        if period < fiscal_start or period > fiscal_end:
+            raise HTTPException(status_code=422, detail="Plan line falls outside plan period")
+        dedupe = (code, period.isoformat())
+        if dedupe in seen:
+            raise HTTPException(status_code=422, detail=f"Duplicate plan line for {code} {period.isoformat()}")
+        seen.add(dedupe)
+        amount = _money(raw["amount"])
+        total += amount
+        normalised.append({
+            "account_code": code,
+            "account_name": account.name,
+            "account_type": account.account_type,
+            "period_start": period.isoformat(),
+            "amount": float(amount),
+            "note": (raw.get("note") or "").strip() or None,
+            "basis": "management_plan",
+        })
+
+    reference = f"PLAN-{plan_type.upper()}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{str(uuid4())[:8].upper()}"
+    record = CompanyOperatingRecord(
+        company_id=company_id,
+        branch_id=branch_id,
+        module="accounting",
+        record_type="financial_plan",
+        reference=reference,
+        title=name.strip(),
+        description=(notes or "").strip() or None,
+        status="draft",
+        created_by_user_id=user_id,
+        amount=_money(total),
+        currency="LSL",
+        data={
+            "plan_type": plan_type,
+            "fiscal_start": fiscal_start.isoformat(),
+            "fiscal_end": fiscal_end.isoformat(),
+            "version": 1,
+            "lines": normalised,
+            "approved_by_user_id": None,
+            "approved_at": None,
+            "source_plan_id": None,
+        },
+        tags=["financial_planning", plan_type],
+    )
+    db.add(record)
+    db.flush()
+    return record
+
+
+def approve_financial_plan(
+    db: Session,
+    *,
+    company_id,
+    plan_id,
+    user_id,
+) -> CompanyOperatingRecord:
+    plan = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == plan_id,
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "financial_plan",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).with_for_update().first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Financial plan not found")
+    if plan.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft financial plans can be approved")
+    if plan.created_by_user_id == user_id:
+        raise HTTPException(status_code=409, detail="Maker/checker control: plan creator cannot approve the plan")
+    data = dict(plan.data or {})
+    data["approved_by_user_id"] = str(user_id)
+    data["approved_at"] = datetime.now(timezone.utc).isoformat()
+    plan.data = data
+    plan.status = "approved"
+    db.add(plan)
+    return plan
+
+
+def financial_plan_payload(plan: CompanyOperatingRecord) -> dict:
+    data = dict(plan.data or {})
+    return {
+        "id": str(plan.id),
+        "reference": plan.reference,
+        "name": plan.title,
+        "description": plan.description,
+        "status": plan.status,
+        "branch_id": str(plan.branch_id) if plan.branch_id else None,
+        "plan_type": data.get("plan_type"),
+        "fiscal_start": data.get("fiscal_start"),
+        "fiscal_end": data.get("fiscal_end"),
+        "version": data.get("version", 1),
+        "source_plan_id": data.get("source_plan_id"),
+        "approved_by_user_id": data.get("approved_by_user_id"),
+        "approved_at": data.get("approved_at"),
+        "total_planned": float(_money(plan.amount)),
+        "lines": data.get("lines", []),
+    }
+
+
+def financial_plan_variance(
+    db: Session,
+    *,
+    company_id,
+    plan: CompanyOperatingRecord,
+    as_of: date,
+    branch_id=None,
+) -> dict:
+    """Compare plan lines to posted ledger actuals using account normal balances."""
+    data = dict(plan.data or {})
+    fiscal_start = date.fromisoformat(data["fiscal_start"])
+    fiscal_end = date.fromisoformat(data["fiscal_end"])
+    effective_end = min(as_of, fiscal_end)
+    if effective_end < fiscal_start:
+        raise HTTPException(status_code=422, detail="as_of precedes financial plan")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    plan_map = {}
+    account_meta = {}
+    for line in data.get("lines", []):
+        period = date.fromisoformat(line["period_start"])
+        if period > effective_end:
+            continue
+        k = (line["account_code"], period.year, period.month)
+        plan_map[k] = _money(line["amount"])
+        account_meta[line["account_code"]] = {
+            "name": line.get("account_name"),
+            "account_type": line.get("account_type"),
+        }
+
+    actual_q = db.query(
+        AccountingAccount.code,
+        AccountingAccount.name,
+        AccountingAccount.account_type,
+        func.extract("year", JournalEntry.entry_date),
+        func.extract("month", JournalEntry.entry_date),
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalLine, JournalLine.account_id == AccountingAccount.id).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        AccountingAccount.scope_key == key,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(fiscal_start, effective_end),
+    )
+    selected_branch = branch_id or plan.branch_id
+    if selected_branch:
+        actual_q = actual_q.filter(JournalEntry.branch_id == selected_branch)
+    actual_rows = actual_q.group_by(
+        AccountingAccount.code,
+        AccountingAccount.name,
+        AccountingAccount.account_type,
+        func.extract("year", JournalEntry.entry_date),
+        func.extract("month", JournalEntry.entry_date),
+    ).all()
+
+    actual_map = {}
+    for code, name, account_type, year_value, month_value, debit, credit in actual_rows:
+        raw = _money(Decimal(debit) - Decimal(credit))
+        actual = -raw if account_type in {"liability", "equity", "revenue"} else raw
+        actual_map[(code, int(year_value), int(month_value))] = _money(actual)
+        account_meta[code] = {"name": name, "account_type": account_type}
+
+    keys = sorted(set(plan_map) | set(actual_map), key=lambda x: (x[1], x[2], x[0]))
+    rows = []
+    planned_total = Decimal("0.00")
+    actual_total = Decimal("0.00")
+    for code, year_value, month_value in keys:
+        planned = plan_map.get((code, year_value, month_value), Decimal("0.00"))
+        actual = actual_map.get((code, year_value, month_value), Decimal("0.00"))
+        variance = _money(actual - planned)
+        meta = account_meta.get(code, {})
+        account_type = meta.get("account_type") or "unknown"
+        favorable = None
+        if account_type == "revenue":
+            favorable = variance >= 0
+        elif account_type == "expense":
+            favorable = variance <= 0
+        pct = None if planned == 0 else float((variance / abs(planned) * Decimal("100")).quantize(Decimal("0.01")))
+        narrative = (
+            f"{meta.get('name') or code} actual {float(actual):,.2f} versus plan {float(planned):,.2f}; "
+            f"variance {float(abs(variance)):,.2f} {'above' if variance > 0 else 'below' if variance < 0 else 'on'} plan."
+        )
+        rows.append({
+            "account_code": code,
+            "account_name": meta.get("name") or code,
+            "account_type": account_type,
+            "period": f"{year_value:04d}-{month_value:02d}",
+            "planned": float(planned),
+            "actual": float(actual),
+            "variance": float(variance),
+            "variance_percent": pct,
+            "favorability": "favorable" if favorable is True else "unfavorable" if favorable is False else "neutral",
+            "explanation": narrative,
+            "cause_inferred": False,
+        })
+        planned_total += planned
+        actual_total += actual
+
+    ranked = sorted(rows, key=lambda row: abs(row["variance"]), reverse=True)
+    return {
+        "plan": financial_plan_payload(plan),
+        "as_of": effective_end.isoformat(),
+        "planned_total": float(_money(planned_total)),
+        "actual_total": float(_money(actual_total)),
+        "net_variance": float(_money(actual_total - planned_total)),
+        "rows": rows,
+        "top_variances": ranked[:10],
+        "intelligence_policy": (
+            "Variance explanations describe ledger-observed amount differences only. "
+            "LoanHub does not infer business causes without supporting evidence."
+        ),
+    }
+
+
+def create_rolling_forecast_from_plan(
+    db: Session,
+    *,
+    company_id,
+    source_plan: CompanyOperatingRecord,
+    cutoff_date: date,
+    name: str,
+    user_id,
+) -> CompanyOperatingRecord:
+    """Create a draft rolling forecast: actual months to cutoff + remaining planned months."""
+    source = dict(source_plan.data or {})
+    fiscal_start = date.fromisoformat(source["fiscal_start"])
+    fiscal_end = date.fromisoformat(source["fiscal_end"])
+    if cutoff_date < fiscal_start or cutoff_date > fiscal_end:
+        raise HTTPException(status_code=422, detail="Forecast cutoff must fall within source plan period")
+
+    variance = financial_plan_variance(
+        db,
+        company_id=company_id,
+        plan=source_plan,
+        as_of=cutoff_date,
+        branch_id=source_plan.branch_id,
+    )
+    actual_index = {
+        (row["account_code"], row["period"]): _money(row["actual"])
+        for row in variance["rows"]
+    }
+    forecast_lines = []
+    for line in source.get("lines", []):
+        period = date.fromisoformat(line["period_start"])
+        month_key = f"{period.year:04d}-{period.month:02d}"
+        if period.year < cutoff_date.year or (period.year == cutoff_date.year and period.month <= cutoff_date.month):
+            amount = actual_index.get((line["account_code"], month_key), Decimal("0.00"))
+            basis = "actual_to_cutoff"
+        else:
+            amount = _money(line["amount"])
+            basis = "source_plan"
+        forecast_lines.append({
+            **line,
+            "amount": float(amount),
+            "basis": basis,
+        })
+
+    reference = f"PLAN-FORECAST-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{str(uuid4())[:8].upper()}"
+    record = CompanyOperatingRecord(
+        company_id=company_id,
+        branch_id=source_plan.branch_id,
+        module="accounting",
+        record_type="financial_plan",
+        reference=reference,
+        title=name.strip(),
+        description=f"Rolling forecast based on {source_plan.reference} through {cutoff_date.isoformat()}",
+        status="draft",
+        created_by_user_id=user_id,
+        amount=_money(sum((_money(line["amount"]) for line in forecast_lines), Decimal("0.00"))),
+        currency="LSL",
+        data={
+            "plan_type": "forecast",
+            "fiscal_start": source["fiscal_start"],
+            "fiscal_end": source["fiscal_end"],
+            "version": int(source.get("version", 1)) + 1,
+            "lines": forecast_lines,
+            "approved_by_user_id": None,
+            "approved_at": None,
+            "source_plan_id": str(source_plan.id),
+            "cutoff_date": cutoff_date.isoformat(),
+        },
+        tags=["financial_planning", "forecast", "rolling"],
+    )
+    db.add(record)
+    db.flush()
+    return record
 
 def depreciate_all_fixed_assets_for_period(
     db: Session,

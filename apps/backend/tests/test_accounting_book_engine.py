@@ -1072,3 +1072,39 @@ def test_month_end_pack_includes_vat_control_and_deterministic_depreciation_acti
     assert "depreciateAssetsForPeriod" in frontend_api
     assert "VAT control reconciliation" in frontend
     assert "Post due depreciation" in frontend
+
+
+def test_budget_forecast_engine_keeps_plans_separate_from_posted_ledger_truth():
+    schema = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "class FinancialPlanCreate" in schema
+    assert "class FinancialPlanLineCreate" in schema
+    assert "def create_financial_plan(" in service
+    assert 'record_type="financial_plan"' in service
+    assert 'status="draft"' in service
+    assert "def approve_financial_plan(" in service
+    assert "Maker/checker control: plan creator cannot approve the plan" in service
+    assert "def financial_plan_variance(" in service
+    assert 'JournalEntry.status == "posted"' in service
+    assert '"cause_inferred": False' in service
+    assert "does not infer business causes without supporting evidence" in service
+    assert "def create_rolling_forecast_from_plan(" in service
+    assert '"actual_to_cutoff"' in service
+    assert '"source_plan"' in service
+
+    assert '@router.get("/financial-plans")' in router
+    assert '@router.post("/financial-plans"' in router
+    assert '@router.post("/financial-plans/{plan_id}/approve")' in router
+    assert '@router.get("/financial-plans/{plan_id}/variance")' in router
+    assert '@router.post("/financial-plans/{plan_id}/rolling-forecast"' in router
+
+    assert "createFinancialPlan" in frontend_api
+    assert "getFinancialPlanVariance" in frontend_api
+    assert "createRollingForecast" in frontend_api
+    assert "Budgeting & forecasting" in frontend
+    assert "Plan control & variance intelligence" in frontend
+    assert "Analyse actual vs plan" in frontend

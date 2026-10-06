@@ -17,6 +17,7 @@ from core.access_control import (
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.branch import CompanyBranch
 from database.models.company import LoanCompany
+from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.enums import UserRole
 from database.models.governance_control import ApprovalRequest, BankStatementLine
 from database.models.reconciliation import ReconciliationBatch
@@ -48,6 +49,7 @@ from database.schemas.accounting import (
     LedgerLineRead,
     LedgerRead,
     LoanWriteOffCreate,
+    FinancialPlanCreate,
     MonthEndAdjustmentDraftCreate,
     OpeningBalanceMigrationCreate,
     WrittenOffLoanRecoveryCreate,
@@ -99,6 +101,11 @@ from services.accounting_service import (
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
     month_end_control_pack,
+    create_financial_plan,
+    approve_financial_plan,
+    financial_plan_payload,
+    financial_plan_variance,
+    create_rolling_forecast_from_plan,
     prepare_month_end_adjustment_draft,
     prepare_due_adjustment_reversal_drafts,
     record_electronic_clearing_settlement,
@@ -836,6 +843,132 @@ def prepare_month_end_reversal_drafts(
     )
     db.commit()
     return result
+
+
+@router.get("/financial-plans")
+def list_financial_plans(
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    query = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == selected_company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "financial_plan",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if selected_branch_id:
+        query = query.filter(CompanyOperatingRecord.branch_id == selected_branch_id)
+    return [financial_plan_payload(row) for row in query.order_by(CompanyOperatingRecord.created_at.desc()).all()]
+
+
+@router.post("/financial-plans", status_code=status.HTTP_201_CREATED)
+def create_plan(
+    payload: FinancialPlanCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    row = create_financial_plan(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        name=payload.name,
+        plan_type=payload.plan_type,
+        fiscal_start=payload.fiscal_start,
+        fiscal_end=payload.fiscal_end,
+        notes=payload.notes,
+        lines=[item.model_dump() for item in payload.lines],
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(row)
+    return financial_plan_payload(row)
+
+
+@router.post("/financial-plans/{plan_id}/approve")
+def approve_plan(
+    plan_id: UUID,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    row = approve_financial_plan(db, company_id=selected_company_id, plan_id=plan_id, user_id=context.user.id)
+    db.commit()
+    db.refresh(row)
+    return financial_plan_payload(row)
+
+
+@router.get("/financial-plans/{plan_id}/variance")
+def plan_variance(
+    plan_id: UUID,
+    as_of: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    plan = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == plan_id,
+        CompanyOperatingRecord.company_id == selected_company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "financial_plan",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Financial plan not found")
+    return financial_plan_variance(
+        db, company_id=selected_company_id, plan=plan, as_of=as_of, branch_id=selected_branch_id
+    )
+
+
+@router.post("/financial-plans/{plan_id}/rolling-forecast", status_code=status.HTTP_201_CREATED)
+def rolling_forecast(
+    plan_id: UUID,
+    cutoff_date: date = Query(...),
+    name: str = Query(..., min_length=3, max_length=240),
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    plan = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == plan_id,
+        CompanyOperatingRecord.company_id == selected_company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "financial_plan",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Financial plan not found")
+    row = create_rolling_forecast_from_plan(
+        db,
+        company_id=selected_company_id,
+        source_plan=plan,
+        cutoff_date=cutoff_date,
+        name=name,
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(row)
+    return financial_plan_payload(row)
 
 
 @router.get("/financial-books/export")

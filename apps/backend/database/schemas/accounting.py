@@ -355,6 +355,32 @@ class SuspenseCorrectionCreate(BaseModel):
 
 
 
+
+class FinancialPlanLineCreate(BaseModel):
+    account_code: str = Field(min_length=4, max_length=30)
+    period_start: date
+    amount: Decimal = Field(ge=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class FinancialPlanCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=240)
+    plan_type: str = Field(pattern="^(budget|forecast)$")
+    fiscal_start: date
+    fiscal_end: date
+    branch_id: UUID | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    lines: list[FinancialPlanLineCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_plan_period(self):
+        if self.fiscal_end < self.fiscal_start:
+            raise ValueError("fiscal_end must be on or after fiscal_start")
+        for line in self.lines:
+            if line.period_start < self.fiscal_start or line.period_start > self.fiscal_end:
+                raise ValueError("Plan line period_start must fall within the plan period")
+        return self
+
 class MonthEndAdjustmentDraftCreate(BaseModel):
     adjustment_type: str = Field(pattern="^(accrual|prepayment|accrued_income)$")
     amount: Decimal = Field(gt=0)
