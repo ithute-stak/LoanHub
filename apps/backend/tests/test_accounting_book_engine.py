@@ -313,6 +313,36 @@ def test_company_statement_classifies_loan_notes_as_non_current_and_tax_as_curre
     assert '"non_current_liabilities"' in router
 
 
+def test_chapters_38_39_ratio_analysis_is_exposed():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def financial_ratio_analysis(" in service
+    assert '@router.get("/analysis/ratios")' in router
+    assert '"gross_margin_percent"' in service
+    assert '"inventory_turnover_times"' in service
+    assert '"current_ratio"' in service
+    assert '"acid_test_ratio"' in service
+    assert '"receivables_days"' in service
+    assert '"payables_days"' in service
+    assert '"return_on_shareholders_funds_percent"' in service
+    assert '"return_on_capital_employed_percent"' in service
+    assert '"gearing_percent"' in service
+
+
+def test_ratio_analysis_keeps_book_warning_that_ratios_need_context():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "Ratios identify relationships and trends but do not explain causes by themselves" in service
+    assert '"chapter_38"' in service
+    assert '"chapter_39"' in service
+
+
+def test_inventory_turnover_uses_average_inventory_and_cost_of_services():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert 'average_inventory = _money((opening_inventory + inventory) / Decimal("2"))' in service
+    assert '_safe_ratio(cost_of_services, average_inventory)' in service
+    assert 'round(365 / inventory_turnover, 2)' in service
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(

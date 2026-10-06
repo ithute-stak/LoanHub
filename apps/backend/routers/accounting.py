@@ -70,6 +70,7 @@ from services.accounting_service import (
     entry_query,
     cash_flow_statement,
     fixed_asset_query,
+    financial_ratio_analysis,
     ledger_rows,
     loan_receivables_control_reconciliation,
     post_accrual_adjustment,
@@ -869,6 +870,27 @@ def company_loan_notes(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/analysis/ratios")
+def accounting_ratios(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return financial_ratio_analysis(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
 
 
 @router.get("/company/changes-in-equity")
