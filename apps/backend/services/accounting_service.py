@@ -35,6 +35,7 @@ from database.models.enums import (
     PaymentMethod,
     PaymentPurpose,
     PaymentStatus,
+    InstallmentStatus,
     TreasuryDirection,
     TreasuryEntryApprovalStatus,
     TreasuryEntryType,
@@ -4450,6 +4451,7 @@ def approve_treasury_commitment(
     company_id,
     commitment_id,
     user_id,
+    branch_id=None,
 ) -> CompanyOperatingRecord:
     row = db.query(CompanyOperatingRecord).filter(
         CompanyOperatingRecord.id == commitment_id,
@@ -4460,6 +4462,8 @@ def approve_treasury_commitment(
     ).with_for_update().first()
     if not row:
         raise HTTPException(status_code=404, detail="Treasury commitment not found")
+    if branch_id and row.branch_id != branch_id:
+        raise HTTPException(status_code=403, detail="Treasury commitment is outside your branch scope")
     if row.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft treasury commitments can be approved")
     if row.created_by_user_id == user_id:
@@ -4545,7 +4549,7 @@ def treasury_cash_forecast(
         ClientCompanyLoan.company_id == company_id,
         RepaymentInstallment.is_superseded.is_(False),
         RepaymentInstallment.due_date.between(from_date, to_date),
-        RepaymentInstallment.status.notin_(["paid", "waived"]),
+        RepaymentInstallment.status.notin_([InstallmentStatus.PAID, InstallmentStatus.WAIVED]),
     )
     if branch_id:
         installments = installments.filter(ClientCompanyLoan.branch_id == branch_id)
