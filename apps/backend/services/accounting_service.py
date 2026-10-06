@@ -2940,6 +2940,231 @@ def transaction_accounting_coverage(
     }
 
 
+EXPECTED_REFERENCE_ACCOUNTS = {
+    "fixed_asset_acquisition": {"1500"},
+    "depreciation_adjustment": {"5400", "1510"},
+    "accrual_adjustment": {"2100"},
+    "prepayment_adjustment": {"1400"},
+    "accrued_income_adjustment": {"1220"},
+    "loan_write_off": {"1100"},
+}
+
+
+def accounting_error_diagnostics(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Chapters 23-27: detect control failures, including errors a trial balance can miss.
+
+    A balanced trial balance proves arithmetic equality, not correctness of account
+    choice or completeness.  This diagnostic therefore combines double-entry
+    integrity, control-account reconciliation, source completeness, suspense, bank
+    reconciliation exceptions and conservative errors-of-principle heuristics.
+    """
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+
+    journals = db.query(JournalEntry).options(
+        joinedload(JournalEntry.lines).joinedload(JournalLine.account)
+    ).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(from_date, to_date),
+    )
+    if branch_id:
+        journals = journals.filter(JournalEntry.branch_id == branch_id)
+    journal_rows = journals.all()
+
+    malformed = []
+    principle_risks = []
+    internal_reference_only = []
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
+
+    for entry in journal_rows:
+        debit = _money(sum((_money(line.debit) for line in entry.lines), Decimal("0.00")))
+        credit = _money(sum((_money(line.credit) for line in entry.lines), Decimal("0.00")))
+        total_debit += debit
+        total_credit += credit
+        account_ids = {line.account_id for line in entry.lines}
+        if (
+            len(entry.lines) < 2
+            or len(account_ids) < 2
+            or debit <= 0
+            or debit != credit
+            or _money(entry.total_debit) != debit
+            or _money(entry.total_credit) != credit
+        ):
+            malformed.append({
+                "entry_id": str(entry.id),
+                "entry_number": entry.entry_number,
+                "reason": "persisted journal fails double-entry/header integrity",
+            })
+
+        codes = {line.account.code for line in entry.lines if line.account is not None}
+        expected = EXPECTED_REFERENCE_ACCOUNTS.get(entry.reference_type or "")
+        if expected and not expected.issubset(codes):
+            principle_risks.append({
+                "entry_id": str(entry.id),
+                "entry_number": entry.entry_number,
+                "reference_type": entry.reference_type,
+                "expected_account_codes": sorted(expected),
+                "actual_account_codes": sorted(codes),
+                "error_class": "possible_error_of_principle_or_commission",
+            })
+
+        if not entry.reference_type or not entry.reference_id:
+            internal_reference_only.append(str(entry.id))
+
+    total_debit = _money(total_debit)
+    total_credit = _money(total_credit)
+    trial_difference = _money(total_debit - total_credit)
+
+    suspense_account = account_by_code(db, key, "2990")
+    suspense_q = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == suspense_account.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= to_date,
+    )
+    if branch_id:
+        suspense_q = suspense_q.filter(JournalEntry.branch_id == branch_id)
+    suspense_debit, suspense_credit = suspense_q.first()
+    suspense_balance = _money(Decimal(suspense_debit) - Decimal(suspense_credit))
+
+    receivables_control = loan_receivables_control_reconciliation(
+        db, company_id=company_id, as_of=to_date, branch_id=branch_id
+    )
+    coverage = transaction_accounting_coverage(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+
+    reconciliation_q = db.query(ReconciliationLine).join(
+        ReconciliationBatch, ReconciliationBatch.id == ReconciliationLine.batch_id
+    ).filter(
+        ReconciliationBatch.company_id == company_id,
+        ReconciliationBatch.period_end >= from_date,
+        ReconciliationBatch.period_start <= to_date,
+        ReconciliationLine.status.in_([
+            "unmatched", "shortage", "excess", "missing_source", "adjustment_required"
+        ]),
+    )
+    if branch_id:
+        reconciliation_q = reconciliation_q.filter(
+            ReconciliationBatch.branch_id == branch_id
+        )
+    unresolved_reconciliation = reconciliation_q.all()
+
+    controls = {
+        "trial_balance_arithmetically_balanced": trial_difference == 0,
+        "persisted_journals_valid": len(malformed) == 0,
+        "suspense_cleared": suspense_balance == 0,
+        "loan_receivables_control_balanced": bool(receivables_control["balanced"]),
+        "operational_sources_fully_accounted": bool(coverage["complete"]),
+        "reconciliation_exceptions_cleared": len(unresolved_reconciliation) == 0,
+        "no_detected_principle_risks": len(principle_risks) == 0,
+    }
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "controls": controls,
+        "healthy": all(controls.values()),
+        "trial_balance": {
+            "total_debit": float(total_debit),
+            "total_credit": float(total_credit),
+            "difference": float(trial_difference),
+        },
+        "suspense_balance": float(suspense_balance),
+        "malformed_journals": malformed,
+        "possible_errors_not_revealed_by_trial_balance": principle_risks,
+        "internal_reference_only_entry_ids": internal_reference_only,
+        "unresolved_reconciliation_count": len(unresolved_reconciliation),
+        "unresolved_reconciliation_line_ids": [
+            str(line.id) for line in unresolved_reconciliation
+        ],
+        "loan_receivables_control": receivables_control,
+        "transaction_accounting_coverage": coverage,
+        "error_classes_checked": [
+            "arithmetic_or_one_sided_error",
+            "possible_error_of_principle",
+            "possible_error_of_commission",
+            "omission_via_source_coverage",
+            "suspense_difference",
+            "control_account_difference",
+            "bank_or_external_reconciliation_difference",
+        ],
+        "note": (
+            "A zero trial-balance difference does not prove that postings are correct; "
+            "errors of principle, commission, original entry and compensating errors can still balance."
+        ),
+    }
+
+
+def incomplete_records_control(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Modern Chapter 27 completeness control for a computerised LoanHub ledger.
+
+    The book's single-entry reconstruction techniques are intended for incomplete
+    manual records. LoanHub instead identifies whether operational source records
+    can be reconstructed into a complete double-entry population and lists the
+    missing evidence explicitly.
+    """
+    diagnostics = accounting_error_diagnostics(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    coverage = diagnostics["transaction_accounting_coverage"]
+    reconstruction_ready = (
+        coverage["complete"]
+        and diagnostics["controls"]["persisted_journals_valid"]
+        and diagnostics["controls"]["loan_receivables_control_balanced"]
+        and diagnostics["controls"]["reconciliation_exceptions_cleared"]
+    )
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "records_complete": reconstruction_ready,
+        "source_counts": coverage["source_counts"],
+        "missing_counts": coverage["missing_counts"],
+        "missing_source_ids": coverage["missing_source_ids"],
+        "unresolved_reconciliation_count": diagnostics["unresolved_reconciliation_count"],
+        "loan_receivables_control_variance": diagnostics["loan_receivables_control"]["variance"],
+        "malformed_journal_count": len(diagnostics["malformed_journals"]),
+        "principle_risk_count": len(diagnostics["possible_errors_not_revealed_by_trial_balance"]),
+        "method": "operational-source-to-double-entry reconstruction",
+        "note": (
+            "This is LoanHub's computerised equivalent of the completeness problem in "
+            "Chapter 27; it does not estimate profit from single-entry statements of affairs."
+        ),
+    }
+
+
 def _written_off_recovery_balance(db: Session, *, company_id, loan_id) -> Decimal:
     """Net posted recovery income for one written-off loan, including reversals."""
     key, _ = scope_key(company_id)

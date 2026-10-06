@@ -54,6 +54,7 @@ from database.schemas.accounting import (
 from database.session import get_db
 from services.accounting_service import (
     accounting_business_date,
+    accounting_error_diagnostics,
     asset_payload,
     bank_settlement_chain,
     books_of_original_entry,
@@ -87,6 +88,7 @@ from services.accounting_service import (
     record_electronic_clearing_settlement,
     scope_key,
     source_book_traceability,
+    incomplete_records_control,
     transaction_accounting_coverage,
     validate_postable_entry,
     value_inventory_lower_of_cost_and_nrv,
@@ -911,6 +913,48 @@ def doubtful_debt_allowance_adjustment(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/controls/error-diagnostics")
+def error_diagnostics(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return accounting_error_diagnostics(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
+
+
+@router.get("/controls/incomplete-records")
+def incomplete_records(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return incomplete_records_control(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
 
 
 @router.get("/cash-flow")
