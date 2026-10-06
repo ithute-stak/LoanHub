@@ -99,6 +99,7 @@ from services.accounting_service import (
     receipts_and_payments_summary,
     scope_key,
     source_book_traceability,
+    statement_of_changes_in_equity as statement_of_changes_in_equity_data,
     incomplete_records_control,
     transaction_accounting_coverage,
     validate_postable_entry,
@@ -585,7 +586,7 @@ def financial_books_pack_data(
         "trial_balance": trial,
         "income_statement": income.model_dump(),
         "statement_of_financial_position": position.model_dump(),
-        "statement_of_changes_in_equity": statement_of_changes_in_equity(
+        "statement_of_changes_in_equity": statement_of_changes_in_equity_data(
             db,
             company_id=company_id,
             from_date=from_date,
