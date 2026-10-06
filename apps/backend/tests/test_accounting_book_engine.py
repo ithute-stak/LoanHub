@@ -207,6 +207,42 @@ def test_current_asset_statement_includes_accrued_income():
     assert '"1200", "1210", "1220", "1300"' in router
 
 
+def test_chapters_23_27_controls_detect_balancing_and_non_balancing_errors():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def accounting_error_diagnostics(" in service
+    assert "def incomplete_records_control(" in service
+    assert "EXPECTED_REFERENCE_ACCOUNTS" in service
+    assert '"possible_errors_not_revealed_by_trial_balance"' in service
+    assert '"operational_sources_fully_accounted"' in service
+    assert '"loan_receivables_control_balanced"' in service
+    assert '"reconciliation_exceptions_cleared"' in service
+    assert '@router.get("/controls/error-diagnostics")' in router
+    assert '@router.get("/controls/incomplete-records")' in router
+
+
+def test_error_diagnostics_preserves_book_warning_that_balanced_trial_balance_is_not_proof():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "A zero trial-balance difference does not prove that postings are correct" in service
+    assert '"possible_error_of_principle_or_commission"' in service
+    assert '"omission_via_source_coverage"' in service
+    assert '"suspense_difference"' in service
+
+
+def test_incomplete_records_control_uses_source_reconstruction_not_profit_guessing():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"method": "operational-source-to-double-entry reconstruction"' in service
+    assert "does not estimate profit from single-entry statements of affairs" in service
+    assert '"missing_source_ids": coverage["missing_source_ids"]' in service
+
+
+def test_chapter_26_suspense_corrections_remain_journal_based():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def post_suspense_correction(" in service
+    assert 'reference_type="suspense_correction"' in service
+    assert 'target_account_code == "2990"' in service
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
