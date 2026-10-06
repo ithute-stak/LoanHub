@@ -25,6 +25,10 @@ from database.schemas.accounting import (
     AccountingAccountUpdate,
     AccountingDashboardRead,
     AccruedIncomeAdjustmentCreate,
+    CorporationTaxCreate,
+    DividendPaymentCreate,
+    LoanNoteIssueCreate,
+    ShareIssueCreate,
     AccrualAdjustmentCreate,
     DepreciationAdjustmentCreate,
     DoubtfulDebtAllowanceCreate,
@@ -70,6 +74,8 @@ from services.accounting_service import (
     loan_receivables_control_reconciliation,
     post_accrual_adjustment,
     post_accrued_income_adjustment,
+    post_corporation_tax_charge,
+    post_dividend_payment,
     post_depreciation_adjustment,
     post_doubtful_debt_allowance,
     post_expense,
@@ -79,6 +85,8 @@ from services.accounting_service import (
     post_suspense_correction,
     post_fixed_asset_depreciation,
     post_loan_write_off,
+    post_loan_note_issue,
+    post_share_issue,
     record_written_off_loan_recovery,
     dispose_fixed_asset,
     electronic_clearing_aging,
@@ -531,7 +539,8 @@ CURRENT_ASSET_CODES = {
     "1200", "1210", "1220", "1300", "1400", "1600",
 }
 NON_CURRENT_ASSET_CODES = {"1500", "1510"}
-CURRENT_LIABILITY_CODES = {"2000", "2100", "2200", "2300", "2400", "2990"}
+CURRENT_LIABILITY_CODES = {"2000", "2100", "2200", "2300", "2400", "2600", "2990"}
+NON_CURRENT_LIABILITY_CODES = {"2500"}
 
 
 def _statement_position_class(code: str, account_type: str) -> str:
@@ -549,6 +558,8 @@ def _statement_position_class(code: str, account_type: str) -> str:
     if account_type == "liability":
         if code in CURRENT_LIABILITY_CODES:
             return "current_liability"
+        if code in NON_CURRENT_LIABILITY_CODES:
+            return "non_current_liability"
         return "unclassified_liability"
     if account_type == "equity":
         return "equity"
@@ -611,6 +622,7 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
             "current_assets": Decimal("0"),
             "unclassified_assets": Decimal("0"),
             "current_liabilities": Decimal("0"),
+            "non_current_liabilities": Decimal("0"),
             "unclassified_liabilities": Decimal("0"),
         }
         for line in lines:
@@ -625,6 +637,7 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
                 "current_asset": "current_assets",
                 "unclassified_asset": "unclassified_assets",
                 "current_liability": "current_liabilities",
+                "non_current_liability": "non_current_liabilities",
                 "unclassified_liability": "unclassified_liabilities",
             }.get(position_class)
             if key_name:
@@ -772,6 +785,107 @@ def accounting_ratios(
         "cash_to_liabilities": ratio(liquid, liabilities),
         "loan_receivables_to_assets": ratio(receivables, assets),
     }
+
+
+@router.post("/company/share-issues", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def company_share_issue(
+    payload: ShareIssueCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_share_issue(
+        db, company_id=selected_company_id, branch_id=branch,
+        shares_issued=payload.shares_issued,
+        nominal_value_per_share=payload.nominal_value_per_share,
+        issue_price_per_share=payload.issue_price_per_share,
+        settlement_account_code=payload.settlement_account_code,
+        description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id, entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/company/dividends", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def company_dividend(
+    payload: DividendPaymentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_dividend_payment(
+        db, company_id=selected_company_id, branch_id=branch,
+        amount=payload.amount, settlement_account_code=payload.settlement_account_code,
+        description=payload.description, reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id, entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/company/corporation-tax", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def company_corporation_tax(
+    payload: CorporationTaxCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_corporation_tax_charge(
+        db, company_id=selected_company_id, branch_id=branch,
+        amount=payload.amount, description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id, entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/company/loan-notes", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def company_loan_notes(
+    payload: LoanNoteIssueCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    branch = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_loan_note_issue(
+        db, company_id=selected_company_id, branch_id=branch,
+        amount=payload.amount, settlement_account_code=payload.settlement_account_code,
+        description=payload.description, reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id, entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/company/changes-in-equity")
+def company_changes_in_equity(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    branch = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return statement_of_changes_in_equity(
+        db, company_id=selected_company_id, from_date=from_date, to_date=to_date, branch_id=branch
+    )
 
 
 @router.post("/inventory/valuation")
