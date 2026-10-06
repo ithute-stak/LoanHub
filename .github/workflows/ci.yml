@@ -121,6 +121,12 @@ jobs:
           set -euo pipefail
           bash ./scripts/validate_project.sh
 
+      - name: Verify PostgreSQL tenant isolation
+        working-directory: apps/backend
+        run: |
+          python -m pytest -q tests/test_database_tenant_context.py tests/test_database_rls_pilot.py tests/test_database_management_contract.py
+          python scripts/verify_rls_pilot.py
+
       - name: Validate system-owner recovery helper
         run: |
           set -euo pipefail
