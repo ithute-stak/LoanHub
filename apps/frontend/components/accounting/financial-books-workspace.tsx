@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BookOpenCheck, CalendarCheck2, RefreshCcw, Scale, Upload } from "lucide-react";
+import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { createOpeningBalanceMigration, getFinancialBooks, listAccountingAccounts } from "@/api/accounting";
+import { createOpeningBalanceMigration, createYearEndClosingDraft, exportFinancialBooks, getFinancialBooks, listAccountingAccounts, previewYearEndClosing } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,9 @@ export function FinancialBooksWorkspace() {
   const [loading, setLoading] = useState(false);
   const [periodWorking, setPeriodWorking] = useState(false);
   const [openingWorking, setOpeningWorking] = useState(false);
+  const [exportWorking, setExportWorking] = useState<"pdf" | "xlsx" | null>(null);
+  const [yearEndWorking, setYearEndWorking] = useState(false);
+  const [yearEndPreview, setYearEndPreview] = useState<Record<string, unknown> | null>(null);
   const [periodNote, setPeriodNote] = useState("Reviewed and supported by period close evidence.");
   const [newPeriodStart, setNewPeriodStart] = useState(yearStart());
   const [newPeriodEnd, setNewPeriodEnd] = useState(isoToday());
@@ -156,11 +159,70 @@ export function FinancialBooksWorkspace() {
       await governanceControlsApi.periodAction(selectedPeriod, action, periodNote.trim());
       toast.success(action === "lock" ? "Period soft-closed" : action === "close" ? "Period hard-closed" : "Period reopened");
       setReadiness(null);
+      setYearEndPreview(null);
       await loadControls();
     } catch (error) {
       toast.error(getErrorMessage(error, `Could not ${action} accounting period`));
     } finally {
       setPeriodWorking(false);
+    }
+  }
+
+  async function downloadBooks(format: "pdf" | "xlsx") {
+    if (!companyId) return;
+    setExportWorking(format);
+    try {
+      const blob = await exportFinancialBooks({
+        companyId,
+        branchId: effectiveBranchId,
+        fromDate,
+        toDate,
+        format,
+      });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `${currentCompany?.name ?? "LoanHub"}_Financial_Books_${fromDate}_${toDate}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      toast.success(format === "pdf" ? "Financial books PDF prepared" : "Financial books Excel workbook prepared");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not export financial books"));
+    } finally {
+      setExportWorking(null);
+    }
+  }
+
+  async function previewYearEnd() {
+    if (!selectedPeriod || !companyId) return;
+    setYearEndWorking(true);
+    try {
+      const result = await previewYearEndClosing(selectedPeriod, companyId);
+      setYearEndPreview(result);
+      toast.success("Year-end closing preview prepared");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare year-end closing preview"));
+    } finally {
+      setYearEndWorking(false);
+    }
+  }
+
+  async function prepareYearEndDraft() {
+    if (!selectedPeriod || !companyId) return;
+    setYearEndWorking(true);
+    try {
+      const journal = await createYearEndClosingDraft(selectedPeriod, companyId);
+      toast.success("Year-end closing draft created", {
+        description: `${journal.entry_number} is waiting for a different authorised finance user to post it.`,
+      });
+      const result = await previewYearEndClosing(selectedPeriod, companyId);
+      setYearEndPreview(result);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not create year-end closing draft"));
+    } finally {
+      setYearEndWorking(false);
     }
   }
 
@@ -240,6 +302,10 @@ export function FinancialBooksWorkspace() {
               <Metric label="Total assets" value={formatMoney(Number(books.statement_of_financial_position.totals.total_assets ?? books.statement_of_financial_position.totals.asset ?? 0))} />
               <Metric label="General ledger accounts" value={String(books.general_ledger.length)} />
             </div>
+            <div className="flex flex-wrap gap-2">
+              <LoadingButton variant="outline" loading={exportWorking === "pdf"} onClick={() => void downloadBooks("pdf")}><Download className="h-4 w-4" />Export PDF</LoadingButton>
+              <LoadingButton variant="outline" loading={exportWorking === "xlsx"} onClick={() => void downloadBooks("xlsx")}><FileSpreadsheet className="h-4 w-4" />Export Excel</LoadingButton>
+            </div>
 
             <Card className="loanhub-panel overflow-hidden">
               <CardHeader><CardTitle>Book index</CardTitle><CardDescription>{books.preparation_note}</CardDescription></CardHeader>
@@ -282,11 +348,29 @@ export function FinancialBooksWorkspace() {
                 {currentPeriod?.status === "open" ? <LoadingButton loading={periodWorking} onClick={() => void periodAction("lock")}>Soft-close</LoadingButton> : null}
                 {currentPeriod?.status === "locked" ? <LoadingButton loading={periodWorking} onClick={() => void periodAction("close")}>Hard-close</LoadingButton> : null}
                 {currentPeriod && ["locked", "closed"].includes(String(currentPeriod.status)) ? <LoadingButton loading={periodWorking} variant="destructive" onClick={() => void periodAction("reopen")}>Reopen</LoadingButton> : null}
+                {currentPeriod?.status === "closed" ? <LoadingButton loading={yearEndWorking} variant="outline" onClick={() => void previewYearEnd()}>Preview year-end close</LoadingButton> : null}
               </div>
             </CardContent>
           </Card>
 
           {readiness ? <Card className="loanhub-panel"><CardHeader><CardTitle>Close readiness</CardTitle><CardDescription>{Boolean(readiness.ready_to_lock) ? "All hard controls currently pass." : "Resolve the failed controls before soft-close."}</CardDescription></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Object.entries(closeChecks).map(([key, passed]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3"><span className="text-sm">{titleCase(key)}</span><Badge variant={passed ? "default" : "destructive"}>{passed ? "Pass" : "Fail"}</Badge></div>)}</CardContent></Card> : null}
+
+          {yearEndPreview ? <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Year-end closing transfer</CardTitle><CardDescription>{String(yearEndPreview.policy ?? "")}</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                <Metric label="Revenue" value={formatMoney(Number(yearEndPreview.revenue_total ?? 0))} />
+                <Metric label="Expenses" value={formatMoney(Number(yearEndPreview.expense_total ?? 0))} />
+                <Metric label="Profit / loss" value={formatMoney(Number(yearEndPreview.net_profit_or_loss ?? 0))} />
+                <Metric label="Closing date" value={String(yearEndPreview.closing_date ?? "—")} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={Boolean(yearEndPreview.balanced) ? "default" : "destructive"}>{Boolean(yearEndPreview.balanced) ? "Balanced" : "Unbalanced"}</Badge>
+                {yearEndPreview.existing_journal_id ? <Badge variant="outline">Draft already prepared</Badge> : null}
+              </div>
+              {!yearEndPreview.existing_journal_id ? <LoadingButton loading={yearEndWorking} onClick={() => void prepareYearEndDraft()}>Prepare maker/checker closing draft</LoadingButton> : null}
+            </CardContent>
+          </Card> : null}
         </TabsContent>
 
         <TabsContent value="opening" className="space-y-5">
