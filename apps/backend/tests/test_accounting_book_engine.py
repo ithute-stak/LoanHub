@@ -1108,3 +1108,36 @@ def test_budget_forecast_engine_keeps_plans_separate_from_posted_ledger_truth():
     assert "Budgeting & forecasting" in frontend
     assert "Plan control & variance intelligence" in frontend
     assert "Analyse actual vs plan" in frontend
+
+
+def test_treasury_cashflow_intelligence_uses_real_sources_and_nonposting_scenarios():
+    schema = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "class TreasuryCommitmentCreate" in schema
+    assert "class TreasuryForecastRequest" in schema
+    assert "def create_treasury_commitment(" in service
+    assert 'record_type="treasury_commitment"' in service
+    assert "Maker/checker control: commitment creator cannot approve it" in service
+    assert "def treasury_cash_forecast(" in service
+    assert "RepaymentInstallment.due_date.between" in service
+    assert 'CompanyOperatingRecord.status == "approved"' in service
+    assert '"minimum_cash_breach"' in service
+    assert "does not post journals" in service
+    assert "def treasury_stress_test(" in service
+    assert '"collections_down_20pct"' in service
+    assert '"combined_stress"' in service
+
+    assert '@router.post("/treasury/cash-forecast")' in router
+    assert '@router.post("/treasury/stress-test")' in router
+    assert '@router.post("/treasury/commitments"' in router
+    assert '@router.post("/treasury/commitments/{commitment_id}/approve")' in router
+
+    assert "getTreasuryCashForecast" in frontend_api
+    assert "getTreasuryStressTest" in frontend_api
+    assert "Treasury & cash-flow intelligence" in frontend
+    assert "Liquidity stress scenarios" in frontend
+    assert "Create commitment draft" in frontend
