@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,8 +16,9 @@ from core.access_control import (
 )
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.branch import CompanyBranch
+from database.models.company import LoanCompany
 from database.models.enums import UserRole
-from database.models.governance_control import ApprovalRequest, BankStatementLine
+from database.models.governance_control import AccountingPeriod, ApprovalRequest, BankStatementLine
 from database.models.reconciliation import ReconciliationBatch
 from database.schemas.accounting import (
     AccountingAccountCreate,
@@ -105,6 +106,14 @@ from services.accounting_service import (
     transaction_accounting_coverage,
     validate_postable_entry,
     value_inventory_lower_of_cost_and_nrv,
+    year_end_closing_preview,
+    prepare_year_end_closing_draft,
+)
+
+
+from services.financial_books_export_service import (
+    build_financial_books_pdf,
+    build_financial_books_xlsx,
 )
 
 
@@ -727,6 +736,117 @@ def financial_books(
         branch_id=selected_branch_id,
         include_ledger_detail=include_ledger_detail,
     )
+
+
+@router.get("/financial-books/export")
+def export_financial_books(
+    format: str = Query(..., pattern="^(pdf|xlsx)$"),
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for financial books export")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    company = db.get(LoanCompany, selected_company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    pack = financial_books_pack_data(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+        include_ledger_detail=True,
+    )
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in company.name).strip("_") or "LoanHub"
+    period_name = f"{from_date.isoformat()}_{to_date.isoformat()}"
+
+    if format == "pdf":
+        content = build_financial_books_pdf(pack, company_name=company.name)
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}_Financial_Books_{period_name}.pdf"'
+            },
+        )
+
+    content = build_financial_books_xlsx(pack, company_name=company.name)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}_Financial_Books_{period_name}.xlsx"'
+        },
+    )
+
+
+@router.get("/year-end-closing/preview")
+def preview_year_end_closing(
+    period_id: UUID,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for year-end closing")
+    period = db.query(AccountingPeriod).filter(
+        AccountingPeriod.id == period_id,
+        AccountingPeriod.company_id == selected_company_id,
+    ).first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Accounting period not found")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, period.branch_id
+    )
+    return year_end_closing_preview(
+        db,
+        company_id=selected_company_id,
+        period_start=period.period_start,
+        period_end=period.period_end,
+        branch_id=selected_branch_id,
+    )
+
+
+@router.post("/year-end-closing", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def create_year_end_closing(
+    period_id: UUID,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for year-end closing")
+    period = db.query(AccountingPeriod).filter(
+        AccountingPeriod.id == period_id,
+        AccountingPeriod.company_id == selected_company_id,
+    ).with_for_update().first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Accounting period not found")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, period.branch_id
+    )
+    entry = prepare_year_end_closing_draft(
+        db,
+        company_id=selected_company_id,
+        period_start=period.period_start,
+        period_end=period.period_end,
+        branch_id=selected_branch_id,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
 
 
 @router.get("/trial-balance", response_model=TrialBalanceRead)
