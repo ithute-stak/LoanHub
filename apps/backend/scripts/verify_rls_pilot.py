@@ -12,6 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from database.models.company import LoanCompany
 from database.models.company_operations_phase1 import CRMRelationshipCase
+from database.models.company_client import CompanyBorrowerAccount
 from database.models.enums import CompanyStatus, EmploymentStatus, InstitutionType, UserRole
 from database.models.borrower import Borrower
 from database.models.user import User
@@ -64,6 +65,27 @@ def _seed_borrower(db, suffix: str) -> Borrower:
     return borrower
 
 
+def _seed_company_borrower_account(
+    db,
+    company: LoanCompany,
+    borrower: Borrower,
+    label: str,
+) -> CompanyBorrowerAccount:
+    account = CompanyBorrowerAccount(
+        company_id=company.id,
+        borrower_id=borrower.id,
+        account_reference=f"RLS-ACCOUNT-{label}-{uuid.uuid4().hex[:10]}",
+        source="rls_probe",
+        status="active",
+        opening_fee_amount=0,
+        opening_fee_currency="LSL",
+        opening_fee_status="not_required",
+    )
+    db.add(account)
+    db.flush()
+    return account
+
+
 def _seed_case(db, company: LoanCompany, borrower: Borrower, label: str) -> CRMRelationshipCase:
     case = CRMRelationshipCase(
         company_id=company.id,
@@ -104,6 +126,8 @@ def main() -> None:
         company_b = _seed_company(db, "B")
         borrower_a = _seed_borrower(db, "A")
         borrower_b = _seed_borrower(db, "B")
+        _seed_company_borrower_account(db, company_a, borrower_a, "A")
+        _seed_company_borrower_account(db, company_b, borrower_b, "B")
         case_a = _seed_case(db, company_a, borrower_a, "A")
         case_b = _seed_case(db, company_b, borrower_b, "B")
         company_a_id = company_a.id
@@ -124,6 +148,14 @@ def main() -> None:
             text(
                 f'GRANT SELECT, INSERT, UPDATE, DELETE '
                 f'ON TABLE crm_relationship_cases TO "{PROBE_ROLE}"'
+            )
+        )
+        # The borrower-scope trigger reads these relationship tables before
+        # PostgreSQL evaluates the CRM row-level INSERT policy.
+        db.execute(
+            text(
+                f'GRANT SELECT ON TABLE company_borrower_accounts, client_company_loan '
+                f'TO "{PROBE_ROLE}"'
             )
         )
         db.commit()
