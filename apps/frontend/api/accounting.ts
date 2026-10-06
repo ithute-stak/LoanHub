@@ -100,6 +100,81 @@ export async function createOpeningBalanceMigration(payload: {
 }
 
 
+
+export type MonthEndControlPack = {
+  period_start: string;
+  period_end: string;
+  branch_id?: string | null;
+  ready_to_lock: boolean;
+  failed_checks: string[];
+  checks: Record<string, boolean>;
+  loan_receivables_subledger: {
+    ledger_account_code: string;
+    folio_count: number;
+    folio_total: number;
+    control_source_total: number;
+    general_ledger_total: number;
+    folio_to_control_variance: number;
+    control_to_gl_variance: number;
+    balanced: boolean;
+    folios: Array<{
+      loan_id: string;
+      loan_reference: string;
+      folio_number: string;
+      borrower_id: string;
+      branch_id?: string | null;
+      status: string;
+      operational_balance: number;
+      source_principal_outstanding: number;
+      written_off: boolean;
+    }>;
+  };
+  fixed_asset_depreciation: {
+    asset_count_due: number;
+    total_due: number;
+    assets: Array<{
+      asset_id: string;
+      reference?: string | null;
+      name: string;
+      branch_id?: string | null;
+      amount_due: number;
+      carrying_amount_before: number;
+      last_depreciation_date?: string | null;
+    }>;
+  };
+  adjustment_register: {
+    posted_count: number;
+    draft_count: number;
+    entries: Array<{
+      journal_entry_id: string;
+      entry_number: string;
+      entry_date: string;
+      reference_type?: string | null;
+      reference_id?: string | null;
+      description: string;
+      status: string;
+      amount: number;
+    }>;
+  };
+  policy_note: string;
+};
+
+export async function getMonthEndControlPack(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<MonthEndControlPack> {
+  return (await api.get<MonthEndControlPack>("/accounting/month-end-control-pack", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      period_start: filters.periodStart,
+      period_end: filters.periodEnd,
+    },
+  })).data;
+}
+
 export async function exportFinancialBooks(filters: {
   companyId?: string;
   branchId?: string | null;

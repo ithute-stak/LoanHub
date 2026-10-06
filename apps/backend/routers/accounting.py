@@ -97,6 +97,7 @@ from services.accounting_service import (
     electronic_clearing_reconciliation,
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
+    month_end_control_pack,
     record_electronic_clearing_settlement,
     receipts_and_payments_summary,
     scope_key,
@@ -749,6 +750,31 @@ def financial_books(
         to_date=to_date,
         branch_id=selected_branch_id,
         include_ledger_detail=include_ledger_detail,
+    )
+
+
+@router.get("/month-end-control-pack")
+def get_month_end_control_pack(
+    company_id: UUID | None = None,
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for month-end controls")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
+    )
+    return month_end_control_pack(
+        db,
+        company_id=selected_company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=selected_branch_id,
     )
 
 

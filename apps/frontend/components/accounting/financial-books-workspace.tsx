@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { cancelYearEndClosingDraft, createOpeningBalanceMigration, createYearEndClosingDraft, exportFinancialBooks, getFinancialBooks, listAccountingAccounts, previewYearEndClosing } from "@/api/accounting";
+import { cancelYearEndClosingDraft, createOpeningBalanceMigration, createYearEndClosingDraft, exportFinancialBooks, getFinancialBooks, getMonthEndControlPack, listAccountingAccounts, previewYearEndClosing, type MonthEndControlPack } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,8 @@ export function FinancialBooksWorkspace() {
   const [books, setBooks] = useState<FinancialBooksPack | null>(null);
   const [periods, setPeriods] = useState<ControlRecord[]>([]);
   const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null);
+  const [monthEndPack, setMonthEndPack] = useState<MonthEndControlPack | null>(null);
+  const [monthEndWorking, setMonthEndWorking] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -129,6 +131,27 @@ export function FinancialBooksWorkspace() {
     [openingLines],
   );
   const openingBalanced = openingTotals.debit > 0 && Math.abs(openingTotals.debit - openingTotals.credit) < 0.005;
+
+  async function loadMonthEndPack() {
+    if (!companyId || !selectedPeriod) return;
+    const period = periods.find((item) => item.id === selectedPeriod);
+    if (!period) return;
+    setMonthEndWorking(true);
+    try {
+      const result = await getMonthEndControlPack({
+        companyId,
+        branchId: effectiveBranchId,
+        periodStart: String(period.period_start),
+        periodEnd: String(period.period_end),
+      });
+      setMonthEndPack(result);
+      toast.success(result.ready_to_lock ? "Month-end controls are green" : "Month-end controls need attention");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare month-end control pack"));
+    } finally {
+      setMonthEndWorking(false);
+    }
+  }
 
   async function createPeriod() {
     if (!newPeriodStart || !newPeriodEnd) return;
@@ -320,9 +343,10 @@ export function FinancialBooksWorkspace() {
       </section>
 
       <Tabs defaultValue="books" className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-3 rounded-2xl p-1">
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-4">
           <TabsTrigger value="books">Financial books</TabsTrigger>
           <TabsTrigger value="periods">Period close</TabsTrigger>
+          <TabsTrigger value="month-end">Month-end controls</TabsTrigger>
           <TabsTrigger value="opening">Opening balances</TabsTrigger>
         </TabsList>
 
@@ -423,6 +447,64 @@ export function FinancialBooksWorkspace() {
               {yearEndPreview.existing_journal_id && yearEndPreview.existing_journal_status === "draft" ? <LoadingButton loading={yearEndWorking} variant="destructive" onClick={() => void cancelYearEndDraft()}>Cancel closing draft</LoadingButton> : null}
             </CardContent>
           </Card> : null}
+        </TabsContent>
+
+        <TabsContent value="month-end" className="space-y-5">
+          <Card className="loanhub-panel">
+            <CardHeader>
+              <CardTitle>Month-end control pack</CardTitle>
+              <CardDescription>Reconcile the loan folio subledger to GL control 1100, inspect depreciation due, and review period adjustments before locking the books.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Field label="Accounting period"><Select value={selectedPeriod} onValueChange={(value) => { setSelectedPeriod(value); setMonthEndPack(null); }}><SelectTrigger><SelectValue placeholder="Select accounting period" /></SelectTrigger><SelectContent>{periods.map((period) => <SelectItem key={period.id} value={period.id}>{String(period.period_start)} – {String(period.period_end)} · {titleCase(period.status)}</SelectItem>)}</SelectContent></Select></Field>
+              <LoadingButton loading={monthEndWorking} onClick={() => void loadMonthEndPack()}><Scale className="h-4 w-4" />Prepare month-end pack</LoadingButton>
+            </CardContent>
+          </Card>
+
+          {monthEndPack ? <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Metric label="Close status" value={monthEndPack.ready_to_lock ? "Ready" : "Attention"} />
+              <Metric label="Loan folios" value={String(monthEndPack.loan_receivables_subledger.folio_count)} />
+              <Metric label="GL receivables" value={formatMoney(monthEndPack.loan_receivables_subledger.general_ledger_total)} />
+              <Metric label="Depreciation due" value={formatMoney(monthEndPack.fixed_asset_depreciation.total_due)} />
+            </div>
+
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>Control checklist</CardTitle><CardDescription>{monthEndPack.policy_note}</CardDescription></CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {Object.entries(monthEndPack.checks).map(([key, passed]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3"><span className="text-sm">{titleCase(key)}</span><Badge variant={passed ? "default" : "destructive"}>{passed ? "Pass" : "Fail"}</Badge></div>)}
+              </CardContent>
+            </Card>
+
+            <Card className="loanhub-panel overflow-hidden">
+              <CardHeader><CardTitle>Loan receivables subsidiary ledger</CardTitle><CardDescription>Independent loan folios rebuilt from successful source transactions and reconciled to the general ledger control account.</CardDescription></CardHeader>
+              <CardContent className="space-y-4 p-0">
+                <div className="grid gap-3 px-6 md:grid-cols-4">
+                  <Metric label="Folio total" value={formatMoney(monthEndPack.loan_receivables_subledger.folio_total)} />
+                  <Metric label="Control source total" value={formatMoney(monthEndPack.loan_receivables_subledger.control_source_total)} />
+                  <Metric label="GL control 1100" value={formatMoney(monthEndPack.loan_receivables_subledger.general_ledger_total)} />
+                  <Metric label="GL variance" value={formatMoney(monthEndPack.loan_receivables_subledger.control_to_gl_variance)} />
+                </div>
+                <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Loan folio</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Operational balance</TableHead><TableHead className="text-right">Source principal</TableHead><TableHead>Written off</TableHead></TableRow></TableHeader><TableBody>{monthEndPack.loan_receivables_subledger.folios.map((folio) => <TableRow key={folio.loan_id}><TableCell><p className="font-black">{folio.folio_number}</p><p className="font-mono text-xs text-muted-foreground">{folio.loan_reference}</p></TableCell><TableCell>{titleCase(folio.status || "unknown")}</TableCell><TableCell className="text-right">{formatMoney(folio.operational_balance)}</TableCell><TableCell className="text-right font-black">{formatMoney(folio.source_principal_outstanding)}</TableCell><TableCell>{folio.written_off ? "Yes" : "No"}</TableCell></TableRow>)}</TableBody></Table></div>
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card className="loanhub-panel">
+                <CardHeader><CardTitle>Fixed-asset depreciation due</CardTitle><CardDescription>Deterministic depreciation still outstanding for the selected period.</CardDescription></CardHeader>
+                <CardContent className="space-y-3">
+                  {monthEndPack.fixed_asset_depreciation.assets.length ? monthEndPack.fixed_asset_depreciation.assets.map((asset) => <div key={asset.asset_id} className="flex items-center justify-between rounded-xl border p-3"><div><p className="font-bold">{asset.reference} · {asset.name}</p><p className="text-xs text-muted-foreground">Carrying amount {formatMoney(asset.carrying_amount_before)}</p></div><span className="font-black">{formatMoney(asset.amount_due)}</span></div>) : <p className="text-sm text-muted-foreground">No depreciation remains due for this period.</p>}
+                </CardContent>
+              </Card>
+              <Card className="loanhub-panel">
+                <CardHeader><CardTitle>Adjustment register</CardTitle><CardDescription>Accruals, prepayments, accrued income, depreciation, credit losses and other period-end adjustments.</CardDescription></CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3"><Metric label="Posted" value={String(monthEndPack.adjustment_register.posted_count)} /><Metric label="Draft" value={String(monthEndPack.adjustment_register.draft_count)} /></div>
+                  {monthEndPack.adjustment_register.entries.slice(0, 12).map((entry) => <div key={entry.journal_entry_id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-bold">{entry.entry_number}</p><p className="text-xs text-muted-foreground">{titleCase(entry.reference_type || "adjustment")} · {entry.entry_date}</p></div><div className="text-right"><p className="font-black">{formatMoney(entry.amount)}</p><Badge variant={entry.status === "posted" ? "default" : "outline"}>{titleCase(entry.status)}</Badge></div></div>)}
+                </CardContent>
+              </Card>
+            </div>
+          </> : null}
         </TabsContent>
 
         <TabsContent value="opening" className="space-y-5">
