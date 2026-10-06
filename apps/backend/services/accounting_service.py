@@ -2701,10 +2701,10 @@ def reverse_period_adjustment(
         raise HTTPException(status_code=404, detail="Period adjustment journal not found")
     if original.status != "posted":
         raise HTTPException(status_code=409, detail="Only posted period adjustments can be reversed")
-    if original.reference_type not in {"accrual_adjustment", "prepayment_adjustment"}:
+    if original.reference_type not in {"accrual_adjustment", "prepayment_adjustment", "accrued_income_adjustment"}:
         raise HTTPException(
             status_code=422,
-            detail="Only accrual and prepayment adjustments can use the period reversal workflow",
+            detail="Only accrual, prepayment and accrued-income adjustments can use the period reversal workflow",
         )
     if reversal_date <= original.entry_date:
         raise HTTPException(status_code=422, detail="Reversal date must be after the original adjustment date")
