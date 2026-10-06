@@ -1599,9 +1599,30 @@ def financial_ratio_analysis(
         if account.account_type == "equity":
             total_equity += presented
 
-    # Current-period profit is part of equity even before the formal
-    # retained-earnings closing entry is posted.
-    total_equity = _money(total_equity + net_profit)
+    # Unclosed cumulative profit/loss is part of equity even before a formal
+    # retained-earnings closing entry is posted. Use all posted P&L through the
+    # reporting date rather than only the requested ratio-analysis period.
+    cumulative_rows = db.query(
+        AccountingAccount.account_type,
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalLine, JournalLine.account_id == AccountingAccount.id).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.account_type.in_(["revenue", "expense"]),
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date <= to_date,
+    )
+    if branch_id:
+        cumulative_rows = cumulative_rows.filter(JournalEntry.branch_id == branch_id)
+    cumulative_rows = cumulative_rows.group_by(AccountingAccount.account_type).all()
+    cumulative_profit = Decimal("0.00")
+    for account_type, debit, credit in cumulative_rows:
+        balance = _money(Decimal(debit) - Decimal(credit))
+        cumulative_profit += -balance if account_type == "revenue" else -balance
+    total_equity = _money(total_equity + cumulative_profit)
     current_assets = _money(current_assets)
     current_liabilities = _money(current_liabilities)
     inventory = _account_signed_balance(
