@@ -3666,8 +3666,11 @@ def loan_receivables_subledger(
         source_total += balance
         folios.append({
             "loan_id": str(loan.id),
+            "loan_reference": loan.loan_reference,
+            "folio_number": loan.folio_number,
+            "borrower_id": str(loan.borrower_id),
             "branch_id": str(loan.branch_id) if loan.branch_id else None,
-            "status": str(getattr(loan, "status", "") or ""),
+            "status": str(getattr(getattr(loan, "status", None), "value", getattr(loan, "status", "")) or ""),
             "operational_balance": float(_money(getattr(loan, "balance", 0))),
             "source_principal_outstanding": float(balance),
             "written_off": loan.id in written_off_ids,
