@@ -14,7 +14,7 @@ scoped to either a tenant company or the LoanHub platform.
 """
 
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -28,7 +28,7 @@ from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.lending_operations import CollectionCase
 from database.models.credit_loss_provisioning import CreditLossProvisionRun
-from database.models.governance_control import ApprovalRequest, BankStatementLine
+from database.models.governance_control import AccountingPeriod, ApprovalRequest, BankStatementLine
 from database.models.reconciliation import ReconciliationBatch, ReconciliationLine
 from database.models.enums import (
     PaymentDirection,
@@ -1540,6 +1540,10 @@ def financial_ratio_analysis(
         JournalEntry.scope_key == key,
         JournalEntry.status == "posted",
         JournalEntry.entry_date.between(from_date, to_date),
+        or_(
+            JournalEntry.reference_type.is_(None),
+            JournalEntry.reference_type != "year_end_closing",
+        ),
     )
     if branch_id:
         income_rows = income_rows.filter(JournalEntry.branch_id == branch_id)
@@ -1875,6 +1879,328 @@ def accounting_modern_practice_readiness(
             ]
         },
     }
+
+
+def _year_end_period_coverage(
+    db: Session,
+    *,
+    company_id,
+    financial_year_start: date,
+    financial_year_end: date,
+    branch_id=None,
+) -> tuple[list[AccountingPeriod], AccountingPeriod]:
+    if financial_year_start > financial_year_end:
+        raise HTTPException(status_code=422, detail="Financial year start must not be after financial year end")
+
+    periods = db.query(AccountingPeriod).filter(
+        AccountingPeriod.company_id == company_id,
+        AccountingPeriod.period_end >= financial_year_start,
+        AccountingPeriod.period_start <= financial_year_end,
+    )
+    if branch_id:
+        periods = periods.filter(AccountingPeriod.branch_id == branch_id)
+    else:
+        periods = periods.filter(AccountingPeriod.branch_id.is_(None))
+    periods = periods.order_by(AccountingPeriod.period_start.asc()).all()
+    if not periods:
+        raise HTTPException(status_code=404, detail="No accounting periods cover the selected financial year")
+
+    expected_start = financial_year_start
+    for period in periods:
+        if period.period_start != expected_start:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Accounting periods do not continuously cover the selected financial year; "
+                    f"expected a period starting {expected_start.isoformat()}"
+                ),
+            )
+        if period.period_end > financial_year_end:
+            raise HTTPException(
+                status_code=409,
+                detail="An accounting period crosses the selected financial-year boundary",
+            )
+        if period.status != "closed":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Every accounting period in the selected financial year must be hard-closed; "
+                    f"{period.period_start.isoformat()} to {period.period_end.isoformat()} is {period.status}"
+                ),
+            )
+        expected_start = period.period_end + timedelta(days=1)
+
+    if expected_start != financial_year_end + timedelta(days=1):
+        raise HTTPException(
+            status_code=409,
+            detail="Accounting periods do not fully cover the selected financial year",
+        )
+
+    next_date = financial_year_end + timedelta(days=1)
+    next_period = db.query(AccountingPeriod).filter(
+        AccountingPeriod.company_id == company_id,
+        AccountingPeriod.period_start <= next_date,
+        AccountingPeriod.period_end >= next_date,
+    )
+    if branch_id:
+        next_period = next_period.filter(AccountingPeriod.branch_id == branch_id)
+    else:
+        next_period = next_period.filter(AccountingPeriod.branch_id.is_(None))
+    next_period = next_period.first()
+    if not next_period:
+        raise HTTPException(
+            status_code=409,
+            detail="Create the next accounting period before preparing year-end closing",
+        )
+    if next_period.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail="The next accounting period must be open for year-end closing",
+        )
+    return periods, next_period
+
+
+def year_end_closing_preview(
+    db: Session,
+    *,
+    company_id,
+    financial_year_start: date,
+    financial_year_end: date,
+    branch_id=None,
+) -> dict:
+    """Prepare the retained-earnings transfer across a complete financial year.
+
+    The selected financial year may contain monthly, quarterly or annual
+    accounting periods. Every period must be hard-closed with continuous
+    coverage. The closing journal is dated on the first day of the next open
+    period, while reporting excludes the special journal from operating P&L.
+    """
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    periods, next_period = _year_end_period_coverage(
+        db,
+        company_id=company_id,
+        financial_year_start=financial_year_start,
+        financial_year_end=financial_year_end,
+        branch_id=branch_id,
+    )
+    next_date = financial_year_end + timedelta(days=1)
+
+    rows = db.query(
+        AccountingAccount.id,
+        AccountingAccount.code,
+        AccountingAccount.name,
+        AccountingAccount.account_type,
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(
+        JournalLine, JournalLine.account_id == AccountingAccount.id
+    ).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.account_type.in_(["revenue", "expense"]),
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(financial_year_start, financial_year_end),
+        or_(
+            JournalEntry.reference_type.is_(None),
+            JournalEntry.reference_type != "year_end_closing",
+        ),
+    )
+    if branch_id:
+        rows = rows.filter(JournalEntry.branch_id == branch_id)
+    rows = rows.group_by(
+        AccountingAccount.id,
+        AccountingAccount.code,
+        AccountingAccount.name,
+        AccountingAccount.account_type,
+    ).order_by(AccountingAccount.code.asc()).all()
+
+    closing_lines = []
+    revenue_total = Decimal("0.00")
+    expense_total = Decimal("0.00")
+    for account_id, code, name, account_type, debit, credit in rows:
+        debit = _money(debit)
+        credit = _money(credit)
+        if account_type == "revenue":
+            balance = _money(credit - debit)
+            revenue_total += balance
+            if balance > 0:
+                closing_lines.append({
+                    "account_id": account_id,
+                    "account_code": code,
+                    "account_name": name,
+                    "debit": balance,
+                    "credit": Decimal("0.00"),
+                    "purpose": "close_revenue",
+                })
+            elif balance < 0:
+                closing_lines.append({
+                    "account_id": account_id,
+                    "account_code": code,
+                    "account_name": name,
+                    "debit": Decimal("0.00"),
+                    "credit": abs(balance),
+                    "purpose": "close_revenue_debit_balance",
+                })
+        else:
+            balance = _money(debit - credit)
+            expense_total += balance
+            if balance > 0:
+                closing_lines.append({
+                    "account_id": account_id,
+                    "account_code": code,
+                    "account_name": name,
+                    "debit": Decimal("0.00"),
+                    "credit": balance,
+                    "purpose": "close_expense",
+                })
+            elif balance < 0:
+                closing_lines.append({
+                    "account_id": account_id,
+                    "account_code": code,
+                    "account_name": name,
+                    "debit": abs(balance),
+                    "credit": Decimal("0.00"),
+                    "purpose": "close_expense_credit_balance",
+                })
+
+    net_profit = _money(revenue_total - expense_total)
+    retained = account_by_code(db, key, "3100")
+    if net_profit > 0:
+        closing_lines.append({
+            "account_id": retained.id,
+            "account_code": retained.code,
+            "account_name": retained.name,
+            "debit": Decimal("0.00"),
+            "credit": net_profit,
+            "purpose": "transfer_profit_to_retained_earnings",
+        })
+    elif net_profit < 0:
+        closing_lines.append({
+            "account_id": retained.id,
+            "account_code": retained.code,
+            "account_name": retained.name,
+            "debit": abs(net_profit),
+            "credit": Decimal("0.00"),
+            "purpose": "transfer_loss_to_retained_earnings",
+        })
+
+    total_debit = _money(sum((line["debit"] for line in closing_lines), Decimal("0.00")))
+    total_credit = _money(sum((line["credit"] for line in closing_lines), Decimal("0.00")))
+    if total_debit != total_credit:
+        raise HTTPException(status_code=500, detail="Year-end closing preview is not balanced")
+
+    branch_key = str(branch_id) if branch_id else "ALL"
+    reference = (
+        f"YEAR-END:{financial_year_start.isoformat()}:"
+        f"{financial_year_end.isoformat()}:{branch_key}"
+    )
+    existing = _journal_for_reference(db, key, "year_end_closing", reference)
+
+    return {
+        "source_period_ids": [str(period.id) for period in periods],
+        "financial_year_start": financial_year_start.isoformat(),
+        "financial_year_end": financial_year_end.isoformat(),
+        "closing_date": next_date.isoformat(),
+        "next_period_id": str(next_period.id),
+        "next_period_status": next_period.status,
+        "reference": reference,
+        "revenue_total": float(_money(revenue_total)),
+        "expense_total": float(_money(expense_total)),
+        "net_profit_or_loss": float(net_profit),
+        "total_debit": float(total_debit),
+        "total_credit": float(total_credit),
+        "balanced": total_debit == total_credit,
+        "existing_journal_id": str(existing.id) if existing else None,
+        "existing_journal_status": existing.status if existing else None,
+        "lines": [
+            {
+                **line,
+                "account_id": str(line["account_id"]),
+                "debit": float(line["debit"]),
+                "credit": float(line["credit"]),
+            }
+            for line in closing_lines
+        ],
+        "policy": (
+            "All accounting periods in the financial year must be hard-closed. "
+            "The closing journal is dated on the first day of the next open period "
+            "and is excluded from that period's operating P&L."
+        ),
+    }
+
+
+def prepare_year_end_closing_draft(
+    db: Session,
+    *,
+    company_id,
+    financial_year_start: date,
+    financial_year_end: date,
+    branch_id,
+    user_id,
+) -> JournalEntry:
+    preview = year_end_closing_preview(
+        db,
+        company_id=company_id,
+        financial_year_start=financial_year_start,
+        financial_year_end=financial_year_end,
+        branch_id=branch_id,
+    )
+    key, _ = scope_key(company_id)
+    reference = preview["reference"]
+    existing = _journal_for_reference(db, key, "year_end_closing", reference)
+    if existing:
+        return existing
+    if not preview["lines"]:
+        raise HTTPException(status_code=409, detail="There is no revenue or expense activity to close")
+
+    return create_entry(
+        db,
+        company_id=company_id,
+        branch_id=branch_id,
+        created_by_user_id=user_id,
+        entry_date=date.fromisoformat(preview["closing_date"]),
+        description=(
+            f"Year-end closing transfer for {financial_year_start.isoformat()} "
+            f"to {financial_year_end.isoformat()}"
+        ),
+        reference_type="year_end_closing",
+        reference_id=reference,
+        status_value="draft",
+        lines=[
+            {
+                "account_id": UUID(line["account_id"]),
+                "debit": _money(line["debit"]),
+                "credit": _money(line["credit"]),
+                "description": line["purpose"],
+            }
+            for line in preview["lines"]
+        ],
+    )
+
+
+def cancel_year_end_closing_draft(
+    db: Session,
+    *,
+    company_id,
+    journal_entry_id,
+) -> None:
+    key, _ = scope_key(company_id)
+    entry = entry_query(db, key).filter(
+        JournalEntry.id == journal_entry_id,
+        JournalEntry.reference_type == "year_end_closing",
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Year-end closing journal not found")
+    if entry.status != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Only an unposted year-end closing draft can be cancelled",
+        )
+    db.delete(entry)
+    db.flush()
 
 
 def value_inventory_lower_of_cost_and_nrv(items: list[dict]) -> dict:

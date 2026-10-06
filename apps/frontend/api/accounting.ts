@@ -98,3 +98,61 @@ export async function createOpeningBalanceMigration(payload: {
     params: { company_id: companyId },
   })).data;
 }
+
+
+export async function exportFinancialBooks(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  fromDate: string;
+  toDate: string;
+  format: "pdf" | "xlsx";
+}): Promise<Blob> {
+  return (await api.get("/accounting/financial-books/export", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      from_date: filters.fromDate,
+      to_date: filters.toDate,
+      format: filters.format,
+    },
+    responseType: "blob",
+  })).data as Blob;
+}
+
+export async function previewYearEndClosing(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  financialYearStart: string;
+  financialYearEnd: string;
+}): Promise<Record<string, unknown>> {
+  return (await api.get("/accounting/year-end-closing/preview", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      financial_year_start: filters.financialYearStart,
+      financial_year_end: filters.financialYearEnd,
+    },
+  })).data as Record<string, unknown>;
+}
+
+export async function createYearEndClosingDraft(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  financialYearStart: string;
+  financialYearEnd: string;
+}): Promise<JournalEntry> {
+  return (await api.post<JournalEntry>("/accounting/year-end-closing", null, {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      financial_year_start: filters.financialYearStart,
+      financial_year_end: filters.financialYearEnd,
+    },
+  })).data;
+}
+
+export async function cancelYearEndClosingDraft(entryId: string, companyId?: string): Promise<void> {
+  await api.delete(`/accounting/year-end-closing/${entryId}`, {
+    params: { company_id: companyId },
+  });
+}

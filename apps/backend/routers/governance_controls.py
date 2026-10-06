@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -275,6 +275,37 @@ def reopen_accounting_period(
         raise HTTPException(status_code=404, detail="Accounting period not found")
     if item.status not in {"locked", "closed"}:
         raise HTTPException(status_code=409, detail="Only a locked or closed period can be reopened")
+
+    year_end_rows = db.query(JournalEntry).filter(
+        JournalEntry.company_id == context.company_id,
+        JournalEntry.reference_type == "year_end_closing",
+        JournalEntry.status.in_(["draft", "posted"]),
+    ).all()
+    for closing in year_end_rows:
+        parts = str(closing.reference_id or "").split(":")
+        if len(parts) != 4 or parts[0] != "YEAR-END":
+            continue
+        try:
+            closing_start = date.fromisoformat(parts[1])
+            closing_end = date.fromisoformat(parts[2])
+        except ValueError:
+            continue
+        branch_key = parts[3]
+        same_branch = (
+            branch_key == "ALL"
+            if item.branch_id is None
+            else branch_key == str(item.branch_id)
+        )
+        if same_branch and closing_start <= item.period_start and closing_end >= item.period_end:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This period is covered by a prepared year-end closing journal. "
+                    "Cancel an unposted year-end draft before reopening; posted year-end "
+                    "closing requires a current-period correction instead of reopening."
+                ),
+            )
+
     if item.status == "closed" and item.closed_by_user_id == context.user.id:
         raise HTTPException(
             status_code=409,

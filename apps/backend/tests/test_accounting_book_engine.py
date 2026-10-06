@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from database.models.enums import PaymentMethod
 from database.schemas.accounting import FixedAssetCreate, VatTransactionCreate
+from services.financial_books_export_service import build_financial_books_pdf, build_financial_books_xlsx
 from services.accounting_service import (
     COMPANY_CHART,
     PLATFORM_CHART,
@@ -446,6 +447,105 @@ def test_financial_books_remain_posted_ledger_only():
     router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
     assert 'JournalEntry.status == "posted"' in router
     assert "Draft journals are excluded" in router
+
+
+def test_year_end_closing_moves_result_next_period_and_uses_maker_checker_draft():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def year_end_closing_preview(" in service
+    assert "Every accounting period in the selected financial year must be hard-closed" in service
+    assert "next_date = financial_year_end + timedelta(days=1)" in service
+    assert "Accounting periods do not continuously cover the selected financial year" in service
+    assert 'account_by_code(db, key, "3100")' in service
+    assert '"transfer_profit_to_retained_earnings"' in service
+    assert '"transfer_loss_to_retained_earnings"' in service
+    assert 'reference_type="year_end_closing"' in service
+    assert 'status_value="draft"' in service
+    assert '@router.get("/year-end-closing/preview")' in router
+    assert '@router.post("/year-end-closing"' in router
+
+
+def test_financial_books_export_endpoints_support_pdf_and_xlsx():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '@router.get("/financial-books/export")' in router
+    assert 'pattern="^(pdf|xlsx)$"' in router
+    assert 'media_type="application/pdf"' in router
+    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in router
+
+
+def test_financial_books_exporters_create_real_files():
+    pack = {
+        "accounting_basis": "Frank Wood-aligned double-entry financial accounting",
+        "preparation_note": "Posted ledger data only.",
+        "period": {"from_date": "2026-01-01", "to_date": "2026-12-31"},
+        "book_index": [{"order": 1, "book": "trial_balance", "purpose": "control"}],
+        "trial_balance": {
+            "lines": [{"code": "1000", "name": "Cash", "account_type": "asset", "debit": 100, "credit": 0, "balance": 100}],
+            "total_debit": 100,
+            "total_credit": 100,
+            "difference": 0,
+        },
+        "income_statement": {
+            "sections": {"revenue": [{"code": "4000", "name": "Interest Income", "amount": 100}]},
+            "totals": {"revenue": 100, "net_profit": 100},
+        },
+        "statement_of_financial_position": {
+            "sections": {"asset": [{"code": "1000", "name": "Cash", "amount": 100}]},
+            "totals": {"asset": 100, "total_assets": 100, "total_equity": 100},
+        },
+        "statement_of_changes_in_equity": {"opening_equity": 0, "closing_equity": 100},
+        "statement_of_cash_flows": {"opening_cash": 0, "closing_cash": 100, "reconciled": True},
+        "general_ledger": [{
+            "account_code": "1000",
+            "account_name": "Cash",
+            "opening_balance": 0,
+            "period_debit": 100,
+            "period_credit": 0,
+            "closing_balance": 100,
+            "lines": [],
+        }],
+        "books_of_original_entry": [],
+        "financial_ratios": {"profitability": {"net_profit_margin_percent": 100}},
+        "accounting_controls": {"error_diagnostics": {"controls": {"trial_balance_arithmetically_balanced": True}}},
+    }
+    pdf = build_financial_books_pdf(pack, company_name="Test Lender")
+    xlsx = build_financial_books_xlsx(pack, company_name="Test Lender")
+    assert pdf.startswith(b"%PDF")
+    assert xlsx.startswith(b"PK")
+
+
+def test_year_end_closing_is_excluded_from_next_period_operating_performance():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'JournalEntry.reference_type != "year_end_closing"' in service
+    assert 'exclude_reference_types={"year_end_closing"} if statement_name == "income_statement" else None' in router
+    assert "The closing journal is dated on the first day of the next open" in service
+
+
+def test_year_end_closing_supports_monthly_periods_and_protects_reopen():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    controls = (ROOT / "backend" / "routers" / "governance_controls.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def _year_end_period_coverage(" in service
+    assert '"source_period_ids"' in service
+    assert "financial_year_start" in router
+    assert "financial_year_end" in router
+    assert '@router.delete("/year-end-closing/{entry_id}"' in router
+    assert "This period is covered by a prepared year-end closing journal" in controls
+
+
+def test_year_end_draft_cancellation_keeps_branch_scope():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "Year-end draft is outside your branch scope" in router
+    assert "Only the draft creator or company management can cancel this year-end draft" in router
+
+
+def test_finance_workspace_exposes_exports_and_year_end_close():
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+    assert "Export PDF" in frontend
+    assert "Export Excel" in frontend
+    assert "Preview year-end close" in frontend
+    assert "Prepare maker/checker closing draft" in frontend
 
 
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
