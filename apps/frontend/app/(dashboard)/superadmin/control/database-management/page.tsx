@@ -44,6 +44,15 @@ type ConstraintStat = {
   definition: string;
 };
 
+type RowSecurityTable = {
+  schema_name: string;
+  table_name: string;
+  table_owner: string;
+  enabled: boolean;
+  forced: boolean;
+  policy_count: number;
+};
+
 type DatabaseHealth = {
   supported: boolean;
   database_engine: string;
@@ -80,6 +89,16 @@ type DatabaseHealth = {
   replication?: {
     is_replica: boolean;
     connected_replicas: number;
+  };
+  row_security?: {
+    runtime_role: string;
+    runtime_is_superuser: boolean;
+    runtime_has_override: boolean;
+    runtime_owns_protected_table: boolean;
+    protected_table_count: number;
+    tables_without_policy: string[];
+    enforcement_ready: boolean;
+    tables: RowSecurityTable[];
   };
   alembic_heads?: string[];
   unvalidated_check_constraints?: ConstraintStat[];
@@ -204,6 +223,30 @@ export default function DatabaseManagementPage() {
                 <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Alembic head</p><p className="mt-1 break-all font-mono text-sm font-bold">{health.alembic_heads?.join(", ") || "Unknown"}</p></div>
                 <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Unvalidated CHECK constraints</p><p className="mt-1 font-black">{number(health.unvalidated_check_constraints?.length)}</p></div>
               </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border bg-card p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black">Tenant isolation enforcement</h2>
+                <p className="mt-1 text-sm text-muted-foreground">PostgreSQL runtime-role and row-policy readiness.</p>
+              </div>
+              <span className="rounded-full border px-3 py-1 text-xs font-black">
+                {health.row_security?.enforcement_ready ? "Ready" : "Review required"}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Runtime role</p><p className="mt-1 font-black">{health.row_security?.runtime_role || "Unknown"}</p></div>
+              <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Protected tables</p><p className="mt-1 font-black">{number(health.row_security?.protected_table_count)}</p></div>
+              <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Role override</p><p className="mt-1 font-black">{health.row_security?.runtime_has_override || health.row_security?.runtime_is_superuser ? "Present" : "None"}</p></div>
+              <div className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">Protected-table ownership</p><p className="mt-1 font-black">{health.row_security?.runtime_owns_protected_table ? "Needs separation" : "Separated"}</p></div>
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead className="border-b text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="py-3 pr-4">Table</th><th className="pr-4">Owner</th><th className="pr-4">Policies</th><th>Status</th></tr></thead>
+                <tbody>{health.row_security?.tables?.length ? health.row_security.tables.map((row) => <tr key={row.table_name} className="border-b last:border-0"><td className="py-3 pr-4 font-bold">{row.table_name}</td><td className="pr-4">{row.table_owner}</td><td className="pr-4">{number(row.policy_count)}</td><td>{row.enabled ? "Enabled" : "Disabled"}</td></tr>) : <tr><td colSpan={4} className="py-4 text-muted-foreground">No protected tables detected.</td></tr>}</tbody>
+              </table>
             </div>
           </section>
 

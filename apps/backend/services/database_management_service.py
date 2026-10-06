@@ -166,6 +166,78 @@ def database_health_snapshot(db: Session) -> dict[str, Any]:
         ),
     }
 
+    runtime_role = dict(
+        db.execute(
+            text(
+                """
+                SELECT
+                    rolname AS role_name,
+                    rolsuper AS is_superuser,
+                    rolbypassrls AS row_security_override
+                FROM pg_roles
+                WHERE rolname = current_user
+                """
+            )
+        ).mappings().one()
+    )
+
+    row_security_tables = [
+        dict(row)
+        for row in db.execute(
+            text(
+                """
+                SELECT
+                    n.nspname AS schema_name,
+                    c.relname AS table_name,
+                    pg_get_userbyid(c.relowner) AS table_owner,
+                    c.relrowsecurity AS enabled,
+                    c.relforcerowsecurity AS forced,
+                    count(p.policyname) AS policy_count
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                LEFT JOIN pg_policies p
+                  ON p.schemaname = n.nspname
+                 AND p.tablename = c.relname
+                WHERE c.relkind IN ('r', 'p')
+                  AND c.relrowsecurity = true
+                  AND n.nspname = 'public'
+                GROUP BY
+                    n.nspname,
+                    c.relname,
+                    c.relowner,
+                    c.relrowsecurity,
+                    c.relforcerowsecurity
+                ORDER BY c.relname
+                """
+            )
+        ).mappings().all()
+    ]
+
+    runtime_role_name = str(runtime_role["role_name"])
+    runtime_owns_protected_table = any(
+        str(row["table_owner"]) == runtime_role_name
+        for row in row_security_tables
+    )
+    tables_without_policy = [
+        str(row["table_name"])
+        for row in row_security_tables
+        if int(row["policy_count"] or 0) == 0
+    ]
+    row_security = {
+        "runtime_role": runtime_role_name,
+        "runtime_is_superuser": bool(runtime_role["is_superuser"]),
+        "runtime_has_override": bool(runtime_role["row_security_override"]),
+        "runtime_owns_protected_table": runtime_owns_protected_table,
+        "protected_table_count": len(row_security_tables),
+        "tables_without_policy": tables_without_policy,
+        "tables": row_security_tables,
+        "enforcement_ready": bool(row_security_tables)
+        and not bool(runtime_role["is_superuser"])
+        and not bool(runtime_role["row_security_override"])
+        and not runtime_owns_protected_table
+        and not tables_without_policy,
+    }
+
     return {
         "supported": True,
         "database_engine": "postgresql",
@@ -201,6 +273,7 @@ def database_health_snapshot(db: Session) -> dict[str, Any]:
         },
         "stats_reset": stats["stats_reset"],
         "replication": replication,
+        "row_security": row_security,
         "alembic_heads": alembic_heads,
         "unvalidated_check_constraints": constraints,
         "largest_tables": tables,
