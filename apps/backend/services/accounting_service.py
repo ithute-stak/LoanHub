@@ -1527,39 +1527,83 @@ def financial_ratio_analysis(
     key, _ = scope_key(company_id)
     ensure_chart(db, company_id=company_id)
 
-    income = statement(
-        db,
-        key=key,
-        statement_name="income_statement",
-        account_types={"revenue", "expense"},
-        from_date=from_date,
-        to_date=to_date,
-        branch_id=branch_id,
+    income_rows = db.query(
+        AccountingAccount.code,
+        AccountingAccount.account_type,
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalLine, JournalLine.account_id == AccountingAccount.id).join(
+        JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
+    ).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.account_type.in_(["revenue", "expense"]),
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(from_date, to_date),
     )
-    position = statement(
-        db,
-        key=key,
-        statement_name="statement_of_financial_position",
-        account_types={"asset", "liability", "equity"},
-        from_date=None,
-        to_date=to_date,
-        branch_id=branch_id,
-    )
+    if branch_id:
+        income_rows = income_rows.filter(JournalEntry.branch_id == branch_id)
+    income_rows = income_rows.group_by(
+        AccountingAccount.code, AccountingAccount.account_type
+    ).all()
 
-    totals = income["totals"]
-    position_totals = position["totals"]
-    revenue = _money(totals.get("revenue"))
-    gross_result = _money(totals.get("gross_result"))
-    net_profit = _money(totals.get("net_profit"))
-    cost_of_services = _money(
-        next(
-            (line.amount for line in income["sections"].get("expense", []) if line.code == "5000"),
-            Decimal("0.00"),
+    revenue = Decimal("0.00")
+    expense = Decimal("0.00")
+    cost_of_services = Decimal("0.00")
+    for code, account_type, debit, credit in income_rows:
+        balance = _money(Decimal(debit) - Decimal(credit))
+        amount = -balance if account_type == "revenue" else balance
+        if account_type == "revenue":
+            revenue += amount
+        else:
+            expense += amount
+            if code == "5000":
+                cost_of_services += amount
+    revenue = _money(revenue)
+    expense = _money(expense)
+    cost_of_services = _money(cost_of_services)
+    gross_result = _money(revenue - cost_of_services)
+    net_profit = _money(revenue - expense)
+
+    current_asset_codes = {
+        "1000", "1010", "1020", "1100", "1110", "1120", "1150",
+        "1200", "1210", "1220", "1300", "1400", "1600",
+    }
+    current_liability_codes = {
+        "2000", "2100", "2200", "2300", "2400", "2600", "2990",
+    }
+    current_assets = Decimal("0.00")
+    current_liabilities = Decimal("0.00")
+    total_equity = Decimal("0.00")
+    position_rows = db.query(AccountingAccount).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.is_active.is_(True),
+    ).all()
+    for account in position_rows:
+        signed = _account_signed_balance(
+            db,
+            scope_key_value=key,
+            account_code=account.code,
+            to_date=to_date,
+            branch_id=branch_id,
         )
-    )
+        presented = (
+            -signed
+            if account.account_type in {"liability", "equity"}
+            else signed
+        )
+        if account.code in current_asset_codes:
+            current_assets += presented
+        if account.code in current_liability_codes:
+            current_liabilities += presented
+        if account.account_type == "equity":
+            total_equity += presented
 
-    current_assets = _money(position_totals.get("current_assets"))
-    current_liabilities = _money(position_totals.get("current_liabilities"))
+    # Current-period profit is part of equity even before the formal
+    # retained-earnings closing entry is posted.
+    total_equity = _money(total_equity + net_profit)
+    current_assets = _money(current_assets)
+    current_liabilities = _money(current_liabilities)
     inventory = _account_signed_balance(
         db, scope_key_value=key, account_code="1300", to_date=to_date, branch_id=branch_id
     )
@@ -1575,7 +1619,6 @@ def financial_ratio_analysis(
         db, scope_key_value=key, account_code="2000", to_date=to_date, branch_id=branch_id
     )
     trade_payables = _money(max(-trade_payables_signed, Decimal("0.00")))
-    total_equity = _money(position_totals.get("total_equity"))
     loan_notes_signed = _account_signed_balance(
         db, scope_key_value=key, account_code="2500", to_date=to_date, branch_id=branch_id
     )
