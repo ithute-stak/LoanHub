@@ -513,6 +513,14 @@ def test_financial_books_exporters_create_real_files():
     assert xlsx.startswith(b"PK")
 
 
+def test_year_end_closing_is_excluded_from_next_period_operating_performance():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert 'JournalEntry.reference_type != "year_end_closing"' in service
+    assert 'exclude_reference_types={"year_end_closing"} if statement_name == "income_statement" else None' in router
+    assert "The closing journal is dated on the first day after the reporting period" in service
+
+
 def test_finance_workspace_exposes_exports_and_year_end_close():
     frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
     assert "Export PDF" in frontend
