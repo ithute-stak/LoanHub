@@ -470,6 +470,35 @@ def account_ledger(
     )
 
 
+CURRENT_ASSET_CODES = {
+    "1000", "1010", "1020", "1100", "1110", "1120", "1150",
+    "1200", "1210", "1300", "1400", "1600",
+}
+NON_CURRENT_ASSET_CODES = {"1500", "1510"}
+CURRENT_LIABILITY_CODES = {"2000", "2100", "2200", "2300", "2400", "2990"}
+
+
+def _statement_position_class(code: str, account_type: str) -> str:
+    """Classify system-chart balances for statement-of-financial-position presentation.
+
+    User-defined accounts that are not part of the system chart remain explicitly
+    unclassified instead of being silently forced into a liquidity bucket.
+    """
+    if account_type == "asset":
+        if code in NON_CURRENT_ASSET_CODES:
+            return "non_current_asset"
+        if code in CURRENT_ASSET_CODES:
+            return "current_asset"
+        return "unclassified_asset"
+    if account_type == "liability":
+        if code in CURRENT_LIABILITY_CODES:
+            return "current_liability"
+        return "unclassified_liability"
+    if account_type == "equity":
+        return "equity"
+    return account_type
+
+
 def statement(db: Session, *, key: str, statement_name: str, account_types: set[str], from_date, to_date, branch_id=None):
     lines = trial_balance_data(db, key, from_date, to_date, branch_id)
     sections: dict[str, list[FinancialStatementLine]] = {}
@@ -487,7 +516,15 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
         totals[line.account_type] = totals.get(line.account_type, Decimal("0")) + amount
 
     if statement_name == "income_statement":
-        totals["net_profit"] = totals.get("revenue", Decimal("0")) - totals.get("expense", Decimal("0"))
+        revenue_total = totals.get("revenue", Decimal("0"))
+        expense_total = totals.get("expense", Decimal("0"))
+        cost_of_services = next(
+            (line.amount for line in sections.get("expense", []) if line.code == "5000"),
+            Decimal("0"),
+        )
+        totals["gross_result"] = revenue_total - cost_of_services
+        totals["operating_expenses"] = expense_total - cost_of_services
+        totals["net_profit"] = revenue_total - expense_total
     elif statement_name == "statement_of_financial_position":
         # Revenue and expense accounts represent profit that has increased or
         # decreased equity even before a formal year-end transfer to retained
@@ -512,8 +549,45 @@ def statement(db: Session, *, key: str, statement_name: str, account_types: set[
         ]
         totals["current_earnings"] = current_earnings
         totals["total_equity"] = totals.get("equity", Decimal("0")) + current_earnings
-        totals["net_assets"] = totals.get("asset", Decimal("0")) - totals.get("liability", Decimal("0"))
-        totals["equity_check"] = totals["net_assets"] - totals["total_equity"]
+
+        position_totals = {
+            "non_current_assets": Decimal("0"),
+            "current_assets": Decimal("0"),
+            "unclassified_assets": Decimal("0"),
+            "current_liabilities": Decimal("0"),
+            "unclassified_liabilities": Decimal("0"),
+        }
+        for line in lines:
+            presented_amount = (
+                -line.balance
+                if line.account_type in {"liability", "equity", "revenue"}
+                else line.balance
+            )
+            position_class = _statement_position_class(line.code, line.account_type)
+            key_name = {
+                "non_current_asset": "non_current_assets",
+                "current_asset": "current_assets",
+                "unclassified_asset": "unclassified_assets",
+                "current_liability": "current_liabilities",
+                "unclassified_liability": "unclassified_liabilities",
+            }.get(position_class)
+            if key_name:
+                position_totals[key_name] += presented_amount
+
+        totals.update(position_totals)
+        totals["working_capital"] = (
+            totals["current_assets"] - totals["current_liabilities"]
+        )
+        totals["total_assets"] = totals.get("asset", Decimal("0"))
+        totals["total_liabilities"] = totals.get("liability", Decimal("0"))
+        totals["net_assets"] = totals["total_assets"] - totals["total_liabilities"]
+        totals["accounting_equation_difference"] = (
+            totals["total_assets"]
+            - totals["total_liabilities"]
+            - totals["total_equity"]
+        )
+        # Backward-compatible alias retained for existing clients.
+        totals["equity_check"] = totals["accounting_equation_difference"]
     return FinancialStatementRead(
         statement=statement_name,
         from_date=from_date,
