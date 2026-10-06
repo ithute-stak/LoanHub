@@ -621,13 +621,14 @@ export function LoanPortfolioWorkspace({
         setPage(1);
     }
 
+    // Legacy search contract: placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
     const searchControl = <SuggestionSearch
         value={search}
         onValueChange={setSearch}
         suggestions={suggestions}
         minimumCharacters={1}
         maxSuggestions={12}
-        placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
+        placeholder="Folio, loan, borrower, ID, phone, employer, branch, contract..."
         suggestionLabel="Company loans by folio"
         emptyMessage="No loan or folio matches that text."
         wrapperClassName="w-full"
