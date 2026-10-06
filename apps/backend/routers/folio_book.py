@@ -17,9 +17,10 @@ from core.access_control import (
     get_tenant_context,
     require_tenant_roles,
 )
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import UserRole
 from database.session import get_db
-from services.folio_book_service import FolioBookFilters, build_folio_book, folio_book_csv
+from services.folio_book_service import FolioBookFilters, _company_loans_query, _row_payload, build_folio_book, folio_book_csv
 
 
 router = APIRouter(prefix="/folio-book", tags=["Loan Folio Book"])
@@ -38,6 +39,19 @@ FOLIO_BOOK_ROLES = (
 )
 
 
+
+
+def _base_query(db: Session, context: TenantContext):
+    """Compatibility query used by borrower folio-history routes."""
+    query = _company_loans_query(db, context)
+    if context.branch_id:
+        query = query.filter(ClientCompanyLoan.branch_id == context.branch_id)
+    return query
+
+
+def _row(loan: ClientCompanyLoan) -> dict:
+    """Compatibility row serializer backed by the canonical folio service."""
+    return _row_payload(loan)
 
 def _integrity(loans: list) -> dict:
     """Compatibility integrity summary for legacy callers and tests."""
