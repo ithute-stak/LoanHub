@@ -1031,3 +1031,44 @@ def test_month_end_control_pack_reconciles_subledger_and_period_controls():
     assert "Loan receivables subsidiary ledger" in frontend
     assert "Fixed-asset depreciation due" in frontend
     assert "Adjustment register" in frontend
+
+
+def test_month_end_adjustments_prepare_drafts_and_scheduled_reversals():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "class MonthEndAdjustmentDraftCreate" in schema
+    assert "def prepare_month_end_adjustment_draft(" in service
+    assert 'status_value="draft"' in service
+    assert '"accrual": "accrual_adjustment"' in service
+    assert '"prepayment": "prepayment_adjustment"' in service
+    assert '"accrued_income": "accrued_income_adjustment"' in service
+    assert "adjustment_reversal_schedule" in service
+    assert "def prepare_due_adjustment_reversal_drafts(" in service
+    assert 'reference_type="period_adjustment_reversal"' in service
+    assert "Scheduled reversals are prepared as drafts" in service
+
+    assert '@router.post("/month-end-adjustments/drafts"' in router
+    assert '@router.post("/month-end-adjustments/prepare-reversals")' in router
+    assert "createMonthEndAdjustmentDraft" in frontend_api
+    assert "prepareMonthEndReversalDrafts" in frontend_api
+    assert "Prepare maker/checker draft" in frontend
+    assert "Prepare due reversal drafts" in frontend
+
+
+def test_month_end_pack_includes_vat_control_and_deterministic_depreciation_action():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "def vat_control_reconciliation(" in service
+    assert '"net_vat_payable"' in service
+    assert '"net_vat_receivable"' in service
+    assert '"vat_reconciliation": vat_control' in service
+    assert "not a Lesotho VAT return or statutory tax determination" in service
+    assert "depreciateAssetsForPeriod" in frontend_api
+    assert "VAT control reconciliation" in frontend
+    assert "Post due depreciation" in frontend
