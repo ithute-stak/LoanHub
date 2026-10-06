@@ -401,6 +401,89 @@ export async function getTreasuryStressTest(payload: {
   })).data;
 }
 
+
+export type AccountingAuditCompliancePack = {
+  period_start: string;
+  period_end: string;
+  branch_id?: string | null;
+  controls: Record<string, boolean>;
+  control_pass_count: number;
+  control_fail_count: number;
+  audit_integrity: {
+    sealed_event_count: number;
+    chain_valid: boolean;
+    broken_event_id?: string | null;
+    company_period_event_count: number;
+    severity_counts: Record<string, number>;
+  };
+  journal_review: {
+    journal_count: number;
+    flagged_count: number;
+    large_amount_threshold: number;
+    evidence_required_count: number;
+    evidence_missing_count: number;
+    policy_note: string;
+    flagged_entries: Array<{
+      journal_entry_id: string;
+      entry_number: string;
+      entry_date: string;
+      description: string;
+      reference_type?: string | null;
+      reference_id?: string | null;
+      amount: number;
+      flags: string[];
+      evidence_files: Array<{
+        file_id: string;
+        reference: string;
+        name: string;
+        mime_type: string;
+        size_bytes: number;
+        checksum_sha256: string;
+        scan_status: string;
+        is_encrypted: boolean;
+        is_confidential: boolean;
+      }>;
+      review_status: string;
+    }>;
+  };
+  audit_sample: AccountingAuditCompliancePack["journal_review"]["flagged_entries"];
+  vat_control: {
+    closing_input_vat_receivable: number;
+    closing_output_vat_payable: number;
+    net_vat_payable: number;
+    net_vat_receivable: number;
+    ledger_balanced: boolean;
+    policy_note: string;
+  };
+  corporation_tax_control: {
+    closing_tax_expense: number;
+    closing_tax_payable: number;
+    control_flags: Record<string, boolean>;
+    policy_note: string;
+  };
+  statutory_assessment: {
+    status: string;
+    jurisdiction: string;
+    note: string;
+  };
+};
+
+export async function getAccountingAuditCompliancePack(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<AccountingAuditCompliancePack> {
+  return (await api.get<AccountingAuditCompliancePack>("/accounting/audit-compliance-pack", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      period_start: filters.periodStart,
+      period_end: filters.periodEnd,
+    },
+  })).data;
+}
+
 export async function listFinancialPlans(companyId?: string, branchId?: string | null): Promise<FinancialPlan[]> {
   return (await api.get<FinancialPlan[]>("/accounting/financial-plans", {
     params: { company_id: companyId, branch_id: branchId || undefined },
