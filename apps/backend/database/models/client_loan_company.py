@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from sqlalchemy import Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -142,4 +144,28 @@ class ClientCompanyLoan(Base):
     )
 
 
+_TERMINAL_NON_OVERDUE_STATUSES = {
+    LoanStatus.COMPLETED,
+    LoanStatus.CANCELLED,
+    LoanStatus.REJECTED,
+}
+
+
+def loan_can_be_currently_overdue(*, balance, status: LoanStatus | str | None) -> bool:
+    """Return whether a loan is eligible to carry a current overdue flag."""
+    current_balance = Decimal(str(balance or 0))
+    try:
+        current_status = status if isinstance(status, LoanStatus) else LoanStatus(status)
+    except (TypeError, ValueError):
+        current_status = status
+    return current_balance > 0 and current_status not in _TERMINAL_NON_OVERDUE_STATUSES
+
+
+def _clear_stale_current_overdue_flag(_mapper, _connection, loan: ClientCompanyLoan) -> None:
+    if not loan_can_be_currently_overdue(balance=loan.balance, status=loan.status):
+        loan.is_overdue = False
+
+
 event.listen(ClientCompanyLoan, "before_insert", assign_loan_folio)
+event.listen(ClientCompanyLoan, "before_insert", _clear_stale_current_overdue_flag)
+event.listen(ClientCompanyLoan, "before_update", _clear_stale_current_overdue_flag)
