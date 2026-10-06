@@ -375,6 +375,43 @@ def test_chapter_40_automation_preserves_human_control_and_traceability():
     assert "Automation should reduce routine bookkeeping while preserving traceability" in service
 
 
+def test_financial_books_pack_assembles_complete_frank_wood_flow():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def financial_books_pack_data(" in router
+    assert '@router.get("/financial-books")' in router
+    for book in (
+        '"books_of_original_entry"',
+        '"general_ledger"',
+        '"trial_balance"',
+        '"income_statement"',
+        '"statement_of_financial_position"',
+        '"statement_of_changes_in_equity"',
+        '"statement_of_cash_flows"',
+        '"receipts_and_payments"',
+        '"financial_ratios"',
+        '"accounting_controls"',
+    ):
+        assert book in router
+    assert "Draft journals are excluded" in router
+
+
+def test_financial_books_pack_can_include_full_general_ledger_detail():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def _ledger_book_data(" in router
+    assert "include_ledger_detail: bool = Query(default=True)" in router
+    assert '"opening_balance": opening' in router
+    assert '"closing_balance": running' in router
+    assert '"running_balance": running' in router
+
+
+def test_ratio_engine_has_no_router_statement_dependency():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    ratio_block = service.split("def financial_ratio_analysis(", 1)[1].split("ACCOUNTING_ETHICS_PRINCIPLES", 1)[0]
+    assert "statement(" not in ratio_block
+    assert "income_rows = db.query(" in ratio_block
+    assert "cumulative_rows = db.query(" in ratio_block
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
