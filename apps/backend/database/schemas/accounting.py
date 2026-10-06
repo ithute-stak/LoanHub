@@ -356,6 +356,33 @@ class SuspenseCorrectionCreate(BaseModel):
 
 
 
+
+class TreasuryCommitmentCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=240)
+    category: str = Field(pattern="^(expense|payroll|provider|tax|refund|capital|other)$")
+    due_date: date
+    amount: Decimal = Field(gt=0)
+    branch_id: UUID | None = None
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class TreasuryForecastRequest(BaseModel):
+    from_date: date
+    to_date: date
+    minimum_cash: Decimal = Field(default=Decimal("0"), ge=0)
+    collection_rate: Decimal = Field(default=Decimal("1"), ge=0, le=1)
+    obligation_rate: Decimal = Field(default=Decimal("1"), ge=0)
+    unexpected_outflow: Decimal = Field(default=Decimal("0"), ge=0)
+    branch_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_forecast_period(self):
+        if self.to_date < self.from_date:
+            raise ValueError("to_date must be on or after from_date")
+        if (self.to_date - self.from_date).days > 366:
+            raise ValueError("Treasury forecast horizon cannot exceed 366 days")
+        return self
+
 class FinancialPlanLineCreate(BaseModel):
     account_code: str = Field(min_length=4, max_length=30)
     period_start: date
