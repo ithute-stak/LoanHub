@@ -18,7 +18,7 @@ from database.models.accounting import AccountingAccount, JournalEntry, JournalL
 from database.models.branch import CompanyBranch
 from database.models.company import LoanCompany
 from database.models.enums import UserRole
-from database.models.governance_control import AccountingPeriod, ApprovalRequest, BankStatementLine
+from database.models.governance_control import ApprovalRequest, BankStatementLine
 from database.models.reconciliation import ReconciliationBatch
 from database.schemas.accounting import (
     AccountingAccountCreate,
