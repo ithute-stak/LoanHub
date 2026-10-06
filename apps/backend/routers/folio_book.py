@@ -1,75 +1,61 @@
 from __future__ import annotations
 
-import csv
 from collections import defaultdict
-from io import StringIO
+from io import BytesIO
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
-from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
-from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
-from database.models.borrower import Borrower
+from core.access_control import (
+    COLLECTIONS_ROLES,
+    COMPANY_MANAGEMENT_ROLES,
+    FINANCE_ROLES,
+    LENDING_ROLES,
+    TenantContext,
+    get_tenant_context,
+    require_tenant_roles,
+)
 from database.models.client_loan_company import ClientCompanyLoan
-from database.models.enums import LoanStatus
-from database.models.person import Person
-from database.models.user import User
+from database.models.enums import UserRole
 from database.session import get_db
+from services.folio_book_service import FolioBookFilters, _company_loans_query, _row_payload, build_folio_book, folio_book_csv
 
 
 router = APIRouter(prefix="/folio-book", tags=["Loan Folio Book"])
 
+FOLIO_BOOK_ROLES = (
+    COMPANY_MANAGEMENT_ROLES
+    | LENDING_ROLES
+    | FINANCE_ROLES
+    | COLLECTIONS_ROLES
+    | {
+        UserRole.AUDITOR,
+        UserRole.RISK_MANAGER,
+        UserRole.COMPLIANCE_OFFICER,
+        UserRole.REGULATORY_REPORTING_OFFICER,
+    }
+)
 
-def _scope(query, context: TenantContext):
-    query = query.filter(ClientCompanyLoan.company_id == context.company_id)
+
+
+
+def _base_query(db: Session, context: TenantContext):
+    """Compatibility query used by borrower folio-history routes."""
+    query = _company_loans_query(db, context)
     if context.branch_id:
         query = query.filter(ClientCompanyLoan.branch_id == context.branch_id)
     return query
 
 
-def _base_query(db: Session, context: TenantContext):
-    return _scope(
-        db.query(ClientCompanyLoan).options(
-            joinedload(ClientCompanyLoan.borrower).joinedload(Borrower.user).joinedload(User.person),
-            joinedload(ClientCompanyLoan.branch),
-        ),
-        context,
-    )
-
-
-def _borrower_name(loan: ClientCompanyLoan) -> str:
-    user = loan.borrower.user if loan.borrower else None
-    person = user.person if user else None
-    return person.full_name if person else (user.email if user else "Borrower")
-
-
 def _row(loan: ClientCompanyLoan) -> dict:
-    borrower = loan.borrower
-    return {
-        "loan_id": str(loan.id),
-        "folio_number": loan.folio_number,
-        "company_code": loan.folio_company_code,
-        "group_code": loan.folio_group_code,
-        "sequence": loan.folio_sequence,
-        "loan_reference": loan.loan_reference,
-        "borrower_id": str(loan.borrower_id),
-        "borrower_name": _borrower_name(loan),
-        "employer_name": borrower.employer_name if borrower else None,
-        "branch_id": str(loan.branch_id) if loan.branch_id else None,
-        "branch_name": loan.branch.name if loan.branch else None,
-        "principal_amount": float(loan.principal_amount or 0),
-        "balance": float(loan.balance or 0),
-        "status": getattr(loan.status, "value", str(loan.status)),
-        "approved_at": loan.approved_at.isoformat() if loan.approved_at else None,
-        "disbursed_at": loan.disbursed_at.isoformat() if loan.disbursed_at else None,
-        "maturity_date": loan.maturity_date.isoformat() if loan.maturity_date else None,
-        "is_overdue": bool(loan.is_overdue),
-    }
+    """Compatibility row serializer backed by the canonical folio service."""
+    return _row_payload(loan)
 
-
-def _integrity(loans: list[ClientCompanyLoan]) -> dict:
-    by_group: dict[str, list[ClientCompanyLoan]] = defaultdict(list)
+def _integrity(loans: list) -> dict:
+    """Compatibility integrity summary for legacy callers and tests."""
+    by_group: dict[str, list] = defaultdict(list)
     missing: list[str] = []
     malformed: list[str] = []
     seen_numbers: dict[str, list[str]] = defaultdict(list)
@@ -119,69 +105,39 @@ def _integrity(loans: list[ClientCompanyLoan]) -> dict:
         "groups": groups,
     }
 
-
-def _parse_status(value: str | None) -> LoanStatus | None:
-    if not value:
-        return None
-    try:
-        return LoanStatus(value.strip().lower())
-    except ValueError as exc:
-        allowed = ", ".join(item.value for item in LoanStatus)
-        raise HTTPException(status_code=422, detail=f"Loan status must be one of: {allowed}") from exc
+def _filters(
+    search: str | None,
+    group_code: str | None,
+    status: str | None,
+    branch_id: UUID | None,
+) -> FolioBookFilters:
+    return FolioBookFilters(
+        search=search,
+        group_code=group_code,
+        status=status,
+        branch_id=branch_id,
+    )
 
 
 @router.get("")
-def folio_book(
-    search: str | None = None,
-    group_code: str | None = None,
-    status: str | None = None,
+def get_folio_book(
+    search: str | None = Query(default=None, max_length=200),
+    group_code: str | None = Query(default=None, max_length=20),
+    status: str | None = Query(default=None, max_length=40),
+    branch_id: UUID | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=500, ge=1, le=2000),
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    require_tenant_roles(context, COMPANY_ROLES)
-    query = _base_query(db, context)
-    if group_code:
-        query = query.filter(ClientCompanyLoan.folio_group_code == group_code.strip().upper())
-    parsed_status = _parse_status(status)
-    if parsed_status:
-        query = query.filter(ClientCompanyLoan.status == parsed_status)
-    if search:
-        token = f"%{search.strip()}%"
-        query = (
-            query.join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
-            .join(User, User.id == Borrower.user_id)
-            .outerjoin(Person, Person.user_id == User.id)
-            .filter(
-                or_(
-                    ClientCompanyLoan.folio_number.ilike(token),
-                    ClientCompanyLoan.loan_reference.ilike(token),
-                    ClientCompanyLoan.folio_group_code.ilike(token),
-                    Borrower.employer_name.ilike(token),
-                    User.email.ilike(token),
-                    User.phone.ilike(token),
-                    Person.first_name.ilike(token),
-                    Person.middle_name.ilike(token),
-                    Person.last_name.ilike(token),
-                    Person.national_id.ilike(token),
-                    Person.passport_number.ilike(token),
-                )
-            )
-        )
-    total = query.count()
-    rows = query.order_by(
-        ClientCompanyLoan.folio_group_code.asc(),
-        ClientCompanyLoan.folio_sequence.asc(),
-    ).offset(skip).limit(limit).all()
-    all_scoped = _base_query(db, context).all()
-    return {
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "rows": [_row(item) for item in rows],
-        "integrity": _integrity(all_scoped),
-    }
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    return build_folio_book(
+        db,
+        context=context,
+        filters=_filters(search, group_code, status, branch_id),
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/lookup/{folio_number}")
@@ -190,7 +146,7 @@ def folio_lookup(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    require_tenant_roles(context, COMPANY_ROLES)
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
     loan = _base_query(db, context).filter(
         ClientCompanyLoan.folio_number == folio_number.strip().upper()
     ).first()
@@ -204,36 +160,63 @@ def folio_integrity(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    require_tenant_roles(context, COMPANY_ROLES)
-    return _integrity(_base_query(db, context).all())
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    payload = build_folio_book(
+        db,
+        context=context,
+        filters=FolioBookFilters(),
+        skip=0,
+        limit=100_000,
+    )
+    summary = payload["summary"]
+    groups = [
+        {
+            "company_code": item["company_code"],
+            "group_code": item["group_code"],
+            "loan_count": item["loan_count"],
+            "first_sequence": item["first_sequence"],
+            "last_sequence": item["last_sequence"],
+            "next_sequence": item["next_sequence"],
+            "next_folio": item["next_folio_number"],
+            "gap_count": item["gap_count"],
+            "gaps": item["gaps"],
+        }
+        for item in payload["sequence_books"]
+    ]
+    return {
+        "healthy": bool(summary["integrity_ok"] and summary["gap_count"] == 0),
+        "loan_count": summary["total_loans"],
+        "missing_folio_count": summary["missing_folio_count"],
+        "malformed_folio_count": summary["invalid_format_count"] + summary["component_mismatch_count"],
+        "duplicate_folio_count": summary["duplicate_folio_count"],
+        "gap_count": summary["gap_count"],
+        "groups": groups,
+    }
 
 
 @router.get("/export.csv")
-def export_folio_book(
-    group_code: str | None = None,
+def export_folio_book_csv(
+    search: str | None = Query(default=None, max_length=200),
+    group_code: str | None = Query(default=None, max_length=20),
+    status: str | None = Query(default=None, max_length=40),
+    branch_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    require_tenant_roles(context, COMPANY_ROLES)
-    query = _base_query(db, context)
-    if group_code:
-        query = query.filter(ClientCompanyLoan.folio_group_code == group_code.strip().upper())
-    loans = query.order_by(
-        ClientCompanyLoan.folio_group_code.asc(),
-        ClientCompanyLoan.folio_sequence.asc(),
-    ).all()
-    stream = StringIO()
-    writer = csv.DictWriter(stream, fieldnames=[
-        "folio_number", "group_code", "sequence", "loan_reference", "borrower_name",
-        "employer_name", "branch_name", "principal_amount", "balance", "status",
-        "approved_at", "disbursed_at", "maturity_date", "is_overdue",
-    ])
-    writer.writeheader()
-    for loan in loans:
-        payload = _row(loan)
-        writer.writerow({key: payload.get(key) for key in writer.fieldnames})
-    return Response(
-        content=stream.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=loanhub-folio-book.csv"},
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    payload = build_folio_book(
+        db,
+        context=context,
+        filters=_filters(search, group_code, status, branch_id),
+        skip=0,
+        limit=100_000,
+    )
+    content = folio_book_csv(payload)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=LoanHub-Folio-Book.csv",
+            "Cache-Control": "private, no-store, max-age=0",
+        },
     )

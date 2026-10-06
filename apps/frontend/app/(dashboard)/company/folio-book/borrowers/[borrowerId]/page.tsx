@@ -68,12 +68,12 @@ export default function BorrowerFolioHistoryPage() {
                   <TableBody>
                     {data.folios.map((row) => (
                       <TableRow key={row.loan_id}>
-                        <TableCell><p className="font-mono font-black text-primary">{row.folio_number}</p><p className="text-xs text-muted-foreground">Sequence {row.sequence}</p></TableCell>
+                        <TableCell><p className="font-mono font-black text-primary">{row.folio_number}</p><p className="text-xs text-muted-foreground">Sequence {row.folio_sequence}</p></TableCell>
                         <TableCell className="font-mono text-xs">{row.loan_reference}</TableCell>
-                        <TableCell><Badge variant="outline">{row.group_code}</Badge></TableCell>
+                        <TableCell><Badge variant="outline">{row.folio_group_code}</Badge></TableCell>
                         <TableCell>{formatMoney(row.principal_amount)}</TableCell>
                         <TableCell>{formatMoney(row.balance)}</TableCell>
-                        <TableCell><Badge variant={row.is_overdue ? "destructive" : "secondary"}>{row.is_overdue ? "Overdue" : titleCase(row.status)}</Badge></TableCell>
+                        <TableCell><Badge variant={row.status === "overdue" ? "destructive" : "secondary"}>{titleCase(row.status)}</Badge></TableCell>
                         <TableCell>{row.disbursed_at ? formatDate(row.disbursed_at) : row.approved_at ? formatDate(row.approved_at) : "—"}</TableCell>
                       </TableRow>
                     ))}
