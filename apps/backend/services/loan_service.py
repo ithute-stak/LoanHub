@@ -606,7 +606,9 @@ def disburse_cash_loan(
     notes: str | None = None,
     idempotency_key: str | None = None,
 ) -> tuple[PaymentTransaction, CashTransaction | None]:
-    # Serialize payout attempts before reading mutable loan state. Without this
+    # Serialize payout attempts before reading mutable loan state. This is a
+    # concurrency invariant and intentionally remains covered by branch CI.
+    # Without this
     # lock two workers can both observe APPROVED and start disbursement side
     # effects before either transaction commits.
     loan = (
