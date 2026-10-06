@@ -1,9 +1,0 @@
-alembic/versions/s2d4e6f8a130_workspace_document_studio.py
-api/v1/router.py
-database/models/__init__.py
-database/models/workspace_document.py
-database/schemas/workspace_document.py
-requirements.txt
-routers/workspace_documents.py
-services/workspace_document_service.py
-tests/test_workspace_document_export.py

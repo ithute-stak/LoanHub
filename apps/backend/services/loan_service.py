@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.cdas_official import CdasOfficialMandateState
+from database.models.lending_operations import CDASDeductionMandate
 from database.models.origination import LoanContract, LoanTopUpSettlement, OriginationPolicy
 from database.models.company import LoanCompany
 from database.models.enums import (
@@ -535,6 +537,63 @@ def _require_signed_contract_before_disbursement(
     return contract
 
 
+def assert_disbursement_governance_ready(
+    db: Session,
+    loan: ClientCompanyLoan,
+) -> None:
+    """Enforce governance and payroll-collection readiness before any payout."""
+
+    from services.credit_committee_service import assert_loan_disbursement_conditions
+
+    assert_loan_disbursement_conditions(db, loan)
+
+    if not bool(getattr(loan, "cdas_collection_enabled", False)):
+        return
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == loan.company_id,
+            CDASDeductionMandate.loan_id == loan.id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This loan is configured for CDAS collection but has no registered "
+                "CDAS deduction mandate. Register the mandate before disbursement."
+            ),
+        )
+
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == loan.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    usable_mandate_statuses = {"registered", "approved", "active"}
+    usable_lifecycle_statuses = {"registered", "approved", "active"}
+    if (
+        mandate.status not in usable_mandate_statuses
+        or not state
+        or state.lifecycle_status not in usable_lifecycle_statuses
+        or state.deduction_id is None
+        or bool(state.requires_reconciliation)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The CDAS deduction mandate is not ready for disbursement. "
+                "Complete provider registration/reconciliation and ensure a valid "
+                "DeductionID is available first."
+            ),
+        )
+
+
 def disburse_cash_loan(
     db: Session,
     *,
@@ -562,6 +621,7 @@ def disburse_cash_loan(
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
     _require_signed_contract_before_disbursement(db, loan)
+    assert_disbursement_governance_ready(db, loan)
 
     key = _payment_idempotency_key(f"loan-disbursement:{loan.id}:{payment_method.value}", idempotency_key)
     existing = _existing_payment(db, key)
@@ -1099,7 +1159,7 @@ def reverse_loan_payment(db: Session, payment: PaymentTransaction) -> None:
     if not loan:
         return
 
-    if payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+    if payment.purpose in {PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT}:
         allocations = (
             db.query(PaymentAllocation)
             .filter(PaymentAllocation.payment_id == payment.id)
