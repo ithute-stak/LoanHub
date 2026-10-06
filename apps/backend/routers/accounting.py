@@ -57,6 +57,8 @@ from database.schemas.accounting import (
     PeriodAdjustmentReversalCreate,
     TrialBalanceLine,
     TrialBalanceRead,
+    TreasuryCommitmentCreate,
+    TreasuryForecastRequest,
     SuspenseCorrectionCreate,
     VatTransactionCreate,
 )
@@ -115,6 +117,11 @@ from services.accounting_service import (
     statement_of_changes_in_equity as statement_of_changes_in_equity_data,
     incomplete_records_control,
     transaction_accounting_coverage,
+    create_treasury_commitment,
+    approve_treasury_commitment,
+    treasury_commitment_payload,
+    treasury_cash_forecast,
+    treasury_stress_test,
     validate_postable_entry,
     value_inventory_lower_of_cost_and_nrv,
     year_end_closing_preview,
@@ -843,6 +850,124 @@ def prepare_month_end_reversal_drafts(
     )
     db.commit()
     return result
+
+
+@router.get("/treasury/commitments")
+def list_treasury_commitments(
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    query = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == selected_company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "treasury_commitment",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if selected_branch_id:
+        query = query.filter(CompanyOperatingRecord.branch_id == selected_branch_id)
+    return [treasury_commitment_payload(row) for row in query.order_by(CompanyOperatingRecord.due_at.asc()).all()]
+
+
+@router.post("/treasury/commitments", status_code=status.HTTP_201_CREATED)
+def create_commitment(
+    payload: TreasuryCommitmentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    row = create_treasury_commitment(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        title=payload.title,
+        category=payload.category,
+        due_date=payload.due_date,
+        amount=payload.amount,
+        description=payload.description,
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(row)
+    return treasury_commitment_payload(row)
+
+
+@router.post("/treasury/commitments/{commitment_id}/approve")
+def approve_commitment(
+    commitment_id: UUID,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    row = approve_treasury_commitment(
+        db,
+        company_id=selected_company_id,
+        commitment_id=commitment_id,
+        user_id=context.user.id,
+    )
+    db.commit()
+    db.refresh(row)
+    return treasury_commitment_payload(row)
+
+
+@router.post("/treasury/cash-forecast")
+def cash_forecast(
+    payload: TreasuryForecastRequest,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    return treasury_cash_forecast(
+        db,
+        company_id=selected_company_id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+        branch_id=selected_branch_id,
+        minimum_cash=payload.minimum_cash,
+        collection_rate=payload.collection_rate,
+        obligation_rate=payload.obligation_rate,
+        unexpected_outflow=payload.unexpected_outflow,
+    )
+
+
+@router.post("/treasury/stress-test")
+def cash_stress_test(
+    payload: TreasuryForecastRequest,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    return treasury_stress_test(
+        db,
+        company_id=selected_company_id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+        branch_id=selected_branch_id,
+        minimum_cash=payload.minimum_cash,
+    )
 
 
 @router.get("/financial-plans")
