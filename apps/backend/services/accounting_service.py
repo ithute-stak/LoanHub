@@ -118,6 +118,7 @@ PLATFORM_CHART = [
     ("1010", "Bank", "asset", "debit"),
     ("1020", "Electronic Payment Clearing", "asset", "debit"),
     ("1200", "Tenant Receivables", "asset", "debit"),
+    ("1220", "Accrued Income", "asset", "debit"),
     ("1400", "Prepayments", "asset", "debit"),
     ("1500", "Property and Equipment", "asset", "debit"),
     ("1510", "Accumulated Depreciation", "asset", "credit"),
