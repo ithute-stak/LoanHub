@@ -1683,6 +1683,136 @@ def financial_ratio_analysis(
     }
 
 
+ACCOUNTING_ETHICS_PRINCIPLES = [
+    "integrity",
+    "objectivity",
+    "professional_competence_and_due_care",
+    "confidentiality",
+    "professional_behaviour",
+]
+
+
+def accounting_modern_practice_readiness(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Chapter 40 governance/readiness view for a modern automated accounting system.
+
+    Chapter 40 emphasises that technology automates more basic accounting work,
+    increasing the importance of judgement, analysis, communication and ethics.
+    This control therefore reports whether automation remains traceable and whether
+    human posting duties are segregated where maker/checker data exists.
+    """
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    key, _ = scope_key(company_id)
+    diagnostics = accounting_error_diagnostics(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    traceability = source_book_traceability(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    ratios = financial_ratio_analysis(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+
+    journals = db.query(JournalEntry).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(from_date, to_date),
+    )
+    if branch_id:
+        journals = journals.filter(JournalEntry.branch_id == branch_id)
+    rows = journals.all()
+
+    maker_checker_population = [
+        row for row in rows
+        if row.created_by_user_id is not None and row.posted_by_user_id is not None
+    ]
+    maker_checker_conflicts = [
+        row for row in maker_checker_population
+        if row.created_by_user_id == row.posted_by_user_id
+    ]
+    automated_postings = [
+        row for row in rows
+        if row.posted_by_user_id is None and row.reference_type
+    ]
+    unattributed_postings = [
+        row for row in rows
+        if row.created_by_user_id is None and row.posted_by_user_id is None and not row.reference_type
+    ]
+
+    controls = {
+        "accounting_integrity_controls_healthy": bool(diagnostics["healthy"]),
+        "source_traceability_complete": bool(traceability["traceability_complete"]),
+        "maker_checker_segregated_where_recorded": len(maker_checker_conflicts) == 0,
+        "no_unattributed_postings": len(unattributed_postings) == 0,
+        "ratio_analysis_available": bool(ratios.get("book_alignment")),
+    }
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ready": all(controls.values()),
+        "controls": controls,
+        "automation": {
+            "posted_journal_count": len(rows),
+            "automated_posting_count": len(automated_postings),
+            "maker_checker_population_count": len(maker_checker_population),
+            "maker_checker_conflict_count": len(maker_checker_conflicts),
+            "maker_checker_conflict_entry_ids": [str(row.id) for row in maker_checker_conflicts],
+            "unattributed_posting_count": len(unattributed_postings),
+            "unattributed_posting_entry_ids": [str(row.id) for row in unattributed_postings],
+        },
+        "ethics_principles": ACCOUNTING_ETHICS_PRINCIPLES,
+        "ethics_note": (
+            "These principles are governance expectations from the book; this endpoint "
+            "does not claim that software can determine whether a person is ethical."
+        ),
+        "technology_note": (
+            "Automation should reduce routine bookkeeping while preserving traceability, "
+            "controls and human interpretation of financial information."
+        ),
+        "analysis_note": ratios["interpretation_note"],
+        "integrity_diagnostics": {
+            "healthy": diagnostics["healthy"],
+            "controls": diagnostics["controls"],
+        },
+        "source_traceability": {
+            "posted_entry_count": traceability["posted_entry_count"],
+            "internal_reference_only_count": traceability["internal_reference_only_count"],
+            "missing_narrative_count": traceability["missing_narrative_count"],
+        },
+        "book_alignment": {
+            "chapter_40": [
+                "ethics_and_integrity",
+                "technology_and_automation",
+                "analysis_and_interpretation",
+                "professional_judgement",
+                "traceability_and_controls",
+            ]
+        },
+    }
+
+
 def value_inventory_lower_of_cost_and_nrv(items: list[dict]) -> dict:
     """Chapter 18: value inventory item-by-item at the lower of cost and NRV."""
     valued = []
