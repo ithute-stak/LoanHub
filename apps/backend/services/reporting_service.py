@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
@@ -35,6 +37,11 @@ from database.models.reporting import GeneratedReport, ReportSchedule
 from database.models.treasury import BranchDailyLedger, BranchDailySubmission, BranchOpeningSource, TreasuryEntry
 from services.file_service import store_bytes
 from services.pdf_design_system import money_text, safe_text
+from services.polyglot_runtime_service import (
+    java_report_csv,
+    record_parity_mismatch,
+    workload_routing_mode,
+)
 
 
 def money(value: Any) -> float:
@@ -813,7 +820,7 @@ def build_pdf(
         subject="Management, accounting, treasury and portfolio report",
     )
 
-def build_csv(metrics: dict[str, Any], metadata: dict[str, Any]) -> bytes:
+def _build_csv_python(metrics: dict[str, Any], metadata: dict[str, Any]) -> bytes:
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["LoanHub Report", metadata["title"]])
@@ -828,6 +835,60 @@ def build_csv(metrics: dict[str, Any], metadata: dict[str, Any]) -> bytes:
         writer.writerow([key.replace("_", " ").title(), value])
     return output.getvalue().encode("utf-8-sig")
 
+
+def _java_csv_inputs(
+    metrics: dict[str, Any],
+    metadata: dict[str, Any],
+) -> tuple[dict[str, str], list[list[Any]]] | None:
+    allowed = (str, int, float, bool, Decimal, type(None))
+    if any(not isinstance(value, allowed) for value in metrics.values()):
+        return None
+    safe_metadata = {
+        key: str(metadata[key])
+        for key in ("title", "reference", "scope_name", "period_start", "period_end")
+    }
+    items: list[list[Any]] = []
+    for key, value in metrics.items():
+        if isinstance(value, Decimal):
+            value = str(value)
+        items.append([str(key), value])
+    return safe_metadata, items
+
+
+def build_csv(metrics: dict[str, Any], metadata: dict[str, Any]) -> bytes:
+    routing_mode = workload_routing_mode("java_report_csv")
+    java_inputs = _java_csv_inputs(metrics, metadata)
+
+    if routing_mode == "off" or java_inputs is None:
+        return _build_csv_python(metrics, metadata)
+
+    java_result = java_report_csv(
+        metadata=java_inputs[0],
+        metrics_items=java_inputs[1],
+    )
+    candidate = None
+    if java_result:
+        try:
+            candidate = base64.b64decode(
+                java_result["content_base64"],
+                validate=True,
+            )
+        except (KeyError, TypeError, ValueError):
+            candidate = None
+        if candidate is not None:
+            expected_hash = hashlib.sha256(candidate).hexdigest()
+            if expected_hash != str(java_result.get("sha256") or "").lower():
+                record_parity_mismatch("java_worker")
+                candidate = None
+
+    if routing_mode == "prefer-worker" and candidate is not None:
+        return candidate
+
+    python_content = _build_csv_python(metrics, metadata)
+    if routing_mode == "shadow" and candidate is not None:
+        if candidate != python_content:
+            record_parity_mismatch("java_worker")
+    return python_content
 
 def generate_report(
     db: Session,
