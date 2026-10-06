@@ -203,7 +203,7 @@ export function FinancialBooksWorkspace() {
   }
 
   async function previewYearEnd() {
-    if (!selectedPeriod || !companyId) return;
+    if (!companyId) return;
     setYearEndWorking(true);
     try {
       const result = await previewYearEndClosing({
@@ -222,7 +222,7 @@ export function FinancialBooksWorkspace() {
   }
 
   async function prepareYearEndDraft() {
-    if (!selectedPeriod || !companyId) return;
+    if (!companyId) return;
     setYearEndWorking(true);
     try {
       const journal = await createYearEndClosingDraft({
