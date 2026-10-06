@@ -12,7 +12,9 @@ from services.accounting_service import (
     PLATFORM_CHART,
     _cash_flow_section,
     _validate_normalized_journal_lines,
+    assess_capital_expenditure,
     calculate_fixed_asset_depreciation,
+    value_inventory_lower_of_cost_and_nrv,
     settlement_account_code,
 )
 
@@ -146,6 +148,63 @@ def test_period_close_requires_reconciliation_batches_closed():
     assert "ReconciliationBatch" in source
     assert '"reconciliation_batches_closed"' in source
     assert '"open_reconciliation_batches"' in source
+
+
+def test_inventory_valuation_uses_lower_of_cost_and_nrv_item_by_item():
+    result = value_inventory_lower_of_cost_and_nrv([
+        {"reference": "A", "cost": Decimal("100"), "expected_selling_price": Decimal("150"), "costs_to_sell": Decimal("0")},
+        {"reference": "B", "cost": Decimal("120"), "expected_selling_price": Decimal("100"), "costs_to_sell": Decimal("10")},
+    ])
+    assert result["inventory_value"] == 190.0
+    assert result["write_down"] == 30.0
+    assert result["items"][0]["basis"] == "cost"
+    assert result["items"][1]["basis"] == "net_realisable_value"
+
+
+def test_capital_expenditure_assessment_separates_initial_use_from_maintenance():
+    result = assess_capital_expenditure([
+        {"description": "Machine", "amount": Decimal("10000"), "category": "purchase_price"},
+        {"description": "Installation", "amount": Decimal("800"), "category": "assembly_installation"},
+        {"description": "Annual service", "amount": Decimal("500"), "category": "repair_maintenance"},
+    ])
+    assert result["capital_expenditure"] == 10800.0
+    assert result["revenue_expenditure"] == 500.0
+
+
+def test_borrowing_cost_capitalisation_requires_both_conditions():
+    denied = assess_capital_expenditure(
+        [{"description": "Interest", "amount": Decimal("600"), "category": "borrowing_cost_construction"}],
+        borrowing_costs_directly_attributable=True,
+        asset_requires_substantial_time_to_prepare=False,
+    )
+    allowed = assess_capital_expenditure(
+        [{"description": "Interest", "amount": Decimal("600"), "category": "borrowing_cost_construction"}],
+        borrowing_costs_directly_attributable=True,
+        asset_requires_substantial_time_to_prepare=True,
+    )
+    assert denied["revenue_expenditure"] == 600.0
+    assert allowed["capital_expenditure"] == 600.0
+
+
+def test_chapter_22_accrued_income_is_posted_and_reversible():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '("1220", "Accrued Income", "asset", "debit")' in service
+    assert "def post_accrued_income_adjustment(" in service
+    assert 'debit_code="1220", credit_code=revenue_account_code' in service
+    assert '"accrued_income_adjustment"' in service
+    assert '@router.post("/adjustments/accrued-income"' in router
+
+
+def test_chapters_18_20_calculators_are_exposed():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '@router.post("/inventory/valuation")' in router
+    assert '@router.post("/capital-expenditure/assess")' in router
+
+
+def test_current_asset_statement_includes_accrued_income():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert '"1200", "1210", "1220", "1300"' in router
 
 
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
