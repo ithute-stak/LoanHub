@@ -805,9 +805,14 @@ def preview_year_end_closing(
     ).first()
     if not period:
         raise HTTPException(status_code=404, detail="Accounting period not found")
-    selected_branch_id = resolve_branch_scope(
-        db, context, selected_company_id, period.branch_id
-    )
+    if (
+        not context.is_platform_admin
+        and context.branch_id
+        and context.role not in COMPANY_MANAGEMENT_ROLES
+        and period.branch_id != context.branch_id
+    ):
+        raise HTTPException(status_code=403, detail="Year-end period is outside your branch scope")
+    selected_branch_id = period.branch_id
     return year_end_closing_preview(
         db,
         company_id=selected_company_id,
@@ -834,9 +839,14 @@ def create_year_end_closing(
     ).with_for_update().first()
     if not period:
         raise HTTPException(status_code=404, detail="Accounting period not found")
-    selected_branch_id = resolve_branch_scope(
-        db, context, selected_company_id, period.branch_id
-    )
+    if (
+        not context.is_platform_admin
+        and context.branch_id
+        and context.role not in COMPANY_MANAGEMENT_ROLES
+        and period.branch_id != context.branch_id
+    ):
+        raise HTTPException(status_code=403, detail="Year-end period is outside your branch scope")
+    selected_branch_id = period.branch_id
     entry = prepare_year_end_closing_draft(
         db,
         company_id=selected_company_id,
