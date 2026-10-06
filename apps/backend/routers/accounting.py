@@ -397,6 +397,279 @@ def trial_balance_data(db: Session, key: str, from_date=None, to_date=None, bran
     return lines
 
 
+def _ledger_book_data(
+    db: Session,
+    *,
+    key: str,
+    account: AccountingAccount,
+    from_date: date,
+    to_date: date,
+    branch_id: UUID | None,
+    include_detail: bool,
+) -> dict:
+    opening_q = db.query(
+        func.coalesce(func.sum(JournalLine.debit), 0),
+        func.coalesce(func.sum(JournalLine.credit), 0),
+    ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+        JournalLine.account_id == account.id,
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date < from_date,
+    )
+    if branch_id:
+        opening_q = opening_q.filter(JournalEntry.branch_id == branch_id)
+    opening_debit, opening_credit = opening_q.first()
+    opening = Decimal(opening_debit) - Decimal(opening_credit)
+    if account.normal_balance == "credit":
+        opening = -opening
+
+    running = opening
+    rows = []
+    debit_total = Decimal("0.00")
+    credit_total = Decimal("0.00")
+    for journal_line, entry in ledger_rows(
+        db,
+        key,
+        account.id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    ):
+        debit = Decimal(journal_line.debit)
+        credit = Decimal(journal_line.credit)
+        debit_total += debit
+        credit_total += credit
+        movement = debit - credit
+        if account.normal_balance == "credit":
+            movement = -movement
+        running += movement
+        if include_detail:
+            rows.append({
+                "entry_id": str(entry.id),
+                "entry_number": entry.entry_number,
+                "entry_date": entry.entry_date.isoformat(),
+                "description": journal_line.description or entry.description,
+                "reference_type": entry.reference_type,
+                "reference_id": entry.reference_id,
+                "debit": debit,
+                "credit": credit,
+                "running_balance": running,
+            })
+
+    return {
+        "account_id": str(account.id),
+        "account_code": account.code,
+        "account_name": account.name,
+        "account_type": account.account_type,
+        "normal_balance": account.normal_balance,
+        "opening_balance": opening,
+        "period_debit": debit_total,
+        "period_credit": credit_total,
+        "closing_balance": running,
+        "lines": rows,
+    }
+
+
+def financial_books_pack_data(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id: UUID | None,
+    include_ledger_detail: bool = True,
+) -> dict:
+    """Assemble LoanHub's Frank Wood-aligned books for one accounting period."""
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    ensure_chart(db, company_id=company_id)
+    key, _ = scope_key(company_id)
+
+    trial_lines = trial_balance_data(db, key, from_date, to_date, branch_id)
+    trial = {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "total_debit": sum((line.debit for line in trial_lines), Decimal("0.00")),
+        "total_credit": sum((line.credit for line in trial_lines), Decimal("0.00")),
+        "difference": (
+            sum((line.debit for line in trial_lines), Decimal("0.00"))
+            - sum((line.credit for line in trial_lines), Decimal("0.00"))
+        ),
+        "lines": [
+            {
+                "account_id": str(line.account_id),
+                "code": line.code,
+                "name": line.name,
+                "account_type": line.account_type,
+                "debit": line.debit,
+                "credit": line.credit,
+                "balance": line.balance,
+            }
+            for line in trial_lines
+        ],
+    }
+
+    accounts = db.query(AccountingAccount).filter(
+        AccountingAccount.scope_key == key,
+        AccountingAccount.is_active.is_(True),
+    ).order_by(AccountingAccount.code.asc()).all()
+    general_ledger = [
+        _ledger_book_data(
+            db,
+            key=key,
+            account=account,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+            include_detail=include_ledger_detail,
+        )
+        for account in accounts
+    ]
+
+    income = statement(
+        db,
+        key=key,
+        statement_name="income_statement",
+        account_types={"revenue", "expense"},
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    position = statement(
+        db,
+        key=key,
+        statement_name="statement_of_financial_position",
+        account_types={"asset", "liability", "equity"},
+        from_date=None,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+
+    return {
+        "book_pack": "LoanHub Financial Books",
+        "accounting_basis": "Frank Wood-aligned double-entry financial accounting",
+        "company_id": str(company_id) if company_id else None,
+        "branch_id": str(branch_id) if branch_id else None,
+        "period": {
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+        },
+        "book_index": [
+            {"order": 1, "book": "books_of_original_entry", "purpose": "source transaction recording and folio traceability"},
+            {"order": 2, "book": "general_ledger", "purpose": "account-by-account double-entry record"},
+            {"order": 3, "book": "trial_balance", "purpose": "debit/credit arithmetical control"},
+            {"order": 4, "book": "income_statement", "purpose": "period financial performance"},
+            {"order": 5, "book": "statement_of_financial_position", "purpose": "assets, liabilities and equity at period end"},
+            {"order": 6, "book": "statement_of_changes_in_equity", "purpose": "movement in company equity"},
+            {"order": 7, "book": "statement_of_cash_flows", "purpose": "operating, investing and financing cash flows"},
+            {"order": 8, "book": "receipts_and_payments", "purpose": "cash-book summary"},
+            {"order": 9, "book": "financial_ratios", "purpose": "profitability, liquidity, efficiency and capital analysis"},
+            {"order": 10, "book": "accounting_controls", "purpose": "integrity, completeness, reconciliation and governance"},
+        ],
+        "books_of_original_entry": books_of_original_entry(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "source_book_traceability": source_book_traceability(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "general_ledger": general_ledger,
+        "trial_balance": trial,
+        "income_statement": income.model_dump(),
+        "statement_of_financial_position": position.model_dump(),
+        "statement_of_changes_in_equity": statement_of_changes_in_equity(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "statement_of_cash_flows": cash_flow_statement(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "receipts_and_payments": receipts_and_payments_summary(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "financial_ratios": financial_ratio_analysis(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+        ),
+        "accounting_controls": {
+            "error_diagnostics": accounting_error_diagnostics(
+                db,
+                company_id=company_id,
+                from_date=from_date,
+                to_date=to_date,
+                branch_id=branch_id,
+            ),
+            "incomplete_records": incomplete_records_control(
+                db,
+                company_id=company_id,
+                from_date=from_date,
+                to_date=to_date,
+                branch_id=branch_id,
+            ),
+            "modern_practice_readiness": accounting_modern_practice_readiness(
+                db,
+                company_id=company_id,
+                from_date=from_date,
+                to_date=to_date,
+                branch_id=branch_id,
+            ),
+        },
+        "preparation_note": (
+            "This pack is generated from posted LoanHub ledger data. Draft journals are excluded. "
+            "It is an accounting book pack, not a substitute for jurisdiction-specific statutory filing."
+        ),
+    }
+
+
+@router.get("/financial-books")
+def financial_books(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    include_ledger_detail: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for financial books")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
+    )
+    return financial_books_pack_data(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+        include_ledger_detail=include_ledger_detail,
+    )
+
+
 @router.get("/trial-balance", response_model=TrialBalanceRead)
 def trial_balance(
     company_id: UUID | None = None,
