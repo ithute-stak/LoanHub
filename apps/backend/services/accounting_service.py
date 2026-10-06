@@ -1501,6 +1501,188 @@ def statement_of_changes_in_equity(
     }
 
 
+def _safe_ratio(numerator: Decimal, denominator: Decimal, *, scale: Decimal = Decimal("1")) -> float | None:
+    if denominator == 0:
+        return None
+    return float((numerator / denominator * scale).quantize(Decimal("0.01")))
+
+
+def financial_ratio_analysis(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Chapters 38-39: calculate and expose core accounting ratios.
+
+    Ratios are calculation aids and analytical signals.  They do not, by
+    themselves, explain why performance changed; interpretation must consider
+    the institution's operating context.
+    """
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+
+    income = statement(
+        db,
+        key=key,
+        statement_name="income_statement",
+        account_types={"revenue", "expense"},
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    position = statement(
+        db,
+        key=key,
+        statement_name="statement_of_financial_position",
+        account_types={"asset", "liability", "equity"},
+        from_date=None,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+
+    totals = income["totals"]
+    position_totals = position["totals"]
+    revenue = _money(totals.get("revenue"))
+    gross_result = _money(totals.get("gross_result"))
+    net_profit = _money(totals.get("net_profit"))
+    cost_of_services = _money(
+        next(
+            (line.amount for line in income["sections"].get("expense", []) if line.code == "5000"),
+            Decimal("0.00"),
+        )
+    )
+
+    current_assets = _money(position_totals.get("current_assets"))
+    current_liabilities = _money(position_totals.get("current_liabilities"))
+    inventory = _account_signed_balance(
+        db, scope_key_value=key, account_code="1300", to_date=to_date, branch_id=branch_id
+    )
+    inventory = _money(max(inventory, Decimal("0.00")))
+    receivables = _money(
+        _account_signed_balance(db, scope_key_value=key, account_code="1200", to_date=to_date, branch_id=branch_id)
+        + _account_signed_balance(db, scope_key_value=key, account_code="1100", to_date=to_date, branch_id=branch_id)
+        + _account_signed_balance(db, scope_key_value=key, account_code="1110", to_date=to_date, branch_id=branch_id)
+        + _account_signed_balance(db, scope_key_value=key, account_code="1120", to_date=to_date, branch_id=branch_id)
+        + _account_signed_balance(db, scope_key_value=key, account_code="1220", to_date=to_date, branch_id=branch_id)
+    )
+    trade_payables_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2000", to_date=to_date, branch_id=branch_id
+    )
+    trade_payables = _money(max(-trade_payables_signed, Decimal("0.00")))
+    total_equity = _money(position_totals.get("total_equity"))
+    loan_notes_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2500", to_date=to_date, branch_id=branch_id
+    )
+    loan_notes = _money(max(-loan_notes_signed, Decimal("0.00")))
+    capital_employed = _money(total_equity + loan_notes)
+
+    opening_inventory = _account_signed_balance(
+        db,
+        scope_key_value=key,
+        account_code="1300",
+        to_date=from_date.fromordinal(from_date.toordinal() - 1),
+        branch_id=branch_id,
+    )
+    opening_inventory = _money(max(opening_inventory, Decimal("0.00")))
+    average_inventory = _money((opening_inventory + inventory) / Decimal("2"))
+    inventory_turnover = (
+        _safe_ratio(cost_of_services, average_inventory)
+        if average_inventory > 0
+        else None
+    )
+    inventory_days = (
+        round(365 / inventory_turnover, 2)
+        if inventory_turnover not in {None, 0}
+        else None
+    )
+
+    gross_margin_pct = _safe_ratio(gross_result, revenue, scale=Decimal("100"))
+    mark_up_pct = _safe_ratio(gross_result, cost_of_services, scale=Decimal("100"))
+    net_profit_margin_pct = _safe_ratio(net_profit, revenue, scale=Decimal("100"))
+    current_ratio = _safe_ratio(current_assets, current_liabilities)
+    acid_test_ratio = _safe_ratio(current_assets - inventory, current_liabilities)
+    receivables_days = _safe_ratio(receivables, revenue, scale=Decimal("365"))
+    payables_days = _safe_ratio(trade_payables, cost_of_services, scale=Decimal("365"))
+    return_on_shareholders_funds_pct = _safe_ratio(
+        net_profit, total_equity, scale=Decimal("100")
+    )
+    return_on_capital_employed_pct = _safe_ratio(
+        net_profit, capital_employed, scale=Decimal("100")
+    )
+    gearing_pct = _safe_ratio(
+        loan_notes, capital_employed, scale=Decimal("100")
+    )
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "profitability": {
+            "gross_margin_percent": gross_margin_pct,
+            "mark_up_percent": mark_up_pct,
+            "net_profit_margin_percent": net_profit_margin_pct,
+            "return_on_shareholders_funds_percent": return_on_shareholders_funds_pct,
+            "return_on_capital_employed_percent": return_on_capital_employed_pct,
+        },
+        "liquidity": {
+            "current_ratio": current_ratio,
+            "acid_test_ratio": acid_test_ratio,
+            "working_capital": float(_money(current_assets - current_liabilities)),
+        },
+        "efficiency": {
+            "inventory_turnover_times": inventory_turnover,
+            "inventory_days": inventory_days,
+            "receivables_days": receivables_days,
+            "payables_days": payables_days,
+        },
+        "capital_structure": {
+            "gearing_percent": gearing_pct,
+            "loan_notes": float(loan_notes),
+            "total_equity": float(total_equity),
+            "capital_employed": float(capital_employed),
+        },
+        "inputs": {
+            "revenue": float(revenue),
+            "gross_result": float(gross_result),
+            "net_profit": float(net_profit),
+            "cost_of_services": float(cost_of_services),
+            "current_assets": float(current_assets),
+            "current_liabilities": float(current_liabilities),
+            "inventory": float(inventory),
+            "average_inventory": float(average_inventory),
+            "receivables": float(receivables),
+            "trade_payables": float(trade_payables),
+        },
+        "interpretation_note": (
+            "Ratios identify relationships and trends but do not explain causes by themselves; "
+            "interpret them in the context of the institution, its lending model, market and policies."
+        ),
+        "book_alignment": {
+            "chapter_38": [
+                "gross_margin",
+                "mark_up",
+                "inventory_turnover",
+                "inventory_days",
+                "current_ratio",
+            ],
+            "chapter_39": [
+                "profitability",
+                "liquidity",
+                "efficiency",
+                "capital_structure",
+                "return_on_shareholders_funds",
+                "return_on_capital_employed",
+            ],
+        },
+    }
+
+
 def value_inventory_lower_of_cost_and_nrv(items: list[dict]) -> dict:
     """Chapter 18: value inventory item-by-item at the lower of cost and NRV."""
     valued = []
