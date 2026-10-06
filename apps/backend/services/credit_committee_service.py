@@ -768,6 +768,25 @@ def finalize_case(
         if not (override_reason or "").strip():
             raise HTTPException(status_code=422, detail="A documented override reason is required when changing the computed committee outcome")
 
+    application = db.get(DirectLoanApplication, case.application_id)
+    final_integration_readiness = None
+    final_evidence_snapshot = None
+    if decision in {"approved", "conditionally_approved"}:
+        if not application:
+            raise HTTPException(status_code=409, detail="The governed application is no longer available")
+        final_integration_readiness = assert_application_integration_readiness_for_approval(
+            db,
+            application=application,
+            amount=Decimal(application.requested_amount or 0),
+            product_id=application.product_id,
+            proposed_installment=(
+                Decimal(assessment.proposed_installment)
+                if assessment.proposed_installment is not None
+                else None
+            ),
+        )
+        final_evidence_snapshot = build_evidence_snapshot(db, application)
+
     conditions = _collect_decision_conditions(assessment, votes) if decision == "conditionally_approved" else []
     for item in conditions:
         due_date = item.get("due_date")
@@ -803,10 +822,14 @@ def finalize_case(
         "votes": [vote_payload(row) for row in votes],
         "conditions": conditions,
         "evidence_captured_at": (case.evidence_snapshot or {}).get("captured_at"),
+        "final_evidence_captured_at": (
+            final_evidence_snapshot or {}
+        ).get("captured_at"),
+        "final_integration_readiness": final_integration_readiness,
+        "final_evidence_snapshot": final_evidence_snapshot,
     }
     _event(db, case, "committee_finalized", context.user.id, case.final_snapshot)
 
-    application = db.get(DirectLoanApplication, case.application_id)
     if application and decision == "rejected":
         application.status = "rejected"
         application.rejected_at = now
