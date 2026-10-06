@@ -204,6 +204,42 @@ class DepreciationAdjustmentCreate(BaseModel):
     reference_id: str | None = Field(default=None, max_length=120)
 
 
+class InventoryValuationItem(BaseModel):
+    reference: str = Field(min_length=1, max_length=120)
+    cost: Decimal = Field(ge=0)
+    expected_selling_price: Decimal = Field(ge=0)
+    costs_to_sell: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class InventoryValuationRequest(BaseModel):
+    items: list[InventoryValuationItem] = Field(min_length=1)
+
+
+class CapitalExpenditureComponent(BaseModel):
+    description: str = Field(min_length=2, max_length=240)
+    amount: Decimal = Field(gt=0)
+    category: str = Field(pattern=(
+        "^(purchase_price|delivery|non_refundable_tax|site_preparation|"
+        "assembly_installation|testing|professional_fees|improvement|"
+        "repair_maintenance|insurance|fuel|day_to_day|borrowing_cost_construction)$"
+    ))
+
+
+class CapitalExpenditureAssessment(BaseModel):
+    components: list[CapitalExpenditureComponent] = Field(min_length=1)
+    borrowing_costs_directly_attributable: bool = False
+    asset_requires_substantial_time_to_prepare: bool = False
+
+
+class AccruedIncomeAdjustmentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    revenue_account_code: str = Field(default="4900", min_length=4, max_length=30)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
 class AccrualAdjustmentCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     description: str = Field(min_length=2, max_length=1000)
