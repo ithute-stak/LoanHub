@@ -3602,6 +3602,214 @@ def period_close_pack(
     }
 
 
+
+MONTH_END_ADJUSTMENT_REFERENCE_TYPES = {
+    "accrual_adjustment",
+    "prepayment_adjustment",
+    "accrued_income_adjustment",
+    "depreciation_adjustment",
+    "doubtful_debt_allowance",
+    "credit_loss_provision_run",
+    "corporation_tax_charge",
+}
+
+
+def loan_receivables_subledger(
+    db: Session,
+    *,
+    company_id,
+    as_of: date,
+    branch_id=None,
+) -> dict:
+    """Build loan-by-loan principal folios and reconcile them to GL control 1100.
+
+    Each folio is derived from successful disbursement/repayment source records,
+    independently of the general ledger. Written-off loans are reduced to zero
+    from their write-off date so the folio total follows the same source basis
+    used by the receivables control reconciliation.
+    """
+    control = loan_receivables_control_reconciliation(
+        db,
+        company_id=company_id,
+        as_of=as_of,
+        branch_id=branch_id,
+    )
+
+    loans = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == company_id,
+    )
+    if branch_id:
+        loans = loans.filter(ClientCompanyLoan.branch_id == branch_id)
+
+    written_off_ids = {
+        row.loan_id
+        for row in db.query(CollectionCase).filter(
+            CollectionCase.company_id == company_id,
+            CollectionCase.write_off_at.is_not(None),
+            func.date(CollectionCase.write_off_at) <= as_of,
+        ).all()
+    }
+
+    folios = []
+    source_total = Decimal("0.00")
+    for loan in loans.order_by(ClientCompanyLoan.created_at.asc()).all():
+        balance = Decimal("0.00") if loan.id in written_off_ids else loan_source_principal_outstanding(
+            db,
+            company_id=company_id,
+            loan_id=loan.id,
+            as_of=as_of,
+        )
+        balance = _money(balance)
+        if balance == 0 and loan.id not in written_off_ids:
+            # Settled zero-balance folios add noise to month-end control packs.
+            continue
+        source_total += balance
+        folios.append({
+            "loan_id": str(loan.id),
+            "branch_id": str(loan.branch_id) if loan.branch_id else None,
+            "status": str(getattr(loan, "status", "") or ""),
+            "operational_balance": float(_money(getattr(loan, "balance", 0))),
+            "source_principal_outstanding": float(balance),
+            "written_off": loan.id in written_off_ids,
+        })
+
+    source_total = _money(source_total)
+    control_source_total = _money(control["source_principal_receivable"])
+    folio_to_control_variance = _money(source_total - control_source_total)
+    return {
+        "as_of": as_of.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ledger_account_code": "1100",
+        "folio_count": len(folios),
+        "folio_total": float(source_total),
+        "control_source_total": float(control_source_total),
+        "general_ledger_total": float(_money(control["ledger_principal_receivable"])),
+        "folio_to_control_variance": float(folio_to_control_variance),
+        "control_to_gl_variance": float(_money(control["variance"])),
+        "balanced": folio_to_control_variance == 0 and bool(control["balanced"]),
+        "folios": folios,
+    }
+
+
+def month_end_control_pack(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Accountant-facing month-end evidence pack.
+
+    This extends the hard close pack with the supporting loan folios, fixed-asset
+    depreciation preview and an adjustment register. It does not invent or post
+    estimates: finance can see what is outstanding before locking the period.
+    """
+    close_pack = period_close_pack(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+    receivables = loan_receivables_subledger(
+        db,
+        company_id=company_id,
+        as_of=period_end,
+        branch_id=branch_id,
+    )
+
+    assets = fixed_asset_query(db, company_id=company_id, branch_id=branch_id).filter(
+        CompanyOperatingRecord.status == "active"
+    ).all()
+    depreciation_due = []
+    depreciation_total = Decimal("0.00")
+    for asset in assets:
+        data = _asset_data(asset)
+        acquisition_date = date.fromisoformat(data["acquisition_date"])
+        if acquisition_date > period_end:
+            continue
+        amount = calculate_fixed_asset_depreciation(
+            asset,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if amount <= 0:
+            continue
+        depreciation_total += amount
+        depreciation_due.append({
+            "asset_id": str(asset.id),
+            "reference": asset.reference,
+            "name": asset.title,
+            "branch_id": str(asset.branch_id) if asset.branch_id else None,
+            "amount_due": float(_money(amount)),
+            "carrying_amount_before": float(_money(data.get("carrying_amount", asset.amount))),
+            "last_depreciation_date": data.get("last_depreciation_date"),
+        })
+
+    adjustments = db.query(JournalEntry).filter(
+        JournalEntry.company_id == company_id,
+        JournalEntry.entry_date.between(period_start, period_end),
+        JournalEntry.reference_type.in_(MONTH_END_ADJUSTMENT_REFERENCE_TYPES),
+    )
+    if branch_id:
+        adjustments = adjustments.filter(JournalEntry.branch_id == branch_id)
+    adjustment_rows = adjustments.order_by(
+        JournalEntry.entry_date.asc(),
+        JournalEntry.created_at.asc(),
+    ).all()
+    adjustment_register = [
+        {
+            "journal_entry_id": str(row.id),
+            "entry_number": row.entry_number,
+            "entry_date": row.entry_date.isoformat(),
+            "reference_type": row.reference_type,
+            "reference_id": row.reference_id,
+            "description": row.description,
+            "status": row.status,
+            "amount": float(_money(row.total_debit)),
+        }
+        for row in adjustment_rows
+    ]
+    draft_adjustments = sum(1 for row in adjustment_rows if row.status == "draft")
+    posted_adjustments = sum(1 for row in adjustment_rows if row.status == "posted")
+
+    extended_checks = {
+        "loan_folio_subledger_agrees_to_control_and_gl": bool(receivables["balanced"]),
+        "month_end_adjustment_drafts_cleared": draft_adjustments == 0,
+    }
+    failed = [
+        name for name, passed in {**close_pack["checks"], **extended_checks}.items()
+        if not passed
+    ]
+
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "ready_to_lock": bool(close_pack["ready_to_lock"]) and all(extended_checks.values()),
+        "failed_checks": failed,
+        "checks": {**close_pack["checks"], **extended_checks},
+        "loan_receivables_subledger": receivables,
+        "fixed_asset_depreciation": {
+            "asset_count_due": len(depreciation_due),
+            "total_due": float(_money(depreciation_total)),
+            "assets": depreciation_due,
+        },
+        "adjustment_register": {
+            "posted_count": posted_adjustments,
+            "draft_count": draft_adjustments,
+            "entries": adjustment_register,
+            "supported_reference_types": sorted(MONTH_END_ADJUSTMENT_REFERENCE_TYPES),
+        },
+        "close_pack": close_pack,
+        "policy_note": (
+            "The month-end pack reconciles supporting records to posted ledger truth. "
+            "Estimated accruals, prepayments and other judgemental adjustments remain "
+            "human-controlled journal decisions and are never fabricated by this pack."
+        ),
+    }
+
 def depreciate_all_fixed_assets_for_period(
     db: Session,
     *,
