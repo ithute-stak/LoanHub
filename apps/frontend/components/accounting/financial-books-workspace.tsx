@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, RefreshCcw, Scale, Upload } from "lucide-react";
 
 import { createOpeningBalanceMigration, getFinancialBooks, listAccountingAccounts } from "@/api/accounting";
@@ -290,7 +290,7 @@ export function FinancialBooksWorkspace() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
 }
 
