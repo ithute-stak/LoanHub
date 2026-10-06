@@ -117,6 +117,7 @@ from services.accounting_service import (
     statement_of_changes_in_equity as statement_of_changes_in_equity_data,
     incomplete_records_control,
     transaction_accounting_coverage,
+    accounting_audit_compliance_pack,
     create_treasury_commitment,
     approve_treasury_commitment,
     treasury_commitment_payload,
@@ -969,6 +970,29 @@ def cash_stress_test(
         to_date=payload.to_date,
         branch_id=selected_branch_id,
         minimum_cash=payload.minimum_cash,
+    )
+
+
+@router.get("/audit-compliance-pack")
+def get_audit_compliance_pack(
+    company_id: UUID | None = None,
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company")
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return accounting_audit_compliance_pack(
+        db,
+        company_id=selected_company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=selected_branch_id,
     )
 
 

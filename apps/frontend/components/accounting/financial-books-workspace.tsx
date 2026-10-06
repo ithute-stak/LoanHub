@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { approveFinancialPlan, approveTreasuryCommitment, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createTreasuryCommitment, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, getTreasuryCashForecast, getTreasuryStressTest, listAccountingAccounts, listFinancialPlans, listTreasuryCommitments, prepareMonthEndReversalDrafts, previewYearEndClosing, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack, type TreasuryCashForecast, type TreasuryCommitment, type TreasuryStressTest } from "@/api/accounting";
+import { approveFinancialPlan, approveTreasuryCommitment, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createTreasuryCommitment, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getAccountingAuditCompliancePack, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, getTreasuryCashForecast, getTreasuryStressTest, listAccountingAccounts, listFinancialPlans, listTreasuryCommitments, prepareMonthEndReversalDrafts, previewYearEndClosing, type AccountingAuditCompliancePack, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack, type TreasuryCashForecast, type TreasuryCommitment, type TreasuryStressTest } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,8 @@ export function FinancialBooksWorkspace() {
   const [planVariance, setPlanVariance] = useState<FinancialPlanVariance | null>(null);
   const [planningWorking, setPlanningWorking] = useState(false);
   const [treasuryWorking, setTreasuryWorking] = useState(false);
+  const [auditWorking, setAuditWorking] = useState(false);
+  const [auditPack, setAuditPack] = useState<AccountingAuditCompliancePack | null>(null);
   const [treasuryCommitments, setTreasuryCommitments] = useState<TreasuryCommitment[]>([]);
   const [treasuryForecast, setTreasuryForecast] = useState<TreasuryCashForecast | null>(null);
   const [treasuryStress, setTreasuryStress] = useState<TreasuryStressTest | null>(null);
@@ -406,6 +408,39 @@ export function FinancialBooksWorkspace() {
     }
   }
 
+  async function loadAuditPack() {
+    if (!companyId) return;
+    setAuditWorking(true);
+    try {
+      const result = await getAccountingAuditCompliancePack({
+        companyId,
+        branchId: effectiveBranchId,
+        periodStart: fromDate,
+        periodEnd: toDate,
+      });
+      setAuditPack(result);
+      toast.success(result.control_fail_count ? "Audit pack prepared with control exceptions" : "Audit pack controls are green");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare audit compliance pack"));
+    } finally {
+      setAuditWorking(false);
+    }
+  }
+
+  function exportAuditEvidence() {
+    if (!auditPack) return;
+    const blob = new Blob([JSON.stringify(auditPack, null, 2)], { type: "application/json" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `${currentCompany?.name ?? "LoanHub"}_Audit_Evidence_${fromDate}_${toDate}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+    toast.success("Audit evidence pack exported");
+  }
+
   async function createPeriod() {
     if (!newPeriodStart || !newPeriodEnd) return;
     setPeriodWorking(true);
@@ -596,12 +631,13 @@ export function FinancialBooksWorkspace() {
       </section>
 
       <Tabs defaultValue="books" className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-6">
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-7">
           <TabsTrigger value="books">Financial books</TabsTrigger>
           <TabsTrigger value="periods">Period close</TabsTrigger>
           <TabsTrigger value="month-end">Month-end controls</TabsTrigger>
           <TabsTrigger value="planning">Planning</TabsTrigger>
           <TabsTrigger value="treasury">Treasury</TabsTrigger>
+          <TabsTrigger value="audit">Audit & compliance</TabsTrigger>
           <TabsTrigger value="opening">Opening balances</TabsTrigger>
         </TabsList>
 
@@ -887,6 +923,66 @@ export function FinancialBooksWorkspace() {
             <CardHeader><CardTitle>Liquidity stress scenarios</CardTitle><CardDescription>{treasuryStress.policy_note}</CardDescription></CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{treasuryStress.scenarios.map((row) => <div key={row.scenario} className="rounded-xl border p-3"><p className="font-black">{titleCase(row.scenario)}</p><p className="mt-2 text-sm">Closing: {formatMoney(row.projected_closing_cash)}</p><p className="text-sm">Minimum: {formatMoney(row.minimum_projected_cash)}</p><Badge variant={row.breach_count ? "destructive" : "default"} className="mt-2">{row.breach_count ? `${row.breach_count} breach(es)` : "Pass"}</Badge></div>)}</CardContent>
           </Card> : null}
+        </TabsContent>
+
+        <TabsContent value="audit" className="space-y-5">
+          <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Audit, compliance & statutory finance pack</CardTitle><CardDescription>Verify the sealed audit chain, test accounting controls, review unusual journals, inspect supporting evidence and prepare auditor-ready schedules without changing ledger truth.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-4">
+                <Field label="From"><Input type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setAuditPack(null); }} /></Field>
+                <Field label="To"><Input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setAuditPack(null); }} /></Field>
+                <Field label="Branch"><Select value={branchId} onValueChange={(value) => { setBranchId(value); setAuditPack(null); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All branches</SelectItem>{branches.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></Field>
+                <div className="flex items-end"><LoadingButton className="w-full" loading={auditWorking} onClick={() => void loadAuditPack()}><Scale className="h-4 w-4" />Prepare audit pack</LoadingButton></div>
+              </div>
+              {auditPack ? <Button variant="outline" onClick={exportAuditEvidence}><Download className="h-4 w-4" />Export evidence JSON</Button> : null}
+            </CardContent>
+          </Card>
+
+          {auditPack ? <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Metric label="Controls passed" value={String(auditPack.control_pass_count)} />
+              <Metric label="Control exceptions" value={String(auditPack.control_fail_count)} />
+              <Metric label="Flagged journals" value={String(auditPack.journal_review.flagged_count)} />
+              <Metric label="Missing evidence" value={String(auditPack.journal_review.evidence_missing_count)} />
+            </div>
+
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>Audit integrity</CardTitle><CardDescription>LoanHub audit events are cryptographically chained and sealed against mutation.</CardDescription></CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-4">
+                <Metric label="Sealed events" value={String(auditPack.audit_integrity.sealed_event_count)} />
+                <Metric label="Period events" value={String(auditPack.audit_integrity.company_period_event_count)} />
+                <div className="rounded-2xl border bg-card p-4"><p className="text-xs font-black uppercase tracking-wider text-muted-foreground">Hash chain</p><Badge className="mt-2" variant={auditPack.audit_integrity.chain_valid ? "default" : "destructive"}>{auditPack.audit_integrity.chain_valid ? "Valid" : "Broken"}</Badge>{auditPack.audit_integrity.broken_event_id ? <p className="mt-2 font-mono text-xs">{auditPack.audit_integrity.broken_event_id}</p> : null}</div>
+                <div className="rounded-2xl border bg-card p-4"><p className="text-xs font-black uppercase tracking-wider text-muted-foreground">Severity mix</p><p className="mt-2 text-sm">{Object.entries(auditPack.audit_integrity.severity_counts).map(([key, value]) => `${titleCase(key)} ${value}`).join(" · ") || "No events"}</p></div>
+              </CardContent>
+            </Card>
+
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>Finance control checklist</CardTitle><CardDescription>{auditPack.statutory_assessment.note}</CardDescription></CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{Object.entries(auditPack.controls).map(([key, passed]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl border p-3"><span className="text-sm">{titleCase(key)}</span><Badge variant={passed ? "default" : "destructive"}>{passed ? "Pass" : "Exception"}</Badge></div>)}</CardContent>
+            </Card>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card className="loanhub-panel">
+                <CardHeader><CardTitle>VAT control schedule</CardTitle><CardDescription>{auditPack.vat_control.policy_note}</CardDescription></CardHeader>
+                <CardContent className="grid gap-3 md:grid-cols-2"><Metric label="Input VAT receivable" value={formatMoney(auditPack.vat_control.closing_input_vat_receivable)} /><Metric label="Output VAT payable" value={formatMoney(auditPack.vat_control.closing_output_vat_payable)} /><Metric label="Net VAT payable" value={formatMoney(auditPack.vat_control.net_vat_payable)} /><Metric label="Net VAT receivable" value={formatMoney(auditPack.vat_control.net_vat_receivable)} /></CardContent>
+              </Card>
+              <Card className="loanhub-panel">
+                <CardHeader><CardTitle>Corporation tax control schedule</CardTitle><CardDescription>{auditPack.corporation_tax_control.policy_note}</CardDescription></CardHeader>
+                <CardContent className="grid gap-3 md:grid-cols-2"><Metric label="Tax expense" value={formatMoney(auditPack.corporation_tax_control.closing_tax_expense)} /><Metric label="Tax payable" value={formatMoney(auditPack.corporation_tax_control.closing_tax_payable)} />{Object.entries(auditPack.corporation_tax_control.control_flags).map(([key, passed]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3"><span className="text-sm">{titleCase(key)}</span><Badge variant={passed ? "default" : "destructive"}>{passed ? "Pass" : "Review"}</Badge></div>)}</CardContent>
+              </Card>
+            </div>
+
+            <Card className="loanhub-panel overflow-hidden">
+              <CardHeader><CardTitle>Unusual-journal review</CardTitle><CardDescription>{auditPack.journal_review.policy_note}</CardDescription></CardHeader>
+              <CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Entry</TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead>Review flags</TableHead><TableHead>Evidence</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader><TableBody>{auditPack.journal_review.flagged_entries.slice(0, 50).map((row) => <TableRow key={row.journal_entry_id}><TableCell className="font-black">{row.entry_number}</TableCell><TableCell>{row.entry_date}</TableCell><TableCell className="max-w-80">{row.description}</TableCell><TableCell><div className="flex max-w-96 flex-wrap gap-1">{row.flags.map((flag) => <Badge key={flag} variant={flag === "supporting_evidence_missing" ? "destructive" : "outline"}>{titleCase(flag)}</Badge>)}</div></TableCell><TableCell>{row.evidence_files.length ? `${row.evidence_files.length} file(s)` : "None"}</TableCell><TableCell className="text-right font-black">{formatMoney(row.amount)}</TableCell></TableRow>)}</TableBody></Table></div></CardContent>
+            </Card>
+
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>Deterministic auditor sample</CardTitle><CardDescription>Prioritises higher-risk flagged entries, then adds deterministic coverage. It is reproducible and contains no hidden random selection.</CardDescription></CardHeader>
+              <CardContent className="space-y-2">{auditPack.audit_sample.map((row) => <div key={row.journal_entry_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-black">{row.entry_number} · {row.entry_date}</p><p className="text-sm text-muted-foreground">{row.description}</p></div><div className="text-right"><p className="font-black">{formatMoney(row.amount)}</p><p className="text-xs text-muted-foreground">{row.flags.map(titleCase).join(", ")}</p></div></div>)}</CardContent>
+            </Card>
+          </> : null}
         </TabsContent>
 
         <TabsContent value="opening" className="space-y-5">
