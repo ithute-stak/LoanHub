@@ -117,7 +117,7 @@ def _set_probe_role_and_context(db, company_id: uuid.UUID) -> None:
 
 def main() -> None:
     db = SessionLocal()
-    company_a_id = company_b_id = borrower_b_id = case_b_id = None
+    company_a_id = company_b_id = borrower_a_id = borrower_b_id = case_a_id = case_b_id = None
     try:
         if db.bind is None or db.bind.dialect.name != "postgresql":
             raise RuntimeError("RLS verification requires PostgreSQL")
@@ -132,7 +132,9 @@ def main() -> None:
         case_b = _seed_case(db, company_b, borrower_b, "B")
         company_a_id = company_a.id
         company_b_id = company_b.id
+        borrower_a_id = borrower_a.id
         borrower_b_id = borrower_b.id
+        case_a_id = case_a.id
         case_b_id = case_b.id
         db.commit()
 
@@ -160,7 +162,7 @@ def main() -> None:
         )
         db.commit()
 
-        _set_probe_role_and_context(db, company_a.id)
+        _set_probe_role_and_context(db, company_a_id)
 
         visible = db.execute(
             text(
@@ -171,9 +173,9 @@ def main() -> None:
                 ORDER BY id
                 """
             ),
-            {"case_a": case_a.id, "case_b": case_b.id},
+            {"case_a": case_a_id, "case_b": case_b_id},
         ).mappings().all()
-        if len(visible) != 1 or visible[0]["company_id"] != company_a.id:
+        if len(visible) != 1 or visible[0]["company_id"] != company_a_id:
             raise AssertionError(
                 f"RLS SELECT isolation failed: expected only Company A row, got {visible!r}"
             )
@@ -186,7 +188,7 @@ def main() -> None:
                 WHERE id = :case_b
                 """
             ),
-            {"case_b": case_b.id},
+            {"case_b": case_b_id},
         )
         if updated.rowcount != 0:
             raise AssertionError("RLS UPDATE isolation failed for Company B row")
@@ -226,8 +228,8 @@ def main() -> None:
                 ),
                 {
                     "id": uuid.uuid4(),
-                    "company_id": company_b.id,
-                    "borrower_id": borrower_b.id,
+                    "company_id": company_b_id,
+                    "borrower_id": borrower_b_id,
                     "reference": f"RLS-X-{uuid.uuid4().hex[:10]}",
                 },
             )
@@ -248,6 +250,7 @@ def main() -> None:
         try:
             db.rollback()
             db.execute(text("RESET ROLE"))
+            db.execute(text(f'DROP OWNED BY "{PROBE_ROLE}"'))
             db.execute(text(f'DROP ROLE IF EXISTS "{PROBE_ROLE}"'))
             db.commit()
         except Exception:
