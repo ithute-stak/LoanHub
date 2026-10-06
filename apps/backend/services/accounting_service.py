@@ -24,6 +24,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
+from database.models.audit_log import AuditLog
+from database.models.file_management import ManagedFile
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.lending_operations import CollectionCase
@@ -43,6 +45,7 @@ from database.models.enums import (
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.treasury import TreasuryEntry, TreasurySettings
+from core.audit_integrity import verify_chain
 
 
 MONEY = Decimal("0.01")
@@ -4693,6 +4696,330 @@ def treasury_stress_test(
         "minimum_cash": float(_money(minimum_cash)),
         "scenarios": results,
         "policy_note": "Stress scenarios change assumptions only; they never change loans, treasury entries, budgets or accounting journals.",
+    }
+
+
+AUDIT_EVIDENCE_REFERENCE_TYPES = {
+    "accrual_adjustment",
+    "prepayment_adjustment",
+    "accrued_income_adjustment",
+    "credit_loss_provision_run",
+    "corporation_tax_charge",
+    "period_adjustment_reversal",
+    "opening_balance_migration",
+    "year_end_closing",
+}
+
+
+def corporation_tax_control(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Ledger control for corporation-tax expense/payable; not a tax return."""
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    expense = account_by_code(db, key, "6900")
+    payable = account_by_code(db, key, "2600")
+
+    def movement(account_id):
+        q = db.query(
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        ).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).filter(
+            JournalLine.account_id == account_id,
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.entry_date.between(period_start, period_end),
+        )
+        if branch_id:
+            q = q.filter(JournalEntry.branch_id == branch_id)
+        debit, credit = q.first()
+        return _money(debit), _money(credit)
+
+    expense_debit, expense_credit = movement(expense.id)
+    payable_debit, payable_credit = movement(payable.id)
+    expense_balance = _account_signed_balance(
+        db, scope_key_value=key, account_code="6900", to_date=period_end, branch_id=branch_id
+    )
+    payable_signed = _account_signed_balance(
+        db, scope_key_value=key, account_code="2600", to_date=period_end, branch_id=branch_id
+    )
+    payable_balance = _money(-payable_signed)
+    return {
+        "expense_account": "6900",
+        "payable_account": "2600",
+        "period_tax_expense_debits": float(expense_debit),
+        "period_tax_expense_credits": float(expense_credit),
+        "period_tax_payable_debits": float(payable_debit),
+        "period_tax_payable_credits": float(payable_credit),
+        "closing_tax_expense": float(expense_balance),
+        "closing_tax_payable": float(payable_balance),
+        "control_flags": {
+            "tax_expense_non_negative": expense_balance >= 0,
+            "tax_payable_non_negative": payable_balance >= 0,
+        },
+        "policy_note": (
+            "This schedule reconciles LoanHub ledger accounts only. It does not determine taxable income, "
+            "tax rates, filing obligations or compliance with Lesotho Revenue Authority requirements."
+        ),
+    }
+
+
+def _journal_evidence_index(
+    db: Session,
+    *,
+    company_id,
+    journal_ids: list[str],
+    branch_id=None,
+) -> dict[str, list[dict]]:
+    if not journal_ids:
+        return {}
+    query = db.query(ManagedFile).filter(
+        ManagedFile.company_id == company_id,
+        ManagedFile.linked_entity_type == "journal_entry",
+        ManagedFile.linked_entity_id.in_(journal_ids),
+        ManagedFile.is_deleted.is_(False),
+    )
+    if branch_id:
+        query = query.filter(
+            (ManagedFile.branch_id == branch_id) | (ManagedFile.branch_id.is_(None))
+        )
+    result: dict[str, list[dict]] = {}
+    for row in query.all():
+        result.setdefault(str(row.linked_entity_id), []).append({
+            "file_id": str(row.id),
+            "reference": row.reference,
+            "name": row.original_name,
+            "mime_type": row.mime_type,
+            "size_bytes": int(row.size_bytes or 0),
+            "checksum_sha256": row.checksum_sha256,
+            "scan_status": row.scan_status,
+            "is_encrypted": bool(row.is_encrypted),
+            "is_confidential": bool(row.is_confidential),
+        })
+    return result
+
+
+def unusual_journal_review(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Deterministic review indicators. Flags are not fraud conclusions."""
+    key, _ = scope_key(company_id)
+    query = entry_query(db, key).filter(
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(period_start, period_end),
+    )
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+    entries = query.order_by(JournalEntry.entry_date.asc(), JournalEntry.created_at.asc()).all()
+
+    amounts = sorted(_money(row.total_debit) for row in entries if _money(row.total_debit) > 0)
+    median = Decimal("0.00")
+    if amounts:
+        middle = len(amounts) // 2
+        median = amounts[middle] if len(amounts) % 2 else _money((amounts[middle - 1] + amounts[middle]) / Decimal("2"))
+    large_threshold = max(Decimal("10000.00"), _money(median * Decimal("5")))
+
+    evidence = _journal_evidence_index(
+        db,
+        company_id=company_id,
+        journal_ids=[str(row.id) for row in entries],
+        branch_id=branch_id,
+    )
+
+    rows = []
+    evidence_required_count = 0
+    evidence_missing_count = 0
+    for entry in entries:
+        amount = _money(entry.total_debit)
+        flags = []
+        account_codes = {line.account.code for line in entry.lines if line.account}
+        if amount >= large_threshold and amount > 0:
+            flags.append("large_amount")
+        if "2990" in account_codes:
+            flags.append("suspense_account")
+        if not entry.reference_type or not entry.reference_id:
+            flags.append("missing_source_reference")
+        if entry.created_by_user_id and entry.posted_by_user_id and entry.created_by_user_id == entry.posted_by_user_id:
+            flags.append("creator_equals_poster")
+        if entry.entry_date.weekday() >= 5:
+            flags.append("weekend_entry_date")
+        if entry.created_at and (entry.created_at.date() - entry.entry_date).days > 5:
+            flags.append("late_recording")
+
+        needs_evidence = (
+            entry.reference_type in AUDIT_EVIDENCE_REFERENCE_TYPES
+            or "missing_source_reference" in flags
+            or "large_amount" in flags
+        )
+        files = evidence.get(str(entry.id), [])
+        if needs_evidence:
+            evidence_required_count += 1
+            if not files:
+                evidence_missing_count += 1
+                flags.append("supporting_evidence_missing")
+
+        if flags:
+            rows.append({
+                "journal_entry_id": str(entry.id),
+                "entry_number": entry.entry_number,
+                "entry_date": entry.entry_date.isoformat(),
+                "description": entry.description,
+                "reference_type": entry.reference_type,
+                "reference_id": entry.reference_id,
+                "amount": float(amount),
+                "flags": flags,
+                "evidence_files": files,
+                "review_status": "review_required",
+            })
+
+    rows.sort(key=lambda row: (-len(row["flags"]), -abs(row["amount"]), row["entry_date"]))
+    return {
+        "journal_count": len(entries),
+        "flagged_count": len(rows),
+        "large_amount_threshold": float(large_threshold),
+        "evidence_required_count": evidence_required_count,
+        "evidence_missing_count": evidence_missing_count,
+        "flagged_entries": rows,
+        "policy_note": (
+            "These are deterministic audit-review indicators, not findings of fraud, error or misconduct. "
+            "Each flag requires supporting-document and business-context review."
+        ),
+    }
+
+
+def deterministic_audit_sample(journal_review: dict, *, max_items: int = 15) -> list[dict]:
+    flagged = list(journal_review.get("flagged_entries", []))
+    selected = []
+    seen = set()
+    for row in flagged[:10]:
+        if row["journal_entry_id"] not in seen:
+            selected.append(row)
+            seen.add(row["journal_entry_id"])
+        if len(selected) >= max_items:
+            return selected
+    remaining = flagged[10:]
+    if remaining and len(selected) < max_items:
+        slots = max_items - len(selected)
+        step = max(1, len(remaining) // slots)
+        for row in remaining[::step]:
+            if row["journal_entry_id"] in seen:
+                continue
+            selected.append(row)
+            seen.add(row["journal_entry_id"])
+            if len(selected) >= max_items:
+                break
+    return selected
+
+
+def accounting_audit_compliance_pack(
+    db: Session,
+    *,
+    company_id,
+    period_start: date,
+    period_end: date,
+    branch_id=None,
+) -> dict:
+    """Read-only audit evidence pack over posted accounting and sealed audit logs."""
+    if period_end < period_start:
+        raise HTTPException(status_code=422, detail="Period end must be on or after period start")
+
+    close_pack = period_close_pack(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+    vat = vat_control_reconciliation(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+    corporation_tax = corporation_tax_control(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+    journal_review = unusual_journal_review(
+        db,
+        company_id=company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+
+    sealed_chain = db.query(AuditLog).filter(
+        AuditLog.event_hash.is_not(None),
+        AuditLog.sealed_at.is_not(None),
+    ).order_by(AuditLog.sealed_at.asc(), AuditLog.id.asc()).all()
+    chain_valid, broken_event_id = verify_chain(sealed_chain)
+
+    audit_query = db.query(AuditLog).filter(
+        AuditLog.company_id == company_id,
+        func.date(AuditLog.created_at).between(period_start, period_end),
+    )
+    if branch_id:
+        audit_query = audit_query.filter(
+            (AuditLog.branch_id == branch_id) | (AuditLog.branch_id.is_(None))
+        )
+    company_events = audit_query.order_by(AuditLog.created_at.asc(), AuditLog.id.asc()).all()
+    severity_counts: dict[str, int] = {}
+    for event in company_events:
+        severity = str(event.severity or "info")
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
+    controls = {
+        "global_audit_hash_chain_valid": bool(chain_valid),
+        "trial_balance_balanced": bool(close_pack["checks"].get("trial_balance_balanced")),
+        "suspense_cleared": bool(close_pack["checks"].get("suspense_cleared")),
+        "bank_reconciliations_clear": bool(close_pack["checks"].get("bank_reconciliations_clear")),
+        "loan_receivables_control_balanced": bool(close_pack["checks"].get("loan_receivables_control_balanced")),
+        "supporting_evidence_complete": journal_review["evidence_missing_count"] == 0,
+        "vat_control_non_negative": bool(vat["ledger_balanced"]),
+        "corporation_tax_control_non_negative": all(corporation_tax["control_flags"].values()),
+    }
+
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "controls": controls,
+        "control_pass_count": sum(1 for value in controls.values() if value),
+        "control_fail_count": sum(1 for value in controls.values() if not value),
+        "audit_integrity": {
+            "sealed_event_count": len(sealed_chain),
+            "chain_valid": bool(chain_valid),
+            "broken_event_id": broken_event_id,
+            "company_period_event_count": len(company_events),
+            "severity_counts": severity_counts,
+        },
+        "journal_review": journal_review,
+        "audit_sample": deterministic_audit_sample(journal_review),
+        "vat_control": vat,
+        "corporation_tax_control": corporation_tax,
+        "period_close_evidence": close_pack,
+        "statutory_assessment": {
+            "status": "not_assessed",
+            "jurisdiction": "Lesotho",
+            "note": (
+                "LoanHub has assembled accounting control schedules and evidence. This pack does not certify "
+                "statutory compliance, tax filing correctness or audit opinion."
+            ),
+        },
     }
 
 def depreciate_all_fixed_assets_for_period(
