@@ -1540,6 +1540,10 @@ def financial_ratio_analysis(
         JournalEntry.scope_key == key,
         JournalEntry.status == "posted",
         JournalEntry.entry_date.between(from_date, to_date),
+        or_(
+            JournalEntry.reference_type.is_(None),
+            JournalEntry.reference_type != "year_end_closing",
+        ),
     )
     if branch_id:
         income_rows = income_rows.filter(JournalEntry.branch_id == branch_id)
@@ -1955,6 +1959,10 @@ def year_end_closing_preview(
         JournalEntry.scope_key == key,
         JournalEntry.status == "posted",
         JournalEntry.entry_date.between(period_start, period_end),
+        or_(
+            JournalEntry.reference_type.is_(None),
+            JournalEntry.reference_type != "year_end_closing",
+        ),
     )
     if branch_id:
         rows = rows.filter(JournalEntry.branch_id == branch_id)
