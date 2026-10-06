@@ -4401,6 +4401,296 @@ def create_rolling_forecast_from_plan(
     db.flush()
     return record
 
+
+def create_treasury_commitment(
+    db: Session,
+    *,
+    company_id,
+    branch_id,
+    title: str,
+    category: str,
+    due_date: date,
+    amount,
+    description: str | None,
+    user_id,
+) -> CompanyOperatingRecord:
+    amount = _money(amount)
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="Treasury commitment amount must be greater than zero")
+    reference = f"TC-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{str(uuid4())[:8].upper()}"
+    record = CompanyOperatingRecord(
+        company_id=company_id,
+        branch_id=branch_id,
+        module="accounting",
+        record_type="treasury_commitment",
+        reference=reference,
+        title=title.strip(),
+        description=(description or "").strip() or None,
+        status="draft",
+        created_by_user_id=user_id,
+        amount=amount,
+        currency="LSL",
+        due_at=datetime.combine(due_date, datetime.min.time()),
+        data={
+            "category": category,
+            "due_date": due_date.isoformat(),
+            "approved_by_user_id": None,
+            "approved_at": None,
+        },
+        tags=["treasury", "forecast", category],
+    )
+    db.add(record)
+    db.flush()
+    return record
+
+
+def approve_treasury_commitment(
+    db: Session,
+    *,
+    company_id,
+    commitment_id,
+    user_id,
+) -> CompanyOperatingRecord:
+    row = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == commitment_id,
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "treasury_commitment",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).with_for_update().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Treasury commitment not found")
+    if row.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft treasury commitments can be approved")
+    if row.created_by_user_id == user_id:
+        raise HTTPException(status_code=409, detail="Maker/checker control: commitment creator cannot approve it")
+    data = dict(row.data or {})
+    data["approved_by_user_id"] = str(user_id)
+    data["approved_at"] = datetime.now(timezone.utc).isoformat()
+    row.data = data
+    row.status = "approved"
+    db.add(row)
+    return row
+
+
+def treasury_commitment_payload(row: CompanyOperatingRecord) -> dict:
+    data = dict(row.data or {})
+    return {
+        "id": str(row.id),
+        "reference": row.reference,
+        "title": row.title,
+        "description": row.description,
+        "status": row.status,
+        "branch_id": str(row.branch_id) if row.branch_id else None,
+        "category": data.get("category"),
+        "due_date": data.get("due_date"),
+        "amount": float(_money(row.amount)),
+        "approved_by_user_id": data.get("approved_by_user_id"),
+        "approved_at": data.get("approved_at"),
+    }
+
+
+def _forecast_opening_liquidity(
+    db: Session,
+    *,
+    company_id,
+    before_date: date,
+    branch_id=None,
+) -> dict:
+    key, _ = scope_key(company_id)
+    cash = _account_signed_balance(db, scope_key_value=key, account_code="1000", to_date=before_date, branch_id=branch_id)
+    bank = _account_signed_balance(db, scope_key_value=key, account_code="1010", to_date=before_date, branch_id=branch_id)
+    clearing = _account_signed_balance(db, scope_key_value=key, account_code="1020", to_date=before_date, branch_id=branch_id)
+    return {
+        "cash": _money(cash),
+        "bank": _money(bank),
+        "electronic_clearing": _money(clearing),
+        "available_cash": _money(cash + bank),
+        "gross_liquid_funds": _money(cash + bank + clearing),
+    }
+
+
+def treasury_cash_forecast(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+    minimum_cash=Decimal("0"),
+    collection_rate=Decimal("1"),
+    obligation_rate=Decimal("1"),
+    unexpected_outflow=Decimal("0"),
+) -> dict:
+    """Forward cash forecast from ledger liquidity, loan schedules and approved commitments."""
+    if to_date < from_date:
+        raise HTTPException(status_code=422, detail="Invalid treasury forecast period")
+    if (to_date - from_date).days > 366:
+        raise HTTPException(status_code=422, detail="Treasury forecast horizon cannot exceed 366 days")
+
+    minimum_cash = _money(minimum_cash)
+    collection_rate = Decimal(str(collection_rate))
+    obligation_rate = Decimal(str(obligation_rate))
+    unexpected_outflow = _money(unexpected_outflow)
+    opening = _forecast_opening_liquidity(
+        db,
+        company_id=company_id,
+        before_date=from_date - timedelta(days=1),
+        branch_id=branch_id,
+    )
+
+    installments = db.query(RepaymentInstallment, ClientCompanyLoan).join(
+        ClientCompanyLoan, ClientCompanyLoan.id == RepaymentInstallment.loan_id
+    ).filter(
+        ClientCompanyLoan.company_id == company_id,
+        RepaymentInstallment.is_superseded.is_(False),
+        RepaymentInstallment.due_date.between(from_date, to_date),
+        RepaymentInstallment.status.notin_(["paid", "waived"]),
+    )
+    if branch_id:
+        installments = installments.filter(ClientCompanyLoan.branch_id == branch_id)
+
+    collection_by_day: dict[date, Decimal] = {}
+    collection_details = []
+    for installment, loan in installments.all():
+        remaining = max(_money(installment.total_due) - _money(installment.paid_amount), Decimal("0.00"))
+        expected = _money(remaining * collection_rate)
+        if expected <= 0:
+            continue
+        collection_by_day[installment.due_date] = _money(collection_by_day.get(installment.due_date, Decimal("0")) + expected)
+        collection_details.append({
+            "installment_id": str(installment.id),
+            "loan_id": str(loan.id),
+            "folio_number": loan.folio_number,
+            "due_date": installment.due_date.isoformat(),
+            "scheduled_remaining": float(remaining),
+            "scenario_expected_collection": float(expected),
+        })
+
+    commitments = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "treasury_commitment",
+        CompanyOperatingRecord.status == "approved",
+        CompanyOperatingRecord.is_archived.is_(False),
+        CompanyOperatingRecord.due_at >= datetime.combine(from_date, datetime.min.time()),
+        CompanyOperatingRecord.due_at <= datetime.combine(to_date, datetime.max.time()),
+    )
+    if branch_id:
+        commitments = commitments.filter(CompanyOperatingRecord.branch_id == branch_id)
+
+    obligation_by_day: dict[date, Decimal] = {}
+    commitment_details = []
+    for row in commitments.all():
+        due = date.fromisoformat(str((row.data or {}).get("due_date") or row.due_at.date().isoformat()))
+        scenario_amount = _money(_money(row.amount) * obligation_rate)
+        obligation_by_day[due] = _money(obligation_by_day.get(due, Decimal("0")) + scenario_amount)
+        commitment_details.append({
+            **treasury_commitment_payload(row),
+            "scenario_amount": float(scenario_amount),
+        })
+
+    days = []
+    running = _money(opening["available_cash"] - unexpected_outflow)
+    breaches = []
+    current = from_date
+    while current <= to_date:
+        inflow = collection_by_day.get(current, Decimal("0.00"))
+        outflow = obligation_by_day.get(current, Decimal("0.00"))
+        opening_balance = running
+        running = _money(running + inflow - outflow)
+        breach = running < minimum_cash
+        if breach:
+            breaches.append({
+                "date": current.isoformat(),
+                "projected_closing_cash": float(running),
+                "minimum_cash": float(minimum_cash),
+                "shortfall": float(_money(minimum_cash - running)),
+            })
+        days.append({
+            "date": current.isoformat(),
+            "opening_cash": float(opening_balance),
+            "expected_collections": float(inflow),
+            "approved_obligations": float(outflow),
+            "projected_closing_cash": float(running),
+            "minimum_cash_breach": breach,
+        })
+        current += timedelta(days=1)
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "opening_liquidity": {key: float(value) for key, value in opening.items()},
+        "scenario": {
+            "collection_rate": float(collection_rate),
+            "obligation_rate": float(obligation_rate),
+            "unexpected_outflow": float(unexpected_outflow),
+            "minimum_cash": float(minimum_cash),
+        },
+        "total_expected_collections": float(_money(sum(collection_by_day.values(), Decimal("0.00")))),
+        "total_approved_obligations": float(_money(sum(obligation_by_day.values(), Decimal("0.00")))),
+        "projected_closing_cash": float(running),
+        "minimum_projected_cash": min((row["projected_closing_cash"] for row in days), default=float(opening["available_cash"])),
+        "breach_count": len(breaches),
+        "breaches": breaches,
+        "daily_forecast": days,
+        "collection_details": collection_details,
+        "commitments": commitment_details,
+        "policy_note": (
+            "This is a management liquidity forecast. It uses posted opening cash/bank balances, "
+            "scheduled loan installments and approved treasury commitments. It does not post journals "
+            "or guarantee that scheduled collections will be received."
+        ),
+    }
+
+
+def treasury_stress_test(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+    minimum_cash=Decimal("0"),
+) -> dict:
+    scenarios = [
+        ("baseline", Decimal("1.00"), Decimal("1.00"), Decimal("0")),
+        ("collections_down_20pct", Decimal("0.80"), Decimal("1.00"), Decimal("0")),
+        ("collections_down_35pct", Decimal("0.65"), Decimal("1.00"), Decimal("0")),
+        ("obligations_up_15pct", Decimal("1.00"), Decimal("1.15"), Decimal("0")),
+        ("combined_stress", Decimal("0.70"), Decimal("1.15"), Decimal("0")),
+    ]
+    results = []
+    for name, collection_rate, obligation_rate, shock in scenarios:
+        forecast = treasury_cash_forecast(
+            db,
+            company_id=company_id,
+            from_date=from_date,
+            to_date=to_date,
+            branch_id=branch_id,
+            minimum_cash=minimum_cash,
+            collection_rate=collection_rate,
+            obligation_rate=obligation_rate,
+            unexpected_outflow=shock,
+        )
+        results.append({
+            "scenario": name,
+            "collection_rate": float(collection_rate),
+            "obligation_rate": float(obligation_rate),
+            "projected_closing_cash": forecast["projected_closing_cash"],
+            "minimum_projected_cash": forecast["minimum_projected_cash"],
+            "breach_count": forecast["breach_count"],
+            "first_breach": forecast["breaches"][0] if forecast["breaches"] else None,
+        })
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "minimum_cash": float(_money(minimum_cash)),
+        "scenarios": results,
+        "policy_note": "Stress scenarios change assumptions only; they never change loans, treasury entries, budgets or accounting journals.",
+    }
+
 def depreciate_all_fixed_assets_for_period(
     db: Session,
     *,
