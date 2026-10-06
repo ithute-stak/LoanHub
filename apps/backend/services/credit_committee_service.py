@@ -21,7 +21,6 @@ from database.models.credit_committee import (
 from database.models.lending_operations import (
     CDASPayrollProfile,
     ComplianceCase,
-    CreditBureauEnquiry,
     CreditDecision,
 )
 from database.models.origination import (
@@ -33,6 +32,11 @@ from database.models.origination import (
 from database.models.person import Person
 from database.models.professional_lending import DirectLoanApplication
 from database.models.user import User
+from services.credit_bureau_policy_service import (
+    company_experian_policy,
+    latest_fresh_experian_enquiry,
+)
+from services.external_underwriting_evidence_service import external_evidence_snapshot
 
 
 MONEY = Decimal("0.01")
@@ -153,15 +157,14 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
     employment = db.query(BorrowerEmploymentProfile).filter(
         BorrowerEmploymentProfile.borrower_id == application.borrower_id,
     ).first()
-    bureau = (
-        db.query(CreditBureauEnquiry)
-        .filter(
-            CreditBureauEnquiry.company_id == application.company_id,
-            CreditBureauEnquiry.borrower_id == application.borrower_id,
-            CreditBureauEnquiry.status == "completed",
-        )
-        .order_by(CreditBureauEnquiry.completed_at.desc())
-        .first()
+    _, bureau_policy = company_experian_policy(db, application.company_id)
+    bureau = latest_fresh_experian_enquiry(
+        db,
+        company_id=application.company_id,
+        application_id=application.id,
+        borrower_id=application.borrower_id,
+        max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
+        environment=str(bureau_policy.get("environment") or "sandbox"),
     )
     rules_decision = (
         db.query(CreditDecision)
@@ -193,6 +196,14 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
 
     active_exposure = sum((money(row.balance) for row in active_loans), Decimal("0"))
     debt_installments = sum((money(row.monthly_installment) for row in debts), Decimal("0"))
+    external_evidence = external_evidence_snapshot(
+        application_id=application.id,
+        bureau=bureau,
+        bureau_policy=bureau_policy,
+        cdas_profile=payroll,
+        cdas_selected=bool(application.cdas_collection_enabled),
+        proposed_installment=(affordability.proposed_installment if affordability else 0),
+    )
     return {
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "application": {
@@ -249,13 +260,7 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
         },
         "credit_bureau": {
             "available": bool(bureau),
-            "reference": bureau.enquiry_reference if bureau else None,
-            "score": bureau.score if bureau else None,
-            "risk_grade": bureau.risk_grade if bureau else None,
-            "current_exposure": str(money(bureau.current_exposure)) if bureau else "0.00",
-            "monthly_obligations": str(money(bureau.monthly_obligations)) if bureau else "0.00",
-            "adverse_records": int(bureau.adverse_records or 0) if bureau else 0,
-            "completed_at": bureau.completed_at.isoformat() if bureau and bureau.completed_at else None,
+            **external_evidence["credit_bureau"],
         },
         "rules_engine": {
             "available": bool(rules_decision),
@@ -280,12 +285,9 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
         "compliance": {"open_case_count": int(open_compliance)},
         "cdas": {
             "profile_available": bool(payroll),
-            "verified": bool(payroll.verified) if payroll else False,
-            "employee_number": payroll.employee_number if payroll else None,
-            "net_salary": str(money(payroll.net_salary)) if payroll else "0.00",
-            "existing_deductions": str(money(payroll.existing_deductions)) if payroll else "0.00",
-            "maximum_deduction_percent": str(payroll.maximum_deduction_percent or 0) if payroll else None,
+            **external_evidence["cdas"],
         },
+        "external_underwriting_evidence": external_evidence,
     }
 
 
@@ -766,6 +768,25 @@ def finalize_case(
         if not (override_reason or "").strip():
             raise HTTPException(status_code=422, detail="A documented override reason is required when changing the computed committee outcome")
 
+    application = db.get(DirectLoanApplication, case.application_id)
+    final_integration_readiness = None
+    final_evidence_snapshot = None
+    if decision in {"approved", "conditionally_approved"}:
+        if not application:
+            raise HTTPException(status_code=409, detail="The governed application is no longer available")
+        final_integration_readiness = assert_application_integration_readiness_for_approval(
+            db,
+            application=application,
+            amount=Decimal(application.requested_amount or 0),
+            product_id=application.product_id,
+            proposed_installment=(
+                Decimal(assessment.proposed_installment)
+                if assessment.proposed_installment is not None
+                else None
+            ),
+        )
+        final_evidence_snapshot = build_evidence_snapshot(db, application)
+
     conditions = _collect_decision_conditions(assessment, votes) if decision == "conditionally_approved" else []
     for item in conditions:
         due_date = item.get("due_date")
@@ -801,10 +822,14 @@ def finalize_case(
         "votes": [vote_payload(row) for row in votes],
         "conditions": conditions,
         "evidence_captured_at": (case.evidence_snapshot or {}).get("captured_at"),
+        "final_evidence_captured_at": (
+            final_evidence_snapshot or {}
+        ).get("captured_at"),
+        "final_integration_readiness": final_integration_readiness,
+        "final_evidence_snapshot": final_evidence_snapshot,
     }
     _event(db, case, "committee_finalized", context.user.id, case.final_snapshot)
 
-    application = db.get(DirectLoanApplication, case.application_id)
     if application and decision == "rejected":
         application.status = "rejected"
         application.rejected_at = now

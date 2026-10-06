@@ -73,23 +73,40 @@ after promotion would preserve correctness evidence but would not deliver the in
 CPU-efficiency gain.
 
 
-## 10/10 workload completion
+## Predictive intelligence migration status
 
-The remaining runtime gaps are now assigned concrete production work:
+Loan-level transparent predictive scoring now has a batched Rust path.
 
-- **Go mobile push:** Python resolves recipients, owns notification policy, and mints a
-  short-lived Firebase OAuth token. Go performs bounded concurrent FCM HTTP v1 fan-out.
-  Long-lived Firebase credentials never move into the Go service.
-- **Go webhooks:** Python validates/signs and owns retry/audit state; Go performs the
-  bounded concurrent HTTP delivery batch.
-- **Java CSV reports:** Java renders deterministic CSV export bytes. Shadow mode requires
-  byte-for-byte parity with Python before promotion; Java never queries LoanHub data or
-  chooses report scope.
-- **Rust:** finance, reconciliation and portfolio-risk batch compute remain the primary
-  deterministic compute engines.
-- **C++:** remains intentionally narrow behind Rust for benchmark-proven native kernels.
-  Keeping C++ small is a safety/maintenance feature, not an incomplete migration.
+Python continues to own:
+- company/branch scope and snapshot selection;
+- collection work-item selection;
+- evidence construction and advisory-only policy;
+- database persistence and auditability;
+- all actual credit and collection decisions.
 
-Side-effecting transports (webhook and mobile push) default to `off` for specialized
-workers. They do not dual-send in shadow mode. Non-side-effecting Java/Rust workloads
-can use shadow parity and benchmark history before promotion.
+Rust owns the deterministic scoring inner loop: DPD scoring, deterioration,
+bucket-worsening, first-payment-default/top-up stress, collection-priority scoring,
+risk-band classification, projected PAR30 entry and 30-day stress bucket.
+
+The workload starts in `shadow`. After benchmark/parity evidence supports promotion,
+`prefer-worker` uses valid Rust rows directly and falls back to Python only for
+missing or invalid worker output. This is the intended efficiency model: once promoted,
+LoanHub should not keep paying for the same CPU-heavy Python calculation solely for
+live parity on every request.
+
+
+## Mobile push migration status
+
+Mobile push network fan-out now has a Go path.
+
+Python remains responsible for recipient selection, device-token lookup, notification
+category/channel policy, message text/data, Firebase project selection and OAuth
+credential acquisition. Only a short-lived FCM access token is handed to Go; the
+long-lived service-account private key remains with Python/Application Default
+Credentials.
+
+Go performs bounded concurrent calls to the fixed FCM v1 endpoint. The workload
+defaults to `off`. Because push is side-effecting, `shadow` remains Python-only:
+LoanHub never sends duplicate notifications merely to compare runtimes. When explicitly
+promoted to `prefer-worker`, an ambiguous Go handoff is not immediately replayed
+through Python, avoiding double delivery.

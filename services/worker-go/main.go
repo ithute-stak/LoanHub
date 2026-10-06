@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"os"
 	"strconv"
 	"strings"
@@ -55,38 +54,35 @@ type webhookDeliveryBatchResponse struct {
 	Results       []webhookDeliveryResult `json:"results"`
 }
 
-type pushNotification struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-}
-
 type pushDeliveryJob struct {
-	JobID       string            `json:"job_id"`
-	Token       string            `json:"token"`
-	Data        map[string]string `json:"data"`
-	Notification pushNotification `json:"notification"`
-	ChannelID   string            `json:"channel_id"`
+	JobID     string            `json:"job_id"`
+	Token     string            `json:"token"`
+	Title     string            `json:"title"`
+	Body      string            `json:"body"`
+	ChannelID string            `json:"channel_id"`
+	Data      map[string]string `json:"data"`
+	TimeoutMS int               `json:"timeout_ms"`
 }
 
 type pushDeliveryBatchRequest struct {
 	ProjectID   string            `json:"project_id"`
 	AccessToken string            `json:"access_token"`
-	Jobs        []pushDeliveryJob  `json:"jobs"`
+	Jobs        []pushDeliveryJob `json:"jobs"`
 }
 
 type pushDeliveryResult struct {
-	JobID      string `json:"job_id"`
-	StatusCode int    `json:"status_code"`
-	Error      string `json:"error,omitempty"`
-	DurationMS int64  `json:"duration_ms"`
+	JobID              string `json:"job_id"`
+	StatusCode         int    `json:"status_code"`
+	ResponseBodySHA256 string `json:"response_body_sha256,omitempty"`
+	ProviderMessageID  string `json:"provider_message_id,omitempty"`
+	Error              string `json:"error,omitempty"`
+	DurationMS         int64  `json:"duration_ms"`
 }
 
 type pushDeliveryBatchResponse struct {
 	Authoritative bool                 `json:"authoritative"`
 	Results       []pushDeliveryResult `json:"results"`
 }
-
-var firebaseProjectIDPattern = regexp.MustCompile("^[a-z0-9][a-z0-9-]{4,62}[a-z0-9]$")
 
 func clampInt(value, minimum, maximum int) int {
 	if value < minimum {
@@ -288,6 +284,46 @@ func handleWebhookDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func pushConcurrency() int {
+	raw := strings.TrimSpace(os.Getenv("LOANHUB_GO_PUSH_CONCURRENCY"))
+	if raw == "" {
+		return 32
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 32
+	}
+	return clampInt(value, 1, 128)
+}
+
+func validProjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func pushHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        128,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     60 * time.Second,
+	}
+	return &http.Client{Transport: transport}
+}
+
 func deliverPush(
 	client *http.Client,
 	projectID string,
@@ -297,43 +333,55 @@ func deliverPush(
 	started := time.Now()
 	result := pushDeliveryResult{JobID: job.JobID}
 
-	message := map[string]any{
+	timeoutMS := clampInt(job.TimeoutMS, 100, 30_000)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(timeoutMS)*time.Millisecond,
+	)
+	defer cancel()
+
+	payload := map[string]any{
 		"message": map[string]any{
 			"token": job.Token,
-			"data":  job.Data,
 			"notification": map[string]string{
-				"title": job.Notification.Title,
-				"body":  job.Notification.Body,
+				"title": job.Title,
+				"body":  job.Body,
 			},
+			"data": job.Data,
 			"android": map[string]any{
-				"priority": "high",
+				"priority": "HIGH",
 				"notification": map[string]any{
-					"channel_id":              job.ChannelID,
-					"sound":                   "default",
+					"channel_id":               job.ChannelID,
+					"sound":                    "default",
 					"default_vibrate_timings": true,
 				},
 			},
 		},
 	}
-	body, err := json.Marshal(message)
+	raw, err := json.Marshal(payload)
 	if err != nil {
-		result.Error = "encode_message"
+		result.Error = "encode_push_payload"
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	endpoint := "https://fcm.googleapis.com/v1/projects/" + projectID + "/messages:send"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	endpoint := fmt.Sprintf(
+		"https://fcm.googleapis.com/v1/projects/%s/messages:send",
+		projectID,
+	)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		strings.NewReader(string(raw)),
+	)
 	if err != nil {
-		result.Error = "build_request"
+		result.Error = err.Error()
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "LoanHub-Go-Push/1.0")
 
 	response, err := client.Do(request)
 	if err != nil {
@@ -342,10 +390,24 @@ func deliverPush(
 		return result
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+
 	result.StatusCode = response.StatusCode
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		result.Error = fmt.Sprintf("FCM returned HTTP %d", response.StatusCode)
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if readErr != nil {
+		result.Error = readErr.Error()
+	} else {
+		sum := sha256.Sum256(body)
+		result.ResponseBodySHA256 = hex.EncodeToString(sum[:])
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			var decoded struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(body, &decoded) == nil {
+				result.ProviderMessageID = decoded.Name
+			}
+		} else {
+			result.Error = fmt.Sprintf("FCM returned HTTP %d", response.StatusCode)
+		}
 	}
 	result.DurationMS = time.Since(started).Milliseconds()
 	return result
@@ -363,12 +425,8 @@ func handlePushDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !firebaseProjectIDPattern.MatchString(strings.TrimSpace(req.ProjectID)) {
-		http.Error(w, "invalid project_id", http.StatusUnprocessableEntity)
-		return
-	}
-	if strings.TrimSpace(req.AccessToken) == "" {
-		http.Error(w, "access_token required", http.StatusUnprocessableEntity)
+	if !validProjectID(req.ProjectID) || strings.TrimSpace(req.AccessToken) == "" {
+		http.Error(w, "project_id and access_token are required", http.StatusUnprocessableEntity)
 		return
 	}
 	if len(req.Jobs) == 0 || len(req.Jobs) > 500 {
@@ -382,6 +440,10 @@ func handlePushDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "job_id and token are required", http.StatusUnprocessableEntity)
 			return
 		}
+		if len(job.Token) > 4096 || len(job.Title) > 120 || len(job.Body) > 240 {
+			http.Error(w, "push field exceeds limit", http.StatusUnprocessableEntity)
+			return
+		}
 		if _, exists := seen[job.JobID]; exists {
 			http.Error(w, "duplicate job_id", http.StatusUnprocessableEntity)
 			return
@@ -389,9 +451,9 @@ func handlePushDeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		seen[job.JobID] = struct{}{}
 	}
 
-	client := webhookHTTPClient()
+	client := pushHTTPClient()
 	results := make([]pushDeliveryResult, len(req.Jobs))
-	semaphore := make(chan struct{}, webhookConcurrency())
+	semaphore := make(chan struct{}, pushConcurrency())
 	var wait sync.WaitGroup
 	for index, job := range req.Jobs {
 		index := index
@@ -447,7 +509,7 @@ func main() {
 		})
 	})
 	mux.HandleFunc("/v1/webhooks/deliver-batch", handleWebhookDeliveryBatch)
-	mux.HandleFunc("/v1/push/fcm-deliver-batch", handlePushDeliveryBatch)
+	mux.HandleFunc("/v1/push/deliver-batch", handlePushDeliveryBatch)
 
 	addr := os.Getenv("LOANHUB_GO_WORKER_ADDR")
 	if addr == "" {

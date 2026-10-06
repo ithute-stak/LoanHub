@@ -16,6 +16,10 @@ from services.credit_bureau_policy_service import (
     latest_fresh_experian_enquiry,
 )
 from services.experian_service import environment_test_status, has_credentials_for_environment
+from services.external_underwriting_evidence_service import (
+    bureau_evidence,
+    cdas_deduction_capacity,
+)
 
 
 def _assessment_decision(assessment: AffordabilityAssessment | None) -> str | None:
@@ -24,20 +28,13 @@ def _assessment_decision(assessment: AffordabilityAssessment | None) -> str | No
     return assessment.override_decision if assessment.overridden else assessment.decision
 
 
-def _normalized_bureau(enquiry) -> dict[str, Any]:
-    if not enquiry:
-        return {}
-    response = dict(enquiry.response_data or {})
-    normalized = response.get("normalized")
-    return dict(normalized) if isinstance(normalized, dict) else {}
-
-
 def application_integration_readiness(
     db: Session,
     *,
     application: DirectLoanApplication,
     amount: Decimal | None = None,
     product_id=None,
+    proposed_installment: Decimal | None = None,
 ) -> dict[str, Any]:
     """Build one cross-system view of Core LoanHub, Experian and CDAS.
 
@@ -118,55 +115,19 @@ def application_integration_readiness(
             max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
             environment=bureau_environment,
         )
-    bureau_normalized = _normalized_bureau(latest_bureau)
     bureau_fresh = latest_bureau is not None
     bureau_ready = not bureau_required_approval or bureau_fresh
+    bureau_snapshot = bureau_evidence(
+        latest_bureau,
+        policy=bureau_policy,
+        application_id=application.id,
+    )
 
     if bureau_fresh and latest_bureau:
-        decline_below = bureau_policy.get("decline_below_score")
-        refer_below = bureau_policy.get("refer_below_score")
-        score = latest_bureau.score
-        if decline_below is not None and score is not None and score < int(decline_below):
+        if bureau_snapshot["blockers"]:
             bureau_ready = False
-            blockers.append(
-                {
-                    "source": "bureau",
-                    "code": "score_below_decline_threshold",
-                    "message": "The latest Experian score is below the company's configured decline threshold.",
-                    "action_path": f"/company/origination/experian?application={application.id}",
-                }
-            )
-        elif refer_below is not None and score is not None and score < int(refer_below):
-            warnings.append(
-                {
-                    "source": "bureau",
-                    "code": "score_requires_referral",
-                    "message": "The latest Experian score is below the company's referral threshold and requires manager attention.",
-                    "action_path": f"/company/origination/experian?application={application.id}",
-                }
-            )
-
-        if bureau_policy.get("block_defaults") and int(bureau_normalized.get("defaults_count") or 0) > 0:
-            bureau_ready = False
-            blockers.append(
-                {
-                    "source": "bureau",
-                    "code": "defaults_blocked",
-                    "message": "Experian reports defaults and company policy blocks approval.",
-                    "action_path": f"/company/origination/experian?application={application.id}",
-                }
-            )
-
-        if bureau_policy.get("require_identity_match") and bureau_normalized.get("identity_match") is not True:
-            bureau_ready = False
-            blockers.append(
-                {
-                    "source": "bureau",
-                    "code": "identity_match_required",
-                    "message": "Experian identity matching has not passed the company's approval policy.",
-                    "action_path": f"/company/origination/experian?application={application.id}",
-                }
-            )
+            blockers.extend(bureau_snapshot["blockers"])
+        warnings.extend(bureau_snapshot["warnings"])
 
         if bureau_policy.get("include_bureau_commitments_in_affordability") and assessment:
             input_snapshot = dict(assessment.input_snapshot or {})
@@ -239,8 +200,20 @@ def application_integration_readiness(
         and cdas_profile.verified
         and str(cdas_profile.employee_number or "").strip()
     )
+    cdas_capacity = cdas_deduction_capacity(
+        cdas_profile,
+        selected_for_collection=cdas_selected,
+        proposed_installment=(
+            proposed_installment if proposed_installment is not None
+            else (assessment.proposed_installment if assessment else 0)
+        ),
+        application_id=application.id,
+    )
     cdas_ready = not cdas_selected or (
-        cdas_verified and cdas_provider_configured and cdas_provider_enabled
+        cdas_verified
+        and cdas_provider_configured
+        and cdas_provider_enabled
+        and bool(cdas_capacity["capacity_sufficient"])
     )
     if cdas_selected and not cdas_verified:
         blockers.append(
@@ -251,6 +224,9 @@ def application_integration_readiness(
                 "action_path": f"/company/cdas?application={application.id}",
             }
         )
+
+    if cdas_selected and cdas_verified and not cdas_capacity["capacity_sufficient"]:
+        blockers.extend(cdas_capacity["blockers"])
 
     if cdas_selected and not cdas_provider_configured:
         blockers.append(
@@ -308,6 +284,9 @@ def application_integration_readiness(
         "score_below_decline_threshold",
         "defaults_blocked",
         "identity_match_required",
+        "judgments_blocked",
+        "collections_blocked",
+        "deduction_capacity_insufficient",
     }
     blocker_codes = {item["code"] for item in blockers}
     if ready_for_approval:
@@ -348,8 +327,11 @@ def application_integration_readiness(
             "risk_band": latest_bureau.risk_grade if latest_bureau else None,
             "monthly_commitments": float(latest_bureau.monthly_obligations or 0) if latest_bureau else None,
             "total_balance": float(latest_bureau.current_exposure or 0) if latest_bureau else None,
-            "defaults_count": int(bureau_normalized.get("defaults_count") or 0) if latest_bureau else None,
-            "identity_match": bureau_normalized.get("identity_match") if latest_bureau else None,
+            "defaults_count": bureau_snapshot["defaults_count"] if latest_bureau else None,
+            "judgments_count": bureau_snapshot["judgments_count"] if latest_bureau else None,
+            "collections_count": bureau_snapshot["collections_count"] if latest_bureau else None,
+            "recent_enquiries_count": bureau_snapshot["recent_enquiries_count"] if latest_bureau else None,
+            "identity_match": bureau_snapshot["identity_match"] if latest_bureau else None,
             "used_in_affordability": bool(
                 bureau_enabled
                 and bureau_fresh
@@ -368,6 +350,13 @@ def application_integration_readiness(
             "employee_number": cdas_profile.employee_number if cdas_profile else None,
             "department": cdas_profile.ministry_department if cdas_profile else None,
             "verified_at": cdas_profile.verified_at.isoformat() if cdas_profile and cdas_profile.verified_at else None,
+            "net_salary": float(cdas_capacity["net_salary"]),
+            "existing_deductions": float(cdas_capacity["existing_deductions"]),
+            "maximum_deduction_percent": float(cdas_capacity["maximum_deduction_percent"]),
+            "maximum_deduction": float(cdas_capacity["maximum_deduction"]),
+            "available_deduction_capacity": float(cdas_capacity["available_deduction_capacity"]),
+            "proposed_installment": float(cdas_capacity["proposed_installment"]),
+            "capacity_sufficient": bool(cdas_capacity["capacity_sufficient"]),
             "collection_plan": dict(application.cdas_collection_plan or {}),
             "ready_for_approval": cdas_ready,
         },
@@ -380,12 +369,14 @@ def assert_application_integration_readiness_for_approval(
     application: DirectLoanApplication,
     amount: Decimal,
     product_id,
+    proposed_installment: Decimal | None = None,
 ) -> dict[str, Any]:
     readiness = application_integration_readiness(
         db,
         application=application,
         amount=amount,
         product_id=product_id,
+        proposed_installment=proposed_installment,
     )
     if not readiness["ready_for_approval"]:
         messages = [item["message"] for item in readiness["blockers"]]

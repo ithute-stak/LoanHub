@@ -1,347 +1,292 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { CircleCheck, CircleX, KeyRound, Loader2, PlugZap, RefreshCcw, Save, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { CircleCheck, CircleX, Loader2, RefreshCcw, ShieldCheck, WalletCards } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
 
 type CdasEnvironment = "test" | "live";
 
+type ProfileState = {
+    configured: boolean;
+    last_test_status: string | null;
+    last_tested_at: string | null;
+};
+
+type Subscription = {
+    status: string;
+    approved: boolean;
+    currency: string;
+    pricing: Record<string, number>;
+    credit_limit: number | null;
+    warning_threshold: number | null;
+    auto_suspend_on_limit: boolean;
+    billing_due_days?: number;
+    rejection_reason?: string | null;
+    usage?: {
+        live_transaction_count: number;
+        outstanding_balance: number;
+        credit_limit: number | null;
+        remaining_credit: number | null;
+        currency: string;
+    };
+};
+
 type CdasConfiguration = {
     provider: "cdas";
     environment: CdasEnvironment;
     enabled: boolean;
-    base_url: string;
-    username: string;
-    item_code: string;
-    timeout_seconds: number;
-    password_configured: boolean;
     configured: boolean;
     last_test_status: string | null;
     last_tested_at: string | null;
-    reintegration_phase: "manual_documented_operations";
+    profiles: { test: ProfileState; live: ProfileState };
+    subscription: Subscription;
 };
 
-type CdasForm = {
+type CdasTransaction = {
+    id: string;
     environment: CdasEnvironment;
-    enabled: boolean;
-    base_url: string;
-    username: string;
-    item_code: string;
-    password: string;
-    clear_password: boolean;
-    timeout_seconds: number;
+    operation_type: string;
+    transaction_reference: string;
+    amount: number;
+    currency: string;
+    status: string;
+    accrued_at: string;
+};
+
+type CdasInvoice = {
+    id: string;
+    invoice_number: string;
+    period_start: string;
+    period_end: string;
+    transaction_count: number;
+    subtotal: number;
+    waived_amount: number;
+    amount_due: number;
+    currency: string;
+    status: string;
+    issued_at: string;
+    due_at: string;
+    paid_at: string | null;
 };
 
 type Props = { canManage: boolean };
 
-const TEST_URL = "https://test-cdas-thirdpartyapi.sentraptt.com";
-
-const EMPTY_FORM: CdasForm = {
-    environment: "test",
-    enabled: false,
-    base_url: TEST_URL,
-    username: "",
-    item_code: "",
-    password: "",
-    clear_password: false,
-    timeout_seconds: 20,
+const OPERATION_LABELS: Record<string, string> = {
+    employee_verification: "Employee verification",
+    affordability: "Affordability check",
+    deduction_lookup: "Deduction lookup",
+    registration: "Deduction registration",
+    lifecycle: "Lifecycle action",
+    modification: "Active deduction modification",
+    settlement: "Settlement",
+    document: "Statement / document",
 };
 
-function fromConfiguration(configuration: CdasConfiguration): CdasForm {
-    return {
-        environment: configuration.environment,
-        enabled: configuration.enabled,
-        base_url: configuration.base_url,
-        username: configuration.username,
-        item_code: configuration.item_code ?? "",
-        password: "",
-        clear_password: false,
-        timeout_seconds: configuration.timeout_seconds,
-    };
-}
-
 export function CompanyCdasSettings({ canManage }: Props) {
+    const { activeRole } = useTenant();
+    const canSwitchEnvironment = activeRole === "company_owner";
     const [configuration, setConfiguration] = useState<CdasConfiguration | null>(null);
-    const [form, setForm] = useState<CdasForm>(EMPTY_FORM);
+    const [transactions, setTransactions] = useState<CdasTransaction[]>([]);
+    const [invoices, setInvoices] = useState<CdasInvoice[]>([]);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [testing, setTesting] = useState(false);
+    const [requesting, setRequesting] = useState(false);
+    const [switching, setSwitching] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         setLoadError(null);
         try {
-            const response = await api.get<CdasConfiguration>("/cdas/configuration");
-            setConfiguration(response.data);
-            setForm(fromConfiguration(response.data));
+            const [configResponse, transactionResponse, invoiceResponse] = await Promise.all([
+                api.get<CdasConfiguration>("/cdas/configuration"),
+                api.get<CdasTransaction[]>("/cdas/transactions?limit=10"),
+                api.get<CdasInvoice[]>("/cdas/invoices?limit=12"),
+            ]);
+            setConfiguration(configResponse.data);
+            setTransactions(transactionResponse.data);
+            setInvoices(invoiceResponse.data);
         } catch (error: unknown) {
-            setLoadError(getErrorMessage(error, "CDAS authentication configuration could not be loaded."));
+            setLoadError(getErrorMessage(error, "CDAS service status could not be loaded."));
         } finally {
             setLoading(false);
         }
     }, []);
 
-    useEffect(() => {
-        void load();
-    }, [load]);
+    useEffect(() => { void load(); }, [load]);
 
-    function changeEnvironment(environment: CdasEnvironment) {
-        setForm((current) => ({
-            ...current,
-            environment,
-            enabled: false,
-            base_url: environment === "test" ? TEST_URL : "",
-            username: "",
-            item_code: "",
-            password: "",
-            clear_password: false,
-        }));
-    }
-
-    async function save(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (!canManage || saving) return;
-        setSaving(true);
+    async function requestSubscription() {
+        if (!canManage || requesting) return;
+        setRequesting(true);
         try {
-            const response = await api.put<CdasConfiguration>("/cdas/configuration", {
-                environment: form.environment,
-                enabled: form.enabled,
-                base_url: form.base_url.trim(),
-                username: form.username.trim(),
-                item_code: form.item_code.trim() || null,
-                password: form.password.trim() || null,
-                clear_password: form.clear_password,
-                timeout_seconds: Number(form.timeout_seconds),
+            await api.post("/cdas/subscription");
+            toast.success("CDAS subscription requested", {
+                description: "The LoanHub Platform Owner must configure your company-specific CDAS profile and approve access.",
             });
-            setConfiguration(response.data);
-            setForm(fromConfiguration(response.data));
-            toast.success("CDAS authentication configuration saved.");
+            await load();
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "CDAS authentication configuration could not be saved."));
+            toast.error(getErrorMessage(error, "CDAS subscription request could not be submitted."));
         } finally {
-            setSaving(false);
+            setRequesting(false);
         }
     }
 
-    async function testConnection() {
-        if (!canManage || testing) return;
-        setTesting(true);
+    async function switchEnvironment(environment: CdasEnvironment) {
+        if (!canSwitchEnvironment || switching || environment === configuration?.environment) return;
+        setSwitching(true);
         try {
-            const response = await api.post<{ ok: boolean; configuration: CdasConfiguration }>(
-                "/cdas/configuration/test",
-            );
-            setConfiguration(response.data.configuration);
-            setForm(fromConfiguration(response.data.configuration));
-            toast.success("CDAS login verified successfully.");
+            const response = await api.put<CdasConfiguration>("/cdas/environment", { environment });
+            setConfiguration(response.data);
+            toast.success(`CDAS switched to ${environment === "live" ? "Live" : "Test"}`);
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "CDAS login test failed."));
-            await load();
+            toast.error(getErrorMessage(error, "CDAS environment could not be changed."));
         } finally {
-            setTesting(false);
+            setSwitching(false);
         }
     }
 
     if (loading) {
-        return (
-            <Card>
-                <CardContent className="flex min-h-48 items-center justify-center gap-3 text-sm text-muted-foreground">
-                    <Loader2 className="h-5 w-5 animate-spin" /> Loading CDAS authentication configuration…
-                </CardContent>
-            </Card>
-        );
+        return <Card><CardContent className="flex min-h-48 items-center justify-center gap-3 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading CDAS service…</CardContent></Card>;
     }
 
     if (loadError) {
         return (
             <Alert variant="destructive">
                 <CircleX className="h-4 w-4" />
-                <AlertTitle>CDAS authentication unavailable</AlertTitle>
+                <AlertTitle>CDAS service unavailable</AlertTitle>
                 <AlertDescription className="space-y-3">
                     <p>{loadError}</p>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
-                        <RefreshCcw className="h-4 w-4" /> Retry
-                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void load()}><RefreshCcw className="h-4 w-4" /> Retry</Button>
                 </AlertDescription>
             </Alert>
         );
     }
 
+    const subscription = configuration?.subscription;
+    const profile = configuration?.profiles?.[configuration.environment];
+    const usage = subscription?.usage;
+
     return (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="space-y-6">
             <Card>
                 <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <CardTitle className="flex items-center gap-2">
-                                <KeyRound className="h-5 w-5" /> CDAS authentication
-                            </CardTitle>
+                            <CardTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" /> CDAS platform service</CardTitle>
                             <CardDescription className="mt-2 max-w-3xl">
-                                Secure company-specific CDAS credentials and the Item Code issued to this third party. LoanHub uses this authentication foundation for deliberate, documented CDAS operations only. Employee, affordability, deduction and document requests are initiated by a user; no background CDAS crawling or automatic lifecycle processing is enabled.
+                                Your company uses its own CDAS account and Item Code, but credentials are held securely by the LoanHub Platform Owner. Your company never sees or replaces CDAS passwords, usernames or provider endpoints.
                             </CardDescription>
                         </div>
-                        <Badge variant={configuration?.enabled ? "default" : "secondary"}>
-                            {configuration?.enabled ? "CDAS enabled" : "CDAS disabled"}
-                        </Badge>
+                        <Badge variant={subscription?.status === "approved" ? "default" : "secondary"}>{titleCase(subscription?.status || "not subscribed")}</Badge>
                     </div>
                 </CardHeader>
-                <CardContent>
-                    <form className="space-y-5" onSubmit={save}>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label htmlFor="cdas-environment">Environment</Label>
-                                <select
-                                    id="cdas-environment"
-                                    value={form.environment}
-                                    disabled={!canManage || saving}
-                                    onChange={(event) => changeEnvironment(event.target.value as CdasEnvironment)}
-                                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                                >
-                                    <option value="test">Test</option>
-                                    <option value="live">Live</option>
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="cdas-timeout">Timeout seconds</Label>
-                                <Input
-                                    id="cdas-timeout"
-                                    type="number"
-                                    min={1}
-                                    max={120}
-                                    value={form.timeout_seconds}
-                                    disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({ ...current, timeout_seconds: Number(event.target.value) }))}
-                                />
-                            </div>
-                        </div>
+                <CardContent className="space-y-5">
+                    {subscription?.rejection_reason ? <Alert variant="destructive"><CircleX className="h-4 w-4" /><AlertTitle>Subscription rejected</AlertTitle><AlertDescription>{subscription.rejection_reason}</AlertDescription></Alert> : null}
 
-                        <div className="space-y-2">
-                            <Label htmlFor="cdas-base-url">Base URL</Label>
-                            <Input
-                                id="cdas-base-url"
-                                value={form.base_url}
-                                disabled={!canManage || saving || form.environment === "test"}
-                                onChange={(event) => setForm((current) => ({ ...current, base_url: event.target.value }))}
-                                placeholder="https://..."
-                            />
-                        </div>
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <Status label="Selected mode" value={configuration?.environment === "live" ? "Live" : "Test"} good={Boolean(profile?.configured)} />
+                        <Status label="Profile configured" value={profile?.configured ? "Yes" : "No"} good={Boolean(profile?.configured)} />
+                        <Status label="Connection test" value={profile?.last_test_status ? titleCase(profile.last_test_status) : "Not tested"} good={profile?.last_test_status === "connected"} />
+                        <Status label="Platform approval" value={subscription?.approved ? "Approved" : "Required"} good={Boolean(subscription?.approved)} />
+                    </div>
 
-                        <div className="grid gap-4 md:grid-cols-3">
-                            <div className="space-y-2">
-                                <Label htmlFor="cdas-username">Username</Label>
-                                <Input
-                                    id="cdas-username"
-                                    value={form.username}
-                                    disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
-                                    autoComplete="off"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="cdas-item-code">Item Code</Label>
-                                <Input
-                                    id="cdas-item-code"
-                                    value={form.item_code}
-                                    disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({ ...current, item_code: event.target.value }))}
-                                    placeholder="Issued by CDAS / DataNet"
-                                    autoComplete="off"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="cdas-password">Password</Label>
-                                <Input
-                                    id="cdas-password"
-                                    type="password"
-                                    value={form.password}
-                                    disabled={!canManage || saving || form.clear_password}
-                                    onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-                                    placeholder={configuration?.password_configured ? "Leave blank to keep stored password" : "Enter CDAS password"}
-                                    autoComplete="new-password"
-                                />
-                            </div>
-                        </div>
+                    {!subscription?.approved && subscription?.status !== "pending" && canManage ? (
+                        <Button onClick={() => void requestSubscription()} disabled={requesting}>
+                            {requesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                            Request CDAS subscription
+                        </Button>
+                    ) : null}
 
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            <label className="flex items-center gap-2 rounded-xl border p-3 text-sm font-medium">
-                                <input
-                                    type="checkbox"
-                                    checked={form.enabled}
-                                    disabled={!canManage || saving}
-                                    onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
-                                />
-                                Enable CDAS
-                            </label>
-                            <label className="flex items-center gap-2 rounded-xl border p-3 text-sm font-medium">
-                                <input
-                                    type="checkbox"
-                                    checked={form.clear_password}
-                                    disabled={!canManage || saving || Boolean(form.password)}
-                                    onChange={(event) => setForm((current) => ({ ...current, clear_password: event.target.checked }))}
-                                />
-                                Clear stored password
-                            </label>
+                    <div className="rounded-2xl border p-4">
+                        <p className="text-sm font-black">Company environment</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Only the Loan Company Owner can switch Test ↔ Live. Live can be selected only after the Platform Owner has configured and successfully tested your Live profile.</p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            <Button type="button" variant={configuration?.environment === "test" ? "default" : "outline"} disabled={!canSwitchEnvironment || switching || !subscription?.approved || !configuration?.profiles.test.configured} onClick={() => void switchEnvironment("test")}>Test</Button>
+                            <Button type="button" variant={configuration?.environment === "live" ? "default" : "outline"} disabled={!canSwitchEnvironment || switching || !subscription?.approved || configuration?.profiles.live.last_test_status !== "connected"} onClick={() => void switchEnvironment("live")}>Live</Button>
                         </div>
+                    </div>
 
-                        <div className="flex flex-wrap gap-2">
-                            <Button type="submit" disabled={!canManage || saving}>
-                                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                                Save configuration
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                disabled={!canManage || testing || !configuration?.configured}
-                                onClick={() => void testConnection()}
-                            >
-                                {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-                                Test login
-                            </Button>
-                            <Button asChild type="button" variant="outline">
-                                <Link href="/company/cdas"><ShieldCheck className="h-4 w-4" /> Open CDAS workspace</Link>
-                            </Button>
-                        </div>
-                    </form>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        {(["test", "live"] as CdasEnvironment[]).map((environment) => {
+                            const state = configuration?.profiles[environment];
+                            return (
+                                <div key={environment} className="rounded-2xl border p-4">
+                                    <p className="font-black">{environment === "live" ? "Live" : "Test"} profile</p>
+                                    <p className="mt-2 text-sm text-muted-foreground">{state?.configured ? "Configured centrally by Platform Owner" : "Not configured yet"}</p>
+                                    <div className="mt-3 flex items-center gap-2 text-xs font-bold">
+                                        {state?.last_test_status === "connected" ? <CircleCheck className="h-4 w-4 text-emerald-600" /> : <CircleX className="h-4 w-4 text-muted-foreground" />}
+                                        {state?.last_test_status ? titleCase(state.last_test_status) : "Not tested"}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </CardContent>
+            </Card>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <Status label="Live operations" value={String(usage?.live_transaction_count ?? 0)} />
+                <Status label="Outstanding" value={formatMoney(usage?.outstanding_balance ?? 0)} />
+                <Status label="Credit limit" value={usage?.credit_limit == null ? "Unlimited" : formatMoney(usage.credit_limit)} />
+                <Status label="Remaining credit" value={usage?.remaining_credit == null ? "Unlimited" : formatMoney(usage.remaining_credit)} />
+            </div>
+
+            <Card>
+                <CardHeader><CardTitle>Live PAYG pricing</CardTitle><CardDescription>Test operations cost M0.00. Pricing below applies only to successful Live business operations; login, token refresh and reconciliation traffic is not billed.</CardDescription></CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    {Object.entries(subscription?.pricing || {}).map(([key, price]) => (
+                        <div key={key} className="rounded-2xl border p-4"><p className="text-xs font-bold text-muted-foreground">{OPERATION_LABELS[key] || titleCase(key)}</p><p className="mt-2 text-lg font-black">{formatMoney(price)}</p></div>
+                    ))}
                 </CardContent>
             </Card>
 
             <Card>
-                <CardHeader>
-                    <CardTitle className="text-base">Integration status</CardTitle>
-                    <CardDescription>Manual documented CDAS operations with no background provider polling.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Credential storage</span>
-                        <strong>{configuration?.password_configured ? "Configured" : "Not configured"}</strong>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Last login test</span>
-                        <strong>{configuration?.last_test_status ?? "Not tested"}</strong>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Tested at</span>
-                        <strong>{configuration?.last_tested_at ? new Date(configuration.last_tested_at).toLocaleString() : "—"}</strong>
-                    </div>
-                    <Alert>
-                        {configuration?.last_test_status === "connected" ? <CircleCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
-                        <AlertTitle>Authentication foundation</AlertTitle>
-                        <AlertDescription>
-                            A successful login test proves token acquisition only. Each employee, affordability, deduction or document operation remains a separate deliberate request in the CDAS workspace.
-                        </AlertDescription>
-                    </Alert>
+                <CardHeader><CardTitle>CDAS invoices</CardTitle><CardDescription>Monthly Live PAYG statements. Standard payment term: {subscription?.billing_due_days ?? 14} days.</CardDescription></CardHeader>
+                <CardContent className="space-y-2">
+                    {invoices.length ? invoices.map((row) => (
+                        <div key={row.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <p className="text-sm font-black">{row.invoice_number}</p>
+                                <p className="text-xs text-muted-foreground">{row.period_start} → {row.period_end} · {row.transaction_count} operations · Due {new Date(row.due_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-sm font-black">{formatMoney(row.amount_due)}</p>
+                                <Badge variant={row.status === "paid" ? "default" : "secondary"}>{titleCase(row.status)}</Badge>
+                            </div>
+                        </div>
+                    )) : <p className="text-sm text-muted-foreground">No CDAS invoices have been issued yet.</p>}
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader><CardTitle>Recent CDAS usage</CardTitle><CardDescription>Successful metered business operations for this company.</CardDescription></CardHeader>
+                <CardContent className="space-y-2">
+                    {transactions.length ? transactions.map((row) => (
+                        <div key={row.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div><p className="text-sm font-black">{OPERATION_LABELS[row.operation_type] || titleCase(row.operation_type)}</p><p className="text-xs text-muted-foreground">{row.transaction_reference} · {row.environment.toUpperCase()}</p></div>
+                            <div className="text-sm font-black">{formatMoney(row.amount)}</div>
+                        </div>
+                    )) : <p className="text-sm text-muted-foreground">No CDAS usage has been recorded yet.</p>}
+                </CardContent>
+            </Card>
+
+            <div className="flex flex-wrap gap-2">
+                <Button asChild><Link href="/company/cdas"><ShieldCheck className="h-4 w-4" /> Open CDAS workspace</Link></Button>
+                <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" /> Refresh</Button>
+            </div>
         </div>
     );
+}
+
+function Status({ label, value, good }: { label: string; value: string; good?: boolean }) {
+    return <div className="rounded-2xl border p-4"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{label}</p><p className={`mt-2 text-sm font-black ${good ? "text-emerald-600" : ""}`}>{value}</p></div>;
 }

@@ -47,13 +47,16 @@ from database.schemas.governance_control import (
     DataRightsComplete,
     DataRightsCreate,
     DecisionRequest,
+    GatewayAdjustmentConfirmation,
     GuarantorCreate,
     GuarantorVerify,
     PaymentAdjustmentCreate,
 )
 from database.session import get_db
+from services.accounting_service import period_close_pack
 from services.governance_control_service import (
     approve_payment_adjustment,
+    confirm_gateway_adjustment,
     bank_line_fingerprint,
     match_bank_line,
     new_case_reference,
@@ -158,6 +161,30 @@ def approve_adjustment(adjustment_id: UUID, payload: DecisionRequest, db: Sessio
     return item
 
 
+@router.post("/payment-adjustments/{adjustment_id}/provider-confirm")
+def confirm_adjustment_provider_reversal(
+    adjustment_id: UUID,
+    payload: GatewayAdjustmentConfirmation,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
+    item = db.query(PaymentAdjustment).filter(
+        PaymentAdjustment.id == adjustment_id,
+        PaymentAdjustment.company_id == context.company_id,
+    ).with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    confirm_gateway_adjustment(
+        db,
+        adjustment=item,
+        provider_reference=payload.provider_reference,
+    )
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 @router.post("/payment-adjustments/{adjustment_id}/reject")
 def reject_adjustment(adjustment_id: UUID, payload: DecisionRequest, db: Session = Depends(get_db), context: TenantContext = Depends(get_tenant_context)):
     require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
@@ -207,9 +234,23 @@ def lock_accounting_period(period_id: UUID, payload: AccountingPeriodAction, db:
     item = db.query(AccountingPeriod).filter(AccountingPeriod.id == period_id, AccountingPeriod.company_id == context.company_id).with_for_update().first()
     if not item or item.status != "open":
         raise HTTPException(status_code=409, detail="Only an open company period can be locked")
-    drafts = db.query(JournalEntry.id).filter(JournalEntry.company_id == context.company_id, JournalEntry.entry_date.between(item.period_start, item.period_end), JournalEntry.status == "draft").count()
-    if drafts:
-        raise HTTPException(status_code=409, detail=f"Resolve {drafts} draft journal entries before locking the period")
+    pack = period_close_pack(
+        db,
+        company_id=context.company_id,
+        period_start=item.period_start,
+        period_end=item.period_end,
+        branch_id=item.branch_id,
+    )
+    if not pack["ready_to_lock"]:
+        failed = [name for name, passed in pack["checks"].items() if not passed]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Accounting period is not ready to lock",
+                "failed_checks": failed,
+                "close_pack": pack,
+            },
+        )
     item.status = "locked"
     item.locked_by_user_id = context.user.id
     item.locked_at = _now()

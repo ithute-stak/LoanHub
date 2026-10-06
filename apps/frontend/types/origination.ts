@@ -337,6 +337,9 @@ export type ApplicationIntegrationReadiness = {
     monthly_commitments: number | null;
     total_balance: number | null;
     defaults_count: number | null;
+    judgments_count: number | null;
+    collections_count: number | null;
+    recent_enquiries_count: number | null;
     identity_match: boolean | null;
     used_in_affordability: boolean;
     debt_mode: string;
@@ -352,6 +355,13 @@ export type ApplicationIntegrationReadiness = {
     employee_number: string | null;
     department: string | null;
     verified_at: string | null;
+    net_salary: number;
+    existing_deductions: number;
+    maximum_deduction_percent: number;
+    maximum_deduction: number;
+    available_deduction_capacity: number;
+    proposed_installment: number;
+    capacity_sufficient: boolean;
     collection_plan: Record<string, unknown>;
     ready_for_approval: boolean;
   };

@@ -27,22 +27,26 @@ _runtime_state: dict[str, dict[str, float | int | str | None]] = {}
 _ROUTING_ENV = {
     "go_reconciliation_hash": "LOANHUB_GO_RECON_HASH_MODE",
     "go_webhook_delivery": "LOANHUB_GO_WEBHOOK_DELIVERY_MODE",
-    "go_mobile_push": "LOANHUB_GO_MOBILE_PUSH_MODE",
+    "go_push_delivery": "LOANHUB_GO_PUSH_DELIVERY_MODE",
     "rust_reconciliation": "LOANHUB_RUST_RECON_MODE",
     "rust_loan_calculation": "LOANHUB_RUST_LOAN_CALC_MODE",
     "rust_portfolio_risk": "LOANHUB_RUST_PORTFOLIO_RISK_MODE",
+    "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
+    "rust_predictive_risk": "LOANHUB_RUST_PREDICTIVE_RISK_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
-    "java_report_csv": "LOANHUB_JAVA_REPORT_CSV_MODE",
+    "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
 _ROUTING_DEFAULTS = {
     "go_reconciliation_hash": "prefer-worker",
     "go_webhook_delivery": "off",
-    "go_mobile_push": "off",
+    "go_push_delivery": "off",
     "rust_reconciliation": "prefer-worker",
     "rust_loan_calculation": "shadow",
     "rust_portfolio_risk": "shadow",
+    "rust_affordability": "shadow",
+    "rust_predictive_risk": "shadow",
     "java_event_processing": "shadow",
-    "java_report_csv": "shadow",
+    "java_underwriting_rules": "shadow",
 }
 _ROUTING_MODES = {"off", "shadow", "prefer-worker"}
 
@@ -158,7 +162,14 @@ def _guarded_get_json(name: str, url: str, timeout: float) -> dict | None:
     return value
 
 
-def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> dict | None:
+def _guarded_post_json(
+    name: str,
+    url: str,
+    payload: dict,
+    timeout: float,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict | None:
     if not _worker_allowed(name):
         with _runtime_lock:
             state = _runtime_state.setdefault(name, {})
@@ -166,7 +177,12 @@ def _guarded_post_json(name: str, url: str, payload: dict, timeout: float) -> di
         return None
     started = monotonic()
     try:
-        value = _post_json(url, payload, timeout=timeout)
+        value = _post_json(
+            url,
+            payload,
+            timeout=timeout,
+            max_response_bytes=max_response_bytes,
+        )
     except (OSError, TypeError, ValueError, urllib.error.URLError) as exc:
         _record_failure(name, started, exc)
         return None
@@ -184,7 +200,13 @@ def _get_json(url: str, timeout: float = 0.8) -> dict:
     return value
 
 
-def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
+def _post_json(
+    url: str,
+    payload: dict,
+    timeout: float = 1.0,
+    *,
+    max_response_bytes: int = 64 * 1024,
+) -> dict:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -192,8 +214,11 @@ def _post_json(url: str, payload: dict, timeout: float = 1.0) -> dict:
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    limit = max(1024, int(max_response_bytes))
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read(64 * 1024)
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("worker response exceeds configured limit")
     value = json.loads(body.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("worker response must be an object")
@@ -242,6 +267,65 @@ def worker_statuses() -> list[WorkerStatus]:
                 )
             )
     return results
+
+
+def rust_affordability_assessment(
+    *,
+    base_income: str,
+    other_income: str,
+    living_expenses: str,
+    existing_debt_repayments: str,
+    dependants: int,
+    dependant_allowance: str,
+    living_expense_buffer: str,
+    proposed_installment: str,
+    disposable_income_usage_percent: str,
+    max_dti_percent: str,
+    max_installment_income_percent: str,
+    min_verified_net_income: str,
+    min_disposable_after_installment: str,
+) -> dict | None:
+    """Delegate deterministic affordability arithmetic to Rust.
+
+    The result is non-authoritative and must be parity-checked by Python before
+    it is accepted for a lender decision.
+    """
+    base_url = rust_compute_url()
+    if not base_url:
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/affordability-assessment",
+        {
+            "base_income": base_income,
+            "other_income": other_income,
+            "living_expenses": living_expenses,
+            "existing_debt_repayments": existing_debt_repayments,
+            "dependants": int(dependants),
+            "dependant_allowance": dependant_allowance,
+            "living_expense_buffer": living_expense_buffer,
+            "proposed_installment": proposed_installment,
+            "disposable_income_usage_percent": disposable_income_usage_percent,
+            "max_dti_percent": max_dti_percent,
+            "max_installment_income_percent": max_installment_income_percent,
+            "min_verified_net_income": min_verified_net_income,
+            "min_disposable_after_installment": min_disposable_after_installment,
+        },
+        timeout=1.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    required = {
+        "passed",
+        "monthly_income",
+        "maximum_affordable_installment",
+        "affordability_headroom",
+        "disposable_after_installment",
+        "dti_percent",
+    }
+    if not required.issubset(value):
+        return None
+    return value
 
 
 def rust_affordability_headroom_preview(
@@ -416,6 +500,44 @@ def java_canonicalize_event(
     return value
 
 
+def java_underwriting_rules(
+    *,
+    monthly_income: str,
+    min_verified_net_income: str,
+    proposed_installment: str,
+    maximum_affordable_installment: str,
+    disposable_after_installment: str,
+    min_disposable_after_installment: str,
+) -> dict | None:
+    """Delegate deterministic lender-rule evaluation to Java.
+
+    Python remains authoritative and parity-checks the Java result before use.
+    """
+    base_url = java_worker_url()
+    if not base_url:
+        return None
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/underwriting/rules",
+        {
+            "monthly_income": monthly_income,
+            "min_verified_net_income": min_verified_net_income,
+            "proposed_installment": proposed_installment,
+            "maximum_affordable_installment": maximum_affordable_installment,
+            "disposable_after_installment": disposable_after_installment,
+            "min_disposable_after_installment": min_disposable_after_installment,
+        },
+        timeout=1.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    if value.get("decision") not in {"pass", "fail"}:
+        return None
+    if not isinstance(value.get("reasons"), list):
+        return None
+    return value
+
+
 def java_event_batch_summary(*, events: list[dict]) -> dict | None:
     """Ask Java to summarize replayable event batches for operational analytics."""
     base_url = java_worker_url()
@@ -477,26 +599,46 @@ def go_webhook_delivery_batch(*, jobs: list[dict]) -> list[dict] | None:
     return [item for item in results if isinstance(item, dict)]
 
 
-def go_mobile_push_batch(
+def rust_predictive_signal_batch(*, rows: list[dict]) -> list[dict] | None:
+    """Delegate deterministic predictive risk scoring to Rust as one batch."""
+    base_url = rust_compute_url()
+    if not base_url or not rows:
+        return None
+    value = _guarded_post_json(
+        "rust_compute",
+        f"{base_url}/v1/predictive-signal-batch",
+        {"rows": rows},
+        timeout=2.5,
+        max_response_bytes=8 * 1024 * 1024,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    results = value.get("results")
+    if not isinstance(results, list):
+        return None
+    return [item for item in results if isinstance(item, dict)]
+
+
+def go_push_delivery_batch(
     *,
     project_id: str,
     access_token: str,
     jobs: list[dict],
 ) -> list[dict] | None:
-    """Fan out prepared FCM v1 messages through Go.
+    """Execute prepared FCM push jobs in Go.
 
-    Python remains responsible for recipient selection, notification policy,
-    and minting the short-lived OAuth token. Go receives no long-lived
-    Firebase credential and performs no automatic retry.
+    Python owns recipient resolution, notification policy and credential
+    acquisition. Go receives only a short-lived OAuth access token and performs
+    bounded concurrent provider HTTP calls. No automatic retry occurs here.
     """
-    if workload_routing_mode("go_mobile_push") != "prefer-worker":
+    if workload_routing_mode("go_push_delivery") != "prefer-worker":
         return None
     base_url = go_worker_url()
-    if not base_url or not project_id or not access_token or not jobs:
+    if not base_url or not jobs or not project_id or not access_token:
         return None
     value = _guarded_post_json(
         "go_worker",
-        f"{base_url}/v1/push/fcm-deliver-batch",
+        f"{base_url}/v1/push/deliver-batch",
         {
             "project_id": project_id,
             "access_token": access_token,
@@ -510,30 +652,3 @@ def go_mobile_push_batch(
     if not isinstance(results, list):
         return None
     return [item for item in results if isinstance(item, dict)]
-
-
-def java_report_csv(
-    *,
-    metadata: dict,
-    metrics_items: list[list],
-) -> dict | None:
-    """Render deterministic report CSV bytes in Java."""
-    base_url = java_worker_url()
-    if not base_url or workload_routing_mode("java_report_csv") == "off":
-        return None
-    value = _guarded_post_json(
-        "java_worker",
-        f"{base_url}/v1/reports/render-csv",
-        {
-            "metadata": metadata,
-            "metrics_items": metrics_items,
-        },
-        timeout=2.0,
-    )
-    if value is None or value.get("authoritative") is not False:
-        return None
-    if not isinstance(value.get("content_base64"), str):
-        return None
-    if not isinstance(value.get("sha256"), str):
-        return None
-    return value

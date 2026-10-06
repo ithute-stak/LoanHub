@@ -19,6 +19,10 @@ DEFAULT_EXPERIAN_POLICY: dict[str, Any] = {
     "max_report_age_hours": 24,
     "required_above_amount": None,
     "required_product_ids": [],
+    "block_defaults": False,
+    "block_judgments": False,
+    "block_collections": False,
+    "require_identity_match": False,
 }
 
 

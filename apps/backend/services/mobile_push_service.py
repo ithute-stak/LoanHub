@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from database.models.mobile_push import MobilePushDevice
 from database.session import SessionLocal
 from services.polyglot_runtime_service import (
-    go_mobile_push_batch,
+    go_push_delivery_batch,
+    go_worker_url,
     workload_routing_mode,
 )
 
@@ -44,28 +45,31 @@ def _firebase_messaging():
 
 
 def _firebase_access_token() -> tuple[str, str] | None:
-    """Return project id + short-lived OAuth token for the Go FCM worker."""
+    """Return project id plus a short-lived FCM OAuth token.
+
+    Long-lived service-account credentials stay with Python/ADC and are never
+    forwarded to the Go worker.
+    """
+
     project_id = (os.getenv("FIREBASE_PROJECT_ID") or "").strip()
     if not project_id:
         return None
     try:
-        import firebase_admin
-        from google.auth.transport.requests import Request as GoogleAuthRequest
+        import google.auth
+        from google.auth.transport.requests import Request
 
-        try:
-            app = firebase_admin.get_app()
-        except ValueError:
-            app = firebase_admin.initialize_app(options={"projectId": project_id})
-
-        credential = app.credential.get_credential()
-        if not getattr(credential, "valid", False):
-            credential.refresh(GoogleAuthRequest())
-        token = str(getattr(credential, "token", "") or "").strip()
-        if not token:
+        credentials, discovered_project = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/firebase.messaging"]
+        )
+        if not credentials.valid or not credentials.token:
+            credentials.refresh(Request())
+        token = str(credentials.token or "").strip()
+        resolved_project = project_id or str(discovered_project or "").strip()
+        if not token or not resolved_project:
             return None
-        return project_id, token
-    except Exception as exc:  # pragma: no cover - deployment credentials/network
-        logger.warning("LoanHub Firebase OAuth token is unavailable: %s", exc)
+        return resolved_project, token
+    except Exception as exc:  # pragma: no cover - deployment credentials
+        logger.warning("LoanHub push access token is unavailable: %s", exc)
         return None
 
 
@@ -124,14 +128,17 @@ def _notification_for_recipient(event: dict, recipient_id: UUID | str) -> dict |
     return None
 
 
-def _push_message_parts(event: dict, notification: dict) -> tuple[str, str, str, dict[str, str]]:
-    category = str(notification.get("category") or event.get("domain") or "general")
-    channel_id = {
+def _channel_id(category: str) -> str:
+    return {
         "chat": "loanhub_messages",
         "message": "loanhub_messages",
         "money": "loanhub_money",
         "call": "loanhub_calls",
     }.get(category, "loanhub_events")
+
+
+def _push_data(event: dict, notification: dict) -> tuple[str, str, str, dict[str, str]]:
+    category = str(notification.get("category") or event.get("domain") or "general")
     title = str(notification.get("title") or "LoanHub")[:120]
     body = str(notification.get("body") or "You have a new LoanHub update")[:240]
     data = {
@@ -144,83 +151,15 @@ def _push_message_parts(event: dict, notification: dict) -> tuple[str, str, str,
         "body": body,
         "category": category,
     }
-    return channel_id, title, body, data
+    return title, body, _channel_id(category), data
 
 
-def _send_via_go(db: Session, user_ids: list[UUID | str], event: dict) -> bool:
-    auth = _firebase_access_token()
-    if auth is None:
-        return False
-    project_id, access_token = auth
-    jobs: list[dict] = []
-    sequence = 0
+def _send_sync_python(user_ids: list[UUID | str], event: dict) -> None:
+    messaging = _firebase_messaging()
+    if messaging is None:
+        return
 
-    for user_id in user_ids:
-        notification = _notification_for_recipient(event, user_id)
-        if not notification:
-            continue
-        tokens = _active_tokens(db, [user_id])
-        if not tokens:
-            continue
-        channel_id, title, body, data = _push_message_parts(event, notification)
-        for token in tokens:
-            sequence += 1
-            jobs.append(
-                {
-                    "job_id": f"{str(event.get('event_id') or 'event')}:{sequence}",
-                    "token": token,
-                    "data": data,
-                    "notification": {"title": title, "body": body},
-                    "channel_id": channel_id,
-                }
-            )
-
-    if not jobs:
-        return True
-
-    # FCM HTTP v1 accepts one target token per request. Go provides the
-    # concurrency; keep each internal batch bounded to 500 jobs.
-    for start in range(0, len(jobs), 500):
-        results = go_mobile_push_batch(
-            project_id=project_id,
-            access_token=access_token,
-            jobs=jobs[start : start + 500],
-        )
-        if results is None:
-            logger.warning(
-                "LoanHub Go push worker unavailable or push outcome unknown; "
-                "not replaying through Python to avoid duplicate notifications"
-            )
-            return True
-        failed = [
-            item
-            for item in results
-            if int(item.get("status_code") or 0) < 200
-            or int(item.get("status_code") or 0) >= 300
-            or item.get("error")
-        ]
-        if failed:
-            logger.warning(
-                "LoanHub Go push delivery returned %s failed targets out of %s",
-                len(failed),
-                len(results),
-            )
-    return True
-
-
-def _send_sync(user_ids: list[UUID | str], event: dict) -> None:
-    routing_mode = workload_routing_mode("go_mobile_push")
     with SessionLocal() as db:
-        if routing_mode == "prefer-worker" and _send_via_go(db, user_ids, event):
-            return
-
-        # Side-effecting shadow mode intentionally uses only the established
-        # Python/Firebase transport. Sending through both runtimes would
-        # duplicate user notifications.
-        messaging = _firebase_messaging()
-        if messaging is None:
-            return
-
         for user_id in user_ids:
             notification = _notification_for_recipient(event, user_id)
             if not notification:
@@ -229,7 +168,7 @@ def _send_sync(user_ids: list[UUID | str], event: dict) -> None:
             if not tokens:
                 continue
 
-            channel_id, title, body, data = _push_message_parts(event, notification)
+            title, body, channel_id, data = _push_data(event, notification)
             android = messaging.AndroidConfig(
                 priority="high",
                 notification=messaging.AndroidNotification(
@@ -250,6 +189,84 @@ def _send_sync(user_ids: list[UUID | str], event: dict) -> None:
                     )
                 except Exception as exc:  # pragma: no cover - provider/network
                     logger.warning("LoanHub push delivery failed: %s", exc)
+
+
+def _send_sync_go(user_ids: list[UUID | str], event: dict) -> bool:
+    """Prepare policy-scoped push jobs and hand network fan-out to Go.
+
+    Returns False only when no Go handoff was possible before any provider send,
+    allowing the caller to use the existing Python transport safely.
+    """
+
+    if not go_worker_url():
+        return False
+    credentials = _firebase_access_token()
+    if credentials is None:
+        return False
+    project_id, access_token = credentials
+
+    jobs: list[dict[str, object]] = []
+    with SessionLocal() as db:
+        for user_id in user_ids:
+            notification = _notification_for_recipient(event, user_id)
+            if not notification:
+                continue
+            tokens = _active_tokens(db, [user_id])
+            if not tokens:
+                continue
+
+            title, body, channel_id, data = _push_data(event, notification)
+            for token in tokens:
+                jobs.append(
+                    {
+                        "job_id": f"{event.get('event_id') or 'push'}:{len(jobs)}",
+                        "token": token,
+                        "title": title,
+                        "body": body,
+                        "channel_id": channel_id,
+                        "data": data,
+                        "timeout_ms": 10_000,
+                    }
+                )
+
+    if not jobs:
+        return True
+
+    for start in range(0, len(jobs), 200):
+        batch = jobs[start : start + 200]
+        results = go_push_delivery_batch(
+            project_id=project_id,
+            access_token=access_token,
+            jobs=batch,
+        )
+        if results is None:
+            logger.warning(
+                "LoanHub Go push delivery outcome is unknown; the batch is not "
+                "replayed through Python to avoid duplicate notifications"
+            )
+            return True
+        failures = [
+            item
+            for item in results
+            if int(item.get("status_code") or 0) < 200
+            or int(item.get("status_code") or 0) >= 300
+            or item.get("error")
+        ]
+        if failures:
+            logger.warning(
+                "LoanHub Go push batch completed with %s/%s provider failures",
+                len(failures),
+                len(results),
+            )
+    return True
+
+
+def _send_sync(user_ids: list[UUID | str], event: dict) -> None:
+    # Side-effecting push delivery is never dual-sent in shadow mode.
+    if workload_routing_mode("go_push_delivery") == "prefer-worker":
+        if _send_sync_go(user_ids, event):
+            return
+    _send_sync_python(user_ids, event)
 
 
 async def send_push_event(user_ids: Iterable[UUID | str], event: dict) -> None:

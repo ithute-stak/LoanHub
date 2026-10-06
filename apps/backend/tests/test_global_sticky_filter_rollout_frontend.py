@@ -11,7 +11,6 @@ STICKY_TOOLBAR_CONSUMERS = {
     "app/(dashboard)/company/cashier/page.tsx": "Cashier loan and borrower search",
     "app/(dashboard)/company/clients/page.tsx": "Company client search and filters",
     "app/(dashboard)/company/collections/page.tsx": "Collections recovery queue search and filters",
-    "app/(dashboard)/company/expense-management/page.tsx": "Money book search and direction filters",
     "app/(dashboard)/company/marketplace/_components/internal-applications-workspace.tsx": "Internal application search and status filters",
     "app/(dashboard)/company/products/page.tsx": "Loan product search",
     "app/(dashboard)/superadmin/companies/_components/companies-table.tsx": "Company management search and filters",

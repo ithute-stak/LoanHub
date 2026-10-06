@@ -794,6 +794,344 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct AffordabilityAssessmentRequest {
+    base_income: String,
+    other_income: String,
+    living_expenses: String,
+    existing_debt_repayments: String,
+    dependants: i64,
+    dependant_allowance: String,
+    living_expense_buffer: String,
+    proposed_installment: String,
+    disposable_income_usage_percent: String,
+    max_dti_percent: String,
+    max_installment_income_percent: String,
+    min_verified_net_income: String,
+    min_disposable_after_installment: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AffordabilityAssessmentResponse {
+    passed: bool,
+    monthly_income: String,
+    base_income: String,
+    other_income: String,
+    living_expenses: String,
+    existing_debt_repayments: String,
+    dependant_allowance_total: String,
+    configured_buffer: String,
+    disposable_before_new_loan: String,
+    proposed_installment: String,
+    maximum_affordable_installment: String,
+    affordability_headroom: String,
+    disposable_after_installment: String,
+    dti_percent: String,
+    disposable_income_limit: String,
+    dti_limit: String,
+    installment_income_limit: String,
+    minimum_disposable_after_installment: String,
+    income_missing: bool,
+    income_below_minimum: bool,
+    installment_above_limit: bool,
+    disposable_income_too_low: bool,
+    authoritative: bool,
+}
+
+fn affordability_assessment(
+    req: &AffordabilityAssessmentRequest,
+) -> Result<AffordabilityAssessmentResponse, String> {
+    let base_income = money(decimal(&req.base_income)?);
+    let other_income = money(decimal(&req.other_income)?);
+    let income = money(base_income + other_income);
+    let living = money(decimal(&req.living_expenses)?);
+    let debt = money(decimal(&req.existing_debt_repayments)?);
+    let dependant_allowance = money(decimal(&req.dependant_allowance)?);
+    let dependant_total = money(Decimal::from(req.dependants.max(0)) * dependant_allowance);
+    let buffer_amount = money(decimal(&req.living_expense_buffer)?);
+    let installment = money(decimal(&req.proposed_installment)?);
+
+    let committed_before_new_loan = money(living + debt + dependant_total + buffer_amount);
+    let disposable_before_new_loan = money(income - committed_before_new_loan);
+    let disposable_percent = decimal(&req.disposable_income_usage_percent)?;
+    let max_dti_percent = decimal(&req.max_dti_percent)?;
+    let max_installment_percent = decimal(&req.max_installment_income_percent)?;
+
+    let positive_disposable = if disposable_before_new_loan > Decimal::ZERO {
+        disposable_before_new_loan
+    } else {
+        Decimal::ZERO
+    };
+    let disposable_limit = money(
+        positive_disposable * disposable_percent / Decimal::from(100_i64)
+    );
+
+    let raw_dti_limit =
+        income * max_dti_percent / Decimal::from(100_i64) - debt;
+    let dti_limit = money(if raw_dti_limit > Decimal::ZERO {
+        raw_dti_limit
+    } else {
+        Decimal::ZERO
+    });
+
+    let installment_income_limit = money(
+        income * max_installment_percent / Decimal::from(100_i64)
+    );
+    let maximum_affordable_installment = money(
+        disposable_limit.min(dti_limit).min(installment_income_limit)
+    );
+    let after_installment = money(disposable_before_new_loan - installment);
+    let dti = if income > Decimal::ZERO {
+        ((debt + installment) * Decimal::from(100_i64) / income)
+            .round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero)
+    } else {
+        Decimal::from(100_i64)
+    };
+    let headroom = money(maximum_affordable_installment - installment);
+    let minimum_income = money(decimal(&req.min_verified_net_income)?);
+    let minimum_after = money(decimal(&req.min_disposable_after_installment)?);
+
+    let income_missing = income <= Decimal::ZERO;
+    let income_below_minimum = !income_missing && income < minimum_income;
+    let installment_above_limit = installment > maximum_affordable_installment;
+    let disposable_income_too_low = after_installment < minimum_after;
+    let passed = !income_missing
+        && !income_below_minimum
+        && !installment_above_limit
+        && !disposable_income_too_low;
+
+    Ok(AffordabilityAssessmentResponse {
+        passed,
+        monthly_income: income.to_string(),
+        base_income: base_income.to_string(),
+        other_income: other_income.to_string(),
+        living_expenses: living.to_string(),
+        existing_debt_repayments: debt.to_string(),
+        dependant_allowance_total: dependant_total.to_string(),
+        configured_buffer: buffer_amount.to_string(),
+        disposable_before_new_loan: disposable_before_new_loan.to_string(),
+        proposed_installment: installment.to_string(),
+        maximum_affordable_installment: maximum_affordable_installment.to_string(),
+        affordability_headroom: headroom.to_string(),
+        disposable_after_installment: after_installment.to_string(),
+        dti_percent: dti.to_string(),
+        disposable_income_limit: disposable_limit.to_string(),
+        dti_limit: dti_limit.to_string(),
+        installment_income_limit: installment_income_limit.to_string(),
+        minimum_disposable_after_installment: minimum_after.to_string(),
+        income_missing,
+        income_below_minimum,
+        installment_above_limit,
+        disposable_income_too_low,
+        authoritative: false,
+    })
+}
+
+
+
+#[derive(Debug, Deserialize)]
+struct PredictiveSignalInput {
+    key: String,
+    current_dpd: i64,
+    previous_dpd: Option<i64>,
+    current_bucket: String,
+    previous_bucket: Option<String>,
+    first_payment_default: bool,
+    is_top_up: bool,
+    has_work_item: bool,
+    work_priority: Option<String>,
+    work_priority_score: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PredictiveSignalBatchRequest {
+    rows: Vec<PredictiveSignalInput>,
+}
+
+#[derive(Debug, Serialize)]
+struct PredictiveSignalOutput {
+    key: String,
+    risk_score: String,
+    risk_band: String,
+    projected_par30_entry: bool,
+    stress_bucket_30d: String,
+    rationale: Vec<String>,
+    recommended_action: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PredictiveSignalBatchResponse {
+    results: Vec<PredictiveSignalOutput>,
+    authoritative: bool,
+}
+
+fn predictive_band(score: Decimal) -> &'static str {
+    if score >= Decimal::from(80_i64) {
+        "critical"
+    } else if score >= Decimal::from(60_i64) {
+        "high"
+    } else if score >= Decimal::from(40_i64) {
+        "elevated"
+    } else if score >= Decimal::from(20_i64) {
+        "watch"
+    } else {
+        "stable"
+    }
+}
+
+fn predictive_bucket(days: i64) -> &'static str {
+    if days <= 0 {
+        "current"
+    } else if days <= 7 {
+        "1-7"
+    } else if days <= 30 {
+        "8-30"
+    } else if days <= 60 {
+        "31-60"
+    } else if days <= 90 {
+        "61-90"
+    } else {
+        "90+"
+    }
+}
+
+fn bucket_rank(value: &str) -> i64 {
+    match value {
+        "1-7" => 1,
+        "8-30" => 2,
+        "31-60" => 3,
+        "61-90" => 4,
+        "90+" => 5,
+        _ => 0,
+    }
+}
+
+fn predictive_signal(row: &PredictiveSignalInput) -> Result<PredictiveSignalOutput, String> {
+    let mut score = Decimal::ZERO;
+    let mut rationale = Vec::new();
+    let dpd = row.current_dpd;
+
+    if dpd >= 90 {
+        score += Decimal::from(75_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 60 {
+        score += Decimal::from(60_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 30 {
+        score += Decimal::from(45_i64);
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if dpd >= 8 {
+        score += Decimal::from(25_i64);
+        rationale.push(format!("Loan is already {dpd} days past due"));
+    } else if dpd >= 1 {
+        score += Decimal::from(12_i64);
+        rationale.push(format!("Loan is {dpd} days past due"));
+    }
+
+    let dpd_change = row.previous_dpd.map(|previous| dpd - previous);
+    if let Some(change) = dpd_change {
+        if change >= 15 {
+            score += Decimal::from(15_i64);
+            rationale.push(format!(
+                "DPD increased by {change} days since the prior stored snapshot"
+            ));
+        } else if change >= 7 {
+            score += Decimal::from(10_i64);
+            rationale.push(format!(
+                "DPD increased by {change} days since the prior stored snapshot"
+            ));
+        }
+    }
+
+    if let Some(previous_bucket) = row.previous_bucket.as_deref() {
+        if previous_bucket != row.current_bucket
+            && bucket_rank(&row.current_bucket) > bucket_rank(previous_bucket)
+        {
+            score += Decimal::from(8_i64);
+            rationale.push(format!(
+                "Delinquency bucket worsened from {previous_bucket} to {}",
+                row.current_bucket
+            ));
+        }
+    }
+
+    if row.first_payment_default {
+        score += Decimal::from(20_i64);
+        rationale.push("First-payment-default evidence is present".to_string());
+    }
+    if row.is_top_up && dpd > 0 {
+        score += Decimal::from(5_i64);
+        rationale.push("This is a top-up exposure already showing repayment stress".to_string());
+    }
+
+    if row.has_work_item {
+        let priority = row.work_priority.as_deref().unwrap_or("");
+        if matches!(priority, "critical" | "urgent") {
+            score += Decimal::from(10_i64);
+            rationale.push(format!(
+                "Collections already has a {priority} work item"
+            ));
+        } else {
+            let priority_score = row
+                .work_priority_score
+                .as_deref()
+                .map(decimal)
+                .transpose()?
+                .unwrap_or(Decimal::ZERO);
+            if priority == "high" || priority_score >= Decimal::from(70_i64) {
+                score += Decimal::from(6_i64);
+                rationale.push("Collections already has a high-priority work item".to_string());
+            }
+        }
+    }
+
+    if score > Decimal::from(100_i64) {
+        score = Decimal::from(100_i64);
+    }
+    let band = predictive_band(score);
+    let projected_par30 = (1..30).contains(&dpd)
+        && (dpd >= 8
+            || row.first_payment_default
+            || dpd_change.map(|change| change >= 7).unwrap_or(false));
+    let stress_bucket = if dpd > 0 {
+        predictive_bucket(dpd.saturating_add(30)).to_string()
+    } else {
+        row.current_bucket.clone()
+    };
+    let action = match band {
+        "critical" | "high" => "Review the loan and active collection evidence now, then assign or reprioritise the appropriate human recovery action.",
+        "elevated" => "Prioritise a human account review and borrower contact before the next repayment date or collection cycle.",
+        "watch" => "Monitor the next scheduled repayment and confirm that the collection route remains valid.",
+        _ => "No predictive escalation is indicated; continue normal servicing and monitoring.",
+    };
+
+    Ok(PredictiveSignalOutput {
+        key: row.key.clone(),
+        risk_score: score.to_string(),
+        risk_band: band.to_string(),
+        projected_par30_entry: projected_par30,
+        stress_bucket_30d: stress_bucket,
+        rationale,
+        recommended_action: action.to_string(),
+    })
+}
+
+fn predictive_signal_batch(
+    req: &PredictiveSignalBatchRequest,
+) -> Result<PredictiveSignalBatchResponse, String> {
+    if req.rows.len() > 10_000 {
+        return Err("too_many_rows".to_string());
+    }
+    let mut results = Vec::with_capacity(req.rows.len());
+    for row in &req.rows {
+        results.push(predictive_signal(row)?);
+    }
+    Ok(PredictiveSignalBatchResponse {
+        results,
+        authoritative: false,
+    })
+}
+
 fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     if req.term_months == 0 || req.term_months > 120 || req.due_dates.len() != req.term_months {
         return Err("invalid term or due_dates".to_string());
@@ -837,6 +1175,50 @@ fn main() {
             match serde_json::from_str::<PortfolioRiskRequest>(&body)
                 .map_err(|_| "invalid_json".to_string())
                 .and_then(|payload| portfolio_risk_summary(&payload))
+            {
+                Ok(result) => {
+                    let body = serde_json::to_string(&result).unwrap();
+                    let _ = request.respond(json_response(200, body));
+                }
+                Err(error) => {
+                    let body = serde_json::json!({"error": error}).to_string();
+                    let _ = request.respond(json_response(422, body));
+                }
+            }
+            continue;
+        }
+
+        if request.method() == &Method::Post && url == "/v1/affordability-assessment" {
+            let mut body = String::new();
+            if request.as_reader().read_to_string(&mut body).is_err() {
+                let _ = request.respond(json_response(400, r#"{"error":"invalid_body"}"#.to_string()));
+                continue;
+            }
+            match serde_json::from_str::<AffordabilityAssessmentRequest>(&body)
+                .map_err(|_| "invalid_json".to_string())
+                .and_then(|payload| affordability_assessment(&payload))
+            {
+                Ok(result) => {
+                    let body = serde_json::to_string(&result).unwrap();
+                    let _ = request.respond(json_response(200, body));
+                }
+                Err(error) => {
+                    let body = serde_json::json!({"error": error}).to_string();
+                    let _ = request.respond(json_response(422, body));
+                }
+            }
+            continue;
+        }
+
+        if request.method() == &Method::Post && url == "/v1/predictive-signal-batch" {
+            let mut body = String::new();
+            if request.as_reader().read_to_string(&mut body).is_err() {
+                let _ = request.respond(json_response(400, r#"{"error":"invalid_body"}"#.to_string()));
+                continue;
+            }
+            match serde_json::from_str::<PredictiveSignalBatchRequest>(&body)
+                .map_err(|_| "invalid_json".to_string())
+                .and_then(|payload| predictive_signal_batch(&payload))
             {
                 Ok(result) => {
                     let body = serde_json::to_string(&result).unwrap();

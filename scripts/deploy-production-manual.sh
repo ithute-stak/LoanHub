@@ -280,6 +280,9 @@ echo "[LoanHub] Starting persistent database and cache"
 "${compose[@]}" up -d --no-build --pull never db redis
 wait_healthy db 45 2
 
+echo "[LoanHub] Ensuring least-privilege runtime database role"
+"${compose[@]}" run --rm --no-deps db-role-bootstrap
+
 echo "[LoanHub] Running candidate backend import smoke before database migration or application cutover"
 "${compose[@]}" run --rm --no-deps backend python -c 'import main; print("LoanHub backend import smoke passed")'
 

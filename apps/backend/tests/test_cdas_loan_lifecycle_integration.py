@@ -27,19 +27,21 @@ def test_cdas_application_employee_verification_links_verified_payroll_profile()
     assert "A verified CDAS payroll profile with an employee number is required" in lending
 
 
-def test_cdas_company_item_code_is_stored_for_provider_registration() -> None:
+def test_cdas_item_code_is_platform_owned_for_provider_registration() -> None:
     router = _read(ROOT / "routers/cdas_api.py")
     service = _read(ROOT / "services/cdas_config_service.py")
+    platform_router = _read(ROOT / "routers/platform_cdas.py")
     settings = _read(
         FRONTEND_ROOT
         / "app/(dashboard)/company/settings/_components/company-cdas-settings.tsx"
     )
 
-    assert "item_code: str | None" in router
-    assert "item_code=payload.item_code" in router
-    assert '"item_code": item_code' in service
-    assert 'id="cdas-item-code"' in settings
-    assert "Issued by CDAS / DataNet" in settings
+    assert "get_company_item_code(db, company_id)" in router
+    assert "profile.item_code" in service
+    assert "item_code: str | None" in platform_router
+    assert "item_code=payload.item_code" in platform_router
+    assert 'id="cdas-item-code"' not in settings
+    assert "credentials are held securely by the LoanHub Platform Owner" in settings
 
 
 def test_cdas_approved_loan_registration_draft_is_local_and_provider_safe() -> None:
@@ -144,3 +146,18 @@ def test_linked_cdas_modify_and_settlement_use_saved_provider_identity() -> None
     assert "/cdas/loans/${selectedLoanId}/settle" in page
     assert "setModify((current) => ({" in page
     assert "setSettle((current) => ({" in page
+
+
+
+def test_cdas_collected_loan_requires_reconciled_provider_mandate_before_disbursement() -> None:
+    service = _read(ROOT / "services/loan_service.py")
+
+    assert "def assert_disbursement_governance_ready(" in service
+    assert "CDASDeductionMandate" in service
+    assert "CdasOfficialMandateState" in service
+    assert 'usable_mandate_statuses = {"registered", "approved", "active"}' in service
+    assert 'usable_lifecycle_statuses = {"registered", "approved", "active"}' in service
+    assert "state.deduction_id is None" in service
+    assert "bool(state.requires_reconciliation)" in service
+    assert "Register the mandate before disbursement." in service
+    assert "Complete provider registration/reconciliation" in service

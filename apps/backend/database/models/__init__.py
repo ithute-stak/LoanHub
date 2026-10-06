@@ -54,7 +54,18 @@ from database.models.notification import Notification
 from database.models.payment import PaymentTransaction
 from database.models.lelefa_paygate import LelefaPayGateWebhookEvent
 from database.models.lelefa_paygate_configuration import LelefaPayGateConfiguration
-from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
+from database.models.platform_credit_bureau import (
+    PlatformCreditBureauConfiguration,
+    PlatformCreditBureauSubscription,
+    PlatformCreditBureauTransaction,
+    PlatformCreditBureauInvoice,
+)
+from database.models.platform_cdas import (
+    PlatformCdasSubscription,
+    PlatformCdasCredentialProfile,
+    PlatformCdasTransaction,
+    PlatformCdasInvoice,
+)
 from database.models.polyglot_benchmark import PolyglotBenchmarkRun
 from database.models.early_settlement import LoanEarlySettlement
 from database.models.loan_payment_operations import (
@@ -160,6 +171,13 @@ __all__ = [
     "LelefaPayGateWebhookEvent",
     "LelefaPayGateConfiguration",
     "PlatformCreditBureauConfiguration",
+    "PlatformCreditBureauSubscription",
+    "PlatformCreditBureauTransaction",
+    "PlatformCreditBureauInvoice",
+    "PlatformCdasSubscription",
+    "PlatformCdasCredentialProfile",
+    "PlatformCdasTransaction",
+    "PlatformCdasInvoice",
     "PolyglotBenchmarkRun",
     "LoanEarlySettlement",
     "AccountingExport",

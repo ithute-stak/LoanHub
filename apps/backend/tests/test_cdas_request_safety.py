@@ -168,7 +168,7 @@ def test_clean_company_client_wires_quota_guard_shared_session_and_local_status(
     assert "get_cdas_request_budget_status" in router_source
     assert '"Return LoanHub\'s local CDAS quota counter without contacting CDAS."' in router_source
     assert "consume_cdas_request_budget" in config_source
-    assert "request_guard=_request_guard(company_id, credentials.environment)" in config_source
+    assert "request_guard=_request_guard(company_id, environment)" in config_source
     assert "RedisCdasSessionBroker" in config_source
     assert "session_broker=_shared_session_broker(credentials, generation=signature)" in config_source
     assert '"shared_session_enabled": bool(settings.REDIS_URL)' in config_source

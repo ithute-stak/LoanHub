@@ -321,6 +321,8 @@ def accrue_platform_transaction_charge(
     )
     db.add(entry)
     db.flush()
+    from services.accounting_service import record_platform_transaction_charge_accrual
+    record_platform_transaction_charge_accrual(db, entry)
     return entry
 
 

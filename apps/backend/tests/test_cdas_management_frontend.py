@@ -74,13 +74,17 @@ def test_document_retrieval_is_manual_management_only_and_downloadable() -> None
     assert "could not be decoded for download" in source
 
 
-def test_settings_describe_full_manual_integration_without_background_polling() -> None:
+def test_settings_use_platform_owned_subscription_and_owner_environment_switch() -> None:
     source = SETTINGS.read_text(encoding="utf-8")
 
-    assert 'reintegration_phase: "manual_documented_operations"' in source
-    assert "no background CDAS crawling or automatic lifecycle processing is enabled" in source
+    assert "CDAS platform service" in source
+    assert "credentials are held securely by the LoanHub Platform Owner" in source
+    assert 'activeRole === "company_owner"' in source
+    assert 'api.post("/cdas/subscription")' in source
+    assert 'api.put<CdasConfiguration>("/cdas/environment"' in source
     assert 'href="/company/cdas"' in source
-    assert "authentication-only" not in source.lower()
+    for secret_field in ('cdas-username', 'cdas-password', 'cdas-item-code', 'cdas-base-url'):
+        assert secret_field not in source
 
 def test_cdas_documents_bridge_safely_into_reconciliation() -> None:
     source = DOCUMENTS.read_text(encoding="utf-8")

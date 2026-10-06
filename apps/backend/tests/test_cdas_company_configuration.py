@@ -1,28 +1,19 @@
 from __future__ import annotations
 
-import pytest
-
-from services.cdas_config_service import (
-    DEFAULT_TEST_BASE_URL,
-    _validate_base_url,
-    _validate_environment_base_url,
-    configuration_summary,
-)
+from services.cdas_config_service import configuration_summary
 
 
-def test_default_configuration_reports_documented_manual_integration_phase():
+def test_default_configuration_reports_platform_owned_manual_integration_phase():
     summary = configuration_summary(None)
     assert summary["environment"] == "test"
-    assert summary["base_url"] == DEFAULT_TEST_BASE_URL
     assert summary["configured"] is False
+    assert summary["enabled"] is False
     assert summary["reintegration_phase"] == "manual_documented_operations"
+    assert summary["profiles"]["test"]["configured"] is False
+    assert summary["profiles"]["live"]["configured"] is False
 
 
-def test_cdas_base_url_requires_https():
-    with pytest.raises(ValueError):
-        _validate_base_url("http://example.test")
-
-
-def test_test_environment_is_pinned_to_official_test_host():
-    with pytest.raises(ValueError):
-        _validate_environment_base_url("test", "https://example.test")
+def test_company_configuration_summary_never_exposes_cdas_secrets():
+    summary = configuration_summary(None)
+    for forbidden in ("username", "password", "item_code", "base_url", "encrypted_credentials"):
+        assert forbidden not in summary
