@@ -108,6 +108,7 @@ from services.accounting_service import (
     value_inventory_lower_of_cost_and_nrv,
     year_end_closing_preview,
     prepare_year_end_closing_draft,
+    cancel_year_end_closing_draft,
 )
 
 
@@ -803,8 +804,10 @@ def export_financial_books(
 
 @router.get("/year-end-closing/preview")
 def preview_year_end_closing(
-    period_id: UUID,
+    financial_year_start: date = Query(...),
+    financial_year_end: date = Query(...),
     company_id: UUID | None = None,
+    branch_id: UUID | None = None,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
@@ -812,32 +815,49 @@ def preview_year_end_closing(
     selected_company_id = resolve_scope(context, company_id)
     if not selected_company_id:
         raise HTTPException(status_code=422, detail="Select a company for year-end closing")
-    period = db.query(AccountingPeriod).filter(
-        AccountingPeriod.id == period_id,
-        AccountingPeriod.company_id == selected_company_id,
-    ).first()
-    if not period:
-        raise HTTPException(status_code=404, detail="Accounting period not found")
-    if (
-        not context.is_platform_admin
-        and context.branch_id
-        and context.role not in COMPANY_MANAGEMENT_ROLES
-        and period.branch_id != context.branch_id
-    ):
-        raise HTTPException(status_code=403, detail="Year-end period is outside your branch scope")
-    selected_branch_id = period.branch_id
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
+    )
     return year_end_closing_preview(
         db,
         company_id=selected_company_id,
-        period_start=period.period_start,
-        period_end=period.period_end,
+        financial_year_start=financial_year_start,
+        financial_year_end=financial_year_end,
         branch_id=selected_branch_id,
     )
 
 
 @router.post("/year-end-closing", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
 def create_year_end_closing(
-    period_id: UUID,
+    financial_year_start: date = Query(...),
+    financial_year_end: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for year-end closing")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
+    )
+    entry = prepare_year_end_closing_draft(
+        db,
+        company_id=selected_company_id,
+        financial_year_start=financial_year_start,
+        financial_year_end=financial_year_end,
+        branch_id=selected_branch_id,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.delete("/year-end-closing/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_year_end_closing(
+    entry_id: UUID,
     company_id: UUID | None = None,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
@@ -846,30 +866,29 @@ def create_year_end_closing(
     selected_company_id = resolve_scope(context, company_id)
     if not selected_company_id:
         raise HTTPException(status_code=422, detail="Select a company for year-end closing")
-    period = db.query(AccountingPeriod).filter(
-        AccountingPeriod.id == period_id,
-        AccountingPeriod.company_id == selected_company_id,
-    ).with_for_update().first()
-    if not period:
-        raise HTTPException(status_code=404, detail="Accounting period not found")
+    key, _ = scope_key(selected_company_id)
+    entry = entry_query(db, key).filter(
+        JournalEntry.id == entry_id,
+        JournalEntry.reference_type == "year_end_closing",
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Year-end closing journal not found")
     if (
-        not context.is_platform_admin
-        and context.branch_id
+        entry.created_by_user_id != context.user.id
+        and not context.is_platform_admin
         and context.role not in COMPANY_MANAGEMENT_ROLES
-        and period.branch_id != context.branch_id
     ):
-        raise HTTPException(status_code=403, detail="Year-end period is outside your branch scope")
-    selected_branch_id = period.branch_id
-    entry = prepare_year_end_closing_draft(
+        raise HTTPException(
+            status_code=403,
+            detail="Only the draft creator or company management can cancel this year-end draft",
+        )
+    cancel_year_end_closing_draft(
         db,
         company_id=selected_company_id,
-        period_start=period.period_start,
-        period_end=period.period_end,
-        branch_id=selected_branch_id,
-        user_id=context.user.id,
+        journal_entry_id=entry_id,
     )
     db.commit()
-    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/trial-balance", response_model=TrialBalanceRead)
