@@ -81,6 +81,7 @@ from services.accounting_service import (
     record_electronic_clearing_settlement,
     scope_key,
     transaction_accounting_coverage,
+    validate_postable_entry,
 )
 
 
@@ -286,6 +287,7 @@ def post_entry(
 
     from services.governance_control_service import ensure_accounting_period_open
     ensure_accounting_period_open(db, company_id=selected_company_id, entry_date=entry.entry_date)
+    validate_postable_entry(db, entry)
     entry.status = "posted"
     entry.posted_by_user_id = context.user.id
     entry.posted_at = datetime.now(timezone.utc)

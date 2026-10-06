@@ -281,6 +281,81 @@ def _journal_for_reference(db: Session, key: str, reference_type: str, reference
     ).first()
 
 
+ALLOWED_JOURNAL_STATUSES = {"draft", "posted"}
+
+
+def _validate_normalized_journal_lines(lines: list[dict]) -> tuple[Decimal, Decimal]:
+    """Enforce the Chapter 2 double-entry invariants on a journal payload.
+
+    A journal needs at least two lines, must affect at least two accounts, each
+    line must be one-sided, and the total debit must equal the total credit.
+    """
+    if len(lines) < 2:
+        raise HTTPException(status_code=422, detail="A journal entry requires at least two lines")
+
+    account_ids = {item["account_id"] for item in lines}
+    if len(account_ids) < 2:
+        raise HTTPException(status_code=422, detail="A journal entry must affect at least two accounts")
+
+    for item in lines:
+        debit = _money(item.get("debit"))
+        credit = _money(item.get("credit"))
+        if debit < 0 or credit < 0 or (debit > 0) == (credit > 0):
+            raise HTTPException(
+                status_code=422,
+                detail="Each journal line must contain one positive debit or credit",
+            )
+
+    total_debit = sum((_money(item.get("debit")) for item in lines), Decimal("0.00"))
+    total_credit = sum((_money(item.get("credit")) for item in lines), Decimal("0.00"))
+    if total_debit <= 0 or total_debit != total_credit:
+        raise HTTPException(
+            status_code=422,
+            detail="Journal entry debits and credits must be equal and greater than zero",
+        )
+    return total_debit, total_credit
+
+
+def validate_postable_entry(db: Session, entry: JournalEntry) -> tuple[Decimal, Decimal]:
+    """Revalidate persisted journal data immediately before it becomes ledger truth.
+
+    Drafts can live for some time before maker/checker approval.  Recomputing the
+    invariant from persisted lines prevents a malformed or tampered draft from
+    becoming a posted ledger entry.
+    """
+    lines = db.query(JournalLine).filter(
+        JournalLine.journal_entry_id == entry.id
+    ).order_by(JournalLine.created_at.asc()).all()
+
+    normalized = [
+        {
+            "account_id": line.account_id,
+            "debit": _money(line.debit),
+            "credit": _money(line.credit),
+        }
+        for line in lines
+    ]
+    total_debit, total_credit = _validate_normalized_journal_lines(normalized)
+
+    accounts = db.query(AccountingAccount).filter(
+        AccountingAccount.id.in_({item["account_id"] for item in normalized}),
+        AccountingAccount.scope_key == entry.scope_key,
+        AccountingAccount.is_active.is_(True),
+    ).all()
+    if len(accounts) != len({item["account_id"] for item in normalized}):
+        raise HTTPException(
+            status_code=422,
+            detail="One or more journal accounts are outside the selected ledger",
+        )
+
+    if _money(entry.total_debit) != total_debit or _money(entry.total_credit) != total_credit:
+        raise HTTPException(
+            status_code=409,
+            detail="Journal header totals do not match persisted journal lines",
+        )
+    return total_debit, total_credit
+
+
 def create_entry(
     db: Session,
     *,
@@ -308,18 +383,18 @@ def create_entry(
     key, scope_type = scope_key(company_id)
     ensure_chart(db, company_id=company_id)
 
-    normalized = []
-    for item in lines:
-        debit = _money(item.get("debit"))
-        credit = _money(item.get("credit"))
-        if debit < 0 or credit < 0 or (debit > 0) == (credit > 0):
-            raise HTTPException(status_code=422, detail="Each journal line must contain one positive debit or credit")
-        normalized.append({**item, "debit": debit, "credit": credit})
+    if status_value not in ALLOWED_JOURNAL_STATUSES:
+        raise HTTPException(status_code=422, detail="Journal status must be draft or posted")
 
-    total_debit = sum((x["debit"] for x in normalized), Decimal("0.00"))
-    total_credit = sum((x["credit"] for x in normalized), Decimal("0.00"))
-    if total_debit <= 0 or total_debit != total_credit:
-        raise HTTPException(status_code=422, detail="Journal entry debits and credits must be equal and greater than zero")
+    normalized = [
+        {
+            **item,
+            "debit": _money(item.get("debit")),
+            "credit": _money(item.get("credit")),
+        }
+        for item in lines
+    ]
+    total_debit, total_credit = _validate_normalized_journal_lines(normalized)
 
     account_ids = {x["account_id"] for x in normalized}
     accounts = db.query(AccountingAccount).filter(

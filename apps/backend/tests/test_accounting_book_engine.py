@@ -11,6 +11,7 @@ from services.accounting_service import (
     COMPANY_CHART,
     PLATFORM_CHART,
     _cash_flow_section,
+    _validate_normalized_journal_lines,
     calculate_fixed_asset_depreciation,
     settlement_account_code,
 )
@@ -43,6 +44,46 @@ def test_company_chart_supports_full_financial_accounting_cycle():
 def test_platform_chart_keeps_double_entry_statement_classes():
     chart = _chart_map(PLATFORM_CHART)
     assert {value[1] for value in chart.values()} >= {"asset", "liability", "equity", "revenue", "expense"}
+
+
+def test_double_entry_invariant_requires_two_lines_and_two_accounts():
+    with pytest.raises(Exception) as one_line:
+        _validate_normalized_journal_lines([
+            {"account_id": "cash", "debit": Decimal("100.00"), "credit": Decimal("0.00")},
+        ])
+    assert "at least two lines" in str(one_line.value.detail)
+
+    with pytest.raises(Exception) as same_account:
+        _validate_normalized_journal_lines([
+            {"account_id": "cash", "debit": Decimal("100.00"), "credit": Decimal("0.00")},
+            {"account_id": "cash", "debit": Decimal("0.00"), "credit": Decimal("100.00")},
+        ])
+    assert "at least two accounts" in str(same_account.value.detail)
+
+
+def test_double_entry_invariant_requires_equal_positive_debits_and_credits():
+    with pytest.raises(Exception) as unbalanced:
+        _validate_normalized_journal_lines([
+            {"account_id": "cash", "debit": Decimal("100.00"), "credit": Decimal("0.00")},
+            {"account_id": "capital", "debit": Decimal("0.00"), "credit": Decimal("90.00")},
+        ])
+    assert "debits and credits must be equal" in str(unbalanced.value.detail)
+
+    debit, credit = _validate_normalized_journal_lines([
+        {"account_id": "bank", "debit": Decimal("100.00"), "credit": Decimal("0.00")},
+        {"account_id": "principal", "debit": Decimal("0.00"), "credit": Decimal("70.00")},
+        {"account_id": "interest", "debit": Decimal("0.00"), "credit": Decimal("30.00")},
+    ])
+    assert debit == Decimal("100.00")
+    assert credit == Decimal("100.00")
+
+
+def test_manual_posting_revalidates_persisted_journal_integrity():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def validate_postable_entry(" in service
+    assert "validate_postable_entry(db, entry)" in router
+    assert "Journal header totals do not match persisted journal lines" in service
 
 
 def test_vat_schema_accepts_registered_purchase():
