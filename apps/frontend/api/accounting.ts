@@ -98,3 +98,35 @@ export async function createOpeningBalanceMigration(payload: {
     params: { company_id: companyId },
   })).data;
 }
+
+
+export async function exportFinancialBooks(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  fromDate: string;
+  toDate: string;
+  format: "pdf" | "xlsx";
+}): Promise<Blob> {
+  return (await api.get("/accounting/financial-books/export", {
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      from_date: filters.fromDate,
+      to_date: filters.toDate,
+      format: filters.format,
+    },
+    responseType: "blob",
+  })).data as Blob;
+}
+
+export async function previewYearEndClosing(periodId: string, companyId?: string): Promise<Record<string, unknown>> {
+  return (await api.get("/accounting/year-end-closing/preview", {
+    params: { period_id: periodId, company_id: companyId },
+  })).data as Record<string, unknown>;
+}
+
+export async function createYearEndClosingDraft(periodId: string, companyId?: string): Promise<JournalEntry> {
+  return (await api.post<JournalEntry>("/accounting/year-end-closing", null, {
+    params: { period_id: periodId, company_id: companyId },
+  })).data;
+}
