@@ -46,6 +46,7 @@ from database.models.treasury import TreasuryEntry, TreasurySettings
 
 MONEY = Decimal("0.01")
 ELECTRONIC_CLEARING_STALE_DAYS = 5
+CASH_EQUIVALENT_CODES = {"1000", "1010"}
 
 
 def settlement_account_code(payment_method) -> str:
@@ -1600,9 +1601,8 @@ def cash_flow_statement(
     key, _ = scope_key(company_id)
     ensure_chart(db, company_id=company_id)
     cash_ids = {
-        account_by_code(db, key, "1000").id,
-        account_by_code(db, key, "1010").id,
-        account_by_code(db, key, "1020").id,
+        account_by_code(db, key, code).id
+        for code in CASH_EQUIVALENT_CODES
     }
     opening_cash = _cash_balance_at(
         db, key=key, cash_ids=cash_ids, before_date=from_date, branch_id=branch_id
@@ -1682,10 +1682,117 @@ def cash_flow_statement(
             "tenant_lending_cash_flows": "operating",
             "fixed_assets": "investing",
             "owner_equity": "financing",
+            "cash_equivalent_account_codes": sorted(CASH_EQUIVALENT_CODES),
+            "electronic_clearing": "excluded_until_settled_to_cash_or_bank",
             "note": "Lending-specific classification is an explicit LoanHub policy layer and should be confirmed by each institution's approved reporting policy.",
         },
         "details": details,
     }
+
+
+def receipts_and_payments_summary(
+    db: Session,
+    *,
+    company_id,
+    from_date: date,
+    to_date: date,
+    branch_id=None,
+) -> dict:
+    """Chapter 29-style cash-book summary adapted for a profit-oriented lender.
+
+    This is deliberately a receipts/payments statement only. It does not replace
+    LoanHub's accrual-basis income statement and is not presented as a non-profit
+    income-and-expenditure account.
+    """
+    if from_date > to_date:
+        raise HTTPException(status_code=422, detail="from_date must not be after to_date")
+
+    key, _ = scope_key(company_id)
+    ensure_chart(db, company_id=company_id)
+    cash_accounts = {
+        account_by_code(db, key, code).id: code
+        for code in CASH_EQUIVALENT_CODES
+    }
+    opening_cash = _cash_balance_at(
+        db,
+        key=key,
+        cash_ids=set(cash_accounts),
+        before_date=from_date,
+        branch_id=branch_id,
+    )
+
+    query = db.query(JournalEntry).options(
+        joinedload(JournalEntry.lines).joinedload(JournalLine.account)
+    ).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+        JournalEntry.entry_date.between(from_date, to_date),
+    )
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+
+    receipts: dict[tuple[str, str], Decimal] = {}
+    payments: dict[tuple[str, str], Decimal] = {}
+    detail = []
+
+    for entry in query.order_by(JournalEntry.entry_date.asc(), JournalEntry.created_at.asc()).all():
+        cash_movement = Decimal("0.00")
+        counterpart_codes = []
+        counterpart_names = []
+        for line in entry.lines:
+            if line.account_id in cash_accounts:
+                cash_movement += _money(line.debit) - _money(line.credit)
+            elif line.account is not None:
+                counterpart_codes.append(line.account.code)
+                counterpart_names.append(line.account.name)
+
+        cash_movement = _money(cash_movement)
+        if cash_movement == 0:
+            continue
+
+        code = ",".join(sorted(set(counterpart_codes))) or "UNCLASSIFIED"
+        name = " / ".join(sorted(set(counterpart_names))) or "Unclassified counterpart"
+        bucket = receipts if cash_movement > 0 else payments
+        key_name = (code, name)
+        bucket[key_name] = _money(bucket.get(key_name, Decimal("0.00")) + abs(cash_movement))
+        detail.append({
+            "entry_id": str(entry.id),
+            "entry_number": entry.entry_number,
+            "entry_date": entry.entry_date.isoformat(),
+            "description": entry.description,
+            "reference_type": entry.reference_type,
+            "reference_id": entry.reference_id,
+            "direction": "receipt" if cash_movement > 0 else "payment",
+            "amount": float(abs(cash_movement)),
+            "counterpart_account_codes": sorted(set(counterpart_codes)),
+        })
+
+    total_receipts = _money(sum(receipts.values(), Decimal("0.00")))
+    total_payments = _money(sum(payments.values(), Decimal("0.00")))
+    closing_cash = _money(opening_cash + total_receipts - total_payments)
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "opening_cash_and_bank": float(opening_cash),
+        "receipts": [
+            {"account_code": code, "account_name": name, "amount": float(amount)}
+            for (code, name), amount in sorted(receipts.items())
+        ],
+        "payments": [
+            {"account_code": code, "account_name": name, "amount": float(amount)}
+            for (code, name), amount in sorted(payments.items())
+        ],
+        "total_receipts": float(total_receipts),
+        "total_payments": float(total_payments),
+        "closing_cash_and_bank": float(closing_cash),
+        "cash_equivalent_account_codes": sorted(CASH_EQUIVALENT_CODES),
+        "basis": "cash_book_summary",
+        "note": "This cash-basis summary complements, but does not replace, LoanHub's accrual-basis income statement.",
+        "details": detail,
+    }
+
 
 def post_vat_transaction(
     db: Session,
