@@ -874,6 +874,13 @@ def cancel_year_end_closing(
     if not entry:
         raise HTTPException(status_code=404, detail="Year-end closing journal not found")
     if (
+        not context.is_platform_admin
+        and context.branch_id
+        and context.role not in COMPANY_MANAGEMENT_ROLES
+        and entry.branch_id != context.branch_id
+    ):
+        raise HTTPException(status_code=403, detail="Year-end draft is outside your branch scope")
+    if (
         entry.created_by_user_id != context.user.id
         and not context.is_platform_admin
         and context.role not in COMPANY_MANAGEMENT_ROLES
