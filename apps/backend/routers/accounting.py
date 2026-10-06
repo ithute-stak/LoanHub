@@ -24,6 +24,7 @@ from database.schemas.accounting import (
     AccountingAccountRead,
     AccountingAccountUpdate,
     AccountingDashboardRead,
+    AccruedIncomeAdjustmentCreate,
     AccrualAdjustmentCreate,
     DepreciationAdjustmentCreate,
     DoubtfulDebtAllowanceCreate,
@@ -35,6 +36,8 @@ from database.schemas.accounting import (
     FixedAssetDisposeCreate,
     FixedAssetRead,
     FinancialStatementRead,
+    InventoryValuationRequest,
+    CapitalExpenditureAssessment,
     JournalEntryCreate,
     JournalEntryRead,
     LedgerLineRead,
@@ -57,6 +60,7 @@ from services.accounting_service import (
     create_fixed_asset,
     calculate_fixed_asset_depreciation,
     create_entry,
+    assess_capital_expenditure,
     ensure_chart,
     entry_query,
     cash_flow_statement,
@@ -64,6 +68,7 @@ from services.accounting_service import (
     ledger_rows,
     loan_receivables_control_reconciliation,
     post_accrual_adjustment,
+    post_accrued_income_adjustment,
     post_depreciation_adjustment,
     post_doubtful_debt_allowance,
     post_expense,
@@ -84,6 +89,7 @@ from services.accounting_service import (
     source_book_traceability,
     transaction_accounting_coverage,
     validate_postable_entry,
+    value_inventory_lower_of_cost_and_nrv,
 )
 
 
@@ -519,7 +525,7 @@ def account_ledger(
 
 CURRENT_ASSET_CODES = {
     "1000", "1010", "1020", "1100", "1110", "1120", "1150",
-    "1200", "1210", "1300", "1400", "1600",
+    "1200", "1210", "1220", "1300", "1400", "1600",
 }
 NON_CURRENT_ASSET_CODES = {"1500", "1510"}
 CURRENT_LIABILITY_CODES = {"2000", "2100", "2200", "2300", "2400", "2990"}
@@ -763,6 +769,61 @@ def accounting_ratios(
         "cash_to_liabilities": ratio(liquid, liabilities),
         "loan_receivables_to_assets": ratio(receivables, assets),
     }
+
+
+@router.post("/inventory/valuation")
+def inventory_valuation(
+    payload: InventoryValuationRequest,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    resolve_scope(context, company_id)
+    return value_inventory_lower_of_cost_and_nrv(
+        [item.model_dump() for item in payload.items]
+    )
+
+
+@router.post("/capital-expenditure/assess")
+def capital_expenditure_assessment(
+    payload: CapitalExpenditureAssessment,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    resolve_scope(context, company_id)
+    return assess_capital_expenditure(
+        [item.model_dump() for item in payload.components],
+        borrowing_costs_directly_attributable=payload.borrowing_costs_directly_attributable,
+        asset_requires_substantial_time_to_prepare=payload.asset_requires_substantial_time_to_prepare,
+    )
+
+
+@router.post("/adjustments/accrued-income", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def accrued_income_adjustment(
+    payload: AccruedIncomeAdjustmentCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
+    entry = post_accrued_income_adjustment(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        amount=payload.amount,
+        revenue_account_code=payload.revenue_account_code,
+        description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        user_id=context.user.id,
+        entry_date=payload.entry_date,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
 
 
 @router.post("/adjustments/depreciation", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
