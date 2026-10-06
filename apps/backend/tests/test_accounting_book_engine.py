@@ -309,6 +309,39 @@ def test_payment_channels_use_distinct_settlement_accounts():
     assert 'account_by_code(db, key, "1020").id' in service
 
 
+def test_books_of_original_entry_are_exposed_and_traceable():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+
+    assert "def classify_book_of_original_entry(" in service
+    assert "def books_of_original_entry(" in service
+    assert "def source_book_traceability(" in service
+    assert '"cash_book"' in service
+    assert '"sales_day_book"' in service
+    assert '"purchases_day_book"' in service
+    assert '"journal"' in service
+    assert '"source_reference_kind"' in service
+    assert '"folio"' in service
+    assert '@router.get("/books-of-original-entry")' in router
+    assert '@router.get("/controls/source-book-traceability")' in router
+
+
+def test_source_books_keep_lending_specific_classification_conservative():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert 'SETTLEMENT_BOOK_CODES = {"1000", "1010", "1020"}' in service
+    assert 'RECEIVABLE_BOOK_CODES = {"1100", "1110", "1120", "1200"}' in service
+    assert 'PAYABLE_BOOK_CODES = {"2000", "2100", "2300", "2400"}' in service
+    assert 'return "journal", "adjustment, opening, correction or transaction outside specialist day books"' in service
+
+
+def test_vat_engine_remains_book_aligned_for_registered_and_unregistered_entities():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert "def post_vat_transaction(" in service
+    assert "VAT-registered sale:" in service
+    assert "VAT-registered purchase/expense/asset:" in service
+    assert "Non-registered entities do not post VAT separately" in service
+
+
 def test_direct_debit_requires_allocations_before_repayment_accounting():
     service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
     assert "payment.purpose == PaymentPurpose.DIRECT_DEBIT" in service

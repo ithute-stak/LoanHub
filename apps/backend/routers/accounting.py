@@ -53,6 +53,7 @@ from services.accounting_service import (
     accounting_business_date,
     asset_payload,
     bank_settlement_chain,
+    books_of_original_entry,
     create_fixed_asset,
     calculate_fixed_asset_depreciation,
     create_entry,
@@ -80,6 +81,7 @@ from services.accounting_service import (
     period_close_pack,
     record_electronic_clearing_settlement,
     scope_key,
+    source_book_traceability,
     transaction_accounting_coverage,
     validate_postable_entry,
 )
@@ -398,6 +400,51 @@ def trial_balance(
         lines=lines,
         total_debit=sum((line.debit for line in lines), Decimal("0")),
         total_credit=sum((line.credit for line in lines), Decimal("0")),
+    )
+
+
+@router.get("/books-of-original-entry")
+def original_entry_books(
+    company_id: UUID | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    branch_id: UUID | None = None,
+    book: str | None = Query(default=None, pattern="^(cash_book|sales_day_book|purchases_day_book|journal)$"),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Trace posted accounting from source references through specialist books into the ledger."""
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return books_of_original_entry(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+        book=book,
+    )
+
+
+@router.get("/controls/source-book-traceability")
+def original_entry_traceability(
+    company_id: UUID | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return source_book_traceability(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
     )
 
 

@@ -1167,6 +1167,154 @@ def record_cdas_transaction_refund(db: Session, transaction) -> None:
                reference_type="cdas_transaction_refund", reference_id=str(transaction.id), entry_date=when)
 
 
+SETTLEMENT_BOOK_CODES = {"1000", "1010", "1020"}
+RECEIVABLE_BOOK_CODES = {"1100", "1110", "1120", "1200"}
+PAYABLE_BOOK_CODES = {"2000", "2100", "2300", "2400"}
+
+
+def classify_book_of_original_entry(entry: JournalEntry) -> tuple[str, str]:
+    """Classify a posted journal into the modern equivalent of a book of original entry.
+
+    The classification follows the purpose of Chapters 11-15 rather than forcing
+    a lending platform into merchandise-specific books. Cash/bank/electronic
+    settlement goes to the cash book; non-cash revenue against receivables maps
+    to the sales day book; non-cash expenses/assets against payables map to the
+    purchases day book; adjustments and anything else remain in the journal.
+    """
+    codes = {
+        line.account.code
+        for line in entry.lines
+        if line.account is not None
+    }
+    types = {
+        line.account.account_type
+        for line in entry.lines
+        if line.account is not None
+    }
+
+    if codes & SETTLEMENT_BOOK_CODES:
+        return "cash_book", "contains cash, bank or electronic-settlement movement"
+
+    if "revenue" in types and codes & RECEIVABLE_BOOK_CODES:
+        return "sales_day_book", "non-cash income recognised against a receivable"
+
+    if ("expense" in types or "asset" in types) and codes & PAYABLE_BOOK_CODES:
+        return "purchases_day_book", "non-cash purchase or expense recognised against a payable"
+
+    return "journal", "adjustment, opening, correction or transaction outside specialist day books"
+
+
+def books_of_original_entry(
+    db: Session,
+    *,
+    company_id,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    branch_id=None,
+    book: str | None = None,
+) -> list[dict]:
+    key, _ = scope_key(company_id)
+    query = db.query(JournalEntry).options(
+        joinedload(JournalEntry.lines).joinedload(JournalLine.account)
+    ).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.status == "posted",
+    )
+    if from_date:
+        query = query.filter(JournalEntry.entry_date >= from_date)
+    if to_date:
+        query = query.filter(JournalEntry.entry_date <= to_date)
+    if branch_id:
+        query = query.filter(JournalEntry.branch_id == branch_id)
+
+    rows = []
+    for entry in query.order_by(JournalEntry.entry_date.asc(), JournalEntry.created_at.asc()).all():
+        source_book, classification_basis = classify_book_of_original_entry(entry)
+        if book and source_book != book:
+            continue
+
+        folio = []
+        for line in entry.lines:
+            account = line.account
+            folio.append({
+                "account_code": account.code if account else None,
+                "account_name": account.name if account else None,
+                "side": "debit" if _money(line.debit) > 0 else "credit",
+                "amount": float(_money(line.debit or line.credit)),
+            })
+
+        rows.append({
+            "entry_id": str(entry.id),
+            "entry_number": entry.entry_number,
+            "entry_date": entry.entry_date.isoformat(),
+            "book": source_book,
+            "classification_basis": classification_basis,
+            "narrative": entry.description,
+            "reference_type": entry.reference_type,
+            "reference_id": entry.reference_id,
+            "source_reference": (
+                f"{entry.reference_type}:{entry.reference_id}"
+                if entry.reference_type and entry.reference_id
+                else entry.entry_number
+            ),
+            "source_reference_kind": (
+                "operational_source"
+                if entry.reference_type and entry.reference_id
+                else "internal_journal_reference"
+            ),
+            "total_debit": float(_money(entry.total_debit)),
+            "total_credit": float(_money(entry.total_credit)),
+            "folio": folio,
+        })
+    return rows
+
+
+def source_book_traceability(
+    db: Session,
+    *,
+    company_id,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    branch_id=None,
+) -> dict:
+    rows = books_of_original_entry(
+        db,
+        company_id=company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+    )
+    counts = {
+        "cash_book": 0,
+        "sales_day_book": 0,
+        "purchases_day_book": 0,
+        "journal": 0,
+    }
+    missing_narrative = 0
+    missing_operational_source = 0
+    for row in rows:
+        counts[row["book"]] = counts.get(row["book"], 0) + 1
+        if not str(row["narrative"] or "").strip():
+            missing_narrative += 1
+        if row["source_reference_kind"] != "operational_source":
+            missing_operational_source += 1
+
+    return {
+        "from_date": from_date.isoformat() if from_date else None,
+        "to_date": to_date.isoformat() if to_date else None,
+        "branch_id": str(branch_id) if branch_id else None,
+        "posted_entry_count": len(rows),
+        "book_counts": counts,
+        "missing_narrative_count": missing_narrative,
+        "internal_reference_only_count": missing_operational_source,
+        "traceability_complete": missing_narrative == 0,
+        "note": (
+            "Internal-reference-only journals remain traceable by LoanHub journal number, "
+            "but operational postings should normally carry reference_type and reference_id."
+        ),
+    }
+
+
 def ledger_rows(db: Session, key: str, account_id, *, from_date=None, to_date=None, branch_id=None):
     query = db.query(JournalLine, JournalEntry).join(
         JournalEntry, JournalEntry.id == JournalLine.journal_entry_id
