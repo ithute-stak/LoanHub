@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { cancelYearEndClosingDraft, createOpeningBalanceMigration, createYearEndClosingDraft, exportFinancialBooks, getFinancialBooks, getMonthEndControlPack, listAccountingAccounts, previewYearEndClosing, type MonthEndControlPack } from "@/api/accounting";
+import { cancelYearEndClosingDraft, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getMonthEndControlPack, listAccountingAccounts, prepareMonthEndReversalDrafts, previewYearEndClosing, type MonthEndControlPack } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,12 @@ export function FinancialBooksWorkspace() {
   const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null);
   const [monthEndPack, setMonthEndPack] = useState<MonthEndControlPack | null>(null);
   const [monthEndWorking, setMonthEndWorking] = useState(false);
+  const [adjustmentWorking, setAdjustmentWorking] = useState(false);
+  const [adjustmentType, setAdjustmentType] = useState<"accrual" | "prepayment" | "accrued_income">("accrual");
+  const [adjustmentAmount, setAdjustmentAmount] = useState("");
+  const [adjustmentAccountCode, setAdjustmentAccountCode] = useState("6500");
+  const [adjustmentDescription, setAdjustmentDescription] = useState("");
+  const [adjustmentReversalDate, setAdjustmentReversalDate] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -150,6 +156,73 @@ export function FinancialBooksWorkspace() {
       toast.error(getErrorMessage(error, "Could not prepare month-end control pack"));
     } finally {
       setMonthEndWorking(false);
+    }
+  }
+
+  async function prepareAdjustmentDraft() {
+    if (!companyId || !selectedPeriod || !adjustmentDescription.trim() || Number(adjustmentAmount) <= 0) return;
+    const period = periods.find((item) => item.id === selectedPeriod);
+    if (!period) return;
+    setAdjustmentWorking(true);
+    try {
+      const entry = await createMonthEndAdjustmentDraft({
+        adjustment_type: adjustmentType,
+        amount: Number(adjustmentAmount),
+        account_code: adjustmentAccountCode,
+        description: adjustmentDescription.trim(),
+        entry_date: String(period.period_end),
+        branch_id: effectiveBranchId,
+        reversal_date: adjustmentReversalDate || null,
+      }, companyId);
+      toast.success("Month-end adjustment draft prepared", { description: `${entry.entry_number} requires a different finance user to post it.` });
+      setAdjustmentAmount("");
+      setAdjustmentDescription("");
+      await loadMonthEndPack();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare month-end adjustment draft"));
+    } finally {
+      setAdjustmentWorking(false);
+    }
+  }
+
+  async function postDeterministicDepreciation() {
+    if (!companyId || !selectedPeriod) return;
+    const period = periods.find((item) => item.id === selectedPeriod);
+    if (!period) return;
+    setAdjustmentWorking(true);
+    try {
+      const result = await depreciateAssetsForPeriod({
+        companyId,
+        branchId: effectiveBranchId,
+        periodStart: String(period.period_start),
+        periodEnd: String(period.period_end),
+      });
+      toast.success("Period depreciation posted", { description: `${result.posted.length} asset entries · ${formatMoney(result.total_depreciation)}` });
+      await loadMonthEndPack();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not post period depreciation"));
+    } finally {
+      setAdjustmentWorking(false);
+    }
+  }
+
+  async function prepareScheduledReversals() {
+    if (!companyId || !selectedPeriod) return;
+    const period = periods.find((item) => item.id === selectedPeriod);
+    if (!period) return;
+    setAdjustmentWorking(true);
+    try {
+      const result = await prepareMonthEndReversalDrafts({
+        companyId,
+        branchId: effectiveBranchId,
+        asOf: String(period.period_end),
+      });
+      toast.success("Scheduled reversal preparation complete", { description: `${result.prepared_count} draft(s) prepared; ${result.waiting_for_source_post_count} awaiting source posting.` });
+      await loadMonthEndPack();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare scheduled reversal drafts"));
+    } finally {
+      setAdjustmentWorking(false);
     }
   }
 
@@ -473,6 +546,37 @@ export function FinancialBooksWorkspace() {
               <CardHeader><CardTitle>Control checklist</CardTitle><CardDescription>{monthEndPack.policy_note}</CardDescription></CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {Object.entries(monthEndPack.checks).map(([key, passed]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3"><span className="text-sm">{titleCase(key)}</span><Badge variant={passed ? "default" : "destructive"}>{passed ? "Pass" : "Fail"}</Badge></div>)}
+              </CardContent>
+            </Card>
+
+            <Card className="loanhub-panel">
+              <CardHeader>
+                <CardTitle>Adjustment preparation</CardTitle>
+                <CardDescription>Prepare judgemental adjustments as maker/checker drafts. Deterministic fixed-asset depreciation can be posted from the asset schedule.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <Field label="Adjustment"><Select value={adjustmentType} onValueChange={(value) => { const kind = value as "accrual" | "prepayment" | "accrued_income"; setAdjustmentType(kind); setAdjustmentAccountCode(kind === "accrued_income" ? "4900" : "6500"); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="accrual">Accrual</SelectItem><SelectItem value="prepayment">Prepayment</SelectItem><SelectItem value="accrued_income">Accrued income</SelectItem></SelectContent></Select></Field>
+                  <Field label={adjustmentType === "accrued_income" ? "Revenue account" : "Expense account"}><Select value={adjustmentAccountCode} onValueChange={setAdjustmentAccountCode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{accounts.filter((account) => adjustmentType === "accrued_income" ? account.account_type === "revenue" : account.account_type === "expense").map((account) => <SelectItem key={account.id} value={account.code}>{account.code} · {account.name}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Amount"><Input type="number" min={0} step="0.01" value={adjustmentAmount} onChange={(e) => setAdjustmentAmount(e.target.value)} /></Field>
+                  <Field label="Reverse on (optional)"><Input type="date" value={adjustmentReversalDate} onChange={(e) => setAdjustmentReversalDate(e.target.value)} /></Field>
+                </div>
+                <Field label="Evidence / description"><Textarea value={adjustmentDescription} onChange={(e) => setAdjustmentDescription(e.target.value)} placeholder="Describe the source evidence and accounting judgement supporting this adjustment." /></Field>
+                <div className="flex flex-wrap gap-2">
+                  <LoadingButton loading={adjustmentWorking} onClick={() => void prepareAdjustmentDraft()}>Prepare maker/checker draft</LoadingButton>
+                  <LoadingButton loading={adjustmentWorking} variant="outline" disabled={!monthEndPack?.fixed_asset_depreciation.asset_count_due} onClick={() => void postDeterministicDepreciation()}>Post due depreciation</LoadingButton>
+                  <LoadingButton loading={adjustmentWorking} variant="outline" onClick={() => void prepareScheduledReversals()}>Prepare due reversal drafts</LoadingButton>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>VAT control reconciliation</CardTitle><CardDescription>{monthEndPack.vat_reconciliation.policy_note}</CardDescription></CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-4">
+                <Metric label="Input VAT receivable" value={formatMoney(monthEndPack.vat_reconciliation.closing_input_vat_receivable)} />
+                <Metric label="Output VAT payable" value={formatMoney(monthEndPack.vat_reconciliation.closing_output_vat_payable)} />
+                <Metric label="Net VAT payable" value={formatMoney(monthEndPack.vat_reconciliation.net_vat_payable)} />
+                <Metric label="Net VAT receivable" value={formatMoney(monthEndPack.vat_reconciliation.net_vat_receivable)} />
               </CardContent>
             </Card>
 
