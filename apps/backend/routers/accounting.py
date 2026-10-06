@@ -414,7 +414,14 @@ def record_expense(
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
 
 
-def trial_balance_data(db: Session, key: str, from_date=None, to_date=None, branch_id: UUID | None = None):
+def trial_balance_data(
+    db: Session,
+    key: str,
+    from_date=None,
+    to_date=None,
+    branch_id: UUID | None = None,
+    exclude_reference_types: set[str] | None = None,
+):
     query = db.query(
         AccountingAccount.id,
         AccountingAccount.code,
@@ -436,6 +443,12 @@ def trial_balance_data(db: Session, key: str, from_date=None, to_date=None, bran
         query = query.filter((JournalEntry.id.is_(None)) | (JournalEntry.entry_date <= to_date))
     if branch_id:
         query = query.filter((JournalEntry.id.is_(None)) | (JournalEntry.branch_id == branch_id))
+    if exclude_reference_types:
+        query = query.filter(
+            (JournalEntry.id.is_(None))
+            | (JournalEntry.reference_type.is_(None))
+            | (~JournalEntry.reference_type.in_(exclude_reference_types))
+        )
 
     rows = query.group_by(
         AccountingAccount.id,
@@ -1031,7 +1044,14 @@ def _statement_position_class(code: str, account_type: str) -> str:
 
 
 def statement(db: Session, *, key: str, statement_name: str, account_types: set[str], from_date, to_date, branch_id=None):
-    lines = trial_balance_data(db, key, from_date, to_date, branch_id)
+    lines = trial_balance_data(
+        db,
+        key,
+        from_date,
+        to_date,
+        branch_id,
+        exclude_reference_types={"year_end_closing"} if statement_name == "income_statement" else None,
+    )
     sections: dict[str, list[FinancialStatementLine]] = {}
     totals: dict[str, Decimal] = {}
     for line in lines:
