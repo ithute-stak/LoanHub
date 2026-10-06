@@ -46,6 +46,8 @@ export function FinancialBooksWorkspace() {
   const [periodWorking, setPeriodWorking] = useState(false);
   const [openingWorking, setOpeningWorking] = useState(false);
   const [periodNote, setPeriodNote] = useState("Reviewed and supported by period close evidence.");
+  const [newPeriodStart, setNewPeriodStart] = useState(yearStart());
+  const [newPeriodEnd, setNewPeriodEnd] = useState(isoToday());
   const [openingDate, setOpeningDate] = useState(yearStart());
   const [openingReference, setOpeningReference] = useState(`OPENING-${new Date().getFullYear()}`);
   const [openingDescription, setOpeningDescription] = useState("Opening balances migrated into LoanHub");
@@ -117,6 +119,21 @@ export function FinancialBooksWorkspace() {
     [openingLines],
   );
   const openingBalanced = openingTotals.debit > 0 && Math.abs(openingTotals.debit - openingTotals.credit) < 0.005;
+
+  async function createPeriod() {
+    if (!newPeriodStart || !newPeriodEnd) return;
+    setPeriodWorking(true);
+    try {
+      const created = await governanceControlsApi.createAccountingPeriod(newPeriodStart, newPeriodEnd);
+      toast.success("Accounting period created");
+      await loadControls();
+      setSelectedPeriod(created.id);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not create accounting period"));
+    } finally {
+      setPeriodWorking(false);
+    }
+  }
 
   async function checkReadiness() {
     if (!selectedPeriod) return;
@@ -252,6 +269,11 @@ export function FinancialBooksWorkspace() {
           <Card className="loanhub-panel">
             <CardHeader><CardTitle className="flex items-center gap-2"><CalendarCheck2 className="h-5 w-5 text-primary" />Accounting period close</CardTitle><CardDescription>Open → locked (soft-close) → closed (hard-close). Locking is allowed only when the full close pack is green.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto]">
+                <Field label="New period start"><Input type="date" value={newPeriodStart} onChange={(e) => setNewPeriodStart(e.target.value)} /></Field>
+                <Field label="New period end"><Input type="date" value={newPeriodEnd} onChange={(e) => setNewPeriodEnd(e.target.value)} /></Field>
+                <div className="flex items-end"><LoadingButton loading={periodWorking} variant="outline" onClick={() => void createPeriod()}>Create period</LoadingButton></div>
+              </div>
               <Field label="Period"><Select value={selectedPeriod} onValueChange={(value) => { setSelectedPeriod(value); setReadiness(null); }}><SelectTrigger><SelectValue placeholder="Select accounting period" /></SelectTrigger><SelectContent>{periods.map((period) => <SelectItem key={period.id} value={period.id}>{String(period.period_start)} – {String(period.period_end)} · {titleCase(period.status)}</SelectItem>)}</SelectContent></Select></Field>
               {currentPeriod ? <div className="flex flex-wrap gap-2"><Badge>{titleCase(currentPeriod.status)}</Badge><Badge variant="outline">{String(currentPeriod.period_start)} – {String(currentPeriod.period_end)}</Badge></div> : null}
               <Field label="Control note"><Textarea value={periodNote} onChange={(e) => setPeriodNote(e.target.value)} /></Field>
