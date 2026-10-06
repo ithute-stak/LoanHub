@@ -119,6 +119,9 @@ export type MonthEndControlPack = {
     balanced: boolean;
     folios: Array<{
       loan_id: string;
+      loan_reference: string;
+      folio_number: string;
+      borrower_id: string;
       branch_id?: string | null;
       status: string;
       operational_balance: number;
