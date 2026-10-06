@@ -85,7 +85,7 @@ importers:
         version: 1.51.0(@types/react@19.3.0)(react@19.3.0)
       next:
         specifier: 16.3.8
-        version: 16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@20.19.39)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@26.6.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -136,8 +136,8 @@ importers:
         specifier: ^4
         version: 4.3.3
       '@types/node':
-        specifier: ^20
-        version: 20.19.39
+        specifier: ^26
+        version: 26.6.4
       '@types/react':
         specifier: ^19
         version: 19.3.0
@@ -1799,8 +1799,8 @@ packages:
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
 
-  '@types/node@20.19.39':
-    resolution: {integrity: sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw==}
+  '@types/node@26.6.4':
+    resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
 
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
@@ -4263,8 +4263,8 @@ packages:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
     engines: {node: '>= 0.4'}
 
-  undici-types@6.21.0:
-    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
   undici@7.30.0:
     resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
@@ -6128,9 +6128,9 @@ snapshots:
 
   '@types/json5@0.0.29': {}
 
-  '@types/node@20.19.39':
+  '@types/node@26.6.4':
     dependencies:
-      undici-types: 6.21.0
+      undici-types: 8.9.0
 
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
@@ -7871,7 +7871,7 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  next@16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@20.19.39)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  next@16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@26.6.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@next/env': 16.3.8
       '@swc/helpers': 0.5.23
@@ -7890,7 +7890,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 16.3.8
       '@next/swc-win32-arm64-msvc': 16.3.8
       '@next/swc-win32-x64-msvc': 16.3.8
-      sharp: 0.35.5(@types/node@20.19.39)
+      sharp: 0.35.5(@types/node@26.6.4)
     transitivePeerDependencies:
       - '@babel/core'
       - '@types/node'
@@ -8563,7 +8563,7 @@ snapshots:
       - supports-color
       - typescript
 
-  sharp@0.35.5(@types/node@20.19.39):
+  sharp@0.35.5(@types/node@26.6.4):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -8594,7 +8594,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.5
       '@img/sharp-win32-ia32': 0.35.5
       '@img/sharp-win32-x64': 0.35.5
-      '@types/node': 20.19.39
+      '@types/node': 26.6.4
     optional: true
 
   shebang-command@2.0.0:
@@ -8872,7 +8872,7 @@ snapshots:
       has-symbols: 1.1.0
       which-boxed-primitive: 1.1.1
 
-  undici-types@6.21.0: {}
+  undici-types@8.9.0: {}
 
   undici@7.30.0: {}
 
