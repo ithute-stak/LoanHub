@@ -1141,3 +1141,28 @@ def test_treasury_cashflow_intelligence_uses_real_sources_and_nonposting_scenari
     assert "Treasury & cash-flow intelligence" in frontend
     assert "Liquidity stress scenarios" in frontend
     assert "Create commitment draft" in frontend
+
+
+def test_audit_compliance_finance_pack_uses_sealed_chain_evidence_and_read_only_controls():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "from core.audit_integrity import verify_chain" in service
+    assert "def corporation_tax_control(" in service
+    assert "def unusual_journal_review(" in service
+    assert "def deterministic_audit_sample(" in service
+    assert "def accounting_audit_compliance_pack(" in service
+    assert "ManagedFile.linked_entity_type == \"journal_entry\"" in service
+    assert '"supporting_evidence_missing"' in service
+    assert '"global_audit_hash_chain_valid"' in service
+    assert '"status": "not_assessed"' in service
+    assert "does not certify statutory compliance" in service
+
+    assert '@router.get("/audit-compliance-pack")' in router
+    assert "getAccountingAuditCompliancePack" in frontend_api
+    assert "Audit, compliance & statutory finance pack" in frontend
+    assert "Unusual-journal review" in frontend
+    assert "Deterministic auditor sample" in frontend
+    assert "Export evidence JSON" in frontend
