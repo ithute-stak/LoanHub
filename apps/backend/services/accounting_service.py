@@ -73,6 +73,7 @@ COMPANY_CHART = [
     ("1150", "Allowance for Credit Losses", "asset", "credit"),
     ("1200", "Trade Receivables", "asset", "debit"),
     ("1210", "Allowance for Doubtful Debts", "asset", "credit"),
+    ("1220", "Accrued Income", "asset", "debit"),
     ("1300", "Inventory and Consumables", "asset", "debit"),
     ("1400", "Prepayments", "asset", "debit"),
     ("1500", "Property and Equipment", "asset", "debit"),
@@ -1341,6 +1342,139 @@ def post_depreciation_adjustment(
         db, company_id=company_id, branch_id=branch_id,
         debit_code="5400", credit_code="1510", amount=amount,
         description=description, reference_type="depreciation_adjustment",
+        reference_id=reference_id, user_id=user_id,
+        entry_date=entry_date or accounting_business_date(db, company_id),
+    )
+
+
+def value_inventory_lower_of_cost_and_nrv(items: list[dict]) -> dict:
+    """Chapter 18: value inventory item-by-item at the lower of cost and NRV."""
+    valued = []
+    total_cost = Decimal("0.00")
+    total_nrv = Decimal("0.00")
+    total_value = Decimal("0.00")
+    total_write_down = Decimal("0.00")
+
+    for item in items:
+        cost = _money(item.get("cost"))
+        expected_selling_price = _money(item.get("expected_selling_price"))
+        costs_to_sell = _money(item.get("costs_to_sell"))
+        if cost < 0 or expected_selling_price < 0 or costs_to_sell < 0:
+            raise HTTPException(status_code=422, detail="Inventory valuation inputs cannot be negative")
+
+        nrv = max(Decimal("0.00"), _money(expected_selling_price - costs_to_sell))
+        value = min(cost, nrv)
+        write_down = _money(cost - value)
+
+        valued.append({
+            "reference": str(item.get("reference") or "").strip(),
+            "cost": float(cost),
+            "net_realisable_value": float(nrv),
+            "valuation": float(value),
+            "write_down": float(write_down),
+            "basis": "cost" if cost <= nrv else "net_realisable_value",
+        })
+        total_cost += cost
+        total_nrv += nrv
+        total_value += value
+        total_write_down += write_down
+
+    return {
+        "method": "lower_of_cost_and_net_realisable_value_item_by_item",
+        "items": valued,
+        "total_cost": float(_money(total_cost)),
+        "total_nrv": float(_money(total_nrv)),
+        "inventory_value": float(_money(total_value)),
+        "write_down": float(_money(total_write_down)),
+    }
+
+
+CAPITAL_COMPONENT_CATEGORIES = {
+    "purchase_price",
+    "delivery",
+    "non_refundable_tax",
+    "site_preparation",
+    "assembly_installation",
+    "testing",
+    "professional_fees",
+    "improvement",
+}
+REVENUE_COMPONENT_CATEGORIES = {
+    "repair_maintenance",
+    "insurance",
+    "fuel",
+    "day_to_day",
+}
+
+
+def assess_capital_expenditure(
+    components: list[dict],
+    *,
+    borrowing_costs_directly_attributable: bool = False,
+    asset_requires_substantial_time_to_prepare: bool = False,
+) -> dict:
+    """Chapter 20 classification using explicit source-supported component categories."""
+    rows = []
+    capital_total = Decimal("0.00")
+    revenue_total = Decimal("0.00")
+
+    for component in components:
+        amount = _money(component.get("amount"))
+        category = str(component.get("category") or "").strip()
+        if amount <= 0:
+            raise HTTPException(status_code=422, detail="Expenditure component amount must be positive")
+
+        if category == "borrowing_cost_construction":
+            is_capital = (
+                borrowing_costs_directly_attributable
+                and asset_requires_substantial_time_to_prepare
+            )
+            reason = (
+                "directly attributable borrowing cost during construction of a qualifying asset"
+                if is_capital
+                else "borrowing cost does not meet the construction-capitalisation conditions"
+            )
+        elif category in CAPITAL_COMPONENT_CATEGORIES:
+            is_capital = True
+            reason = "directly attributable to acquisition, initial use or improvement of a non-current asset"
+        elif category in REVENUE_COMPONENT_CATEGORIES:
+            is_capital = False
+            reason = "day-to-day running or maintenance of existing earning capacity"
+        else:
+            raise HTTPException(status_code=422, detail=f"Unsupported expenditure category: {category}")
+
+        if is_capital:
+            capital_total += amount
+        else:
+            revenue_total += amount
+        rows.append({
+            "description": str(component.get("description") or "").strip(),
+            "category": category,
+            "amount": float(amount),
+            "classification": "capital" if is_capital else "revenue",
+            "reason": reason,
+        })
+
+    return {
+        "components": rows,
+        "capital_expenditure": float(_money(capital_total)),
+        "revenue_expenditure": float(_money(revenue_total)),
+        "total": float(_money(capital_total + revenue_total)),
+        "policy": "Frank Wood Chapter 20 / IAS 16 principles; IAS 23 condition for qualifying borrowing costs",
+    }
+
+
+def post_accrued_income_adjustment(
+    db: Session, *, company_id, branch_id, amount, revenue_account_code: str,
+    description: str, reference_id: str, user_id, entry_date: date | None = None,
+) -> JournalEntry:
+    """Chapter 22 treatment: Dr accrued income / Cr revenue."""
+    if not revenue_account_code.startswith("4"):
+        raise HTTPException(status_code=422, detail="Accrued income must credit a revenue account")
+    return post_codes(
+        db, company_id=company_id, branch_id=branch_id,
+        debit_code="1220", credit_code=revenue_account_code, amount=amount,
+        description=description, reference_type="accrued_income_adjustment",
         reference_id=reference_id, user_id=user_id,
         entry_date=entry_date or accounting_business_date(db, company_id),
     )
