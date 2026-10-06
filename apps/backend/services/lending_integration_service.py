@@ -34,6 +34,7 @@ def application_integration_readiness(
     application: DirectLoanApplication,
     amount: Decimal | None = None,
     product_id=None,
+    proposed_installment: Decimal | None = None,
 ) -> dict[str, Any]:
     """Build one cross-system view of Core LoanHub, Experian and CDAS.
 
@@ -202,7 +203,10 @@ def application_integration_readiness(
     cdas_capacity = cdas_deduction_capacity(
         cdas_profile,
         selected_for_collection=cdas_selected,
-        proposed_installment=(assessment.proposed_installment if assessment else 0),
+        proposed_installment=(
+            proposed_installment if proposed_installment is not None
+            else (assessment.proposed_installment if assessment else 0)
+        ),
         application_id=application.id,
     )
     cdas_ready = not cdas_selected or (
@@ -365,12 +369,14 @@ def assert_application_integration_readiness_for_approval(
     application: DirectLoanApplication,
     amount: Decimal,
     product_id,
+    proposed_installment: Decimal | None = None,
 ) -> dict[str, Any]:
     readiness = application_integration_readiness(
         db,
         application=application,
         amount=amount,
         product_id=product_id,
+        proposed_installment=proposed_installment,
     )
     if not readiness["ready_for_approval"]:
         messages = [item["message"] for item in readiness["blockers"]]

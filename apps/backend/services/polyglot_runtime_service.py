@@ -34,6 +34,7 @@ _ROUTING_ENV = {
     "rust_affordability": "LOANHUB_RUST_AFFORDABILITY_MODE",
     "rust_predictive_risk": "LOANHUB_RUST_PREDICTIVE_RISK_MODE",
     "java_event_processing": "LOANHUB_JAVA_EVENT_MODE",
+    "java_report_csv": "LOANHUB_JAVA_REPORT_CSV_MODE",
     "java_underwriting_rules": "LOANHUB_JAVA_UNDERWRITING_MODE",
 }
 _ROUTING_DEFAULTS = {
@@ -46,6 +47,7 @@ _ROUTING_DEFAULTS = {
     "rust_affordability": "shadow",
     "rust_predictive_risk": "shadow",
     "java_event_processing": "shadow",
+    "java_report_csv": "shadow",
     "java_underwriting_rules": "shadow",
 }
 _ROUTING_MODES = {"off", "shadow", "prefer-worker"}
@@ -652,3 +654,30 @@ def go_push_delivery_batch(
     if not isinstance(results, list):
         return None
     return [item for item in results if isinstance(item, dict)]
+
+
+def java_report_csv(
+    *,
+    metadata: dict,
+    metrics_items: list[list],
+) -> dict | None:
+    """Render deterministic report CSV bytes in Java."""
+    base_url = java_worker_url()
+    if not base_url or workload_routing_mode("java_report_csv") == "off":
+        return None
+    value = _guarded_post_json(
+        "java_worker",
+        f"{base_url}/v1/reports/render-csv",
+        {
+            "metadata": metadata,
+            "metrics_items": metrics_items,
+        },
+        timeout=2.0,
+    )
+    if value is None or value.get("authoritative") is not False:
+        return None
+    if not isinstance(value.get("content_base64"), str):
+        return None
+    if not isinstance(value.get("sha256"), str):
+        return None
+    return value

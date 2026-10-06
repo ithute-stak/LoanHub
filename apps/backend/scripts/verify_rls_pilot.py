@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import sys
 import uuid
+from pathlib import Path
 
 from sqlalchemy import text
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 from database.models.company import LoanCompany
 from database.models.company_operations_phase1 import CRMRelationshipCase
+from database.models.company_client import CompanyBorrowerAccount
 from database.models.enums import CompanyStatus, EmploymentStatus, InstitutionType, UserRole
 from database.models.borrower import Borrower
 from database.models.user import User
@@ -58,6 +65,27 @@ def _seed_borrower(db, suffix: str) -> Borrower:
     return borrower
 
 
+def _seed_company_borrower_account(
+    db,
+    company: LoanCompany,
+    borrower: Borrower,
+    label: str,
+) -> CompanyBorrowerAccount:
+    account = CompanyBorrowerAccount(
+        company_id=company.id,
+        borrower_id=borrower.id,
+        account_reference=f"RLS-ACCOUNT-{label}-{uuid.uuid4().hex[:10]}",
+        source="rls_probe",
+        status="active",
+        opening_fee_amount=0,
+        opening_fee_currency="LSL",
+        opening_fee_status="not_required",
+    )
+    db.add(account)
+    db.flush()
+    return account
+
+
 def _seed_case(db, company: LoanCompany, borrower: Borrower, label: str) -> CRMRelationshipCase:
     case = CRMRelationshipCase(
         company_id=company.id,
@@ -89,7 +117,7 @@ def _set_probe_role_and_context(db, company_id: uuid.UUID) -> None:
 
 def main() -> None:
     db = SessionLocal()
-    company_a_id = company_b_id = borrower_b_id = case_b_id = None
+    company_a_id = company_b_id = borrower_a_id = borrower_b_id = case_a_id = case_b_id = None
     try:
         if db.bind is None or db.bind.dialect.name != "postgresql":
             raise RuntimeError("RLS verification requires PostgreSQL")
@@ -98,11 +126,15 @@ def main() -> None:
         company_b = _seed_company(db, "B")
         borrower_a = _seed_borrower(db, "A")
         borrower_b = _seed_borrower(db, "B")
+        _seed_company_borrower_account(db, company_a, borrower_a, "A")
+        _seed_company_borrower_account(db, company_b, borrower_b, "B")
         case_a = _seed_case(db, company_a, borrower_a, "A")
         case_b = _seed_case(db, company_b, borrower_b, "B")
         company_a_id = company_a.id
         company_b_id = company_b.id
+        borrower_a_id = borrower_a.id
         borrower_b_id = borrower_b.id
+        case_a_id = case_a.id
         case_b_id = case_b.id
         db.commit()
 
@@ -120,9 +152,17 @@ def main() -> None:
                 f'ON TABLE crm_relationship_cases TO "{PROBE_ROLE}"'
             )
         )
+        # The borrower-scope trigger reads these relationship tables before
+        # PostgreSQL evaluates the CRM row-level INSERT policy.
+        db.execute(
+            text(
+                f'GRANT SELECT ON TABLE company_borrower_accounts, client_company_loan '
+                f'TO "{PROBE_ROLE}"'
+            )
+        )
         db.commit()
 
-        _set_probe_role_and_context(db, company_a.id)
+        _set_probe_role_and_context(db, company_a_id)
 
         visible = db.execute(
             text(
@@ -133,9 +173,9 @@ def main() -> None:
                 ORDER BY id
                 """
             ),
-            {"case_a": case_a.id, "case_b": case_b.id},
+            {"case_a": case_a_id, "case_b": case_b_id},
         ).mappings().all()
-        if len(visible) != 1 or visible[0]["company_id"] != company_a.id:
+        if len(visible) != 1 or visible[0]["company_id"] != company_a_id:
             raise AssertionError(
                 f"RLS SELECT isolation failed: expected only Company A row, got {visible!r}"
             )
@@ -148,14 +188,14 @@ def main() -> None:
                 WHERE id = :case_b
                 """
             ),
-            {"case_b": case_b.id},
+            {"case_b": case_b_id},
         )
         if updated.rowcount != 0:
             raise AssertionError("RLS UPDATE isolation failed for Company B row")
 
         deleted = db.execute(
             text("DELETE FROM crm_relationship_cases WHERE id = :case_b"),
-            {"case_b": case_b.id},
+            {"case_b": case_b_id},
         )
         if deleted.rowcount != 0:
             raise AssertionError("RLS DELETE isolation failed for Company B row")
@@ -188,8 +228,8 @@ def main() -> None:
                 ),
                 {
                     "id": uuid.uuid4(),
-                    "company_id": company_b.id,
-                    "borrower_id": borrower_b.id,
+                    "company_id": company_b_id,
+                    "borrower_id": borrower_b_id,
                     "reference": f"RLS-X-{uuid.uuid4().hex[:10]}",
                 },
             )
@@ -210,6 +250,7 @@ def main() -> None:
         try:
             db.rollback()
             db.execute(text("RESET ROLE"))
+            db.execute(text(f'DROP OWNED BY "{PROBE_ROLE}"'))
             db.execute(text(f'DROP ROLE IF EXISTS "{PROBE_ROLE}"'))
             db.commit()
         except Exception:
