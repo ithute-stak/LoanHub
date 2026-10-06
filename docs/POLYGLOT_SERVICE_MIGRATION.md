@@ -110,3 +110,8 @@ defaults to `off`. Because push is side-effecting, `shadow` remains Python-only:
 LoanHub never sends duplicate notifications merely to compare runtimes. When explicitly
 promoted to `prefer-worker`, an ambiguous Go handoff is not immediately replayed
 through Python, avoiding double delivery.
+
+
+## Java deterministic CSV reporting
+
+Java renders deterministic management-report CSV bytes behind the `java_report_csv` workload route. Python remains responsible for report scope and data collection. Shadow mode is the default and requires byte-for-byte parity plus SHA-256 verification before controlled promotion.
