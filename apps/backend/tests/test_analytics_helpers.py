@@ -34,3 +34,26 @@ def test_analytics_rejects_invalid_or_excessive_ranges():
         _range(date(2026, 2, 1), date(2026, 1, 1))
     with pytest.raises(HTTPException):
         _range(date(2020, 1, 1), date(2026, 1, 1))
+
+
+def test_management_command_intelligence_is_ranked_evidence_based_and_human_review_only():
+    root = __import__("pathlib").Path(__file__).resolve().parents[2]
+    service = (root / "backend" / "services" / "analytics_service.py").read_text(encoding="utf-8")
+    router = (root / "backend" / "routers" / "analytics.py").read_text(encoding="utf-8")
+    frontend_api = (root / "frontend" / "api" / "analytics.ts").read_text(encoding="utf-8")
+    panel = (root / "frontend" / "components" / "company" / "management-command-intelligence-panel.tsx").read_text(encoding="utf-8")
+    command = (root / "frontend" / "app" / "(dashboard)" / "company" / "command-centre" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def build_management_command_intelligence(" in service
+    assert "enterprise_early_warning(" in service
+    assert '"priority_actions"' in service
+    assert '"recommended_action"' in service
+    assert '"decision_mode": "human_review"' in service
+    assert '"opportunities"' in service
+    assert "does not approve loans, move money, post journals" in service
+    assert '@router.get("/company-command")' in router
+    assert "ManagementCommandIntelligence" in frontend_api
+    assert "Management Command Intelligence" in panel
+    assert "Ranked management action queue" in panel
+    assert "Recommended management action" in panel
+    assert "ManagementCommandIntelligencePanel" in command
