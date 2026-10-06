@@ -3611,6 +3611,7 @@ MONTH_END_ADJUSTMENT_REFERENCE_TYPES = {
     "doubtful_debt_allowance",
     "credit_loss_provision_run",
     "corporation_tax_charge",
+    "period_adjustment_reversal",
 }
 
 
@@ -3919,7 +3920,7 @@ def prepare_month_end_adjustment_draft(
                 created_by_user_id=user_id,
                 amount=amount,
                 currency="LSL",
-                due_at=datetime.combine(reversal_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                due_at=datetime.combine(reversal_date, datetime.min.time()),
                 data={
                     "journal_entry_id": str(entry.id),
                     "reversal_date": reversal_date.isoformat(),
@@ -3946,7 +3947,7 @@ def prepare_due_adjustment_reversal_drafts(
         CompanyOperatingRecord.record_type == "adjustment_reversal_schedule",
         CompanyOperatingRecord.status == "pending",
         CompanyOperatingRecord.is_archived.is_(False),
-        CompanyOperatingRecord.due_at <= datetime.combine(as_of, datetime.max.time()).replace(tzinfo=timezone.utc),
+        CompanyOperatingRecord.due_at <= datetime.combine(as_of, datetime.max.time()),
     )
     if branch_id:
         schedules = schedules.filter(CompanyOperatingRecord.branch_id == branch_id)
