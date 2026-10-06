@@ -59,6 +59,7 @@ from database.session import get_db
 from services.accounting_service import (
     accounting_business_date,
     accounting_error_diagnostics,
+    accounting_modern_practice_readiness,
     asset_payload,
     bank_settlement_chain,
     books_of_original_entry,
@@ -870,6 +871,27 @@ def company_loan_notes(
     )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.get("/governance/modern-practice-readiness")
+def modern_accounting_readiness(
+    company_id: UUID | None = None,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
+    return accounting_modern_practice_readiness(
+        db,
+        company_id=selected_company_id,
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=selected_branch_id,
+    )
 
 
 @router.get("/analysis/ratios")

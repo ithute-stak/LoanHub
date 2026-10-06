@@ -343,6 +343,38 @@ def test_inventory_turnover_uses_average_inventory_and_cost_of_services():
     assert 'round(365 / inventory_turnover, 2)' in service
 
 
+def test_chapter_40_governance_readiness_is_exposed():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def accounting_modern_practice_readiness(" in service
+    assert '@router.get("/governance/modern-practice-readiness")' in router
+    assert '"automation"' in service
+    assert '"ethics_principles"' in service
+    assert '"technology_note"' in service
+    assert '"analysis_note"' in service
+
+
+def test_chapter_40_ethics_principles_match_book_framework():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    for principle in (
+        "integrity",
+        "objectivity",
+        "professional_competence_and_due_care",
+        "confidentiality",
+        "professional_behaviour",
+    ):
+        assert f'"{principle}"' in service
+    assert "does not claim that software can determine whether a person is ethical" in service
+
+
+def test_chapter_40_automation_preserves_human_control_and_traceability():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    assert '"maker_checker_segregated_where_recorded"' in service
+    assert '"source_traceability_complete"' in service
+    assert '"no_unattributed_postings"' in service
+    assert "Automation should reduce routine bookkeeping while preserving traceability" in service
+
+
 def test_fixed_asset_schema_requires_rate_for_reducing_balance():
     with pytest.raises(ValidationError):
         FixedAssetCreate(
