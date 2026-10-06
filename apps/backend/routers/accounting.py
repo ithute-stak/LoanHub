@@ -48,6 +48,7 @@ from database.schemas.accounting import (
     LedgerLineRead,
     LedgerRead,
     LoanWriteOffCreate,
+    MonthEndAdjustmentDraftCreate,
     OpeningBalanceMigrationCreate,
     WrittenOffLoanRecoveryCreate,
     PrepaymentAdjustmentCreate,
@@ -98,6 +99,8 @@ from services.accounting_service import (
     depreciate_all_fixed_assets_for_period,
     period_close_pack,
     month_end_control_pack,
+    prepare_month_end_adjustment_draft,
+    prepare_due_adjustment_reversal_drafts,
     record_electronic_clearing_settlement,
     receipts_and_payments_summary,
     scope_key,
@@ -776,6 +779,63 @@ def get_month_end_control_pack(
         period_end=period_end,
         branch_id=selected_branch_id,
     )
+
+
+@router.post("/month-end-adjustments/drafts", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
+def create_month_end_adjustment_draft(
+    payload: MonthEndAdjustmentDraftCreate,
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for month-end adjustments")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, payload.branch_id
+    )
+    entry = prepare_month_end_adjustment_draft(
+        db,
+        company_id=selected_company_id,
+        branch_id=selected_branch_id,
+        adjustment_type=payload.adjustment_type,
+        amount=payload.amount,
+        account_code=payload.account_code,
+        description=payload.description,
+        reference_id=payload.reference_id or str(uuid4()),
+        entry_date=payload.entry_date,
+        reversal_date=payload.reversal_date,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
+
+
+@router.post("/month-end-adjustments/prepare-reversals")
+def prepare_month_end_reversal_drafts(
+    as_of: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for month-end reversals")
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
+    )
+    result = prepare_due_adjustment_reversal_drafts(
+        db,
+        company_id=selected_company_id,
+        as_of=as_of,
+        branch_id=selected_branch_id,
+        user_id=context.user.id,
+    )
+    db.commit()
+    return result
 
 
 @router.get("/financial-books/export")
