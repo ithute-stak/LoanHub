@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { approveFinancialPlan, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, listAccountingAccounts, listFinancialPlans, prepareMonthEndReversalDrafts, previewYearEndClosing, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack } from "@/api/accounting";
+import { approveFinancialPlan, approveTreasuryCommitment, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createTreasuryCommitment, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, getTreasuryCashForecast, getTreasuryStressTest, listAccountingAccounts, listFinancialPlans, listTreasuryCommitments, prepareMonthEndReversalDrafts, previewYearEndClosing, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack, type TreasuryCashForecast, type TreasuryCommitment, type TreasuryStressTest } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,21 @@ export function FinancialBooksWorkspace() {
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [planVariance, setPlanVariance] = useState<FinancialPlanVariance | null>(null);
   const [planningWorking, setPlanningWorking] = useState(false);
+  const [treasuryWorking, setTreasuryWorking] = useState(false);
+  const [treasuryCommitments, setTreasuryCommitments] = useState<TreasuryCommitment[]>([]);
+  const [treasuryForecast, setTreasuryForecast] = useState<TreasuryCashForecast | null>(null);
+  const [treasuryStress, setTreasuryStress] = useState<TreasuryStressTest | null>(null);
+  const [treasuryFrom, setTreasuryFrom] = useState(isoToday());
+  const [treasuryTo, setTreasuryTo] = useState(yearEnd());
+  const [minimumCash, setMinimumCash] = useState("0");
+  const [collectionRate, setCollectionRate] = useState("100");
+  const [obligationRate, setObligationRate] = useState("100");
+  const [unexpectedOutflow, setUnexpectedOutflow] = useState("0");
+  const [commitmentTitle, setCommitmentTitle] = useState("");
+  const [commitmentCategory, setCommitmentCategory] = useState<"expense" | "payroll" | "provider" | "tax" | "refund" | "capital" | "other">("expense");
+  const [commitmentDueDate, setCommitmentDueDate] = useState(isoToday());
+  const [commitmentAmount, setCommitmentAmount] = useState("");
+  const [commitmentDescription, setCommitmentDescription] = useState("");
   const [planName, setPlanName] = useState(`Budget ${new Date().getFullYear()}`);
   const [planType, setPlanType] = useState<"budget" | "forecast">("budget");
   const [planStart, setPlanStart] = useState(yearStart());
@@ -116,14 +131,16 @@ export function FinancialBooksWorkspace() {
   const loadControls = useCallback(async () => {
     if (!companyId) return;
     try {
-      const [periodRows, accountRows, planRows] = await Promise.all([
+      const [periodRows, accountRows, planRows, commitmentRows] = await Promise.all([
         governanceControlsApi.accountingPeriods(),
         listAccountingAccounts(companyId),
         listFinancialPlans(companyId, effectiveBranchId),
+        listTreasuryCommitments(companyId, effectiveBranchId),
       ]);
       setPeriods(periodRows);
       setAccounts(accountRows);
       setPlans(planRows);
+      setTreasuryCommitments(commitmentRows);
       setSelectedPlanId((current) => current || planRows[0]?.id || "");
       setSelectedPeriod((current) => current || periodRows[0]?.id || "");
       if (accountRows.length >= 2) {
@@ -319,6 +336,76 @@ export function FinancialBooksWorkspace() {
     setPlanningLines((rows) => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
   }
 
+  async function prepareTreasuryForecast() {
+    if (!companyId) return;
+    setTreasuryWorking(true);
+    try {
+      const payload = {
+        from_date: treasuryFrom,
+        to_date: treasuryTo,
+        minimum_cash: Number(minimumCash || 0),
+        collection_rate: Number(collectionRate || 0) / 100,
+        obligation_rate: Number(obligationRate || 0) / 100,
+        unexpected_outflow: Number(unexpectedOutflow || 0),
+        branch_id: effectiveBranchId,
+      };
+      const [forecast, stress] = await Promise.all([
+        getTreasuryCashForecast(payload, companyId),
+        getTreasuryStressTest({
+          from_date: treasuryFrom,
+          to_date: treasuryTo,
+          minimum_cash: Number(minimumCash || 0),
+          branch_id: effectiveBranchId,
+        }, companyId),
+      ]);
+      setTreasuryForecast(forecast);
+      setTreasuryStress(stress);
+      toast.success(forecast.breach_count ? "Liquidity forecast has minimum-cash breaches" : "Liquidity forecast is above the minimum-cash threshold");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not prepare treasury forecast"));
+    } finally {
+      setTreasuryWorking(false);
+    }
+  }
+
+  async function createCommitment() {
+    if (!companyId || !commitmentTitle.trim() || Number(commitmentAmount) <= 0) return;
+    setTreasuryWorking(true);
+    try {
+      await createTreasuryCommitment({
+        title: commitmentTitle.trim(),
+        category: commitmentCategory,
+        due_date: commitmentDueDate,
+        amount: Number(commitmentAmount),
+        branch_id: effectiveBranchId,
+        description: commitmentDescription.trim() || undefined,
+      }, companyId);
+      toast.success("Treasury commitment draft created");
+      setCommitmentTitle("");
+      setCommitmentAmount("");
+      setCommitmentDescription("");
+      await loadControls();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not create treasury commitment"));
+    } finally {
+      setTreasuryWorking(false);
+    }
+  }
+
+  async function approveCommitment(id: string) {
+    if (!companyId) return;
+    setTreasuryWorking(true);
+    try {
+      await approveTreasuryCommitment(id, companyId);
+      toast.success("Treasury commitment approved");
+      await loadControls();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not approve treasury commitment"));
+    } finally {
+      setTreasuryWorking(false);
+    }
+  }
+
   async function createPeriod() {
     if (!newPeriodStart || !newPeriodEnd) return;
     setPeriodWorking(true);
@@ -509,11 +596,12 @@ export function FinancialBooksWorkspace() {
       </section>
 
       <Tabs defaultValue="books" className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-5">
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1 md:grid-cols-6">
           <TabsTrigger value="books">Financial books</TabsTrigger>
           <TabsTrigger value="periods">Period close</TabsTrigger>
           <TabsTrigger value="month-end">Month-end controls</TabsTrigger>
           <TabsTrigger value="planning">Planning</TabsTrigger>
+          <TabsTrigger value="treasury">Treasury</TabsTrigger>
           <TabsTrigger value="opening">Opening balances</TabsTrigger>
         </TabsList>
 
@@ -742,6 +830,63 @@ export function FinancialBooksWorkspace() {
               </> : null}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="treasury" className="space-y-5">
+          <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Treasury & cash-flow intelligence</CardTitle><CardDescription>Forecast forward liquidity from posted cash/bank balances, scheduled loan collections and approved future commitments. Scenarios never alter the ledger.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="From"><Input type="date" value={treasuryFrom} onChange={(e) => setTreasuryFrom(e.target.value)} /></Field>
+                <Field label="To"><Input type="date" value={treasuryTo} onChange={(e) => setTreasuryTo(e.target.value)} /></Field>
+                <Field label="Minimum cash"><Input type="number" min={0} step="0.01" value={minimumCash} onChange={(e) => setMinimumCash(e.target.value)} /></Field>
+                <Field label="Unexpected outflow"><Input type="number" min={0} step="0.01" value={unexpectedOutflow} onChange={(e) => setUnexpectedOutflow(e.target.value)} /></Field>
+                <Field label="Collection assumption %"><Input type="number" min={0} max={100} step="1" value={collectionRate} onChange={(e) => setCollectionRate(e.target.value)} /></Field>
+                <Field label="Obligation assumption %"><Input type="number" min={0} step="1" value={obligationRate} onChange={(e) => setObligationRate(e.target.value)} /></Field>
+              </div>
+              <LoadingButton loading={treasuryWorking} onClick={() => void prepareTreasuryForecast()}>Run liquidity forecast & stress test</LoadingButton>
+            </CardContent>
+          </Card>
+
+          <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Future treasury commitments</CardTitle><CardDescription>Record known obligations such as payroll, provider settlements, tax, refunds or capital purchases. Draft commitments require a different finance user to approve them before they enter forecasts.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Title"><Input value={commitmentTitle} onChange={(e) => setCommitmentTitle(e.target.value)} /></Field>
+                <Field label="Category"><Select value={commitmentCategory} onValueChange={(v) => setCommitmentCategory(v as typeof commitmentCategory)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["expense","payroll","provider","tax","refund","capital","other"].map((v) => <SelectItem key={v} value={v}>{titleCase(v)}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Due date"><Input type="date" value={commitmentDueDate} onChange={(e) => setCommitmentDueDate(e.target.value)} /></Field>
+                <Field label="Amount"><Input type="number" min={0} step="0.01" value={commitmentAmount} onChange={(e) => setCommitmentAmount(e.target.value)} /></Field>
+              </div>
+              <Field label="Description"><Textarea value={commitmentDescription} onChange={(e) => setCommitmentDescription(e.target.value)} /></Field>
+              <LoadingButton loading={treasuryWorking} onClick={() => void createCommitment()}>Create commitment draft</LoadingButton>
+              <div className="space-y-2">{treasuryCommitments.slice(0, 20).map((row) => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-black">{row.title}</p><p className="text-xs text-muted-foreground">{titleCase(row.category)} · {row.due_date} · {row.reference}</p></div><div className="flex items-center gap-2"><span className="font-black">{formatMoney(row.amount)}</span><Badge variant={row.status === "approved" ? "default" : "outline"}>{titleCase(row.status)}</Badge>{row.status === "draft" ? <LoadingButton size="sm" variant="outline" loading={treasuryWorking} onClick={() => void approveCommitment(row.id)}>Approve</LoadingButton> : null}</div></div>)}</div>
+            </CardContent>
+          </Card>
+
+          {treasuryForecast ? <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Metric label="Opening available cash" value={formatMoney(treasuryForecast.opening_liquidity.available_cash)} />
+              <Metric label="Expected collections" value={formatMoney(treasuryForecast.total_expected_collections)} />
+              <Metric label="Approved obligations" value={formatMoney(treasuryForecast.total_approved_obligations)} />
+              <Metric label="Projected closing cash" value={formatMoney(treasuryForecast.projected_closing_cash)} />
+            </div>
+            <Card className="loanhub-panel">
+              <CardHeader><CardTitle>Liquidity alerts</CardTitle><CardDescription>{treasuryForecast.policy_note}</CardDescription></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-2"><Badge variant={treasuryForecast.breach_count ? "destructive" : "default"}>{treasuryForecast.breach_count ? `${treasuryForecast.breach_count} breach day(s)` : "No minimum-cash breaches"}</Badge></div>
+                {treasuryForecast.breaches.slice(0, 10).map((b) => <div key={b.date} className="flex items-center justify-between rounded-xl border p-3"><span>{b.date}</span><span className="font-black">Shortfall {formatMoney(b.shortfall)}</span></div>)}
+              </CardContent>
+            </Card>
+            <Card className="loanhub-panel overflow-hidden">
+              <CardHeader><CardTitle>Daily cash forecast</CardTitle></CardHeader>
+              <CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead className="text-right">Opening</TableHead><TableHead className="text-right">Collections</TableHead><TableHead className="text-right">Obligations</TableHead><TableHead className="text-right">Closing</TableHead></TableRow></TableHeader><TableBody>{treasuryForecast.daily_forecast.map((row) => <TableRow key={row.date}><TableCell>{row.date}</TableCell><TableCell className="text-right">{formatMoney(row.opening_cash)}</TableCell><TableCell className="text-right">{formatMoney(row.expected_collections)}</TableCell><TableCell className="text-right">{formatMoney(row.approved_obligations)}</TableCell><TableCell className="text-right font-black">{formatMoney(row.projected_closing_cash)} {row.minimum_cash_breach ? <Badge variant="destructive" className="ml-2">Breach</Badge> : null}</TableCell></TableRow>)}</TableBody></Table></div></CardContent>
+            </Card>
+          </> : null}
+
+          {treasuryStress ? <Card className="loanhub-panel">
+            <CardHeader><CardTitle>Liquidity stress scenarios</CardTitle><CardDescription>{treasuryStress.policy_note}</CardDescription></CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{treasuryStress.scenarios.map((row) => <div key={row.scenario} className="rounded-xl border p-3"><p className="font-black">{titleCase(row.scenario)}</p><p className="mt-2 text-sm">Closing: {formatMoney(row.projected_closing_cash)}</p><p className="text-sm">Minimum: {formatMoney(row.minimum_projected_cash)}</p><Badge variant={row.breach_count ? "destructive" : "default"} className="mt-2">{row.breach_count ? `${row.breach_count} breach(es)` : "Pass"}</Badge></div>)}</CardContent>
+          </Card> : null}
         </TabsContent>
 
         <TabsContent value="opening" className="space-y-5">

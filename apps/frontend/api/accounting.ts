@@ -283,6 +283,124 @@ export type FinancialPlanVariance = {
   }>;
 };
 
+
+export type TreasuryCommitment = {
+  id: string;
+  reference: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  branch_id?: string | null;
+  category: string;
+  due_date: string;
+  amount: number;
+};
+
+export type TreasuryCashForecast = {
+  from_date: string;
+  to_date: string;
+  branch_id?: string | null;
+  opening_liquidity: {
+    cash: number;
+    bank: number;
+    electronic_clearing: number;
+    available_cash: number;
+    gross_liquid_funds: number;
+  };
+  scenario: {
+    collection_rate: number;
+    obligation_rate: number;
+    unexpected_outflow: number;
+    minimum_cash: number;
+  };
+  total_expected_collections: number;
+  total_approved_obligations: number;
+  projected_closing_cash: number;
+  minimum_projected_cash: number;
+  breach_count: number;
+  breaches: Array<{ date: string; projected_closing_cash: number; minimum_cash: number; shortfall: number }>;
+  daily_forecast: Array<{
+    date: string;
+    opening_cash: number;
+    expected_collections: number;
+    approved_obligations: number;
+    projected_closing_cash: number;
+    minimum_cash_breach: boolean;
+  }>;
+  policy_note: string;
+};
+
+export type TreasuryStressTest = {
+  from_date: string;
+  to_date: string;
+  minimum_cash: number;
+  policy_note: string;
+  scenarios: Array<{
+    scenario: string;
+    collection_rate: number;
+    obligation_rate: number;
+    projected_closing_cash: number;
+    minimum_projected_cash: number;
+    breach_count: number;
+    first_breach?: { date: string; shortfall: number } | null;
+  }>;
+};
+
+export async function listTreasuryCommitments(companyId?: string, branchId?: string | null): Promise<TreasuryCommitment[]> {
+  return (await api.get<TreasuryCommitment[]>("/accounting/treasury/commitments", {
+    params: { company_id: companyId, branch_id: branchId || undefined },
+  })).data;
+}
+
+export async function createTreasuryCommitment(payload: {
+  title: string;
+  category: "expense" | "payroll" | "provider" | "tax" | "refund" | "capital" | "other";
+  due_date: string;
+  amount: number;
+  branch_id?: string | null;
+  description?: string;
+}, companyId?: string): Promise<TreasuryCommitment> {
+  return (await api.post<TreasuryCommitment>("/accounting/treasury/commitments", payload, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function approveTreasuryCommitment(commitmentId: string, companyId?: string): Promise<TreasuryCommitment> {
+  return (await api.post<TreasuryCommitment>(`/accounting/treasury/commitments/${commitmentId}/approve`, null, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function getTreasuryCashForecast(payload: {
+  from_date: string;
+  to_date: string;
+  minimum_cash: number;
+  collection_rate: number;
+  obligation_rate: number;
+  unexpected_outflow: number;
+  branch_id?: string | null;
+}, companyId?: string): Promise<TreasuryCashForecast> {
+  return (await api.post<TreasuryCashForecast>("/accounting/treasury/cash-forecast", payload, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function getTreasuryStressTest(payload: {
+  from_date: string;
+  to_date: string;
+  minimum_cash: number;
+  branch_id?: string | null;
+}, companyId?: string): Promise<TreasuryStressTest> {
+  return (await api.post<TreasuryStressTest>("/accounting/treasury/stress-test", {
+    ...payload,
+    collection_rate: 1,
+    obligation_rate: 1,
+    unexpected_outflow: 0,
+  }, {
+    params: { company_id: companyId },
+  })).data;
+}
+
 export async function listFinancialPlans(companyId?: string, branchId?: string | null): Promise<FinancialPlan[]> {
   return (await api.get<FinancialPlan[]>("/accounting/financial-plans", {
     params: { company_id: companyId, branch_id: branchId || undefined },
