@@ -234,6 +234,93 @@ export async function depreciateAssetsForPeriod(filters: {
   })).data;
 }
 
+
+export type FinancialPlan = {
+  id: string;
+  reference: string;
+  name: string;
+  description?: string | null;
+  status: string;
+  branch_id?: string | null;
+  plan_type: "budget" | "forecast";
+  fiscal_start: string;
+  fiscal_end: string;
+  version: number;
+  source_plan_id?: string | null;
+  approved_by_user_id?: string | null;
+  approved_at?: string | null;
+  total_planned: number;
+  lines: Array<{
+    account_code: string;
+    account_name: string;
+    account_type: string;
+    period_start: string;
+    amount: number;
+    note?: string | null;
+    basis?: string;
+  }>;
+};
+
+export type FinancialPlanVariance = {
+  plan: FinancialPlan;
+  as_of: string;
+  planned_total: number;
+  actual_total: number;
+  net_variance: number;
+  intelligence_policy: string;
+  top_variances: Array<{
+    account_code: string;
+    account_name: string;
+    account_type: string;
+    period: string;
+    planned: number;
+    actual: number;
+    variance: number;
+    variance_percent?: number | null;
+    favorability: "favorable" | "unfavorable" | "neutral";
+    explanation: string;
+    cause_inferred: false;
+  }>;
+};
+
+export async function listFinancialPlans(companyId?: string, branchId?: string | null): Promise<FinancialPlan[]> {
+  return (await api.get<FinancialPlan[]>("/accounting/financial-plans", {
+    params: { company_id: companyId, branch_id: branchId || undefined },
+  })).data;
+}
+
+export async function createFinancialPlan(payload: {
+  name: string;
+  plan_type: "budget" | "forecast";
+  fiscal_start: string;
+  fiscal_end: string;
+  branch_id?: string | null;
+  notes?: string;
+  lines: Array<{ account_code: string; period_start: string; amount: number; note?: string }>;
+}, companyId?: string): Promise<FinancialPlan> {
+  return (await api.post<FinancialPlan>("/accounting/financial-plans", payload, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function approveFinancialPlan(planId: string, companyId?: string): Promise<FinancialPlan> {
+  return (await api.post<FinancialPlan>(`/accounting/financial-plans/${planId}/approve`, null, {
+    params: { company_id: companyId },
+  })).data;
+}
+
+export async function getFinancialPlanVariance(planId: string, asOf: string, companyId?: string, branchId?: string | null): Promise<FinancialPlanVariance> {
+  return (await api.get<FinancialPlanVariance>(`/accounting/financial-plans/${planId}/variance`, {
+    params: { company_id: companyId, branch_id: branchId || undefined, as_of: asOf },
+  })).data;
+}
+
+export async function createRollingForecast(planId: string, cutoffDate: string, name: string, companyId?: string): Promise<FinancialPlan> {
+  return (await api.post<FinancialPlan>(`/accounting/financial-plans/${planId}/rolling-forecast`, null, {
+    params: { company_id: companyId, cutoff_date: cutoffDate, name },
+  })).data;
+}
+
 export async function exportFinancialBooks(filters: {
   companyId?: string;
   branchId?: string | null;
