@@ -204,6 +204,49 @@ class DepreciationAdjustmentCreate(BaseModel):
     reference_id: str | None = Field(default=None, max_length=120)
 
 
+class ShareIssueCreate(BaseModel):
+    shares_issued: int = Field(gt=0)
+    nominal_value_per_share: Decimal = Field(gt=0)
+    issue_price_per_share: Decimal = Field(gt=0)
+    settlement_account_code: str = Field(default="1010", min_length=4, max_length=30)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_issue_price(self):
+        if self.issue_price_per_share < self.nominal_value_per_share:
+            raise ValueError("Issue price cannot be below nominal value in this workflow")
+        return self
+
+
+class DividendPaymentCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    settlement_account_code: str = Field(default="1010", min_length=4, max_length=30)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
+class CorporationTaxCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
+class LoanNoteIssueCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    settlement_account_code: str = Field(default="1010", min_length=4, max_length=30)
+    description: str = Field(min_length=2, max_length=1000)
+    branch_id: UUID | None = None
+    entry_date: date | None = None
+    reference_id: str | None = Field(default=None, max_length=120)
+
+
 class InventoryValuationItem(BaseModel):
     reference: str = Field(min_length=1, max_length=120)
     cost: Decimal = Field(ge=0)
