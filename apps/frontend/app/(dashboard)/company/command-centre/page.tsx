@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Activity, BrainCircuit, BriefcaseBusiness, Calculator, ChartNoAxesCombined } from "lucide-react";
 
 import { CompanyOperatingSystemCentre } from "@/components/company/company-operating-system-centre";
+import { ManagementCommandIntelligencePanel } from "@/components/company/management-command-intelligence-panel";
 
 export default function CompanyCommandCentrePage() {
   return (
@@ -38,6 +39,7 @@ export default function CompanyCommandCentrePage() {
           <ChartNoAxesCombined className="h-4 w-4" /> Portfolio Risk Intelligence
         </Link>
       </div>
+      <ManagementCommandIntelligencePanel />
       <CompanyOperatingSystemCentre />
     </div>
   );

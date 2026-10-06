@@ -20,6 +20,7 @@ from database.session import get_db
 from services.analytics_service import (
     build_borrower_analytics,
     build_company_analytics,
+    build_management_command_intelligence,
     build_platform_analytics,
 )
 
@@ -59,6 +60,29 @@ def company_analytics(
             date_from=start,
             date_to=end,
             granularity=granularity,
+            branch_id=branch_id,
+        )
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@router.get("/company-command")
+def company_command_intelligence(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    branch_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    if context.role not in COMPANY_ROLES or not context.company_id:
+        raise HTTPException(status_code=403, detail="Company command intelligence requires an active company role")
+    start, end = _range(date_from, date_to)
+    try:
+        return build_management_command_intelligence(
+            db,
+            context=context,
+            date_from=start,
+            date_to=end,
             branch_id=branch_id,
         )
     except PermissionError as error:
