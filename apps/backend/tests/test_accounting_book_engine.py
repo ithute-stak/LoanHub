@@ -453,8 +453,9 @@ def test_year_end_closing_moves_result_next_period_and_uses_maker_checker_draft(
     service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
     router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
     assert "def year_end_closing_preview(" in service
-    assert "Year-end closing requires a hard-closed source period" in service
-    assert "next_date = period_end + timedelta(days=1)" in service
+    assert "Every accounting period in the selected financial year must be hard-closed" in service
+    assert "next_date = financial_year_end + timedelta(days=1)" in service
+    assert "Accounting periods do not continuously cover the selected financial year" in service
     assert 'account_by_code(db, key, "3100")' in service
     assert '"transfer_profit_to_retained_earnings"' in service
     assert '"transfer_loss_to_retained_earnings"' in service
@@ -518,7 +519,19 @@ def test_year_end_closing_is_excluded_from_next_period_operating_performance():
     router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
     assert 'JournalEntry.reference_type != "year_end_closing"' in service
     assert 'exclude_reference_types={"year_end_closing"} if statement_name == "income_statement" else None' in router
-    assert "The closing journal is dated on the first day after the reporting period" in service
+    assert "The closing journal is dated on the first day of the next open" in service
+
+
+def test_year_end_closing_supports_monthly_periods_and_protects_reopen():
+    service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
+    controls = (ROOT / "backend" / "routers" / "governance_controls.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    assert "def _year_end_period_coverage(" in service
+    assert '"source_period_ids"' in service
+    assert "financial_year_start" in router
+    assert "financial_year_end" in router
+    assert '@router.delete("/year-end-closing/{entry_id}"' in router
+    assert "This period is covered by a prepared year-end closing journal" in controls
 
 
 def test_finance_workspace_exposes_exports_and_year_end_close():
