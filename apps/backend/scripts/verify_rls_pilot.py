@@ -195,7 +195,7 @@ def main() -> None:
 
         deleted = db.execute(
             text("DELETE FROM crm_relationship_cases WHERE id = :case_b"),
-            {"case_b": case_b.id},
+            {"case_b": case_b_id},
         )
         if deleted.rowcount != 0:
             raise AssertionError("RLS DELETE isolation failed for Company B row")
