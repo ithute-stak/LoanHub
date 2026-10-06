@@ -119,14 +119,40 @@ export async function exportFinancialBooks(filters: {
   })).data as Blob;
 }
 
-export async function previewYearEndClosing(periodId: string, companyId?: string): Promise<Record<string, unknown>> {
+export async function previewYearEndClosing(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  financialYearStart: string;
+  financialYearEnd: string;
+}): Promise<Record<string, unknown>> {
   return (await api.get("/accounting/year-end-closing/preview", {
-    params: { period_id: periodId, company_id: companyId },
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      financial_year_start: filters.financialYearStart,
+      financial_year_end: filters.financialYearEnd,
+    },
   })).data as Record<string, unknown>;
 }
 
-export async function createYearEndClosingDraft(periodId: string, companyId?: string): Promise<JournalEntry> {
+export async function createYearEndClosingDraft(filters: {
+  companyId?: string;
+  branchId?: string | null;
+  financialYearStart: string;
+  financialYearEnd: string;
+}): Promise<JournalEntry> {
   return (await api.post<JournalEntry>("/accounting/year-end-closing", null, {
-    params: { period_id: periodId, company_id: companyId },
+    params: {
+      company_id: filters.companyId,
+      branch_id: filters.branchId || undefined,
+      financial_year_start: filters.financialYearStart,
+      financial_year_end: filters.financialYearEnd,
+    },
   })).data;
+}
+
+export async function cancelYearEndClosingDraft(entryId: string, companyId?: string): Promise<void> {
+  await api.delete(`/accounting/year-end-closing/${entryId}`, {
+    params: { company_id: companyId },
+  });
 }
