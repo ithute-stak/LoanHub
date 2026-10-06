@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import sys
 import uuid
+from pathlib import Path
 
 from sqlalchemy import text
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from database.models.company import LoanCompany
 from database.models.company_operations_phase1 import CRMRelationshipCase
