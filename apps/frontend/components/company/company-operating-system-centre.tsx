@@ -55,6 +55,8 @@ import {
   generateFTPEvidencePack,
   calculateMinimumViableRate,
   generatePricingOptimizationEvidencePack,
+  optimizeCreditDealStructures,
+  generateDealStructuringEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -71,6 +73,7 @@ import {
   type InterestRateRiskIntelligence,
   type FTPProfitabilityIntelligence,
   type PricingOptimizationResult,
+  type DealStructuringResult,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -105,6 +108,7 @@ const TABS = [
   ["rate-risk", "Rate Risk", Gauge],
   ["ftp", "FTP & Profit", Calculator],
   ["pricing-intel", "Pricing Intel", Calculator],
+  ["deal-structuring", "Deal Structuring", Scale],
   ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
@@ -180,6 +184,17 @@ export function CompanyOperatingSystemCentre() {
   const [rateRisk, setRateRisk] = useState<InterestRateRiskIntelligence | null>(null);
   const [ftp, setFtp] = useState<FTPProfitabilityIntelligence | null>(null);
   const [pricingIntel, setPricingIntel] = useState<PricingOptimizationResult | null>(null);
+  const [dealStructuring, setDealStructuring] = useState<DealStructuringResult | null>(null);
+  const [dealBorrowerId, setDealBorrowerId] = useState("");
+  const [dealMinPrincipal, setDealMinPrincipal] = useState("5000");
+  const [dealMaxPrincipal, setDealMaxPrincipal] = useState("20000");
+  const [dealPrincipalStep, setDealPrincipalStep] = useState("2500");
+  const [dealTerms, setDealTerms] = useState("3,6,9,12");
+  const [dealFeePercent, setDealFeePercent] = useState("0");
+  const [dealMethod, setDealMethod] = useState("micro_loan");
+  const [dealExpectedLoss, setDealExpectedLoss] = useState("");
+  const [dealTargetMargin, setDealTargetMargin] = useState("");
+  const [dealLiquidityBuffer, setDealLiquidityBuffer] = useState("");
   const [pricingIntelPrincipal, setPricingIntelPrincipal] = useState("10000");
   const [pricingIntelTerm, setPricingIntelTerm] = useState("6");
   const [pricingIntelFee, setPricingIntelFee] = useState("0");
@@ -304,6 +319,9 @@ export function CompanyOperatingSystemCentre() {
     }
     if (nextTab === "pricing-intel") {
       setPricingIntel(null);
+    }
+    if (nextTab === "deal-structuring") {
+      setDealStructuring(null);
     }
     if (nextTab === "prudential") {
       try {
@@ -512,6 +530,50 @@ export function CompanyOperatingSystemCentre() {
         horizon_days: Number(rateHorizonDays || 365),
       });
       setRateRisk(result.metrics);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function dealStructuringPayload() {
+    return {
+      borrower_id: dealBorrowerId.trim(),
+      minimum_principal: Number(dealMinPrincipal || 0),
+      maximum_principal: Number(dealMaxPrincipal || 0),
+      principal_step: Number(dealPrincipalStep || 0),
+      term_options: dealTerms.split(",").map((item) => Number(item.trim())).filter((item) => Number.isFinite(item) && item > 0),
+      processing_fee_percent: Number(dealFeePercent || 0),
+      interest_method: dealMethod,
+      expected_loss_percent: dealExpectedLoss.trim() ? Number(dealExpectedLoss) : null,
+      target_margin_percent: dealTargetMargin.trim() ? Number(dealTargetMargin) : null,
+      maximum_search_rate_percent: 500,
+      minimum_liquidity_buffer: dealLiquidityBuffer.trim() ? Number(dealLiquidityBuffer) : null,
+    };
+  }
+
+  async function runDealStructuring() {
+    setBusy(true);
+    setError(null);
+    try {
+      setDealStructuring(await optimizeCreditDealStructures(dealStructuringPayload()));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportDealStructuringPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generateDealStructuringEvidencePack({
+        title: "Credit approval economics & deal structuring assessment",
+        ...dealStructuringPayload(),
+      });
+      setDealStructuring(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -1377,6 +1439,68 @@ export function CompanyOperatingSystemCentre() {
 
             {pricingIntel.minimum_viable_terms ? <article className="rounded-2xl border p-4"><h3 className="font-black">Minimum-rate contractual illustration</h3><div className="mt-3 grid gap-3 sm:grid-cols-3"><Metric label="Monthly installment" value={formatMoney(pricingIntel.minimum_viable_terms.monthly_installment)} /><Metric label="Total repayable" value={formatMoney(pricingIntel.minimum_viable_terms.total_repayable)} /><Metric label="Gross yield proxy" value={`${pricingIntel.minimum_viable_terms.gross_contractual_yield_proxy_percent.toFixed(2)}%`} /></div></article> : null}
             <p className="rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{pricingIntel.policy_note}</p>
+          </section> : null}
+        </div>
+      ) : null}
+
+      {tab === "deal-structuring" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Credit Approval Economics & Deal Structuring Intelligence</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Searches principal and term combinations, solves the minimum viable rate, then tests affordability, liquidity and configured concentration limits. It recommends structures for human review; it never approves the borrower.</p>
+              </div>
+              <button type="button" disabled={busy || !dealStructuring} onClick={() => void exportDealStructuringPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate deal evidence pack</button>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <input value={dealBorrowerId} onChange={(e) => setDealBorrowerId(e.target.value)} placeholder="Borrower UUID" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealMinPrincipal} onChange={(e) => setDealMinPrincipal(e.target.value)} placeholder="Minimum principal" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealMaxPrincipal} onChange={(e) => setDealMaxPrincipal(e.target.value)} placeholder="Maximum principal" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealPrincipalStep} onChange={(e) => setDealPrincipalStep(e.target.value)} placeholder="Principal step" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealTerms} onChange={(e) => setDealTerms(e.target.value)} placeholder="Terms: 3,6,9,12" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealFeePercent} onChange={(e) => setDealFeePercent(e.target.value)} placeholder="Fee % of principal" className="h-11 rounded-xl border bg-background px-3" />
+              <select value={dealMethod} onChange={(e) => setDealMethod(e.target.value)} className="h-11 rounded-xl border bg-background px-3">
+                <option value="micro_loan">LoanHub Micro Loan</option>
+                <option value="simple_interest">Simple interest</option>
+                <option value="flat_rate">Flat rate</option>
+                <option value="compound_interest">Compound interest</option>
+                <option value="reducing_balance">Reducing balance</option>
+                <option value="daily_accrual_reducing">Daily accrual reducing</option>
+              </select>
+              <input value={dealExpectedLoss} onChange={(e) => setDealExpectedLoss(e.target.value)} placeholder="Expected loss % (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealTargetMargin} onChange={(e) => setDealTargetMargin(e.target.value)} placeholder="Target margin % (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={dealLiquidityBuffer} onChange={(e) => setDealLiquidityBuffer(e.target.value)} placeholder="Liquidity buffer LSL (optional)" className="h-11 rounded-xl border bg-background px-3" />
+            </div>
+            <button type="button" disabled={busy || !dealBorrowerId.trim() || Number(dealMinPrincipal) <= 0 || Number(dealMaxPrincipal) <= 0 || Number(dealPrincipalStep) <= 0} onClick={() => void runDealStructuring()} className="mt-4 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Find viable deal structures</button>
+          </section>
+
+          {dealStructuring ? <section className="space-y-5 rounded-3xl border bg-card p-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <Metric label="Candidates tested" value={String(dealStructuring.search.candidate_count)} />
+              <Metric label="Viable structures" value={String(dealStructuring.viable_structure_count)} />
+              <Metric label="Fully viable" value={String(dealStructuring.fully_viable_structure_count)} />
+              <Metric label="Existing exposure" value={formatMoney(dealStructuring.portfolio_constraints.existing_borrower_exposure)} />
+              <Metric label="30-day min cash" value={formatMoney(dealStructuring.portfolio_constraints.baseline_30d_minimum_cash)} />
+              <Metric label="Decision support" value={titleCase(dealStructuring.decision_support)} />
+            </div>
+
+            {dealStructuring.best_structure ? <article className="rounded-2xl border bg-emerald-500/5 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-black uppercase text-muted-foreground">Best available structure</p><h3 className="mt-1 text-xl font-black">{formatMoney(dealStructuring.best_structure.principal)} over {dealStructuring.best_structure.term_months} months</h3></div><span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-black text-emerald-700 dark:text-emerald-300">{titleCase(dealStructuring.best_structure.status)}</span></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <Metric label="Minimum rate" value={dealStructuring.best_structure.minimum_viable_rate_percent == null ? "—" : `${dealStructuring.best_structure.minimum_viable_rate_percent.toFixed(4)}%`} />
+                <Metric label="Installment" value={dealStructuring.best_structure.monthly_installment == null ? "—" : formatMoney(dealStructuring.best_structure.monthly_installment)} />
+                <Metric label="Affordability headroom" value={dealStructuring.best_structure.affordability.headroom == null ? "—" : formatMoney(dealStructuring.best_structure.affordability.headroom)} />
+                <Metric label="Post-deal 30d cash" value={formatMoney(dealStructuring.best_structure.liquidity.post_disbursement_30d_minimum_cash_proxy)} />
+                <Metric label="Exposure / equity" value={dealStructuring.best_structure.concentration.post_deal_exposure_percent_of_equity == null ? "—" : `${dealStructuring.best_structure.concentration.post_deal_exposure_percent_of_equity.toFixed(2)}%`} />
+              </div>
+            </article> : <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm font-bold text-destructive">No candidate satisfied the currently assessable economic, affordability and liquidity constraints.</div>}
+
+            <div className="overflow-x-auto rounded-2xl border">
+              <table className="min-w-full text-sm"><thead className="bg-muted/40 text-left"><tr><th className="p-3">Principal</th><th className="p-3">Term</th><th className="p-3 text-right">Min rate</th><th className="p-3 text-right">Installment</th><th className="p-3">Affordability</th><th className="p-3">Liquidity</th><th className="p-3">Concentration</th><th className="p-3">Status</th></tr></thead><tbody>{dealStructuring.options.slice(0, 100).map((row, index) => <tr key={`${row.principal}-${row.term_months}-${index}`} className="border-t"><td className="p-3 font-black">{formatMoney(row.principal)}</td><td className="p-3">{row.term_months} months</td><td className="p-3 text-right">{row.minimum_viable_rate_percent == null ? "—" : `${row.minimum_viable_rate_percent.toFixed(4)}%`}</td><td className="p-3 text-right">{row.monthly_installment == null ? "—" : formatMoney(row.monthly_installment)}</td><td className="p-3">{titleCase(row.affordability.status)}</td><td className="p-3">{titleCase(row.liquidity.status)}</td><td className="p-3">{titleCase(row.concentration.status)}</td><td className="p-3 font-black">{titleCase(row.status)}</td></tr>)}</tbody></table>
+            </div>
+            <p className="rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{dealStructuring.policy_note}</p>
           </section> : null}
         </div>
       ) : null}
