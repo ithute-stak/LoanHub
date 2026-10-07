@@ -503,3 +503,82 @@ export async function createPrudentialFiling(payload: {
 export async function generatePrudentialEvidencePack(): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PrudentialIntelligence }> {
   return (await api.post("/company-operating-system/prudential/evidence-pack")).data;
 }
+
+
+export type PrudentialStressScenario = {
+  name: string;
+  assumptions: {
+    collection_rate_percent: number;
+    obligation_rate_percent: number;
+    unexpected_outflow: number;
+    additional_stage3_migration_percent: number;
+    additional_writeoff_percent: number;
+    stressed_ecl_rate_percent: number;
+  };
+  impact: {
+    gross_writeoff: number;
+    migrated_to_stage3: number;
+    stressed_stage3_exposure: number;
+    incremental_allowance: number;
+    stressed_equity: number;
+    equity_erosion: number;
+    stressed_portfolio_exposure: number;
+    projected_closing_cash: number;
+    minimum_projected_cash: number;
+    liquidity_breach_days: number;
+  };
+  ratios: {
+    capital_to_portfolio_exposure_percent?: number | null;
+    current_ratio?: number | null;
+    gearing_percent?: number | null;
+    largest_borrower_exposure_percent_of_equity?: number | null;
+    related_party_exposure_percent_of_equity?: number | null;
+    ecl_coverage_percent?: number | null;
+  };
+  assessments: PrudentialAssessment[];
+  breach_count: number;
+  not_assessed_count: number;
+  status: "breach" | "not_assessed" | "within_configured_limits";
+};
+
+export type PrudentialStressPack = {
+  generated_at: string;
+  baseline: {
+    regulatory_status: string;
+    metrics: PrudentialIntelligence["metrics"];
+    assessments: PrudentialAssessment[];
+    breach_count: number;
+    not_assessed_count: number;
+  };
+  scenarios: PrudentialStressScenario[];
+  worst_scenario?: string | null;
+  policy_note: string;
+};
+
+export async function runPrudentialStressTest(payload?: {
+  scenarios?: Array<{
+    name: string;
+    collection_rate_percent: number;
+    obligation_rate_percent: number;
+    unexpected_outflow: number;
+    additional_stage3_migration_percent: number;
+    additional_writeoff_percent: number;
+    stressed_ecl_rate_percent: number;
+  }>;
+}): Promise<PrudentialStressPack> {
+  return (await api.post<PrudentialStressPack>("/company-operating-system/prudential/stress-test", payload ?? {})).data;
+}
+
+export async function generatePrudentialStressEvidencePack(payload?: {
+  scenarios?: Array<{
+    name: string;
+    collection_rate_percent: number;
+    obligation_rate_percent: number;
+    unexpected_outflow: number;
+    additional_stage3_migration_percent: number;
+    additional_writeoff_percent: number;
+    stressed_ecl_rate_percent: number;
+  }>;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PrudentialStressPack }> {
+  return (await api.post("/company-operating-system/prudential/stress-evidence-pack", payload ?? {})).data;
+}
