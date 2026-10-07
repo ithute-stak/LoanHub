@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficialMandateState
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
+from database.models.platform_cdas import PlatformCdasTransaction
 from integrations.cdas import CdasError
 from integrations.cdas_contracts import CdasModifyActivePayload, CdasSettlementPayload
 from services.cdas_autopilot import affordability_window_open, decide_cdas_autopilot
@@ -397,43 +398,63 @@ async def scan_affordability_opportunities(db: Session, *, limit: int = 250) -> 
             environment,
             str(profile.employee_number).strip().casefold(),
         )
+        billing_key = (
+            f"cdas-autopilot-affordability:{loan.company_id}:"
+            f"{profile.employee_number}:{today.isoformat()}"
+        )
         if cache_key in affordability_cache:
             live_affordability = affordability_cache[cache_key]
             reused_reads += 1
         else:
-            client = get_company_cdas_client(db, loan.company_id)
-            subscription = require_approved_subscription(db, company_id=loan.company_id)
-            assert_live_credit_available(
-                db,
-                subscription=subscription,
-                environment=environment,
-                operation_type="affordability",
+            existing_snapshot = (
+                db.query(PlatformCdasTransaction)
+                .filter(
+                    PlatformCdasTransaction.company_id == loan.company_id,
+                    PlatformCdasTransaction.environment == environment,
+                    PlatformCdasTransaction.operation_type == "affordability",
+                    PlatformCdasTransaction.billing_key == billing_key,
+                )
+                .first()
             )
-            try:
-                live_affordability = _money(await client.check_affordability(profile.employee_number))
-            except CdasError:
-                skipped += 1
-                continue
+            snapshot_metadata = dict(existing_snapshot.metadata_json or {}) if existing_snapshot else {}
+            snapshot_value = snapshot_metadata.get("live_affordability")
+            if snapshot_value is not None:
+                live_affordability = _money(snapshot_value)
+                affordability_cache[cache_key] = live_affordability
+                reused_reads += 1
+            else:
+                client = get_company_cdas_client(db, loan.company_id)
+                subscription = require_approved_subscription(db, company_id=loan.company_id)
+                assert_live_credit_available(
+                    db,
+                    subscription=subscription,
+                    environment=environment,
+                    operation_type="affordability",
+                )
+                try:
+                    live_affordability = _money(await client.check_affordability(profile.employee_number))
+                except CdasError:
+                    skipped += 1
+                    continue
 
-            affordability_cache[cache_key] = live_affordability
-            provider_reads += 1
-            record_successful_operation(
-                db,
-                company_id=loan.company_id,
-                environment=environment,
-                operation_type="affordability",
-                actor_user_id=actor_user_id,
-                billing_key=(
-                    f"cdas-autopilot-affordability:{loan.company_id}:"
-                    f"{profile.employee_number}:{today.isoformat()}"
-                ),
-                source_reference=str(profile.id),
-                metadata={
-                    "request_origin": "cdas_autopilot_window",
-                    "dedupe_scope": "company_employee_day",
-                    "employee_number_present": True,
-                },
-            )
+                affordability_cache[cache_key] = live_affordability
+                provider_reads += 1
+                record_successful_operation(
+                    db,
+                    company_id=loan.company_id,
+                    environment=environment,
+                    operation_type="affordability",
+                    actor_user_id=actor_user_id,
+                    billing_key=billing_key,
+                    source_reference=str(profile.id),
+                    metadata={
+                        "request_origin": "cdas_autopilot_window",
+                        "dedupe_scope": "company_employee_day",
+                        "employee_number_present": True,
+                        "live_affordability": str(live_affordability),
+                        "snapshot_date": today.isoformat(),
+                    },
+                )
 
         decision = decide_cdas_autopilot(
             outstanding_balance=_money(loan.balance),
