@@ -29,6 +29,7 @@ from database.models.origination import (
     BorrowerEmploymentProfile,
     BorrowerKYCProfile,
     LoanContract,
+    OriginationPolicy,
 )
 from database.models.person import Person
 from database.models.professional_lending import DirectLoanApplication
@@ -1025,13 +1026,17 @@ def _post_approval_deal_integrity(
             drift.append("loan installment exceeds the final submitted underwriting proposal")
         checks["underwriting_revision"] = latest_assessment.revision
 
+    origination_policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == loan.company_id,
+    ).first()
+    contract_required = True if origination_policy is None else bool(origination_policy.require_signed_contract)
     contract = db.query(LoanContract).filter(
         LoanContract.company_id == loan.company_id,
         LoanContract.loan_id == loan.id,
     ).first()
-    if not contract or contract.status != "signed":
+    if contract_required and (not contract or contract.status != "signed"):
         drift.append("fully signed loan contract is missing")
-    else:
+    if contract:
         terms = dict(contract.terms_snapshot or {})
         contract_pairs = [
             ("principal_amount", loan.principal_amount, "contract principal differs from the loan"),
@@ -1049,6 +1054,8 @@ def _post_approval_deal_integrity(
             drift.append("contract calculation method differs from the loan")
         checks["contract_number"] = contract.contract_number
         checks["contract_hash"] = contract.contract_hash
+        checks["contract_status"] = contract.status
+    checks["contract_required"] = contract_required
 
     affordability = _latest_affordability(db, application)
     if not affordability:
