@@ -75,7 +75,9 @@ def test_frontend_batches_commit_events_and_catches_up_after_reconnect() -> None
     assert "new Map(" in realtime
     assert "receivedCount" in realtime
     assert "hasRemoteChanges" in realtime
-    assert "shouldRefreshRouteForCommit(pathname, detail)" in realtime
+    assert "shouldRefreshRouteForCommit(pathname, detailForDispatch)" in realtime
+    assert "cacheTagsForResources(resources)" in realtime
+    assert "cacheTagsInvalidated({ scope, tags })" in realtime
     assert "beginRealtimeCatchupWindow" in realtime
     assert "reconnect_catchup" in realtime
     assert "router.refresh()" in realtime
@@ -120,6 +122,8 @@ def test_shared_collections_refresh_only_affected_resources_and_sort_determinist
     assert 'payment_transactions: ["payments", "loans"]' in resources
     assert 'payment_transactions: "payments"' in resources
     assert "shouldRefreshRouteForCommit" in resources
+    assert "RESOURCE_CACHE_TAGS" in resources
+    assert "cacheTagsForResources" in resources
     assert "Unknown tables are safer to refresh" in resources
 
     assert "stableSmartSort" in provider
