@@ -29,7 +29,7 @@ from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
 from database.models.professional_lending import DirectLoanApplication
 from database.session import get_db
-from integrations.cdas import CdasClient, CdasError
+from integrations.cdas import CdasClient, CdasError, cdas_error_semantics
 from integrations.cdas_contracts import (
     CdasLifecyclePayload,
     CdasModifyActivePayload,
@@ -42,6 +42,7 @@ from services.cdas_config_service import (
     get_configuration,
     get_company_item_code,
     update_selected_environment,
+    selected_profile,
 )
 from services.cdas_operation_ledger import (
     CdasDuplicateOperationError,
@@ -51,6 +52,7 @@ from services.cdas_operation_ledger import (
     reconcile_provider_operation,
 )
 from services.cdas_request_budget import get_cdas_request_budget_status
+from services.cdas_operation_ledger import UNRESOLVED_OPERATION_STATES
 from services.platform_cdas_service import (
     assert_live_credit_available,
     get_subscription as get_cdas_subscription,
@@ -152,9 +154,14 @@ def _require_confirmed(confirmed: bool) -> None:
 
 def _cdas_http_error(exc: CdasError, *, operation: CdasProviderOperation | None = None) -> HTTPException:
     status = exc.status_code if 400 <= exc.status_code <= 599 else 502
+    semantics = cdas_error_semantics(exc.status_code)
     detail: dict[str, Any] = {
         "provider": "CDAS",
         "code": exc.status_code,
+        "provider_error_code": semantics["code"],
+        "category": semantics["category"],
+        "retryable": semantics["retryable"],
+        "action": semantics["action"],
         "message": exc.message,
     }
     if operation is not None:
@@ -438,6 +445,97 @@ def get_cdas_reference_data(
     """Return the official CDAS v1.5 codes and limits without contacting CDAS."""
     _require_lending_user(context)
     return cdas_reference_data()
+
+
+@router.get("/readiness")
+def cdas_production_readiness(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    row = get_configuration(db, context.company_id)
+    summary = configuration_summary(row, db=db, company_id=context.company_id)
+    environment = str(summary.get("environment") or "test")
+    profile = selected_profile(db, context.company_id)
+    budget = get_cdas_request_budget_status(
+        db,
+        company_id=context.company_id,
+        environment=environment,
+    )
+    unresolved = (
+        db.query(CdasProviderOperation)
+        .filter(
+            CdasProviderOperation.company_id == context.company_id,
+            CdasProviderOperation.environment == environment,
+            CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES),
+        )
+        .count()
+    )
+
+    checks: list[dict[str, Any]] = []
+
+    def add_check(key: str, label: str, passed: bool, *, blocking: bool = True, detail: str | None = None) -> None:
+        checks.append({
+            "key": key,
+            "label": label,
+            "passed": bool(passed),
+            "blocking": bool(blocking),
+            "detail": detail,
+        })
+
+    subscription = summary.get("subscription") or {}
+    selected_state = (summary.get("profiles") or {}).get(environment) or {}
+    live_release = summary.get("live_release") or {}
+
+    add_check("subscription", "Platform subscription approved", bool(subscription.get("approved")))
+    add_check("profile", f"{environment.title()} credential profile configured", bool(selected_state.get("configured")))
+    add_check("connection", f"{environment.title()} provider connection tested", selected_state.get("last_test_status") == "connected")
+    add_check("item_code", "Company Item Code configured", bool(profile and str(profile.item_code or "").strip()))
+    add_check("request_budget", "Provider request allowance available", int(budget.get("remaining") or 0) > 0, detail=f'{budget.get("remaining", 0)} of {budget.get("limit", 400)} requests remain today')
+    add_check("mutation_reconciliation", "No unresolved CDAS mutations", unresolved == 0, detail=f"{unresolved} unresolved provider operation(s)")
+    add_check(
+        "shared_session",
+        "Cross-worker session coordination enabled",
+        bool(summary.get("shared_session_enabled")),
+        blocking=environment == "live",
+        detail="Required for Live multi-worker deployments; Test may operate without Redis.",
+    )
+
+    if environment == "live":
+        add_check("live_release", "Exact Live profile explicitly approved for production", bool(live_release.get("approved")))
+        add_check("live_test_fresh", "Live connection test is fresh", bool(live_release.get("connection_test_fresh")), detail=f'Max age {live_release.get("connection_test_max_age_hours", 24)} hours')
+    else:
+        add_check("test_mode", "Operating in Test mode", True, blocking=False)
+
+    blocking = [item for item in checks if item["blocking"]]
+    passed = sum(1 for item in blocking if item["passed"])
+    score = round((passed / len(blocking)) * 100) if blocking else 100
+    ready = all(item["passed"] for item in blocking)
+
+    return {
+        "provider": "CDAS",
+        "api_contract": "v1.5",
+        "environment": environment,
+        "score": score,
+        "ready": ready,
+        "grade": "10/10-ready" if ready and score == 100 else "action-required",
+        "checks": checks,
+        "request_budget": budget,
+        "unresolved_operation_count": unresolved,
+        "live_release": live_release,
+        "provider_rules": {
+            "token_max_age_hours": 8,
+            "token_idle_expiry_minutes": 10,
+            "daily_requests_per_user": 400,
+            "mutations_auto_replayed": False,
+        },
+        "policy_note": (
+            "Readiness means LoanHub controls are satisfied for the selected environment. "
+            "It does not itself grant DataNet/CDAS production permission or replace external onboarding/UAT approval."
+        ),
+    }
 
 
 @router.get("/request-budget")
