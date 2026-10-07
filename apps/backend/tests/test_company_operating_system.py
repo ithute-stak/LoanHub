@@ -376,3 +376,36 @@ def test_ftp_profitability_is_evidence_driven_conservative_and_nonposting():
     assert "Profitability stress scenario" in centre
     assert "Generate FTP evidence pack" in centre
     assert "Funding-rate completeness" in centre
+
+
+def test_pricing_optimization_solves_economic_floor_without_approving_credit():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class PricingOptimizationRequest" in schema
+    assert "class PricingOptimizationPackRequest" in schema
+
+    assert "def _active_expected_loss_proxy(" in router
+    assert "def _pricing_terms(" in router
+    assert "def _minimum_viable_pricing(" in router
+    assert '@router.post("/pricing/minimum-viable-rate")' in router
+    assert '@router.post("/pricing/minimum-viable-rate/evidence-pack")' in router
+    assert '"report_type="pricing_optimization_evidence_pack"' in router
+    assert '"required_gross_yield_proxy_percent"' in router
+    assert '"minimum_viable_rate_percent"' in router
+    assert '"minimum_rate_gap_bps"' in router
+    assert '"active_provision_policy_current_rate_proxy"' in router
+    assert "does not approve or reject a borrower" in router
+    assert "does not claim APR" in router
+
+    assert "PricingOptimizationResult" in api
+    assert "calculateMinimumViableRate" in api
+    assert "generatePricingOptimizationEvidencePack" in api
+
+    assert "Pricing Optimization & Minimum Viable Lending Rate" in centre
+    assert "Economic floor components" in centre
+    assert "Proposed pricing comparison" in centre
+    assert "Minimum-rate contractual illustration" in centre
+    assert "Generate pricing evidence pack" in centre

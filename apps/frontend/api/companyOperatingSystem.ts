@@ -883,3 +883,91 @@ export async function generateFTPEvidencePack(payload: {
 }): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: FTPProfitabilityIntelligence }> {
   return (await api.post("/company-operating-system/ftp/evidence-pack", payload)).data;
 }
+
+
+export type PricingOptimizationResult = {
+  as_of: string;
+  inputs: {
+    principal: number;
+    term_months: number;
+    processing_fee: number;
+    interest_method: string;
+    proposed_rate_percent?: number | null;
+    target_margin_percent: number;
+    maximum_search_rate_percent: number;
+  };
+  cost_stack: {
+    weighted_funding_cost_percent?: number | null;
+    operating_cost_percent: number;
+    capital_allocation_percent: number;
+    capital_hurdle_rate_percent: number;
+    annualized_capital_charge_percent: number;
+    expected_loss_percent_of_principal?: number | null;
+    annualized_expected_loss_charge_percent?: number | null;
+    annualized_fee_yield_proxy_percent: number;
+    target_margin_percent: number;
+    required_gross_yield_proxy_percent?: number | null;
+    required_interest_yield_proxy_percent?: number | null;
+  };
+  evidence: {
+    ftp_policy: FTPProfitabilityIntelligence["policy"];
+    funding: FTPProfitabilityIntelligence["funding"];
+    expected_loss: {
+      value_percent?: number | null;
+      source: string;
+      policy_name?: string | null;
+      policy_version?: number | null;
+    };
+  };
+  minimum_viable_rate_percent?: number | null;
+  minimum_viable_terms?: {
+    monthly_installment: number;
+    total_repayable: number;
+    contractual_interest: number;
+    simple_annualized_interest_yield_proxy_percent: number;
+    annualized_fee_yield_proxy_percent: number;
+    gross_contractual_yield_proxy_percent: number;
+    details: Record<string, unknown>;
+  } | null;
+  solver_status: "solved" | "not_assessed" | "no_solution_within_search_bound";
+  missing_evidence: string[];
+  proposed_pricing?: {
+    rate_percent: number;
+    monthly_installment: number;
+    total_repayable: number;
+    contractual_interest: number;
+    gross_contractual_yield_proxy_percent: number;
+    risk_adjusted_margin_proxy_percent?: number | null;
+    minimum_rate_gap_bps?: number | null;
+    status: "meets_minimum" | "below_minimum" | "not_assessed";
+  } | null;
+  decision_support: "review_required" | "within_economic_floor" | "not_assessed" | "minimum_rate_calculated";
+  policy_note: string;
+};
+
+export async function calculateMinimumViableRate(payload: {
+  principal: number;
+  term_months: number;
+  processing_fee: number;
+  interest_method: string;
+  proposed_rate_percent?: number | null;
+  expected_loss_percent?: number | null;
+  target_margin_percent?: number | null;
+  maximum_search_rate_percent?: number;
+}): Promise<PricingOptimizationResult> {
+  return (await api.post<PricingOptimizationResult>("/company-operating-system/pricing/minimum-viable-rate", payload)).data;
+}
+
+export async function generatePricingOptimizationEvidencePack(payload: {
+  title?: string;
+  principal: number;
+  term_months: number;
+  processing_fee: number;
+  interest_method: string;
+  proposed_rate_percent?: number | null;
+  expected_loss_percent?: number | null;
+  target_margin_percent?: number | null;
+  maximum_search_rate_percent?: number;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PricingOptimizationResult }> {
+  return (await api.post("/company-operating-system/pricing/minimum-viable-rate/evidence-pack", payload)).data;
+}

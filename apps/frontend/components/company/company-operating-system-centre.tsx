@@ -53,6 +53,8 @@ import {
   saveFTPPolicy,
   runFTPScenario,
   generateFTPEvidencePack,
+  calculateMinimumViableRate,
+  generatePricingOptimizationEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -68,6 +70,7 @@ import {
   type ALMIntelligence,
   type InterestRateRiskIntelligence,
   type FTPProfitabilityIntelligence,
+  type PricingOptimizationResult,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -101,6 +104,7 @@ const TABS = [
   ["alm", "ALM", ChartNoAxesCombined],
   ["rate-risk", "Rate Risk", Gauge],
   ["ftp", "FTP & Profit", Calculator],
+  ["pricing-intel", "Pricing Intel", Calculator],
   ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
@@ -175,6 +179,14 @@ export function CompanyOperatingSystemCentre() {
   const [alm, setAlm] = useState<ALMIntelligence | null>(null);
   const [rateRisk, setRateRisk] = useState<InterestRateRiskIntelligence | null>(null);
   const [ftp, setFtp] = useState<FTPProfitabilityIntelligence | null>(null);
+  const [pricingIntel, setPricingIntel] = useState<PricingOptimizationResult | null>(null);
+  const [pricingIntelPrincipal, setPricingIntelPrincipal] = useState("10000");
+  const [pricingIntelTerm, setPricingIntelTerm] = useState("6");
+  const [pricingIntelFee, setPricingIntelFee] = useState("0");
+  const [pricingIntelMethod, setPricingIntelMethod] = useState("micro_loan");
+  const [pricingIntelProposedRate, setPricingIntelProposedRate] = useState("10");
+  const [pricingIntelExpectedLoss, setPricingIntelExpectedLoss] = useState("");
+  const [pricingIntelTargetMargin, setPricingIntelTargetMargin] = useState("");
   const [ftpOperatingCost, setFtpOperatingCost] = useState("2");
   const [ftpCapitalAllocation, setFtpCapitalAllocation] = useState("15");
   const [ftpHurdleRate, setFtpHurdleRate] = useState("18");
@@ -289,6 +301,9 @@ export function CompanyOperatingSystemCentre() {
       } catch (nextError) {
         setError(errorMessage(nextError));
       }
+    }
+    if (nextTab === "pricing-intel") {
+      setPricingIntel(null);
     }
     if (nextTab === "prudential") {
       try {
@@ -497,6 +512,47 @@ export function CompanyOperatingSystemCentre() {
         horizon_days: Number(rateHorizonDays || 365),
       });
       setRateRisk(result.metrics);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function pricingIntelPayload() {
+    return {
+      principal: Number(pricingIntelPrincipal || 0),
+      term_months: Number(pricingIntelTerm || 0),
+      processing_fee: Number(pricingIntelFee || 0),
+      interest_method: pricingIntelMethod,
+      proposed_rate_percent: pricingIntelProposedRate.trim() ? Number(pricingIntelProposedRate) : null,
+      expected_loss_percent: pricingIntelExpectedLoss.trim() ? Number(pricingIntelExpectedLoss) : null,
+      target_margin_percent: pricingIntelTargetMargin.trim() ? Number(pricingIntelTargetMargin) : null,
+      maximum_search_rate_percent: 500,
+    };
+  }
+
+  async function runPricingOptimization() {
+    setBusy(true);
+    setError(null);
+    try {
+      setPricingIntel(await calculateMinimumViableRate(pricingIntelPayload()));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportPricingOptimizationPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generatePricingOptimizationEvidencePack({
+        title: "Minimum viable lending rate assessment",
+        ...pricingIntelPayload(),
+      });
+      setPricingIntel(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -1242,6 +1298,86 @@ export function CompanyOperatingSystemCentre() {
               <button type="button" disabled={busy} onClick={() => void runFtpStress()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run profitability stress</button>
             </section>
           </div>
+        </div>
+      ) : null}
+
+      {tab === "pricing-intel" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><Calculator className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Pricing Optimization & Minimum Viable Lending Rate</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Calculates the economic rate floor needed to cover explicit funding cost, expected credit loss, operating cost, capital hurdle and target margin. The solver uses LoanHub’s authoritative contractual interest engine for the selected pricing method.</p>
+              </div>
+              <button type="button" disabled={busy || !pricingIntel} onClick={() => void exportPricingOptimizationPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate pricing evidence pack</button>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <input value={pricingIntelPrincipal} onChange={(e) => setPricingIntelPrincipal(e.target.value)} placeholder="Principal" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={pricingIntelTerm} onChange={(e) => setPricingIntelTerm(e.target.value)} placeholder="Term months" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={pricingIntelFee} onChange={(e) => setPricingIntelFee(e.target.value)} placeholder="Processing fee" className="h-11 rounded-xl border bg-background px-3" />
+              <select value={pricingIntelMethod} onChange={(e) => setPricingIntelMethod(e.target.value)} className="h-11 rounded-xl border bg-background px-3">
+                <option value="micro_loan">LoanHub Micro Loan</option>
+                <option value="simple_interest">Simple interest</option>
+                <option value="flat_rate">Flat rate</option>
+                <option value="compound_interest">Compound interest</option>
+                <option value="reducing_balance">Reducing balance</option>
+                <option value="daily_accrual_reducing">Daily accrual reducing</option>
+              </select>
+              <input value={pricingIntelProposedRate} onChange={(e) => setPricingIntelProposedRate(e.target.value)} placeholder="Proposed borrower rate %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={pricingIntelExpectedLoss} onChange={(e) => setPricingIntelExpectedLoss(e.target.value)} placeholder="Expected loss % (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={pricingIntelTargetMargin} onChange={(e) => setPricingIntelTargetMargin(e.target.value)} placeholder="Target margin % (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              <button type="button" disabled={busy || Number(pricingIntelPrincipal) <= 0 || Number(pricingIntelTerm) <= 0} onClick={() => void runPricingOptimization()} className="h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Calculate minimum viable rate</button>
+            </div>
+          </section>
+
+          {pricingIntel ? <section className="space-y-5 rounded-3xl border bg-card p-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <Metric label="Minimum viable rate" value={pricingIntel.minimum_viable_rate_percent == null ? "—" : `${pricingIntel.minimum_viable_rate_percent.toFixed(4)}%`} detail={titleCase(pricingIntel.solver_status)} />
+              <Metric label="Proposed rate" value={pricingIntel.inputs.proposed_rate_percent == null ? "—" : `${pricingIntel.inputs.proposed_rate_percent.toFixed(4)}%`} />
+              <Metric label="Required gross yield" value={pricingIntel.cost_stack.required_gross_yield_proxy_percent == null ? "—" : `${pricingIntel.cost_stack.required_gross_yield_proxy_percent.toFixed(2)}%`} />
+              <Metric label="Funding cost" value={pricingIntel.cost_stack.weighted_funding_cost_percent == null ? "—" : `${pricingIntel.cost_stack.weighted_funding_cost_percent.toFixed(2)}%`} />
+              <Metric label="Expected loss" value={pricingIntel.cost_stack.expected_loss_percent_of_principal == null ? "—" : `${pricingIntel.cost_stack.expected_loss_percent_of_principal.toFixed(2)}%`} />
+              <Metric label="Decision support" value={titleCase(pricingIntel.decision_support)} />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border p-4">
+                <h3 className="font-black">Economic floor components</h3>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between"><span>Funding cost</span><strong>{pricingIntel.cost_stack.weighted_funding_cost_percent?.toFixed(2) ?? "—"}%</strong></div>
+                  <div className="flex justify-between"><span>Operating cost</span><strong>{pricingIntel.cost_stack.operating_cost_percent.toFixed(2)}%</strong></div>
+                  <div className="flex justify-between"><span>Annualized capital charge</span><strong>{pricingIntel.cost_stack.annualized_capital_charge_percent.toFixed(2)}%</strong></div>
+                  <div className="flex justify-between"><span>Annualized expected-loss charge</span><strong>{pricingIntel.cost_stack.annualized_expected_loss_charge_percent?.toFixed(2) ?? "—"}%</strong></div>
+                  <div className="flex justify-between"><span>Target margin</span><strong>{pricingIntel.cost_stack.target_margin_percent.toFixed(2)}%</strong></div>
+                  <div className="flex justify-between"><span>Fee yield contribution</span><strong>{pricingIntel.cost_stack.annualized_fee_yield_proxy_percent.toFixed(2)}%</strong></div>
+                  <div className="flex justify-between border-t pt-2"><span className="font-black">Required interest yield</span><strong>{pricingIntel.cost_stack.required_interest_yield_proxy_percent?.toFixed(2) ?? "—"}%</strong></div>
+                </div>
+              </article>
+              <article className="rounded-2xl border p-4">
+                <h3 className="font-black">Evidence & assumptions</h3>
+                <p className="mt-3 text-sm">Funding-rate coverage: <strong>{pricingIntel.evidence.funding.funding_rate_coverage_percent.toFixed(1)}%</strong></p>
+                <p className="mt-1 text-sm">Expected-loss source: <strong>{titleCase(pricingIntel.evidence.expected_loss.source)}</strong></p>
+                <p className="mt-1 text-sm">Expected-loss policy: <strong>{pricingIntel.evidence.expected_loss.policy_name ?? "Explicit input / unavailable"}</strong></p>
+                <p className="mt-1 text-sm">FTP policy: <strong>{pricingIntel.evidence.ftp_policy.policy_name}</strong></p>
+                {pricingIntel.missing_evidence.length ? <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><strong>Missing evidence:</strong> {pricingIntel.missing_evidence.map(titleCase).join(", ")}</div> : null}
+              </article>
+            </div>
+
+            {pricingIntel.proposed_pricing ? <article className={`rounded-2xl border p-4 ${pricingIntel.proposed_pricing.status === "below_minimum" ? "border-destructive/40" : ""}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Proposed pricing comparison</h3><p className="mt-1 text-sm text-muted-foreground">Economic floor comparison only; borrower affordability and legal pricing controls remain separate.</p></div><span className={`rounded-full px-3 py-1 text-xs font-black ${pricingIntel.proposed_pricing.status === "below_minimum" ? "bg-destructive/10 text-destructive" : pricingIntel.proposed_pricing.status === "meets_minimum" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{titleCase(pricingIntel.proposed_pricing.status)}</span></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <Metric label="Monthly installment" value={formatMoney(pricingIntel.proposed_pricing.monthly_installment)} />
+                <Metric label="Total repayable" value={formatMoney(pricingIntel.proposed_pricing.total_repayable)} />
+                <Metric label="Gross yield proxy" value={`${pricingIntel.proposed_pricing.gross_contractual_yield_proxy_percent.toFixed(2)}%`} />
+                <Metric label="Risk-adjusted margin" value={pricingIntel.proposed_pricing.risk_adjusted_margin_proxy_percent == null ? "—" : `${pricingIntel.proposed_pricing.risk_adjusted_margin_proxy_percent.toFixed(2)}%`} />
+                <Metric label="Rate gap" value={pricingIntel.proposed_pricing.minimum_rate_gap_bps == null ? "—" : `${pricingIntel.proposed_pricing.minimum_rate_gap_bps.toFixed(0)} bps`} />
+              </div>
+            </article> : null}
+
+            {pricingIntel.minimum_viable_terms ? <article className="rounded-2xl border p-4"><h3 className="font-black">Minimum-rate contractual illustration</h3><div className="mt-3 grid gap-3 sm:grid-cols-3"><Metric label="Monthly installment" value={formatMoney(pricingIntel.minimum_viable_terms.monthly_installment)} /><Metric label="Total repayable" value={formatMoney(pricingIntel.minimum_viable_terms.total_repayable)} /><Metric label="Gross yield proxy" value={`${pricingIntel.minimum_viable_terms.gross_contractual_yield_proxy_percent.toFixed(2)}%`} /></div></article> : null}
+            <p className="rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{pricingIntel.policy_note}</p>
+          </section> : null}
         </div>
       ) : null}
 

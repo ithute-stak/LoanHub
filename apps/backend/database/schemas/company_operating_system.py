@@ -104,6 +104,21 @@ class InterestRateStressRequest(BaseModel):
     horizon_days: int = Field(default=365, ge=1, le=1095)
 
 
+
+class PricingOptimizationRequest(BaseModel):
+    principal: Decimal = Field(gt=0)
+    term_months: int = Field(ge=1, le=120)
+    processing_fee: Decimal = Field(default=Decimal("0"), ge=0)
+    interest_method: str = Field(default="micro_loan", min_length=2, max_length=80)
+    proposed_rate_percent: Decimal | None = Field(default=None, ge=0)
+    expected_loss_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    target_margin_percent: Decimal | None = Field(default=None)
+    maximum_search_rate_percent: Decimal = Field(default=Decimal("500"), gt=0, le=5000)
+
+
+class PricingOptimizationPackRequest(PricingOptimizationRequest):
+    title: str = Field(default="Minimum viable lending rate assessment", min_length=3, max_length=240)
+
 class FundsTransferPricingPolicyUpsert(BaseModel):
     policy_name: str = Field(default="LoanHub FTP & risk-adjusted profitability", min_length=3, max_length=240)
     operating_cost_percent_of_exposure: Decimal = Field(default=Decimal("2.00"), ge=0)
