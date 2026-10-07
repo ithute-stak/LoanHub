@@ -132,3 +132,39 @@ def test_generated_report_metrics_normalize_decimal_snapshots():
     reporting = text(BACKEND / "database/models/reporting.py")
     assert "_normalize_generated_report_metrics" in reporting
     assert 'event.listen(GeneratedReport, "before_insert"' in reporting
+
+
+def test_management_decision_accountability_workflow_is_auditable_and_independently_verified():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    panel = (ROOT / "frontend" / "components" / "company" / "management-command-intelligence-panel.tsx").read_text(encoding="utf-8")
+
+    assert "class ManagementActionCreate" in schema
+    assert "class ManagementDecisionCreate" in schema
+    assert "class ManagementResolutionCreate" in schema
+    assert "class ManagementVerificationCreate" in schema
+
+    assert '@router.get("/management-actions")' in router
+    assert '@router.post("/management-actions"' in router
+    assert '@router.post("/management-actions/{record_id}/decisions")' in router
+    assert '@router.post("/management-actions/{record_id}/resolve")' in router
+    assert '@router.post("/management-actions/{record_id}/verify")' in router
+    assert '@router.post("/management-actions/escalate-overdue")' in router
+    assert "Independent verification requires a different user from the resolver" in router
+    assert '"source_signal"' in router
+    assert '"timeline"' in router
+    assert '"overdue_escalation"' in router
+    assert "Escalation changes workflow priority only" in router
+
+    assert "createManagementAction" in api
+    assert "recordManagementDecision" in api
+    assert "resolveManagementAction" in api
+    assert "verifyManagementAction" in api
+    assert "escalateOverdueManagementActions" in api
+
+    assert "Assign & track" in panel
+    assert "Decision & accountability workflow" in panel
+    assert "Record decision" in panel
+    assert "Verify independently" in panel
+    assert "Escalate overdue actions" in panel

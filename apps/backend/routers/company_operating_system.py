@@ -23,6 +23,7 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
@@ -45,6 +46,10 @@ from database.schemas.company_operating_system import (
     APIKeyIssued,
     APIKeyRead,
     CompanyAssistantRequest,
+    ManagementActionCreate,
+    ManagementDecisionCreate,
+    ManagementResolutionCreate,
+    ManagementVerificationCreate,
     OperatingRecordCreate,
     OperatingRecordRead,
     OperatingRecordUpdate,
@@ -464,6 +469,348 @@ def update_operating_record(
     db.commit()
     db.refresh(record)
     return record
+
+
+
+MANAGEMENT_ACTION_VERIFY_ROLES = COMPANY_MANAGEMENT_ROLES | {
+    UserRole.RISK_MANAGER,
+    UserRole.COMPLIANCE_OFFICER,
+    UserRole.AUDITOR,
+}
+
+
+def _management_action_query(db: Session, context: TenantContext):
+    return _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "executive_command",
+        CompanyOperatingRecord.record_type == "management_action",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+
+
+def _management_action_payload(record: CompanyOperatingRecord) -> dict:
+    data = dict(record.data or {})
+    now = _now()
+    overdue = bool(
+        record.due_at
+        and record.due_at < now
+        and record.status not in {"resolved", "verified", "cancelled"}
+    )
+    days_overdue = max((now.date() - record.due_at.date()).days, 0) if overdue and record.due_at else 0
+    return {
+        "id": str(record.id),
+        "reference": record.reference,
+        "branch_id": str(record.branch_id) if record.branch_id else None,
+        "source_signal_id": data.get("source_signal_id"),
+        "source": data.get("source"),
+        "domain": data.get("domain"),
+        "severity": data.get("severity"),
+        "title": record.title,
+        "description": record.description,
+        "status": record.status,
+        "priority": record.priority,
+        "assigned_user_id": str(record.assigned_user_id) if record.assigned_user_id else None,
+        "created_by_user_id": str(record.created_by_user_id) if record.created_by_user_id else None,
+        "due_at": record.due_at.isoformat() if record.due_at else None,
+        "overdue": overdue,
+        "days_overdue": days_overdue,
+        "escalation_level": data.get("escalation_level", 0),
+        "recommended_action": data.get("recommended_action"),
+        "action_url": data.get("action_url"),
+        "source_signal": data.get("source_signal", {}),
+        "decision": data.get("decision"),
+        "decision_note": data.get("decision_note"),
+        "resolution": data.get("resolution"),
+        "resolved_by_user_id": data.get("resolved_by_user_id"),
+        "resolved_at": data.get("resolved_at"),
+        "verification_outcome": data.get("verification_outcome"),
+        "verified_by_user_id": data.get("verified_by_user_id"),
+        "verified_at": data.get("verified_at"),
+        "timeline": data.get("timeline", []),
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+    }
+
+
+def _append_management_timeline(
+    data: dict,
+    *,
+    event: str,
+    user_id,
+    note: str | None = None,
+    evidence_references: list[str] | None = None,
+    extra: dict | None = None,
+) -> dict:
+    timeline = list(data.get("timeline") or [])
+    item = {
+        "event": event,
+        "at": _now().isoformat(),
+        "user_id": str(user_id) if user_id else None,
+    }
+    if note:
+        item["note"] = note
+    if evidence_references:
+        item["evidence_references"] = evidence_references
+    if extra:
+        item.update(extra)
+    timeline.append(item)
+    return {**data, "timeline": timeline}
+
+
+@router.get("/management-actions")
+def list_management_actions(
+    status: str | None = Query(default=None, max_length=40),
+    assigned_user_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    query = _management_action_query(db, context)
+    if status:
+        query = query.filter(CompanyOperatingRecord.status == status)
+    if assigned_user_id:
+        query = query.filter(CompanyOperatingRecord.assigned_user_id == assigned_user_id)
+    rows = query.order_by(CompanyOperatingRecord.due_at.asc(), CompanyOperatingRecord.created_at.desc()).all()
+    return [_management_action_payload(row) for row in rows]
+
+
+@router.post("/management-actions", status_code=201)
+def create_management_action(
+    payload: ManagementActionCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, WRITE_ROLES)
+    _ensure_assignee_scope(db, context, payload.assigned_user_id)
+    branch_id = payload.branch_id
+    if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES:
+        branch_id = context.branch_id
+    elif branch_id:
+        exists = db.query(CompanyBranch.id).filter(
+            CompanyBranch.id == branch_id,
+            CompanyBranch.company_id == context.company_id,
+        ).first()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Branch was not found in this company")
+
+    existing = _management_action_query(db, context).filter(
+        CompanyOperatingRecord.data["source_signal_id"].astext == payload.source_signal_id,
+        ~CompanyOperatingRecord.status.in_(["verified", "cancelled"]),
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"An active management action already exists for signal {payload.source_signal_id}",
+        )
+
+    now = _now()
+    data = {
+        "source_signal_id": payload.source_signal_id,
+        "source": payload.source,
+        "domain": payload.domain,
+        "severity": payload.severity,
+        "recommended_action": payload.recommended_action,
+        "action_url": payload.action_url,
+        "source_signal": {
+            "id": payload.source_signal_id,
+            "source": payload.source,
+            "domain": payload.domain,
+            "severity": payload.severity,
+            "title": payload.title,
+            "why_now": payload.why_now,
+            "recommended_action": payload.recommended_action,
+            "action_url": payload.action_url,
+            "evidence": payload.evidence,
+            "captured_at": now.isoformat(),
+        },
+        "escalation_level": 0,
+        "decision": None,
+        "resolution": None,
+        "verification_outcome": None,
+        "timeline": [{
+            "event": "assigned",
+            "at": now.isoformat(),
+            "user_id": str(context.user.id),
+            "assigned_user_id": str(payload.assigned_user_id),
+            "due_at": payload.due_at.isoformat(),
+        }],
+    }
+    reference = f"MA-{datetime.utcnow():%Y%m%d}-{secrets.token_hex(4).upper()}"
+    record = CompanyOperatingRecord(
+        company_id=context.company_id,
+        branch_id=branch_id,
+        module="executive_command",
+        record_type="management_action",
+        reference=reference,
+        title=payload.title.strip(),
+        description=payload.why_now.strip(),
+        status="assigned",
+        priority=payload.severity,
+        assigned_user_id=payload.assigned_user_id,
+        created_by_user_id=context.user.id,
+        due_at=payload.due_at,
+        data=data,
+        tags=["management_action", payload.domain, payload.severity, payload.source_signal_id],
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _management_action_payload(record)
+
+
+@router.post("/management-actions/{record_id}/decisions")
+def record_management_decision(
+    record_id: UUID,
+    payload: ManagementDecisionCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, WRITE_ROLES)
+    record = _management_action_query(db, context).filter(CompanyOperatingRecord.id == record_id).with_for_update().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Management action not found")
+    if record.status in {"resolved", "verified", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Closed management actions cannot receive new decisions")
+    data = dict(record.data or {})
+    data["decision"] = payload.decision.strip()
+    data["decision_note"] = payload.note.strip()
+    data["decision_by_user_id"] = str(context.user.id)
+    data["decision_at"] = _now().isoformat()
+    data = _append_management_timeline(
+        data,
+        event="decision_recorded",
+        user_id=context.user.id,
+        note=payload.note.strip(),
+        evidence_references=payload.evidence_references,
+        extra={"decision": payload.decision.strip()},
+    )
+    record.data = data
+    record.status = "in_progress"
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _management_action_payload(record)
+
+
+@router.post("/management-actions/{record_id}/resolve")
+def resolve_management_action(
+    record_id: UUID,
+    payload: ManagementResolutionCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, WRITE_ROLES)
+    record = _management_action_query(db, context).filter(CompanyOperatingRecord.id == record_id).with_for_update().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Management action not found")
+    if record.status in {"verified", "cancelled"}:
+        raise HTTPException(status_code=409, detail="This management action is already closed")
+    if record.assigned_user_id and record.assigned_user_id != context.user.id and not _is_company_management(context):
+        raise HTTPException(status_code=403, detail="Only the assigned owner or company management can resolve this action")
+    data = dict(record.data or {})
+    resolved_at = _now().isoformat()
+    data["resolution"] = payload.resolution.strip()
+    data["resolved_by_user_id"] = str(context.user.id)
+    data["resolved_at"] = resolved_at
+    data["verification_outcome"] = None
+    data["verified_by_user_id"] = None
+    data["verified_at"] = None
+    data = _append_management_timeline(
+        data,
+        event="resolved",
+        user_id=context.user.id,
+        note=payload.resolution.strip(),
+        evidence_references=payload.evidence_references,
+    )
+    record.data = data
+    record.status = "resolved"
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _management_action_payload(record)
+
+
+@router.post("/management-actions/{record_id}/verify")
+def verify_management_action(
+    record_id: UUID,
+    payload: ManagementVerificationCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, MANAGEMENT_ACTION_VERIFY_ROLES)
+    record = _management_action_query(db, context).filter(CompanyOperatingRecord.id == record_id).with_for_update().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Management action not found")
+    if record.status != "resolved":
+        raise HTTPException(status_code=409, detail="Only resolved management actions can be independently verified")
+    data = dict(record.data or {})
+    if data.get("resolved_by_user_id") == str(context.user.id):
+        raise HTTPException(status_code=409, detail="Independent verification requires a different user from the resolver")
+
+    verified_at = _now().isoformat()
+    data["verification_outcome"] = payload.outcome
+    data["verified_by_user_id"] = str(context.user.id)
+    data["verified_at"] = verified_at
+    data = _append_management_timeline(
+        data,
+        event="verified" if payload.outcome == "verified" else "reopened",
+        user_id=context.user.id,
+        note=payload.note.strip(),
+        evidence_references=payload.evidence_references,
+        extra={"outcome": payload.outcome},
+    )
+    record.data = data
+    if payload.outcome == "verified":
+        record.status = "verified"
+    else:
+        record.status = "in_progress"
+        data["resolution"] = None
+        data["resolved_by_user_id"] = None
+        data["resolved_at"] = None
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _management_action_payload(record)
+
+
+@router.post("/management-actions/escalate-overdue")
+def escalate_overdue_management_actions(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | {UserRole.RISK_MANAGER})
+    now = _now()
+    rows = _management_action_query(db, context).filter(
+        CompanyOperatingRecord.due_at.is_not(None),
+        CompanyOperatingRecord.due_at < now,
+        CompanyOperatingRecord.status.in_(["assigned", "in_progress", "escalated"]),
+    ).with_for_update().all()
+    escalated = []
+    for record in rows:
+        data = dict(record.data or {})
+        prior_level = int(data.get("escalation_level") or 0)
+        days_overdue = max((now.date() - record.due_at.date()).days, 1)
+        target_level = 3 if days_overdue >= 14 else 2 if days_overdue >= 7 else 1
+        if target_level <= prior_level:
+            continue
+        data["escalation_level"] = target_level
+        data["last_escalated_at"] = now.isoformat()
+        data = _append_management_timeline(
+            data,
+            event="overdue_escalation",
+            user_id=context.user.id,
+            note=f"Action is {days_overdue} day(s) overdue.",
+            extra={"escalation_level": target_level, "days_overdue": days_overdue},
+        )
+        record.data = data
+        record.status = "escalated"
+        db.add(record)
+        escalated.append(str(record.id))
+    db.commit()
+    return {
+        "escalated_count": len(escalated),
+        "record_ids": escalated,
+        "policy_note": "Escalation changes workflow priority only; it does not execute the underlying management action.",
+    }
 
 
 @router.get("/risk/borrowers/{borrower_id}")
