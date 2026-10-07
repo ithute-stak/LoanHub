@@ -1,11 +1,13 @@
 "use client";
 
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 
 import {
     DB_COMMIT_EVENT_NAME,
     type DbCommitBatchDetail,
 } from "@/lib/realtime-commit";
+import { shouldRefreshRouteForCommit } from "@/lib/realtime-resources";
 
 function userIsEditing(): boolean {
     const active = document.activeElement;
@@ -25,6 +27,7 @@ function userIsEditing(): boolean {
  * an editable control has focus and applied as soon as the user leaves it.
  */
 export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
+    const pathname = usePathname();
     const [revision, setRevision] = useState(0);
     const pendingRef = useRef(false);
 
@@ -37,7 +40,7 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
 
         function onCommit(event: Event) {
             const detail = (event as CustomEvent<DbCommitBatchDetail>).detail;
-            if (!detail?.count) return;
+            if (!detail?.count || !shouldRefreshRouteForCommit(pathname, detail)) return;
 
             if (userIsEditing()) {
                 pendingRef.current = true;
@@ -55,7 +58,7 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
             window.removeEventListener(DB_COMMIT_EVENT_NAME, onCommit);
             document.removeEventListener("focusout", onFocusOut);
         };
-    }, []);
+    }, [pathname]);
 
     return <Fragment key={revision}>{children}</Fragment>;
 }

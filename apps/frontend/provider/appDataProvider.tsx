@@ -48,7 +48,8 @@ import {
     updateLoanProduct as updateLoanProductRequest,
 } from "@/api/loanProducts";
 import { api } from "@/lib/api";
-import { DB_COMMIT_EVENT_NAME } from "@/lib/realtime-commit";
+import { DB_COMMIT_EVENT_NAME, type DbCommitBatchDetail } from "@/lib/realtime-commit";
+import { deletedEntityIdsByResource, resourcesForCommitBatch, type RealtimeResource } from "@/lib/realtime-resources";
 import { stableSmartSort } from "@/lib/stable-sort";
 import { useTenant } from "@/provider/tenantProvider";
 import { fetchBranchesThunk } from "@/store/features/thunks/branchThunks";
@@ -527,17 +528,144 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         user,
     ]);
 
+    const refreshRealtimeResources = useCallback(
+        async (resources: Set<RealtimeResource>) => {
+            if (!resources.size || !authInitialized || !user) {
+                return;
+            }
+            if (isCompanyRole(user.role) && !activeCompanyId) {
+                return;
+            }
+
+            const tasks: Promise<unknown>[] = [];
+            if (resources.has("companies")) {
+                tasks.push(dispatch(fetchCompanies()).unwrap());
+            }
+            if (resources.has("companyStaff")) {
+                tasks.push(dispatch(fetchCompanyStaff()).unwrap());
+            }
+            if (resources.has("branches")) {
+                tasks.push(dispatch(fetchBranchesThunk()).unwrap());
+            }
+            if (resources.has("borrowers")) {
+                tasks.push(loadBorrowers());
+            }
+            if (resources.has("loanRequests")) {
+                tasks.push(loadLoanRequests());
+            }
+            if (resources.has("marketplace")) {
+                tasks.push(loadMarketplace());
+            }
+            if (resources.has("loans")) {
+                tasks.push(loadLoansData());
+            }
+            if (resources.has("payments")) {
+                tasks.push(loadPaymentsData());
+            }
+            if (resources.has("billing")) {
+                tasks.push(loadBilling());
+            }
+            if (resources.has("loanProducts")) {
+                tasks.push(loadLoanProducts());
+            }
+            if (
+                resources.has("loanOffers") &&
+                selectedMarketplaceRequest?.id
+            ) {
+                tasks.push(
+                    listOffersByRequest(selectedMarketplaceRequest.id).then(
+                        (offers) => setLoanOffers(stableSmartSort(offers)),
+                    ),
+                );
+            }
+
+            await Promise.allSettled(tasks);
+        },
+        [
+            activeCompanyId,
+            activeMembership?.role,
+            authInitialized,
+            dispatch,
+            loadBilling,
+            loadBorrowers,
+            loadLoanProducts,
+            loadLoanRequests,
+            loadLoansData,
+            loadMarketplace,
+            loadPaymentsData,
+            selectedMarketplaceRequest?.id,
+            user,
+        ],
+    );
+
     useEffect(() => {
         let timer: number | null = null;
+        const pendingResources = new Set<RealtimeResource>();
 
-        const onDatabaseCommit = () => {
+        const onDatabaseCommit = (event: Event) => {
+            const detail = (event as CustomEvent<DbCommitBatchDetail>).detail;
+            const resources = resourcesForCommitBatch(detail);
+            for (const resource of resources) {
+                pendingResources.add(resource);
+            }
+
+            const deleted = deletedEntityIdsByResource(detail);
+            if (deleted.borrowers?.size) {
+                setBorrowers((current) =>
+                    current.filter((item) => !deleted.borrowers?.has(item.id)),
+                );
+            }
+            if (deleted.loanRequests?.size) {
+                setLoanRequests((current) =>
+                    current.filter((item) => !deleted.loanRequests?.has(item.id)),
+                );
+            }
+            if (deleted.loanOffers?.size) {
+                setLoanOffers((current) =>
+                    current.filter((item) => !deleted.loanOffers?.has(item.id)),
+                );
+            }
+            if (deleted.marketplace?.size) {
+                setMarketplaceRequests((current) =>
+                    current.filter((item) => !deleted.marketplace?.has(item.id)),
+                );
+            }
+            if (deleted.loans?.size) {
+                setLoans((current) =>
+                    current.filter((item) => !deleted.loans?.has(item.id)),
+                );
+            }
+            if (deleted.payments?.size) {
+                setPayments((current) =>
+                    current.filter((item) => !deleted.payments?.has(item.id)),
+                );
+            }
+            if (deleted.loanProducts?.size) {
+                setLoanProducts((current) =>
+                    current.filter((item) => !deleted.loanProducts?.has(item.id)),
+                );
+            }
+            if (deleted.billing?.size) {
+                setSubscriptionPlans((current) =>
+                    current.filter((item) => !deleted.billing?.has(item.id)),
+                );
+                setSubscriptions((current) =>
+                    current.filter((item) => !deleted.billing?.has(item.id)),
+                );
+                setCurrentSubscription((current) =>
+                    current && deleted.billing?.has(current.id) ? null : current,
+                );
+            }
+
             if (timer !== null) {
                 window.clearTimeout(timer);
             }
             timer = window.setTimeout(() => {
                 timer = null;
-                void refreshAllData();
-            }, 120);
+                const batch = new Set(pendingResources);
+                pendingResources.clear();
+                void refreshRealtimeResources(batch);
+            }, 90);
         };
 
         window.addEventListener(DB_COMMIT_EVENT_NAME, onDatabaseCommit);
@@ -546,8 +674,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             if (timer !== null) {
                 window.clearTimeout(timer);
             }
+            pendingResources.clear();
         };
-    }, [refreshAllData]);
+    }, [refreshRealtimeResources]);
 
     useEffect(() => {
         if (!authInitialized || !user) {

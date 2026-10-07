@@ -768,6 +768,9 @@ def persist_transparency_events(session: Session, flush_context) -> None:
 
     realtime_payloads = session.info.setdefault("loanhub_realtime_payloads", [])
     commit_events = session.info.setdefault("loanhub_db_commit_events", [])
+    database_context = session.info.get("loanhub.database_context") or {}
+    context_company_id = _uuid(database_context.get("loanhub.company_id"))
+    context_branch_id = _uuid(database_context.get("loanhub.branch_id"))
     now = datetime.utcnow()
     notification_groups: dict[tuple[Any, ...], dict[str, Any]] = {}
 
@@ -779,6 +782,8 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         entity_uuid = _uuid(entity_id_value)
         entity_id = str(entity_id_value) if entity_id_value else None
         company_id, branch_id = _entity_scope(connection, target, table_name)
+        company_id = company_id or context_company_id
+        branch_id = branch_id or context_branch_id
         after_data = {} if action == "deleted" else _snapshot(target)
         before_data = event_item["before"]
         changed_fields = event_item["changed_fields"]
@@ -796,6 +801,7 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         commit_events.append({
             "channels": sorted(channels),
             "payload": {
+                "event_id": str(uuid.uuid4()),
                 "type": "DB_EVENT",
                 "contract": "loanhub.db-commit.v1",
                 "table": table_name,

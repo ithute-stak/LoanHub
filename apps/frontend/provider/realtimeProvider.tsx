@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import {
     createContext,
@@ -17,9 +17,10 @@ import { prepareWebSocketSession } from "@/api/auth";
 import { resolveApiBaseUrl } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
 import { beginRealtimeCatchupWindow, DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
+import { cacheTagsForResources, resourcesForCommitBatch, shouldRefreshRouteForCommit } from "@/lib/realtime-resources";
 import { useTenant } from "@/provider/tenantProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
+import { cacheScopeInvalidated, cacheTagsInvalidated } from "@/store/features/slices/httpCacheSlice";
 
 export type RealtimePayload = Record<string, unknown>;
 export type RealtimeListener = (payload: RealtimePayload) => void;
@@ -90,6 +91,7 @@ export function RealtimeProvider({
 }) {
     const dispatch = useAppDispatch();
     const router = useRouter();
+    const pathname = usePathname();
     const userId = useAppSelector(
         (state) => state.auth.user?.id ?? null,
     );
@@ -118,6 +120,7 @@ export function RealtimeProvider({
     const disposedRef = useRef(false);
     const dbRefreshTimerRef = useRef<number | null>(null);
     const pendingDbEventsRef = useRef<RealtimePayload[]>([]);
+    const dbBatchStartedAtRef = useRef<number | null>(null);
     const seenEventIdsRef = useRef(new Set<string>());
     const hasConnectedOnceRef = useRef(false);
 
@@ -274,6 +277,15 @@ export function RealtimeProvider({
                 setConnected(true);
 
                 beginRealtimeCatchupWindow();
+                dispatch(
+                    cacheScopeInvalidated({
+                        scope: [
+                            userId,
+                            activeCompanyId ?? "platform",
+                            activeRole,
+                        ].join(":"),
+                    }),
+                );
                 window.dispatchEvent(
                     new CustomEvent(DB_COMMIT_EVENT_NAME, {
                         detail: {
@@ -327,48 +339,89 @@ export function RealtimeProvider({
                         }
                     }
 
-                    dispatch(
-                        cacheScopeInvalidated({
-                            scope: [
-                                userId,
-                                activeCompanyId ?? "platform",
-                                activeRole,
-                            ].join(":"),
-                        }),
-                    );
+                    if (pendingDbEventsRef.current.length < 2_000) {
+                        pendingDbEventsRef.current.push(payload);
+                    } else {
+                        // Keep the most recent events under extreme write bursts.
+                        pendingDbEventsRef.current.shift();
+                        pendingDbEventsRef.current.push(payload);
+                    }
 
-                    pendingDbEventsRef.current.push(payload);
+                    const now = Date.now();
+                    if (dbBatchStartedAtRef.current === null) {
+                        dbBatchStartedAtRef.current = now;
+                    }
                     if (dbRefreshTimerRef.current !== null) {
                         window.clearTimeout(dbRefreshTimerRef.current);
                     }
+
+                    const elapsed = now - dbBatchStartedAtRef.current;
+                    const maxWaitRemaining = Math.max(0, 750 - elapsed);
+                    const delay = Math.min(180, maxWaitRemaining);
+
                     dbRefreshTimerRef.current = window.setTimeout(() => {
-                        const events = pendingDbEventsRef.current.splice(0);
+                        const rawEvents = pendingDbEventsRef.current.splice(0);
                         dbRefreshTimerRef.current = null;
+                        dbBatchStartedAtRef.current = null;
+
+                        const events = [
+                            ...new Map(
+                                rawEvents.map((item) => [
+                                    [
+                                        item.table ?? "",
+                                        item.action ?? "",
+                                        item.entity_id ?? "",
+                                        item.request_id ?? "",
+                                    ].join("|"),
+                                    item,
+                                ]),
+                            ).values(),
+                        ];
 
                         const hasRemoteChanges = events.some(
                             (item) => !isLocalMutationRequest(item.request_id),
                         );
 
+                        const detail = {
+                            events,
+                            count: events.length,
+                            receivedCount: rawEvents.length,
+                            latest: events.at(-1) ?? null,
+                            hasRemoteChanges,
+                        };
+                        const resources = resourcesForCommitBatch(detail);
+                        const scope = [
+                            userId,
+                            activeCompanyId ?? "platform",
+                            activeRole,
+                        ].join(":");
+                        const tags = cacheTagsForResources(resources);
+                        if (tags.length) {
+                            dispatch(cacheTagsInvalidated({ scope, tags }));
+                        } else {
+                            dispatch(cacheScopeInvalidated({ scope }));
+                        }
+
                         beginRealtimeCatchupWindow();
+
+                        const detailForDispatch = {
+                            ...detail,
+                        };
 
                         window.dispatchEvent(
                             new CustomEvent(DB_COMMIT_EVENT_NAME, {
-                                detail: {
-                                    events,
-                                    count: events.length,
-                                    latest: events.at(-1) ?? null,
-                                    hasRemoteChanges,
-                                },
+                                detail: detailForDispatch,
                             }),
                         );
 
                         if (
                             hasRemoteChanges &&
-                            document.visibilityState === "visible"
+                            document.visibilityState === "visible" &&
+                            shouldRefreshRouteForCommit(pathname, detailForDispatch)
                         ) {
                             router.refresh();
                         }
-                    }, 180);
+                    }, delay);
                 }
 
                 for (
@@ -424,6 +477,7 @@ export function RealtimeProvider({
                 dbRefreshTimerRef.current = null;
             }
             pendingDbEventsRef.current = [];
+            dbBatchStartedAtRef.current = null;
             closeCurrentSocket();
         };
     }, [
@@ -435,6 +489,7 @@ export function RealtimeProvider({
         closeCurrentSocket,
         dispatch,
         userId,
+        pathname,
         router,
     ]);
 
