@@ -25,6 +25,8 @@ from core.access_control import (
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
+from database.models.credit_loss_provisioning import CreditLossProvisionLine, CreditLossProvisionRun
+from database.models.portfolio_risk import PortfolioRiskSnapshot
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import InstallmentStatus, LoanStatus, PaymentStatus, TreasuryDirection, UserRole
@@ -50,6 +52,9 @@ from database.schemas.company_operating_system import (
     ManagementDecisionCreate,
     ManagementResolutionCreate,
     ManagementVerificationCreate,
+    PrudentialFilingReadinessCreate,
+    PrudentialProfileUpsert,
+    RelatedPartyRegisterCreate,
     OperatingRecordCreate,
     OperatingRecordRead,
     OperatingRecordUpdate,
