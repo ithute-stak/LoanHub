@@ -13,7 +13,6 @@ export type RealtimeResource =
     | "billing"
     | "loanProducts";
 
-type DbEvent = Record<string, unknown>;
 
 const TABLE_RESOURCES: Record<string, RealtimeResource[]> = {
     loan_companies: ["companies"],
@@ -47,6 +46,17 @@ const TABLE_RESOURCES: Record<string, RealtimeResource[]> = {
     subscription_plans: ["billing"],
     company_subscriptions: ["billing"],
     subscription_invoices: ["billing"],
+};
+
+const SAFE_DELETE_RESOURCE: Record<string, RealtimeResource | undefined> = {
+    borrowers: "borrowers",
+    loan_requests: "loanRequests",
+    loan_offers: "loanOffers",
+    client_company_loan: "loans",
+    payment_transactions: "payments",
+    loan_products: "loanProducts",
+    subscription_plans: "billing",
+    company_subscriptions: "billing",
 };
 
 const PREFIX_RESOURCES: Array<[string, RealtimeResource[]]> = [
@@ -167,11 +177,14 @@ export function deletedEntityIdsByResource(
         const entityId = String(event.entity_id ?? "").trim();
         if (!entityId) continue;
 
-        for (const resource of resourcesForTable(event.table)) {
-            const ids = result[resource] ?? new Set<string>();
-            ids.add(entityId);
-            result[resource] = ids;
-        }
+        const resource = SAFE_DELETE_RESOURCE[
+            String(event.table ?? "").trim().toLowerCase()
+        ];
+        if (!resource) continue;
+
+        const ids = result[resource] ?? new Set<string>();
+        ids.add(entityId);
+        result[resource] = ids;
     }
 
     return result;
