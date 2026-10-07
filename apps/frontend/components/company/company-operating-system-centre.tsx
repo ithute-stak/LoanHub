@@ -41,6 +41,10 @@ import {
   generatePrudentialEvidencePack,
   runPrudentialStressTest,
   generatePrudentialStressEvidencePack,
+  getALMIntelligence,
+  createALMFundingFacility,
+  runALMStressTest,
+  generateALMEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -53,6 +57,7 @@ import {
   type OperatingRecord,
   type PrudentialIntelligence,
   type PrudentialStressPack,
+  type ALMIntelligence,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -83,6 +88,7 @@ const TABS = [
   ["operations", "Operating workflows", BriefcaseBusiness],
   ["credit", "Credit & finance", Calculator],
   ["integrations", "Integrations", Webhook],
+  ["alm", "ALM", ChartNoAxesCombined],
   ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
@@ -154,6 +160,15 @@ export function CompanyOperatingSystemCentre() {
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
   const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
+  const [alm, setAlm] = useState<ALMIntelligence | null>(null);
+  const [almLender, setAlmLender] = useState("");
+  const [almOutstanding, setAlmOutstanding] = useState("");
+  const [almMaturity, setAlmMaturity] = useState("");
+  const [almRate, setAlmRate] = useState("");
+  const [almCollectionRate, setAlmCollectionRate] = useState("75");
+  const [almObligationRate, setAlmObligationRate] = useState("110");
+  const [almRolloverRate, setAlmRolloverRate] = useState("50");
+  const [almUnexpectedOutflow, setAlmUnexpectedOutflow] = useState("0");
   const [prudential, setPrudential] = useState<PrudentialIntelligence | null>(null);
   const [prudentialStress, setPrudentialStress] = useState<PrudentialStressPack | null>(null);
   const [stressCollectionRate, setStressCollectionRate] = useState("70");
@@ -219,6 +234,13 @@ export function CompanyOperatingSystemCentre() {
     if (nextTab === "board") {
       try {
         setBoardPackHistory(await listCompanyBoardPacks());
+      } catch (nextError) {
+        setError(errorMessage(nextError));
+      }
+    }
+    if (nextTab === "alm") {
+      try {
+        setAlm(await getALMIntelligence());
       } catch (nextError) {
         setError(errorMessage(nextError));
       }
@@ -359,6 +381,76 @@ export function CompanyOperatingSystemCentre() {
       setOneTimeSecret(`Webhook signing secret shown once: ${issued.signing_secret}`);
       setWebhookUrl("");
       setWebhooks(await listCompanyWebhooks());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshAlm() {
+    setBusy(true);
+    setError(null);
+    try {
+      setAlm(await getALMIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addAlmFundingFacility() {
+    if (!almLender.trim() || Number(almOutstanding) <= 0 || !almMaturity) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createALMFundingFacility({
+        lender_name: almLender.trim(),
+        outstanding_amount: Number(almOutstanding),
+        maturity_date: new Date(`${almMaturity}T17:00:00`).toISOString(),
+        interest_rate_percent: almRate.trim() ? Number(almRate) : null,
+      });
+      setAlmLender("");
+      setAlmOutstanding("");
+      setAlmMaturity("");
+      setAlmRate("");
+      setAlm(await getALMIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runAlmStress() {
+    setBusy(true);
+    setError(null);
+    try {
+      setAlm(await runALMStressTest({
+        collection_rate_percent: Number(almCollectionRate || 0),
+        obligation_rate_percent: Number(almObligationRate || 0),
+        funding_rollover_percent: Number(almRolloverRate || 0),
+        unexpected_outflow: Number(almUnexpectedOutflow || 0),
+      }));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportAlmPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generateALMEvidencePack({
+        collection_rate_percent: Number(almCollectionRate || 0),
+        obligation_rate_percent: Number(almObligationRate || 0),
+        funding_rollover_percent: Number(almRolloverRate || 0),
+        unexpected_outflow: Number(almUnexpectedOutflow || 0),
+      });
+      setAlm(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -734,6 +826,80 @@ export function CompanyOperatingSystemCentre() {
             <div className="flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Integration Hub</h2></div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">Use the Integrations operating module to register bank, mobile-money, payroll, credit-bureau, identity, accounting, SMS/email and debt-collection configurations. Provider credentials still require protected server configuration or dedicated encrypted fields.</p>
           </section>
+        </div>
+      ) : null}
+
+      {tab === "alm" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><ChartNoAxesCombined className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Asset & Liability Management Intelligence</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Builds a maturity ladder from scheduled loan inflows, approved treasury obligations and explicitly registered funding maturities. It highlights refinancing pressure, funding concentration, cumulative gaps and stress-adjusted funding requirements.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void refreshAlm()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Refresh ALM</button>
+                <button type="button" disabled={busy} onClick={() => void exportAlmPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate ALM evidence pack</button>
+              </div>
+            </div>
+
+            {alm ? <>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                <Metric label="Opening cash" value={formatMoney(alm.opening_available_cash)} />
+                <Metric label="Funding outstanding" value={formatMoney(alm.funding.total_outstanding)} />
+                <Metric label="30-day funding due" value={formatMoney(alm.funding.due_within_30_days)} />
+                <Metric label="Max funding requirement" value={formatMoney(alm.maximum_funding_requirement)} />
+                <Metric label="Top funder share" value={`${alm.funding.top_funder_share_percent.toFixed(2)}%`} />
+                <Metric label="Maturity gap" value={alm.duration_style_maturity_gap_days == null ? "—" : `${alm.duration_style_maturity_gap_days.toFixed(0)} days`} />
+              </div>
+
+              <div className="mt-5 overflow-x-auto rounded-2xl border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted/40 text-left"><tr><th className="p-3">Bucket</th><th className="p-3 text-right">Asset inflows</th><th className="p-3 text-right">Scenario inflows</th><th className="p-3 text-right">Operating outflows</th><th className="p-3 text-right">Funding maturities</th><th className="p-3 text-right">Net gap</th><th className="p-3 text-right">Cumulative liquidity</th></tr></thead>
+                  <tbody>{alm.liquidity_ladder.map((row) => <tr key={row.bucket} className="border-t"><td className="p-3 font-black">{titleCase(row.bucket)}</td><td className="p-3 text-right">{formatMoney(row.contractual_asset_inflows)}</td><td className="p-3 text-right">{formatMoney(row.scenario_asset_inflows)}</td><td className="p-3 text-right">{formatMoney(row.operating_outflows)}</td><td className="p-3 text-right">{formatMoney(row.funding_maturities)}</td><td className="p-3 text-right">{formatMoney(row.net_gap)}</td><td className="p-3 text-right font-black">{formatMoney(row.cumulative_liquidity)}</td></tr>)}</tbody>
+                </table>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Funding concentration</h3>
+                  <div className="mt-3 space-y-2">{alm.funding.concentration.length ? alm.funding.concentration.map((row) => <div key={row.lender_name} className="flex items-center justify-between rounded-xl border p-3 text-sm"><span className="font-bold">{row.lender_name}</span><span>{formatMoney(row.outstanding_amount)} · {row.share_percent.toFixed(2)}%</span></div>) : <p className="text-sm text-muted-foreground">No active funding facilities registered.</p>}</div>
+                </article>
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">ALM risk flags</h3>
+                  <div className="mt-3 space-y-2">{Object.entries(alm.risk_flags).map(([key, active]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3 text-sm"><span>{titleCase(key)}</span><span className={active ? "font-black text-destructive" : "font-black text-emerald-700 dark:text-emerald-300"}>{active ? "Review" : "Clear"}</span></div>)}</div>
+                </article>
+              </div>
+              <p className="mt-4 rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{alm.policy_note}</p>
+            </> : null}
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Funding facility register</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Register contractual funding maturities explicitly so ALM does not guess maturity dates from the general ledger.</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <input value={almLender} onChange={(e) => setAlmLender(e.target.value)} placeholder="Lender / funding source" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={almOutstanding} onChange={(e) => setAlmOutstanding(e.target.value)} placeholder="Outstanding amount" className="h-11 rounded-xl border bg-background px-3" />
+                <input type="date" value={almMaturity} onChange={(e) => setAlmMaturity(e.target.value)} className="h-11 rounded-xl border bg-background px-3" />
+                <input value={almRate} onChange={(e) => setAlmRate(e.target.value)} placeholder="Interest rate % (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              </div>
+              <button type="button" disabled={busy || !almLender.trim() || Number(almOutstanding) <= 0 || !almMaturity} onClick={() => void addAlmFundingFacility()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Add funding facility</button>
+              {alm?.funding.facilities?.length ? <div className="mt-4 space-y-2">{alm.funding.facilities.slice(0, 20).map((row) => <div key={row.id} className="rounded-xl border p-3 text-sm"><div className="flex items-center justify-between gap-2"><p className="font-black">{row.lender_name}</p><span>{formatMoney(row.outstanding_amount)}</span></div><p className="mt-1 text-xs text-muted-foreground">Matures {row.maturity_date} · {row.days_to_maturity} days · {row.reference}</p></div>)}</div> : null}
+            </section>
+
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">ALM stress assumptions</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Test reduced collections, higher obligations, partial funding rollover and unexpected cash drains without changing live records.</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <input value={almCollectionRate} onChange={(e) => setAlmCollectionRate(e.target.value)} placeholder="Collection rate %" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={almObligationRate} onChange={(e) => setAlmObligationRate(e.target.value)} placeholder="Obligation rate %" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={almRolloverRate} onChange={(e) => setAlmRolloverRate(e.target.value)} placeholder="Funding rollover %" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={almUnexpectedOutflow} onChange={(e) => setAlmUnexpectedOutflow(e.target.value)} placeholder="Unexpected outflow LSL" className="h-11 rounded-xl border bg-background px-3" />
+              </div>
+              <button type="button" disabled={busy} onClick={() => void runAlmStress()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run ALM stress</button>
+            </section>
+          </div>
         </div>
       ) : null}
 

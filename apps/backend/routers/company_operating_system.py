@@ -45,6 +45,8 @@ from database.models.system_error import SystemErrorLog
 from database.models.treasury import TreasuryEntry
 from database.schemas.company_operating_system import (
     APIKeyCreate,
+    ALMFundingFacilityCreate,
+    ALMStressRequest,
     APIKeyIssued,
     APIKeyRead,
     CompanyAssistantRequest,
@@ -1488,6 +1490,366 @@ def create_prudential_filing(
     db.commit()
     db.refresh(record)
     return {"id": str(record.id), "reference": record.reference, "status": record.status}
+
+
+
+ALM_BUCKETS = [
+    ("0_7_days", 0, 7),
+    ("8_30_days", 8, 30),
+    ("31_90_days", 31, 90),
+    ("91_180_days", 91, 180),
+    ("181_365_days", 181, 365),
+    ("1_3_years", 366, 1095),
+    ("over_3_years", 1096, None),
+]
+
+
+def _alm_bucket(days: int) -> str:
+    value = max(days, 0)
+    for name, start, end in ALM_BUCKETS:
+        if value >= start and (end is None or value <= end):
+            return name
+    return "over_3_years"
+
+
+def _alm_funding_facilities(db: Session, context: TenantContext):
+    query = _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "portfolio_alm",
+        CompanyOperatingRecord.record_type == "funding_facility",
+        CompanyOperatingRecord.status == "active",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    return query.order_by(CompanyOperatingRecord.due_at.asc()).all()
+
+
+def _alm_intelligence(
+    db: Session,
+    context: TenantContext,
+    *,
+    collection_rate=Decimal("1"),
+    obligation_rate=Decimal("1"),
+    funding_rollover_rate=Decimal("0"),
+    unexpected_outflow=Decimal("0"),
+) -> dict:
+    today = date.today()
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+    collection_rate = Decimal(str(collection_rate))
+    obligation_rate = Decimal(str(obligation_rate))
+    funding_rollover_rate = Decimal(str(funding_rollover_rate))
+    unexpected_outflow = Decimal(str(unexpected_outflow))
+
+    ladder = {
+        name: {
+            "contractual_asset_inflows": Decimal("0"),
+            "scenario_asset_inflows": Decimal("0"),
+            "operating_outflows": Decimal("0"),
+            "funding_maturities": Decimal("0"),
+            "scenario_funding_outflows": Decimal("0"),
+        }
+        for name, _, _ in ALM_BUCKETS
+    }
+
+    installments = db.query(RepaymentInstallment, ClientCompanyLoan).join(
+        ClientCompanyLoan, ClientCompanyLoan.id == RepaymentInstallment.loan_id
+    ).filter(
+        ClientCompanyLoan.company_id == context.company_id,
+        RepaymentInstallment.is_superseded.is_(False),
+        RepaymentInstallment.status.notin_([InstallmentStatus.PAID, InstallmentStatus.WAIVED]),
+        RepaymentInstallment.due_date >= today,
+    )
+    if branch_id:
+        installments = installments.filter(ClientCompanyLoan.branch_id == branch_id)
+
+    asset_total = Decimal("0")
+    weighted_asset_days = Decimal("0")
+    for installment, _loan in installments.all():
+        remaining = max(Decimal(str(installment.total_due or 0)) - Decimal(str(installment.paid_amount or 0)), Decimal("0"))
+        if remaining <= 0:
+            continue
+        days = max((installment.due_date - today).days, 0)
+        bucket = _alm_bucket(days)
+        ladder[bucket]["contractual_asset_inflows"] += remaining
+        ladder[bucket]["scenario_asset_inflows"] += remaining * collection_rate
+        asset_total += remaining
+        weighted_asset_days += remaining * Decimal(days)
+
+    commitments = _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "treasury_commitment",
+        CompanyOperatingRecord.status == "approved",
+        CompanyOperatingRecord.is_archived.is_(False),
+        CompanyOperatingRecord.due_at.is_not(None),
+        CompanyOperatingRecord.due_at >= datetime.combine(today, datetime.min.time()),
+    )
+    if branch_id:
+        commitments = commitments.filter(CompanyOperatingRecord.branch_id == branch_id)
+
+    operating_outflow_total = Decimal("0")
+    weighted_liability_days = Decimal("0")
+    liability_total = Decimal("0")
+    for row in commitments.all():
+        amount = Decimal(str(row.amount or 0)) * obligation_rate
+        due_date = row.due_at.date()
+        days = max((due_date - today).days, 0)
+        bucket = _alm_bucket(days)
+        ladder[bucket]["operating_outflows"] += amount
+        operating_outflow_total += amount
+        liability_total += amount
+        weighted_liability_days += amount * Decimal(days)
+
+    facilities = _alm_funding_facilities(db, context)
+    funding_total = Decimal("0")
+    funding_concentration: dict[str, Decimal] = defaultdict(Decimal)
+    funding_due_30 = Decimal("0")
+    funding_due_90 = Decimal("0")
+    funding_due_365 = Decimal("0")
+    facility_payload = []
+    for row in facilities:
+        amount = Decimal(str(row.amount or 0))
+        due_date = row.due_at.date() if row.due_at else today
+        days = max((due_date - today).days, 0)
+        bucket = _alm_bucket(days)
+        contractual_outflow = amount
+        stressed_outflow = amount * (Decimal("1") - funding_rollover_rate)
+        ladder[bucket]["funding_maturities"] += contractual_outflow
+        ladder[bucket]["scenario_funding_outflows"] += stressed_outflow
+        funding_total += amount
+        liability_total += amount
+        weighted_liability_days += amount * Decimal(days)
+        lender = str((row.data or {}).get("lender_name") or row.counterparty_name or "Unknown lender")
+        funding_concentration[lender] += amount
+        if days <= 30:
+            funding_due_30 += amount
+        if days <= 90:
+            funding_due_90 += amount
+        if days <= 365:
+            funding_due_365 += amount
+        facility_payload.append({
+            "id": str(row.id),
+            "reference": row.reference,
+            "lender_name": lender,
+            "facility_type": (row.data or {}).get("facility_type"),
+            "outstanding_amount": float(amount),
+            "maturity_date": due_date.isoformat(),
+            "days_to_maturity": days,
+            "interest_rate_percent": (row.data or {}).get("interest_rate_percent"),
+            "next_repricing_date": (row.data or {}).get("next_repricing_date"),
+            "secured": bool((row.data or {}).get("secured")),
+            "branch_id": str(row.branch_id) if row.branch_id else None,
+        })
+
+    opening = treasury_cash_forecast(
+        db,
+        company_id=context.company_id,
+        from_date=today,
+        to_date=today,
+        branch_id=branch_id,
+        minimum_cash=Decimal("0"),
+        collection_rate=Decimal("1"),
+        obligation_rate=Decimal("1"),
+        unexpected_outflow=Decimal("0"),
+    )["opening_liquidity"]["available_cash"]
+
+    cumulative = Decimal(str(opening)) - unexpected_outflow
+    ladder_rows = []
+    max_funding_requirement = Decimal("0")
+    for name, _, _ in ALM_BUCKETS:
+        row = ladder[name]
+        net_gap = (
+            row["scenario_asset_inflows"]
+            - row["operating_outflows"]
+            - row["scenario_funding_outflows"]
+        )
+        cumulative += net_gap
+        requirement = max(-cumulative, Decimal("0"))
+        max_funding_requirement = max(max_funding_requirement, requirement)
+        ladder_rows.append({
+            "bucket": name,
+            "contractual_asset_inflows": float(row["contractual_asset_inflows"].quantize(Decimal("0.01"))),
+            "scenario_asset_inflows": float(row["scenario_asset_inflows"].quantize(Decimal("0.01"))),
+            "operating_outflows": float(row["operating_outflows"].quantize(Decimal("0.01"))),
+            "funding_maturities": float(row["funding_maturities"].quantize(Decimal("0.01"))),
+            "scenario_funding_outflows": float(row["scenario_funding_outflows"].quantize(Decimal("0.01"))),
+            "net_gap": float(net_gap.quantize(Decimal("0.01"))),
+            "cumulative_liquidity": float(cumulative.quantize(Decimal("0.01"))),
+            "funding_requirement": float(requirement.quantize(Decimal("0.01"))),
+        })
+
+    concentration_rows = sorted(
+        [
+            {
+                "lender_name": lender,
+                "outstanding_amount": float(amount.quantize(Decimal("0.01"))),
+                "share_percent": float((amount / funding_total * Decimal("100")).quantize(Decimal("0.01"))) if funding_total > 0 else 0.0,
+            }
+            for lender, amount in funding_concentration.items()
+        ],
+        key=lambda row: row["share_percent"],
+        reverse=True,
+    )
+    top_funder_share = concentration_rows[0]["share_percent"] if concentration_rows else 0.0
+    asset_wam = float((weighted_asset_days / asset_total).quantize(Decimal("0.01"))) if asset_total > 0 else None
+    liability_wam = float((weighted_liability_days / liability_total).quantize(Decimal("0.01"))) if liability_total > 0 else None
+    maturity_gap_days = (
+        round(asset_wam - liability_wam, 2)
+        if asset_wam is not None and liability_wam is not None
+        else None
+    )
+
+    return {
+        "as_of": today.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "opening_available_cash": float(Decimal(str(opening)).quantize(Decimal("0.01"))),
+        "assumptions": {
+            "collection_rate_percent": float((collection_rate * Decimal("100")).quantize(Decimal("0.01"))),
+            "obligation_rate_percent": float((obligation_rate * Decimal("100")).quantize(Decimal("0.01"))),
+            "funding_rollover_percent": float((funding_rollover_rate * Decimal("100")).quantize(Decimal("0.01"))),
+            "unexpected_outflow": float(unexpected_outflow.quantize(Decimal("0.01"))),
+        },
+        "liquidity_ladder": ladder_rows,
+        "maximum_funding_requirement": float(max_funding_requirement.quantize(Decimal("0.01"))),
+        "projected_terminal_liquidity": float(cumulative.quantize(Decimal("0.01"))),
+        "asset_weighted_average_maturity_days": asset_wam,
+        "liability_weighted_average_maturity_days": liability_wam,
+        "duration_style_maturity_gap_days": maturity_gap_days,
+        "funding": {
+            "total_outstanding": float(funding_total.quantize(Decimal("0.01"))),
+            "due_within_30_days": float(funding_due_30.quantize(Decimal("0.01"))),
+            "due_within_90_days": float(funding_due_90.quantize(Decimal("0.01"))),
+            "due_within_365_days": float(funding_due_365.quantize(Decimal("0.01"))),
+            "top_funder_share_percent": top_funder_share,
+            "concentration": concentration_rows,
+            "facilities": facility_payload,
+        },
+        "risk_flags": {
+            "negative_cumulative_gap": any(row["cumulative_liquidity"] < 0 for row in ladder_rows),
+            "refinancing_pressure_30d": funding_due_30 > Decimal(str(opening)),
+            "funding_concentration_high": top_funder_share >= 40,
+            "longer_asset_than_liability_maturity": maturity_gap_days is not None and maturity_gap_days > 30,
+        },
+        "policy_note": (
+            "ALM maturity analysis uses scheduled loan cash inflows, approved treasury obligations and explicitly registered funding maturities. "
+            "The duration-style maturity gap is a weighted cash-flow timing indicator, not market-value duration or interest-rate VaR."
+        ),
+    }
+
+
+@router.post("/alm/funding-facilities", status_code=201)
+def create_alm_funding_facility(
+    payload: ALMFundingFacilityCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    branch_id = payload.branch_id
+    if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES:
+        branch_id = context.branch_id
+    if payload.maturity_date.date() < date.today():
+        raise HTTPException(status_code=422, detail="Funding facility maturity date cannot be in the past")
+    record = CompanyOperatingRecord(
+        company_id=context.company_id,
+        branch_id=branch_id,
+        module="portfolio_alm",
+        record_type="funding_facility",
+        reference=f"ALMFUND-{secrets.token_hex(4).upper()}",
+        title=f"{payload.lender_name} funding facility",
+        description=payload.notes,
+        status="active",
+        priority="high",
+        created_by_user_id=context.user.id,
+        counterparty_name=payload.lender_name,
+        amount=payload.outstanding_amount,
+        currency="LSL",
+        due_at=payload.maturity_date,
+        data={
+            "lender_name": payload.lender_name,
+            "facility_type": payload.facility_type,
+            "interest_rate_percent": float(payload.interest_rate_percent) if payload.interest_rate_percent is not None else None,
+            "next_repricing_date": payload.next_repricing_date.isoformat() if payload.next_repricing_date else None,
+            "secured": payload.secured,
+        },
+        tags=["alm", "funding", payload.facility_type],
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {
+        "id": str(record.id),
+        "reference": record.reference,
+        "lender_name": payload.lender_name,
+        "outstanding_amount": float(payload.outstanding_amount),
+        "maturity_date": payload.maturity_date.isoformat(),
+        "status": record.status,
+    }
+
+
+@router.get("/alm")
+def get_alm_intelligence(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    return _alm_intelligence(db, context)
+
+
+@router.post("/alm/stress-test")
+def run_alm_stress_test(
+    payload: ALMStressRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    return _alm_intelligence(
+        db,
+        context,
+        collection_rate=Decimal(payload.collection_rate_percent) / Decimal("100"),
+        obligation_rate=Decimal(payload.obligation_rate_percent) / Decimal("100"),
+        funding_rollover_rate=Decimal(payload.funding_rollover_percent) / Decimal("100"),
+        unexpected_outflow=Decimal(payload.unexpected_outflow),
+    )
+
+
+@router.post("/alm/evidence-pack")
+def generate_alm_evidence_pack(
+    payload: ALMStressRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER, UserRole.AUDITOR})
+    pack = _alm_intelligence(
+        db,
+        context,
+        collection_rate=Decimal(payload.collection_rate_percent) / Decimal("100"),
+        obligation_rate=Decimal(payload.obligation_rate_percent) / Decimal("100"),
+        funding_rollover_rate=Decimal(payload.funding_rollover_percent) / Decimal("100"),
+        unexpected_outflow=Decimal(payload.unexpected_outflow),
+    )
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"ALMPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=f"ALM evidence pack - {today:%d %b %Y}",
+        report_type="alm_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today + timedelta(days=1095),
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
+    }
 
 
 @router.get("/prudential")

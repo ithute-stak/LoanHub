@@ -78,6 +78,25 @@ class OperatingRecordRead(BaseModel):
 
 
 
+
+class ALMFundingFacilityCreate(BaseModel):
+    lender_name: str = Field(min_length=2, max_length=240)
+    facility_type: str = Field(default="term_funding", min_length=2, max_length=120)
+    outstanding_amount: Decimal = Field(gt=0)
+    maturity_date: datetime
+    interest_rate_percent: Decimal | None = Field(default=None, ge=0)
+    next_repricing_date: datetime | None = None
+    secured: bool = False
+    branch_id: UUID | None = None
+    notes: str | None = Field(default=None, max_length=3000)
+
+
+class ALMStressRequest(BaseModel):
+    collection_rate_percent: Decimal = Field(default=Decimal("75"), ge=0, le=100)
+    obligation_rate_percent: Decimal = Field(default=Decimal("110"), ge=0)
+    funding_rollover_percent: Decimal = Field(default=Decimal("50"), ge=0, le=100)
+    unexpected_outflow: Decimal = Field(default=Decimal("0"), ge=0)
+
 class PrudentialStressScenarioRequest(BaseModel):
     name: str = Field(default="Custom stress", min_length=2, max_length=160)
     collection_rate_percent: Decimal = Field(default=Decimal("70"), ge=0, le=100)

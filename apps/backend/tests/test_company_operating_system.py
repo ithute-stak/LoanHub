@@ -272,3 +272,37 @@ def test_prudential_stress_testing_is_nonposting_transparent_and_threshold_drive
     assert "Run custom scenario" in centre
     assert "Generate stress evidence pack" in centre
     assert "Equity erosion" in centre
+
+
+def test_alm_intelligence_uses_explicit_funding_maturities_and_nonposting_stress():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class ALMFundingFacilityCreate" in schema
+    assert "class ALMStressRequest" in schema
+
+    assert "ALM_BUCKETS" in router
+    assert "def _alm_intelligence(" in router
+    assert '@router.post("/alm/funding-facilities"' in router
+    assert '@router.get("/alm")' in router
+    assert '@router.post("/alm/stress-test")' in router
+    assert '@router.post("/alm/evidence-pack")' in router
+    assert '"report_type="alm_evidence_pack"' in router
+    assert '"duration_style_maturity_gap_days"' in router
+    assert '"maximum_funding_requirement"' in router
+    assert '"funding_concentration_high"' in router
+    assert "not market-value duration or interest-rate VaR" in router
+
+    assert "ALMIntelligence" in api
+    assert "getALMIntelligence" in api
+    assert "createALMFundingFacility" in api
+    assert "runALMStressTest" in api
+    assert "generateALMEvidencePack" in api
+
+    assert "Asset & Liability Management Intelligence" in centre
+    assert "Funding facility register" in centre
+    assert "ALM stress assumptions" in centre
+    assert "Generate ALM evidence pack" in centre
+    assert "Max funding requirement" in centre

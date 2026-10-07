@@ -582,3 +582,90 @@ export async function generatePrudentialStressEvidencePack(payload?: {
 }): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PrudentialStressPack }> {
   return (await api.post("/company-operating-system/prudential/stress-evidence-pack", payload ?? {})).data;
 }
+
+
+export type ALMIntelligence = {
+  as_of: string;
+  branch_id?: string | null;
+  opening_available_cash: number;
+  assumptions: {
+    collection_rate_percent: number;
+    obligation_rate_percent: number;
+    funding_rollover_percent: number;
+    unexpected_outflow: number;
+  };
+  liquidity_ladder: Array<{
+    bucket: string;
+    contractual_asset_inflows: number;
+    scenario_asset_inflows: number;
+    operating_outflows: number;
+    funding_maturities: number;
+    scenario_funding_outflows: number;
+    net_gap: number;
+    cumulative_liquidity: number;
+    funding_requirement: number;
+  }>;
+  maximum_funding_requirement: number;
+  projected_terminal_liquidity: number;
+  asset_weighted_average_maturity_days?: number | null;
+  liability_weighted_average_maturity_days?: number | null;
+  duration_style_maturity_gap_days?: number | null;
+  funding: {
+    total_outstanding: number;
+    due_within_30_days: number;
+    due_within_90_days: number;
+    due_within_365_days: number;
+    top_funder_share_percent: number;
+    concentration: Array<{ lender_name: string; outstanding_amount: number; share_percent: number }>;
+    facilities: Array<{
+      id: string;
+      reference: string;
+      lender_name: string;
+      facility_type?: string | null;
+      outstanding_amount: number;
+      maturity_date: string;
+      days_to_maturity: number;
+      interest_rate_percent?: number | null;
+      next_repricing_date?: string | null;
+      secured: boolean;
+      branch_id?: string | null;
+    }>;
+  };
+  risk_flags: Record<string, boolean>;
+  policy_note: string;
+};
+
+export async function getALMIntelligence(): Promise<ALMIntelligence> {
+  return (await api.get<ALMIntelligence>("/company-operating-system/alm")).data;
+}
+
+export async function createALMFundingFacility(payload: {
+  lender_name: string;
+  facility_type?: string;
+  outstanding_amount: number;
+  maturity_date: string;
+  interest_rate_percent?: number | null;
+  next_repricing_date?: string | null;
+  secured?: boolean;
+  notes?: string | null;
+}): Promise<Record<string, unknown>> {
+  return (await api.post("/company-operating-system/alm/funding-facilities", payload)).data;
+}
+
+export async function runALMStressTest(payload: {
+  collection_rate_percent: number;
+  obligation_rate_percent: number;
+  funding_rollover_percent: number;
+  unexpected_outflow: number;
+}): Promise<ALMIntelligence> {
+  return (await api.post<ALMIntelligence>("/company-operating-system/alm/stress-test", payload)).data;
+}
+
+export async function generateALMEvidencePack(payload: {
+  collection_rate_percent: number;
+  obligation_rate_percent: number;
+  funding_rollover_percent: number;
+  unexpected_outflow: number;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: ALMIntelligence }> {
+  return (await api.post("/company-operating-system/alm/evidence-pack", payload)).data;
+}
