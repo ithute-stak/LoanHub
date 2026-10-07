@@ -138,3 +138,17 @@ def test_no_affordability_top_up_outside_14_to_20_window() -> None:
 
     assert decision.action == "none"
     assert decision.execute_automatically is False
+
+
+def test_cash_payment_service_marks_cdas_reoptimization_after_success() -> None:
+    from pathlib import Path
+
+    payment_service = (
+        Path(__file__).resolve().parents[1] / "services/payment_service.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'plan["autopilot_pending"]' in payment_service
+    assert '"reason": "confirmed_cash_payment"' in payment_service
+    assert "transaction.purpose == PaymentPurpose.LOAN_REPAYMENT" in payment_service
+    assert "transaction.status == PaymentStatus.SUCCEEDED" in payment_service
+    assert "loan.cdas_collection_enabled" in payment_service
