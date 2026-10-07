@@ -579,6 +579,9 @@ def submit_assessment(
     if not application:
         raise HTTPException(status_code=409, detail="The linked loan application no longer exists")
     snapshot = build_evidence_snapshot(db, application)
+    selected_deal_structure = (case.evidence_snapshot or {}).get("selected_deal_structure")
+    if selected_deal_structure:
+        snapshot["selected_deal_structure"] = selected_deal_structure
     latest = _latest_assessment(db, case.id)
     revision = int(latest.revision or 0) + 1 if latest else 1
     if latest:
@@ -826,6 +829,7 @@ def finalize_case(
             final_evidence_snapshot or {}
         ).get("captured_at"),
         "final_integration_readiness": final_integration_readiness,
+        "selected_deal_structure": (case.evidence_snapshot or {}).get("selected_deal_structure"),
         "final_evidence_snapshot": final_evidence_snapshot,
     }
     _event(db, case, "committee_finalized", context.user.id, case.final_snapshot)
