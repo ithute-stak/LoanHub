@@ -45,6 +45,10 @@ import {
   createALMFundingFacility,
   runALMStressTest,
   generateALMEvidencePack,
+  getInterestRateRiskIntelligence,
+  saveLoanRateProfile,
+  runInterestRateRiskStress,
+  generateInterestRateRiskEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -58,6 +62,7 @@ import {
   type PrudentialIntelligence,
   type PrudentialStressPack,
   type ALMIntelligence,
+  type InterestRateRiskIntelligence,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -89,6 +94,7 @@ const TABS = [
   ["credit", "Credit & finance", Calculator],
   ["integrations", "Integrations", Webhook],
   ["alm", "ALM", ChartNoAxesCombined],
+  ["rate-risk", "Rate Risk", Gauge],
   ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
@@ -161,6 +167,16 @@ export function CompanyOperatingSystemCentre() {
   const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
   const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
   const [alm, setAlm] = useState<ALMIntelligence | null>(null);
+  const [rateRisk, setRateRisk] = useState<InterestRateRiskIntelligence | null>(null);
+  const [rateLoanId, setRateLoanId] = useState("");
+  const [rateType, setRateType] = useState<"fixed" | "variable">("fixed");
+  const [rateNextRepricing, setRateNextRepricing] = useState("");
+  const [rateReference, setRateReference] = useState("");
+  const [rateSpread, setRateSpread] = useState("");
+  const [rateShockBps, setRateShockBps] = useState("200");
+  const [rateAssetShockBps, setRateAssetShockBps] = useState("");
+  const [rateFundingShockBps, setRateFundingShockBps] = useState("");
+  const [rateHorizonDays, setRateHorizonDays] = useState("365");
   const [almLender, setAlmLender] = useState("");
   const [almOutstanding, setAlmOutstanding] = useState("");
   const [almMaturity, setAlmMaturity] = useState("");
@@ -241,6 +257,13 @@ export function CompanyOperatingSystemCentre() {
     if (nextTab === "alm") {
       try {
         setAlm(await getALMIntelligence());
+      } catch (nextError) {
+        setError(errorMessage(nextError));
+      }
+    }
+    if (nextTab === "rate-risk") {
+      try {
+        setRateRisk(await getInterestRateRiskIntelligence());
       } catch (nextError) {
         setError(errorMessage(nextError));
       }
@@ -381,6 +404,77 @@ export function CompanyOperatingSystemCentre() {
       setOneTimeSecret(`Webhook signing secret shown once: ${issued.signing_secret}`);
       setWebhookUrl("");
       setWebhooks(await listCompanyWebhooks());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshRateRisk() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRateRisk(await getInterestRateRiskIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveRateProfile() {
+    if (!rateLoanId.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await saveLoanRateProfile({
+        loan_id: rateLoanId.trim(),
+        rate_type: rateType,
+        next_repricing_date: rateType === "variable" && rateNextRepricing ? new Date(`${rateNextRepricing}T17:00:00`).toISOString() : null,
+        reference_rate_name: rateReference.trim() || null,
+        spread_percent: rateSpread.trim() ? Number(rateSpread) : null,
+      });
+      setRateLoanId("");
+      setRateNextRepricing("");
+      setRateReference("");
+      setRateSpread("");
+      setRateRisk(await getInterestRateRiskIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runRateStress() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRateRisk(await runInterestRateRiskStress({
+        parallel_shock_bps: Number(rateShockBps || 0),
+        asset_shock_bps: rateAssetShockBps.trim() ? Number(rateAssetShockBps) : null,
+        funding_shock_bps: rateFundingShockBps.trim() ? Number(rateFundingShockBps) : null,
+        horizon_days: Number(rateHorizonDays || 365),
+      }));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportRateRiskPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generateInterestRateRiskEvidencePack({
+        parallel_shock_bps: Number(rateShockBps || 0),
+        asset_shock_bps: rateAssetShockBps.trim() ? Number(rateAssetShockBps) : null,
+        funding_shock_bps: rateFundingShockBps.trim() ? Number(rateFundingShockBps) : null,
+        horizon_days: Number(rateHorizonDays || 365),
+      });
+      setRateRisk(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -826,6 +920,83 @@ export function CompanyOperatingSystemCentre() {
             <div className="flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Integration Hub</h2></div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">Use the Integrations operating module to register bank, mobile-money, payroll, credit-bureau, identity, accounting, SMS/email and debt-collection configurations. Provider credentials still require protected server configuration or dedicated encrypted fields.</p>
           </section>
+        </div>
+      ) : null}
+
+      {tab === "rate-risk" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><Gauge className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Interest Rate Risk & Repricing Intelligence</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Maps asset and funding repricing dates, separates fixed and variable balances, measures repricing gaps and estimates earnings-at-risk style changes in net interest income under basis-point shocks.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void refreshRateRisk()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Refresh rate risk</button>
+                <button type="button" disabled={busy} onClick={() => void exportRateRiskPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate rate-risk evidence pack</button>
+              </div>
+            </div>
+
+            {rateRisk ? <>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                <Metric label="Asset balance" value={formatMoney(rateRisk.summary.asset_balance)} />
+                <Metric label="Variable assets" value={formatMoney(rateRisk.summary.variable_asset_balance)} />
+                <Metric label="Funding balance" value={formatMoney(rateRisk.summary.funding_balance)} />
+                <Metric label="Variable funding" value={formatMoney(rateRisk.summary.variable_funding_balance)} />
+                <Metric label="Rate spread" value={rateRisk.summary.baseline_rate_spread_percent == null ? "—" : `${rateRisk.summary.baseline_rate_spread_percent.toFixed(3)}%`} />
+                <Metric label="Δ net interest income" value={formatMoney(rateRisk.summary.estimated_delta_net_interest_income)} />
+              </div>
+
+              <div className="mt-5 overflow-x-auto rounded-2xl border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted/40 text-left"><tr><th className="p-3">Bucket</th><th className="p-3 text-right">Assets</th><th className="p-3 text-right">Funding</th><th className="p-3 text-right">Gap</th><th className="p-3 text-right">Cumulative</th><th className="p-3 text-right">Variable asset</th><th className="p-3 text-right">Variable funding</th><th className="p-3 text-right">Variable gap</th></tr></thead>
+                  <tbody>{rateRisk.repricing_ladder.map((row) => <tr key={row.bucket} className="border-t"><td className="p-3 font-black">{titleCase(row.bucket)}</td><td className="p-3 text-right">{formatMoney(row.asset_balance)}</td><td className="p-3 text-right">{formatMoney(row.funding_balance)}</td><td className="p-3 text-right">{formatMoney(row.repricing_gap)}</td><td className="p-3 text-right">{formatMoney(row.cumulative_gap)}</td><td className="p-3 text-right">{formatMoney(row.variable_asset_balance)}</td><td className="p-3 text-right">{formatMoney(row.variable_funding_balance)}</td><td className="p-3 text-right font-black">{formatMoney(row.variable_repricing_gap)}</td></tr>)}</tbody>
+                </table>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Rate-risk flags</h3>
+                  <div className="mt-3 space-y-2">{Object.entries(rateRisk.risk_flags).map(([key, active]) => <div key={key} className="flex items-center justify-between rounded-xl border p-3 text-sm"><span>{titleCase(key)}</span><span className={active ? "font-black text-destructive" : "font-black text-emerald-700 dark:text-emerald-300"}>{active ? "Review" : "Clear"}</span></div>)}</div>
+                </article>
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Shock summary</h3>
+                  <p className="mt-3 text-sm">Asset shock: <span className="font-black">{rateRisk.summary.asset_shock_bps} bps</span></p>
+                  <p className="mt-1 text-sm">Funding shock: <span className="font-black">{rateRisk.summary.funding_shock_bps} bps</span></p>
+                  <p className="mt-1 text-sm">Δ interest income: <span className="font-black">{formatMoney(rateRisk.summary.estimated_delta_interest_income)}</span></p>
+                  <p className="mt-1 text-sm">Δ interest expense: <span className="font-black">{formatMoney(rateRisk.summary.estimated_delta_interest_expense)}</span></p>
+                  <p className="mt-1 text-sm">Δ NII: <span className="font-black">{formatMoney(rateRisk.summary.estimated_delta_net_interest_income)}</span></p>
+                </article>
+              </div>
+              <p className="mt-4 rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{rateRisk.policy_note}</p>
+            </> : null}
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Loan repricing register</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Loans without an explicit variable-rate profile remain fixed-to-maturity. Variable loans require an explicit next repricing date.</p>
+              <input value={rateLoanId} onChange={(e) => setRateLoanId(e.target.value)} placeholder="Loan UUID" className="mt-4 h-11 w-full rounded-xl border bg-background px-3" />
+              <select value={rateType} onChange={(e) => setRateType(e.target.value as "fixed" | "variable")} className="mt-3 h-11 w-full rounded-xl border bg-background px-3"><option value="fixed">Fixed</option><option value="variable">Variable</option></select>
+              {rateType === "variable" ? <input type="date" value={rateNextRepricing} onChange={(e) => setRateNextRepricing(e.target.value)} className="mt-3 h-11 w-full rounded-xl border bg-background px-3" /> : null}
+              <input value={rateReference} onChange={(e) => setRateReference(e.target.value)} placeholder="Reference rate name (optional)" className="mt-3 h-11 w-full rounded-xl border bg-background px-3" />
+              <input value={rateSpread} onChange={(e) => setRateSpread(e.target.value)} placeholder="Spread % (optional)" className="mt-3 h-11 w-full rounded-xl border bg-background px-3" />
+              <button type="button" disabled={busy || !rateLoanId.trim() || (rateType === "variable" && !rateNextRepricing)} onClick={() => void saveRateProfile()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Save loan rate profile</button>
+              {rateRisk?.loan_profiles?.length ? <div className="mt-4 max-h-96 space-y-2 overflow-auto">{rateRisk.loan_profiles.slice(0, 50).map((row) => <div key={row.loan_id} className="rounded-xl border p-3 text-sm"><div className="flex items-center justify-between gap-2"><p className="font-black">{row.loan_reference}</p><span>{titleCase(row.rate_type)}</span></div><p className="mt-1 text-xs text-muted-foreground">{formatMoney(row.balance)} · {row.contractual_rate_percent.toFixed(3)}% · reprices {row.repricing_date}</p></div>)}</div> : null}
+            </section>
+
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Rate-shock assumptions</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Parallel shock applies to both sides unless separate asset or funding shocks are supplied.</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <input value={rateShockBps} onChange={(e) => setRateShockBps(e.target.value)} placeholder="Parallel shock bps" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={rateHorizonDays} onChange={(e) => setRateHorizonDays(e.target.value)} placeholder="Horizon days" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={rateAssetShockBps} onChange={(e) => setRateAssetShockBps(e.target.value)} placeholder="Asset shock bps (optional)" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={rateFundingShockBps} onChange={(e) => setRateFundingShockBps(e.target.value)} placeholder="Funding shock bps (optional)" className="h-11 rounded-xl border bg-background px-3" />
+              </div>
+              <button type="button" disabled={busy} onClick={() => void runRateStress()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run rate shock</button>
+            </section>
+          </div>
         </div>
       ) : null}
 

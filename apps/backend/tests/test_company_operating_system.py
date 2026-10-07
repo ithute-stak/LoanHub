@@ -306,3 +306,37 @@ def test_alm_intelligence_uses_explicit_funding_maturities_and_nonposting_stress
     assert "ALM stress assumptions" in centre
     assert "Generate ALM evidence pack" in centre
     assert "Max funding requirement" in centre
+
+
+def test_interest_rate_repricing_intelligence_uses_explicit_profiles_and_nonposting_nii_shocks():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class InterestRateLoanProfileCreate" in schema
+    assert "class InterestRateStressRequest" in schema
+    assert "Variable-rate loans require next_repricing_date" in schema
+
+    assert "def _interest_rate_risk_intelligence(" in router
+    assert '@router.post("/interest-rate-risk/loan-profiles"' in router
+    assert '@router.get("/interest-rate-risk")' in router
+    assert '@router.post("/interest-rate-risk/stress-test")' in router
+    assert '@router.post("/interest-rate-risk/evidence-pack")' in router
+    assert '"report_type="interest_rate_risk_evidence_pack"' in router
+    assert '"estimated_delta_net_interest_income"' in router
+    assert '"variable_repricing_gap"' in router
+    assert '"fixed_to_maturity_default"' in router
+    assert "not market-value duration, VaR or a statutory IRRBB calculation" in router
+
+    assert "InterestRateRiskIntelligence" in api
+    assert "getInterestRateRiskIntelligence" in api
+    assert "saveLoanRateProfile" in api
+    assert "runInterestRateRiskStress" in api
+    assert "generateInterestRateRiskEvidencePack" in api
+
+    assert "Interest Rate Risk & Repricing Intelligence" in centre
+    assert "Loan repricing register" in centre
+    assert "Rate-shock assumptions" in centre
+    assert "Generate rate-risk evidence pack" in centre
+    assert "Δ net interest income" in centre

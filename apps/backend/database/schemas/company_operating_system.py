@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 CompanyModule = Literal[
@@ -78,6 +78,30 @@ class OperatingRecordRead(BaseModel):
 
 
 
+
+
+class InterestRateLoanProfileCreate(BaseModel):
+    loan_id: UUID
+    rate_type: Literal["fixed", "variable"]
+    next_repricing_date: datetime | None = None
+    reference_rate_name: str | None = Field(default=None, max_length=120)
+    spread_percent: Decimal | None = Field(default=None)
+    floor_percent: Decimal | None = Field(default=None)
+    cap_percent: Decimal | None = Field(default=None)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_variable_rate_profile(self):
+        if self.rate_type == "variable" and self.next_repricing_date is None:
+            raise ValueError("Variable-rate loans require next_repricing_date")
+        return self
+
+
+class InterestRateStressRequest(BaseModel):
+    parallel_shock_bps: Decimal = Field(default=Decimal("200"), ge=-2000, le=2000)
+    asset_shock_bps: Decimal | None = Field(default=None, ge=-2000, le=2000)
+    funding_shock_bps: Decimal | None = Field(default=None, ge=-2000, le=2000)
+    horizon_days: int = Field(default=365, ge=1, le=1095)
 
 class ALMFundingFacilityCreate(BaseModel):
     lender_name: str = Field(min_length=2, max_length=240)
