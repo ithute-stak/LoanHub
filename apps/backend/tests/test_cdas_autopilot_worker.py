@@ -85,3 +85,14 @@ def test_affordability_scan_reports_provider_read_reuse() -> None:
 
     assert '"provider_reads": provider_reads' in worker
     assert '"reused_reads": reused_reads' in worker
+
+
+def test_daily_affordability_snapshot_survives_worker_restart() -> None:
+    worker = _read(ROOT / "services/cdas_autopilot_worker.py")
+
+    assert "PlatformCdasTransaction" in worker
+    assert "existing_snapshot = (" in worker
+    assert "PlatformCdasTransaction.billing_key == billing_key" in worker
+    assert 'snapshot_metadata.get("live_affordability")' in worker
+    assert '"live_affordability": str(live_affordability)' in worker
+    assert '"snapshot_date": today.isoformat()' in worker
