@@ -235,6 +235,28 @@ def _uuid(value: Any) -> UUID | None:
         return None
 
 
+def _database_event_channels(
+    company_id: UUID | None,
+    branch_id: UUID | None,
+) -> set[str]:
+    """Route database commit events without leaking one branch into another.
+
+    Company-wide subscribers receive every company event. Branch-scoped users
+    receive only their own branch events plus branch-independent shared-company
+    changes through the company-shared channel.
+    """
+    channels: set[str] = {"platform"}
+    if not company_id:
+        return channels
+
+    channels.add(f"company-{company_id}")
+    if branch_id:
+        channels.add(f"branch-{branch_id}")
+    else:
+        channels.add(f"company-shared-{company_id}")
+    return channels
+
+
 def _membership_scope(connection, user_id: UUID | None) -> tuple[UUID | None, UUID | None]:
     if not user_id:
         return None, None
@@ -666,15 +688,18 @@ def capture_bulk_crud_change(execute_state) -> None:
     branch_id = _uuid(context.get("loanhub.branch_id"))
     actor_user_id = _uuid(context.get("loanhub.user_id"))
 
-    channels: set[str] = {"platform"}
-    if company_id:
-        channels.add(f"company-{company_id}")
-    elif str(context.get("loanhub.actor_scope") or "") == "borrower" and actor_user_id:
+    channels = _database_event_channels(company_id, branch_id)
+    if (
+        not company_id
+        and str(context.get("loanhub.actor_scope") or "") == "borrower"
+        and actor_user_id
+    ):
         channels.add(f"user-{actor_user_id}")
 
     session.info.setdefault("loanhub_db_commit_events", []).append({
         "channels": sorted(channels),
         "payload": {
+            "event_id": str(uuid.uuid4()),
             "type": "DB_EVENT",
             "contract": "loanhub.db-commit.v1",
             "table": table_name,
@@ -790,9 +815,7 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         borrower_user_id = _borrower_user_id(connection, target, table_name)
         employee_user_id = _employee_subject_user_id(connection, target, table_name)
 
-        channels: set[str] = {"platform"}
-        if company_id:
-            channels.add(f"company-{company_id}")
+        channels = _database_event_channels(company_id, branch_id)
         if borrower_user_id:
             channels.add(f"user-{borrower_user_id}")
         if employee_user_id and not company_id:
