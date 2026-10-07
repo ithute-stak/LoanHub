@@ -265,7 +265,7 @@ export default function CreditCommitteeCasePage() {
           </div> : null}
 
           {evidence.selected_deal_structure ? <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-black">Selected committee structure</p><p className="mt-1 text-sm text-muted-foreground">{formatMoney(Number(evidence.selected_deal_structure.structure?.principal ?? 0))} over {String(evidence.selected_deal_structure.structure?.term_months ?? "—")} months · minimum rate {String(evidence.selected_deal_structure.structure?.minimum_viable_rate_percent ?? "—")}%</p><p className="mt-2 text-sm">{String(evidence.selected_deal_structure.rationale ?? "")}</p></div> : null}
-        </Card>
+        </CardContent></Card>
 
         <Card><CardHeader><CardTitle>Evidence pack</CardTitle><CardDescription>Captured evidence is frozen into each analyst memo so later source changes do not erase what the committee considered.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Evidence title="Affordability" rows={[['Decision', affordability.decision], ['Headroom', formatMoney(Number(affordability.affordability_headroom ?? 0))], ['Max installment', formatMoney(Number(affordability.maximum_affordable_installment ?? 0))]]} /><Evidence title="Credit bureau" rows={[['Score', bureau.score], ['Risk grade', bureau.risk_grade], ['Adverse records', bureau.adverse_records]]} /><Evidence title="KYC / risk" rows={[['Status', kyc.status], ['Sanctions hit', kyc.sanctions_hit ? 'Yes' : 'No'], ['Fraud flag', kyc.fraud_flag ? 'Yes' : 'No']]} /><Evidence title="Employment" rows={[['Status', employment.employment_status], ['Employer', employment.employer_name], ['Verification', employment.verification_status]]} /></CardContent></Card>
 
