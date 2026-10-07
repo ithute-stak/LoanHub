@@ -49,6 +49,10 @@ from services.cdas_billing_scheduler import (
     start_cdas_billing_scheduler,
     stop_cdas_billing_scheduler,
 )
+from services.cdas_autopilot_scheduler import (
+    start_cdas_autopilot_scheduler,
+    stop_cdas_autopilot_scheduler,
+)
 
 
 def _seed_central_work_groups() -> None:
@@ -72,6 +76,7 @@ async def lifespan(_: FastAPI):
     webhook_started = False
     credit_bureau_billing_started = False
     cdas_billing_started = False
+    cdas_autopilot_started = False
     _seed_central_work_groups()
     await manager.start()
     try:
@@ -84,6 +89,8 @@ async def lifespan(_: FastAPI):
             credit_bureau_billing_started = True
             await start_cdas_billing_scheduler(21600)
             cdas_billing_started = True
+            await start_cdas_autopilot_scheduler(3600)
+            cdas_autopilot_started = True
             if settings.TREASURY_AUTO_SUBMIT_ENABLED:
                 await start_treasury_scheduler(settings.TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS)
                 treasury_started = True
@@ -95,6 +102,8 @@ async def lifespan(_: FastAPI):
             await stop_maturity_recovery_scheduler()
         if credit_bureau_billing_started:
             await stop_credit_bureau_billing_scheduler()
+        if cdas_autopilot_started:
+            await stop_cdas_autopilot_scheduler()
         if cdas_billing_started:
             await stop_cdas_billing_scheduler()
         if webhook_started:
