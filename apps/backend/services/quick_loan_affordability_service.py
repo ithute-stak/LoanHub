@@ -29,6 +29,8 @@ def quick_loan_affordability(
     borrower: Borrower,
     policy: OriginationPolicy,
     proposed_installment: Decimal,
+    bureau_monthly_commitments: Decimal | None = None,
+    live_cdas_affordability: Decimal | None = None,
 ) -> dict[str, Any]:
     """Assess a marketplace/quick-loan offer before the lender approves it.
 
@@ -43,7 +45,9 @@ def quick_loan_affordability(
     other_income = _money(borrower.other_monthly_income)
     income = _money(base_income + other_income)
     living = _money(borrower.monthly_living_expenses)
-    debt = _money(borrower.monthly_debt_repayments)
+    profile_debt = _money(borrower.monthly_debt_repayments)
+    bureau_debt = _money(bureau_monthly_commitments) if bureau_monthly_commitments is not None else Decimal("0.00")
+    debt = max(profile_debt, bureau_debt)
     dependants = int(borrower.dependants or 0)
     dependant_allowance = _money(policy.dependant_allowance)
     dependant_total = _money(Decimal(dependants) * dependant_allowance)
@@ -69,8 +73,13 @@ def quick_loan_affordability(
         * Decimal(policy.max_installment_income_percent or 0)
         / Decimal("100")
     )
-    maximum_affordable_installment = _money(
+    internal_maximum_affordable_installment = _money(
         min(disposable_limit, dti_limit, installment_income_limit)
+    )
+    maximum_affordable_installment = (
+        _money(min(internal_maximum_affordable_installment, _money(live_cdas_affordability)))
+        if live_cdas_affordability is not None
+        else internal_maximum_affordable_installment
     )
 
     after_installment = _money(disposable_before_new_loan - installment)
@@ -143,7 +152,17 @@ def quick_loan_affordability(
     result = {
         "decision": "pass" if passed else "fail",
         "passed": passed,
-        "input_source": "borrower_shared_profile",
+        "input_source": "composite_external_affordability",
+        "external_sources": {
+            "bureau": {
+                "used": bureau_monthly_commitments is not None,
+                "monthly_commitments": str(bureau_debt),
+            },
+            "cdas": {
+                "used": live_cdas_affordability is not None,
+                "live_affordability": str(_money(live_cdas_affordability)) if live_cdas_affordability is not None else None,
+            },
+        },
         "policy_id": str(policy.id),
         "policy_version": int(policy.version or 1),
         "monthly_income": str(income),
@@ -151,11 +170,14 @@ def quick_loan_affordability(
         "other_income": str(other_income),
         "living_expenses": str(living),
         "existing_debt_repayments": str(debt),
+        "profile_debt_repayments": str(profile_debt),
+        "bureau_monthly_commitments": str(bureau_debt),
         "dependants": dependants,
         "dependant_allowance_total": str(dependant_total),
         "configured_buffer": str(buffer_amount),
         "disposable_before_new_loan": str(disposable_before_new_loan),
         "proposed_installment": str(installment),
+        "internal_maximum_affordable_installment": str(internal_maximum_affordable_installment),
         "maximum_affordable_installment": str(maximum_affordable_installment),
         "affordability_headroom": str(headroom),
         "disposable_after_installment": str(after_installment),
