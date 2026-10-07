@@ -88,6 +88,45 @@ def latest_fresh_experian_enquiry(
     return None
 
 
+
+def latest_fresh_borrower_experian_enquiry(
+    db: Session,
+    *,
+    company_id: UUID,
+    borrower_id: UUID,
+    max_report_age_hours: int,
+    environment: str = "sandbox",
+) -> CreditBureauEnquiry | None:
+    """Return the latest fresh borrower-level Experian evidence for quick underwriting.
+
+    Marketplace/quick-loan offers do not always have a DirectLoanApplication,
+    so they reuse the latest fresh enquiry for the same lender company and
+    borrower. Environment still has to match the company's selected bureau mode.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_report_age_hours)
+    rows = (
+        db.query(CreditBureauEnquiry)
+        .filter(
+            CreditBureauEnquiry.company_id == company_id,
+            CreditBureauEnquiry.borrower_id == borrower_id,
+            CreditBureauEnquiry.provider == "experian",
+            CreditBureauEnquiry.status == "completed",
+            CreditBureauEnquiry.completed_at.isnot(None),
+            CreditBureauEnquiry.completed_at >= cutoff,
+        )
+        .order_by(CreditBureauEnquiry.completed_at.desc(), CreditBureauEnquiry.requested_at.desc())
+        .limit(50)
+        .all()
+    )
+    selected_environment = "live" if str(environment).lower() in {"live", "production"} else "sandbox"
+    for row in rows:
+        metadata = dict(row.enquiry_data or {}).get("experian")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        row_environment = "live" if str(metadata.get("environment") or "sandbox").lower() in {"live", "production"} else "sandbox"
+        if row_environment == selected_environment:
+            return row
+    return None
+
 def experian_required_for_application(
     policy: dict[str, Any],
     application: DirectLoanApplication,
