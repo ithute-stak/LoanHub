@@ -75,6 +75,37 @@ class OperatingRecordRead(BaseModel):
     updated_at: datetime
 
 
+
+class ManagementActionCreate(BaseModel):
+    source_signal_id: str = Field(min_length=2, max_length=160)
+    source: str = Field(default="management_command_intelligence", min_length=2, max_length=80)
+    domain: str = Field(min_length=2, max_length=80)
+    severity: Literal["low", "medium", "high", "critical"]
+    title: str = Field(min_length=3, max_length=240)
+    why_now: str = Field(min_length=3, max_length=3000)
+    recommended_action: str = Field(min_length=3, max_length=3000)
+    action_url: str = Field(min_length=1, max_length=500)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    assigned_user_id: UUID
+    due_at: datetime
+
+
+class ManagementDecisionCreate(BaseModel):
+    decision: str = Field(min_length=2, max_length=120)
+    note: str = Field(min_length=3, max_length=4000)
+    evidence_references: list[str] = Field(default_factory=list, max_length=30)
+
+
+class ManagementResolutionCreate(BaseModel):
+    resolution: str = Field(min_length=3, max_length=4000)
+    evidence_references: list[str] = Field(default_factory=list, max_length=30)
+
+
+class ManagementVerificationCreate(BaseModel):
+    outcome: Literal["verified", "reopened"]
+    note: str = Field(min_length=3, max_length=4000)
+    evidence_references: list[str] = Field(default_factory=list, max_length=30)
+
 class APIKeyCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     scopes: list[str] = Field(default_factory=lambda: ["read:portfolio"], max_length=30)
