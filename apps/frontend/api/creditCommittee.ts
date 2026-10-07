@@ -1,3 +1,4 @@
+import type { DealStructureOption, DealStructuringResult } from "@/api/companyOperatingSystem";
 import { api } from "@/lib/api";
 
 export type CreditCondition = {
@@ -202,4 +203,27 @@ export async function downloadCreditMemo(item: CreditCommitteeCase) {
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 5_000);
+}
+
+
+export async function generateCommitteeDealStructures(caseId: string, payload: {
+  minimum_principal: number;
+  maximum_principal: number;
+  principal_step: number;
+  term_options: number[];
+  processing_fee_percent: number;
+  interest_method: string;
+  expected_loss_percent?: number | null;
+  target_margin_percent?: number | null;
+  maximum_search_rate_percent?: number;
+  minimum_liquidity_buffer?: number | null;
+}): Promise<DealStructuringResult> {
+  return (await api.post<DealStructuringResult>(`/credit-committee/cases/${caseId}/deal-structures`, payload)).data;
+}
+
+export async function selectCommitteeDealStructure(caseId: string, payload: {
+  structure: DealStructureOption;
+  rationale: string;
+}): Promise<{ selected_deal_structure: Record<string, unknown>; case: CreditCommitteeCase; policy_note: string }> {
+  return (await api.post(`/credit-committee/cases/${caseId}/deal-structures/select`, payload)).data;
 }
