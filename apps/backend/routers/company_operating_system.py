@@ -25,7 +25,7 @@ from core.access_control import (
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
-from database.models.credit_loss_provisioning import CreditLossProvisionLine, CreditLossProvisionRun
+from database.models.credit_loss_provisioning import CreditLossProvisionLine, CreditLossProvisionPolicy, CreditLossProvisionRun
 from database.models.portfolio_risk import PortfolioRiskSnapshot
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
@@ -51,6 +51,8 @@ from database.schemas.company_operating_system import (
     InterestRateStressRequest,
     FundsTransferPricingPolicyUpsert,
     FundsTransferPricingScenarioRequest,
+    PricingOptimizationPackRequest,
+    PricingOptimizationRequest,
     APIKeyIssued,
     APIKeyRead,
     CompanyAssistantRequest,
@@ -2413,6 +2415,309 @@ def _ftp_profitability_intelligence(
             "Loan yield is a simple annualized contractual-yield proxy. Current posted ECL allowance is deducted in full as a conservative point-in-time risk charge. "
             "Funding cost uses only explicitly registered facilities with rates; incomplete rate coverage remains visible."
         ),
+    }
+
+
+
+def _active_expected_loss_proxy(db: Session, context: TenantContext) -> dict:
+    policy = db.query(CreditLossProvisionPolicy).filter(
+        CreditLossProvisionPolicy.company_id == context.company_id,
+        CreditLossProvisionPolicy.status == "active",
+    ).order_by(CreditLossProvisionPolicy.version.desc()).first()
+    if not policy:
+        return {
+            "expected_loss_percent": None,
+            "source": "unavailable",
+            "policy_name": None,
+            "policy_version": None,
+        }
+    rates = dict(policy.rates or {})
+    current_rate = rates.get("current")
+    if current_rate is None:
+        return {
+            "expected_loss_percent": None,
+            "source": "active_provision_policy_missing_current_rate",
+            "policy_name": policy.name,
+            "policy_version": policy.version,
+        }
+    value = Decimal(str(current_rate)) * Decimal("100")
+    return {
+        "expected_loss_percent": float(value.quantize(Decimal("0.0001"))),
+        "source": "active_provision_policy_current_rate_proxy",
+        "policy_name": policy.name,
+        "policy_version": policy.version,
+    }
+
+
+def _pricing_terms(
+    *,
+    principal: Decimal,
+    rate_percent: Decimal,
+    term_months: int,
+    processing_fee: Decimal,
+    interest_method: str,
+) -> dict:
+    start = date.today()
+    due_dates = generate_monthly_due_dates(start, term_months)
+    monthly, total, details = calculate_loan_terms(
+        principal=principal,
+        rate_percent=rate_percent,
+        term_months=term_months,
+        processing_fee=processing_fee,
+        interest_method=interest_method,
+        start_date=start,
+        due_dates=due_dates,
+    )
+    principal_value = Decimal(str(principal))
+    fee_value = Decimal(str(processing_fee))
+    total_value = Decimal(str(total))
+    term_years = Decimal(term_months) / Decimal("12")
+    contractual_interest = max(total_value - principal_value - fee_value, Decimal("0"))
+    interest_yield = (
+        contractual_interest / principal_value / term_years * Decimal("100")
+        if principal_value > 0 and term_years > 0 else Decimal("0")
+    )
+    fee_yield = (
+        fee_value / principal_value / term_years * Decimal("100")
+        if principal_value > 0 and term_years > 0 else Decimal("0")
+    )
+    return {
+        "monthly_installment": float(Decimal(str(monthly)).quantize(Decimal("0.01"))),
+        "total_repayable": float(total_value.quantize(Decimal("0.01"))),
+        "contractual_interest": float(contractual_interest.quantize(Decimal("0.01"))),
+        "simple_annualized_interest_yield_proxy_percent": float(interest_yield.quantize(Decimal("0.0001"))),
+        "annualized_fee_yield_proxy_percent": float(fee_yield.quantize(Decimal("0.0001"))),
+        "gross_contractual_yield_proxy_percent": float((interest_yield + fee_yield).quantize(Decimal("0.0001"))),
+        "details": details,
+    }
+
+
+def _minimum_viable_pricing(
+    db: Session,
+    context: TenantContext,
+    payload: PricingOptimizationRequest,
+) -> dict:
+    ftp_policy = _ftp_policy_payload(_ftp_policy_record(db, context))
+    funding = _weighted_ftp_funding_cost(db, context)
+    funding_rate = funding.get("weighted_funding_cost_percent")
+
+    expected_loss = payload.expected_loss_percent
+    expected_loss_source = {
+        "source": "explicit_request",
+        "policy_name": None,
+        "policy_version": None,
+    }
+    if expected_loss is None:
+        proxy = _active_expected_loss_proxy(db, context)
+        expected_loss = Decimal(str(proxy["expected_loss_percent"])) if proxy["expected_loss_percent"] is not None else None
+        expected_loss_source = proxy
+
+    target_margin = (
+        Decimal(str(payload.target_margin_percent))
+        if payload.target_margin_percent is not None
+        else Decimal(str(ftp_policy["minimum_risk_adjusted_margin_percent"]))
+    )
+    operating_pct = Decimal(str(ftp_policy["operating_cost_percent_of_exposure"]))
+    capital_allocation_pct = Decimal(str(ftp_policy["capital_allocation_percent_of_exposure"]))
+    capital_hurdle_pct = Decimal(str(ftp_policy["capital_hurdle_rate_percent"]))
+    capital_charge_pct = capital_allocation_pct * capital_hurdle_pct / Decimal("100")
+    term_years = Decimal(payload.term_months) / Decimal("12")
+    fee_yield_pct = (
+        Decimal(payload.processing_fee) / Decimal(payload.principal) / term_years * Decimal("100")
+        if Decimal(payload.principal) > 0 and term_years > 0 else Decimal("0")
+    )
+
+    missing = []
+    if funding_rate is None:
+        missing.append("weighted_funding_cost")
+    if expected_loss is None:
+        missing.append("expected_loss_assumption")
+
+    expected_loss_annualized_pct = (
+        Decimal(str(expected_loss)) / term_years
+        if expected_loss is not None and term_years > 0 else None
+    )
+    required_gross_yield_pct = None
+    required_interest_yield_pct = None
+    if not missing:
+        required_gross_yield_pct = (
+            Decimal(str(funding_rate))
+            + operating_pct
+            + capital_charge_pct
+            + Decimal(str(expected_loss_annualized_pct))
+            + target_margin
+        )
+        required_interest_yield_pct = max(required_gross_yield_pct - fee_yield_pct, Decimal("0"))
+
+    minimum_rate = None
+    minimum_terms = None
+    solver_status = "not_assessed"
+    if required_gross_yield_pct is not None:
+        low = Decimal("0")
+        high = Decimal(payload.maximum_search_rate_percent)
+        high_terms = _pricing_terms(
+            principal=payload.principal,
+            rate_percent=high,
+            term_months=payload.term_months,
+            processing_fee=payload.processing_fee,
+            interest_method=payload.interest_method,
+        )
+        if Decimal(str(high_terms["gross_contractual_yield_proxy_percent"])) < required_gross_yield_pct:
+            solver_status = "no_solution_within_search_bound"
+        else:
+            for _ in range(48):
+                mid = (low + high) / Decimal("2")
+                terms = _pricing_terms(
+                    principal=payload.principal,
+                    rate_percent=mid,
+                    term_months=payload.term_months,
+                    processing_fee=payload.processing_fee,
+                    interest_method=payload.interest_method,
+                )
+                if Decimal(str(terms["gross_contractual_yield_proxy_percent"])) >= required_gross_yield_pct:
+                    high = mid
+                else:
+                    low = mid
+            minimum_rate = high.quantize(Decimal("0.0001"))
+            minimum_terms = _pricing_terms(
+                principal=payload.principal,
+                rate_percent=minimum_rate,
+                term_months=payload.term_months,
+                processing_fee=payload.processing_fee,
+                interest_method=payload.interest_method,
+            )
+            solver_status = "solved"
+
+    proposed = None
+    if payload.proposed_rate_percent is not None:
+        proposed_terms = _pricing_terms(
+            principal=payload.principal,
+            rate_percent=payload.proposed_rate_percent,
+            term_months=payload.term_months,
+            processing_fee=payload.processing_fee,
+            interest_method=payload.interest_method,
+        )
+        proposed_gross = Decimal(str(proposed_terms["gross_contractual_yield_proxy_percent"]))
+        margin_after_charges = (
+            proposed_gross
+            - Decimal(str(funding_rate))
+            - operating_pct
+            - capital_charge_pct
+            - Decimal(str(expected_loss_annualized_pct))
+            if not missing else None
+        )
+        gap_bps = (
+            (Decimal(payload.proposed_rate_percent) - minimum_rate) * Decimal("100")
+            if minimum_rate is not None else None
+        )
+        proposed = {
+            **proposed_terms,
+            "rate_percent": float(Decimal(payload.proposed_rate_percent)),
+            "risk_adjusted_margin_proxy_percent": float(margin_after_charges.quantize(Decimal("0.0001"))) if margin_after_charges is not None else None,
+            "minimum_rate_gap_bps": float(gap_bps.quantize(Decimal("0.01"))) if gap_bps is not None else None,
+            "status": (
+                "meets_minimum"
+                if minimum_rate is not None and Decimal(payload.proposed_rate_percent) >= minimum_rate
+                else "below_minimum"
+                if minimum_rate is not None
+                else "not_assessed"
+            ),
+        }
+
+    return {
+        "as_of": date.today().isoformat(),
+        "inputs": {
+            "principal": float(Decimal(payload.principal)),
+            "term_months": payload.term_months,
+            "processing_fee": float(Decimal(payload.processing_fee)),
+            "interest_method": payload.interest_method,
+            "proposed_rate_percent": float(Decimal(payload.proposed_rate_percent)) if payload.proposed_rate_percent is not None else None,
+            "target_margin_percent": float(target_margin),
+            "maximum_search_rate_percent": float(Decimal(payload.maximum_search_rate_percent)),
+        },
+        "cost_stack": {
+            "weighted_funding_cost_percent": funding_rate,
+            "operating_cost_percent": float(operating_pct),
+            "capital_allocation_percent": float(capital_allocation_pct),
+            "capital_hurdle_rate_percent": float(capital_hurdle_pct),
+            "annualized_capital_charge_percent": float(capital_charge_pct.quantize(Decimal("0.0001"))),
+            "expected_loss_percent_of_principal": float(Decimal(str(expected_loss))) if expected_loss is not None else None,
+            "annualized_expected_loss_charge_percent": float(Decimal(str(expected_loss_annualized_pct)).quantize(Decimal("0.0001"))) if expected_loss_annualized_pct is not None else None,
+            "annualized_fee_yield_proxy_percent": float(fee_yield_pct.quantize(Decimal("0.0001"))),
+            "target_margin_percent": float(target_margin),
+            "required_gross_yield_proxy_percent": float(required_gross_yield_pct.quantize(Decimal("0.0001"))) if required_gross_yield_pct is not None else None,
+            "required_interest_yield_proxy_percent": float(required_interest_yield_pct.quantize(Decimal("0.0001"))) if required_interest_yield_pct is not None else None,
+        },
+        "evidence": {
+            "ftp_policy": ftp_policy,
+            "funding": funding,
+            "expected_loss": {
+                "value_percent": float(Decimal(str(expected_loss))) if expected_loss is not None else None,
+                **expected_loss_source,
+            },
+        },
+        "minimum_viable_rate_percent": float(minimum_rate) if minimum_rate is not None else None,
+        "minimum_viable_terms": minimum_terms,
+        "solver_status": solver_status,
+        "missing_evidence": missing,
+        "proposed_pricing": proposed,
+        "decision_support": (
+            "review_required" if proposed and proposed["status"] == "below_minimum"
+            else "within_economic_floor" if proposed and proposed["status"] == "meets_minimum"
+            else "not_assessed" if missing
+            else "minimum_rate_calculated"
+        ),
+        "policy_note": (
+            "Minimum viable pricing is management decision support. It does not approve or reject a borrower, does not replace affordability or legal pricing limits, "
+            "and does not claim APR. The solver uses LoanHub's authoritative contractual interest engine and a simple annualized yield proxy to cover explicit funding, "
+            "expected-loss, operating-cost, capital-hurdle and target-margin assumptions."
+        ),
+    }
+
+
+@router.post("/pricing/minimum-viable-rate")
+def calculate_minimum_viable_rate(
+    payload: PricingOptimizationRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    return _minimum_viable_pricing(db, context, payload)
+
+
+@router.post("/pricing/minimum-viable-rate/evidence-pack")
+def generate_pricing_optimization_evidence_pack(
+    payload: PricingOptimizationPackRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER, UserRole.AUDITOR})
+    pack = _minimum_viable_pricing(db, context, payload)
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"PRICEPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=payload.title,
+        report_type="pricing_optimization_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today,
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
     }
 
 
