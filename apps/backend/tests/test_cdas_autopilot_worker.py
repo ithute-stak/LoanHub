@@ -96,3 +96,29 @@ def test_daily_affordability_snapshot_survives_worker_restart() -> None:
     assert 'snapshot_metadata.get("live_affordability")' in worker
     assert '"live_affordability": str(live_affordability)' in worker
     assert '"snapshot_date": today.isoformat()' in worker
+
+
+def test_autopilot_uses_postgres_session_locks_across_commits() -> None:
+    worker = _read(ROOT / "services/cdas_autopilot_worker.py")
+
+    assert "pg_try_advisory_lock" in worker
+    assert "pg_advisory_unlock" in worker
+    assert "cdas-autopilot-loan:" in worker
+    assert "cdas-affordability:" in worker
+    assert "cdas-autopilot-topup:" in worker
+
+
+def test_topup_rechecks_authoritative_state_inside_lock() -> None:
+    worker = _read(ROOT / "services/cdas_autopilot_worker.py")
+
+    assert "db.refresh(loan)" in worker
+    assert "refreshed_link = _eligible_link(db, loan)" in worker
+    assert "refreshed_decision = decide_cdas_autopilot(" in worker
+    assert 'refreshed_decision.action != "top_up"' in worker
+
+
+def test_autopilot_operation_names_are_reconcilable() -> None:
+    ledger = _read(ROOT / "services/cdas_operation_ledger.py")
+
+    assert '"deduction.modify_active.autopilot"' in ledger
+    assert '"deduction.settle.autopilot"' in ledger
