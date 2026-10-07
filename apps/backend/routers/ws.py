@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/ws', tags=['WebSockets'])
 
 
+COMPANY_WIDE_REALTIME_ROLES = {
+    UserRole.COMPANY_OWNER,
+    UserRole.COMPANY_ADMIN,
+}
+
+
 def _uuid(value: str | None) -> UUID | None:
     if not value:
         return None
@@ -157,6 +163,28 @@ def _client_id(websocket: WebSocket, user_id: UUID) -> str:
     return f"legacy-{user_id}"
 
 
+def _membership_realtime_channels(membership) -> set[str]:
+    """Return only the realtime scopes explicitly authorized by a membership.
+
+    Branch-scoped staff receive their own branch stream plus company-shared
+    changes. Company owners/admins and memberships intentionally not bound to a
+    branch also receive the company-wide stream.
+    """
+    company_id = str(membership.company_id)
+    channels = {f"company-shared-{company_id}"}
+
+    if (
+        membership.role in COMPANY_WIDE_REALTIME_ROLES
+        or membership.branch_id is None
+    ):
+        channels.add(f"company-{company_id}")
+
+    if membership.branch_id:
+        channels.add(f"branch-{membership.branch_id}")
+
+    return channels
+
+
 @router.websocket('')
 async def websocket_auth_endpoint(
     websocket: WebSocket,
@@ -227,9 +255,7 @@ async def websocket_auth_endpoint(
     elif user.role == UserRole.BORROWER:
         channels.add(f'borrower-{user.id}')
     for membership in memberships:
-        channels.add(f'company-{membership.company_id}')
-        if membership.branch_id:
-            channels.add(f'branch-{membership.branch_id}')
+        channels.update(_membership_realtime_channels(membership))
         if membership.role == UserRole.LOAN_OFFICER:
             channels.add(f'loan-officer-{user.id}')
 
