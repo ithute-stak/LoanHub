@@ -48,6 +48,8 @@ import {
     updateLoanProduct as updateLoanProductRequest,
 } from "@/api/loanProducts";
 import { api } from "@/lib/api";
+import { DB_COMMIT_EVENT_NAME } from "@/lib/realtime-commit";
+import { stableSmartSort } from "@/lib/stable-sort";
 import { useTenant } from "@/provider/tenantProvider";
 import { fetchBranchesThunk } from "@/store/features/thunks/branchThunks";
 import { fetchCompanyStaff } from "@/store/features/thunks/companyUserThunk";
@@ -307,7 +309,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         try {
             if (user.role === "superadmin") {
                 const response = await api.get<Borrower[]>("/borrowers/");
-                setBorrowers(response.data);
+                setBorrowers(stableSmartSort(response.data));
             } else {
                 const response = await api.get<Borrower>("/borrowers/me");
                 setBorrowers([{ ...response.data, person: user.person }]);
@@ -332,7 +334,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 user.role === "superadmin"
                     ? await listAllLoanRequests()
                     : await listMyLoanRequests();
-            setLoanRequests(data);
+            setLoanRequests(stableSmartSort(data));
         } catch (error: unknown) {
             setLoanRequests([]);
             setResourceError(
@@ -357,7 +359,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setResourceLoading("marketplace", true);
         setResourceError("marketplace", null);
         try {
-            setMarketplaceRequests(await listMarketplaceRequests());
+            setMarketplaceRequests(stableSmartSort(await listMarketplaceRequests()));
         } catch (error: unknown) {
             setMarketplaceRequests([]);
             setResourceError(
@@ -377,7 +379,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setResourceLoading("loans", true);
         setResourceError("loans", null);
         try {
-            setLoans(await listLoans());
+            setLoans(stableSmartSort(await listLoans()));
         } catch (error: unknown) {
             setLoans([]);
             setResourceError("loans", getErrorMessage(error, "Failed to load loans"));
@@ -394,7 +396,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setResourceLoading("payments", true);
         setResourceError("payments", null);
         try {
-            setPayments(await listPayments());
+            setPayments(stableSmartSort(await listPayments()));
         } catch (error: unknown) {
             setPayments([]);
             setResourceError("payments", getErrorMessage(error, "Failed to load payments"));
@@ -416,7 +418,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 user.role === "borrower"
                     ? await listPublicLoanProducts()
                     : await listLoanProducts();
-            setLoanProducts(products);
+            setLoanProducts(stableSmartSort(products));
         } catch (error: unknown) {
             setLoanProducts([]);
             setResourceError(
@@ -441,12 +443,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             const plans = user?.role === "superadmin"
                 ? await listAdminSubscriptionPlans()
                 : await listSubscriptionPlans();
-            setSubscriptionPlans(plans);
+            setSubscriptionPlans(stableSmartSort(plans));
             if (!user) {
                 setSubscriptions([]);
                 setCurrentSubscription(null);
             } else if (user.role === "superadmin") {
-                setSubscriptions(await listSubscriptions());
+                setSubscriptions(stableSmartSort(await listSubscriptions()));
                 setCurrentSubscription(null);
             } else if (isCompanyRole(user.role)) {
                 const subscription = await getCurrentSubscription();
@@ -526,6 +528,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     ]);
 
     useEffect(() => {
+        let timer: number | null = null;
+
+        const onDatabaseCommit = () => {
+            if (timer !== null) {
+                window.clearTimeout(timer);
+            }
+            timer = window.setTimeout(() => {
+                timer = null;
+                void refreshAllData();
+            }, 120);
+        };
+
+        window.addEventListener(DB_COMMIT_EVENT_NAME, onDatabaseCommit);
+        return () => {
+            window.removeEventListener(DB_COMMIT_EVENT_NAME, onDatabaseCommit);
+            if (timer !== null) {
+                window.clearTimeout(timer);
+            }
+        };
+    }, [refreshAllData]);
+
+    useEffect(() => {
         if (!authInitialized || !user) {
             loadedScopeRef.current = null;
             return;
@@ -576,7 +600,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             setResourceError("loanOffers", null);
             try {
                 const offers = await listOffersByRequest(requestId);
-                setLoanOffers(offers);
+                setLoanOffers(stableSmartSort(offers));
                 return offers;
             } catch (error: unknown) {
                 setResourceError("loanOffers", getErrorMessage(error, "Failed to load offers"));
@@ -621,7 +645,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const submitLoanOffer = useCallback(
         async (payload: LoanOfferCreatePayload) => {
             const offer = await createLoanOfferRequest(payload);
-            setLoanOffers((current) => [offer, ...current.filter((item) => item.id !== offer.id)]);
+            setLoanOffers((current) => stableSmartSort([offer, ...current.filter((item) => item.id !== offer.id)]));
             await loadMarketplace();
             return offer;
         },
@@ -631,7 +655,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const createLoanRequest = useCallback(
         async (payload: LoanRequestCreatePayload) => {
             const request = await createLoanRequestRequest(payload);
-            setLoanRequests((current) => [request, ...current]);
+            setLoanRequests((current) => stableSmartSort([request, ...current]));
             return request;
         },
         [],
@@ -640,7 +664,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const acceptLoanOffer = useCallback(
         async (requestId: string, offerId: string) => {
             const loan = await acceptLoanOfferRequest(requestId, offerId);
-            setLoans((current) => [loan, ...current.filter((item) => item.id !== loan.id)]);
+            setLoans((current) => stableSmartSort([loan, ...current.filter((item) => item.id !== loan.id)]));
             await Promise.all([loadLoanRequests(), loadOffersForRequest(requestId)]);
             return loan;
         },
@@ -760,6 +784,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setLoanProducts((current) => current.filter((item) => item.id !== productId));
     }, []);
 
+    const sortedCompanies = useMemo(() => stableSmartSort(companies), [companies]);
+    const sortedCompanyStaff = useMemo(() => stableSmartSort(companyStaff), [companyStaff]);
+    const sortedBranches = useMemo(() => stableSmartSort(branches), [branches]);
+
     const errors = useMemo<AppDataErrors>(
         () => ({
             ...localErrors,
@@ -802,9 +830,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             currentCompany,
             currentBranch,
             currentBorrower,
-            companies,
-            companyStaff,
-            branches,
+            companies: sortedCompanies,
+            companyStaff: sortedCompanyStaff,
+            branches: sortedBranches,
             borrowers,
             loanRequests,
             openLoanRequests,
@@ -923,6 +951,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         payments,
         refreshAllData,
         selectedMarketplaceRequest,
+        sortedBranches,
+        sortedCompanies,
+        sortedCompanyStaff,
         submitLoanOffer,
         setLoanProductActive,
         subscriptionPlans,
