@@ -23,6 +23,7 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
