@@ -17,11 +17,11 @@ function userIsEditing(): boolean {
 
 /**
  * Guarantees that standalone client pages which own their own local fetch/state
- * also catch up after a remote committed database change.
+ * also catch up after any committed database change.
  *
  * Shared AppData resources refresh in-place. This boundary is the universal
  * fallback for screens that have not yet moved their loaders into shared state.
- * To avoid destroying an in-progress edit, a remote remount is deferred while
+ * To avoid destroying an in-progress edit, a remount is deferred while
  * an editable control has focus and applied as soon as the user leaves it.
  */
 export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
@@ -37,7 +37,7 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
 
         function onCommit(event: Event) {
             const detail = (event as CustomEvent<DbCommitBatchDetail>).detail;
-            if (!detail?.hasRemoteChanges) return;
+            if (!detail?.count) return;
 
             if (userIsEditing()) {
                 pendingRef.current = true;
@@ -48,11 +48,12 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
         }
 
         window.addEventListener(DB_COMMIT_EVENT_NAME, onCommit);
-        document.addEventListener("focusout", applyPending);
+        const onFocusOut = () => window.setTimeout(applyPending, 0);
+        document.addEventListener("focusout", onFocusOut);
 
         return () => {
             window.removeEventListener(DB_COMMIT_EVENT_NAME, onCommit);
-            document.removeEventListener("focusout", applyPending);
+            document.removeEventListener("focusout", onFocusOut);
         };
     }, []);
 
