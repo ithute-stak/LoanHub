@@ -49,6 +49,10 @@ import {
   saveLoanRateProfile,
   runInterestRateRiskStress,
   generateInterestRateRiskEvidencePack,
+  getFTPProfitability,
+  saveFTPPolicy,
+  runFTPScenario,
+  generateFTPEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -63,6 +67,7 @@ import {
   type PrudentialStressPack,
   type ALMIntelligence,
   type InterestRateRiskIntelligence,
+  type FTPProfitabilityIntelligence,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -95,6 +100,7 @@ const TABS = [
   ["integrations", "Integrations", Webhook],
   ["alm", "ALM", ChartNoAxesCombined],
   ["rate-risk", "Rate Risk", Gauge],
+  ["ftp", "FTP & Profit", Calculator],
   ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
@@ -168,6 +174,15 @@ export function CompanyOperatingSystemCentre() {
   const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
   const [alm, setAlm] = useState<ALMIntelligence | null>(null);
   const [rateRisk, setRateRisk] = useState<InterestRateRiskIntelligence | null>(null);
+  const [ftp, setFtp] = useState<FTPProfitabilityIntelligence | null>(null);
+  const [ftpOperatingCost, setFtpOperatingCost] = useState("2");
+  const [ftpCapitalAllocation, setFtpCapitalAllocation] = useState("15");
+  const [ftpHurdleRate, setFtpHurdleRate] = useState("18");
+  const [ftpMinimumMargin, setFtpMinimumMargin] = useState("0");
+  const [ftpSource, setFtpSource] = useState("");
+  const [ftpFundingShift, setFtpFundingShift] = useState("200");
+  const [ftpEclMultiplier, setFtpEclMultiplier] = useState("1.25");
+  const [ftpOperatingMultiplier, setFtpOperatingMultiplier] = useState("1.10");
   const [rateLoanId, setRateLoanId] = useState("");
   const [rateType, setRateType] = useState<"fixed" | "variable">("fixed");
   const [rateNextRepricing, setRateNextRepricing] = useState("");
@@ -264,6 +279,13 @@ export function CompanyOperatingSystemCentre() {
     if (nextTab === "rate-risk") {
       try {
         setRateRisk(await getInterestRateRiskIntelligence());
+      } catch (nextError) {
+        setError(errorMessage(nextError));
+      }
+    }
+    if (nextTab === "ftp") {
+      try {
+        setFtp(await getFTPProfitability());
       } catch (nextError) {
         setError(errorMessage(nextError));
       }
@@ -475,6 +497,71 @@ export function CompanyOperatingSystemCentre() {
         horizon_days: Number(rateHorizonDays || 365),
       });
       setRateRisk(result.metrics);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshFtp() {
+    setBusy(true);
+    setError(null);
+    try {
+      setFtp(await getFTPProfitability());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFtpConfiguration() {
+    setBusy(true);
+    setError(null);
+    try {
+      await saveFTPPolicy({
+        policy_name: "LoanHub FTP & risk-adjusted profitability",
+        operating_cost_percent_of_exposure: Number(ftpOperatingCost || 0),
+        capital_allocation_percent_of_exposure: Number(ftpCapitalAllocation || 0),
+        capital_hurdle_rate_percent: Number(ftpHurdleRate || 0),
+        minimum_risk_adjusted_margin_percent: Number(ftpMinimumMargin || 0),
+        source_reference: ftpSource.trim() || null,
+      });
+      setFtp(await getFTPProfitability());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runFtpStress() {
+    setBusy(true);
+    setError(null);
+    try {
+      setFtp(await runFTPScenario({
+        funding_cost_shift_bps: Number(ftpFundingShift || 0),
+        ecl_multiplier: Number(ftpEclMultiplier || 0),
+        operating_cost_multiplier: Number(ftpOperatingMultiplier || 0),
+      }));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportFtpPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generateFTPEvidencePack({
+        funding_cost_shift_bps: Number(ftpFundingShift || 0),
+        ecl_multiplier: Number(ftpEclMultiplier || 0),
+        operating_cost_multiplier: Number(ftpOperatingMultiplier || 0),
+      });
+      setFtp(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -1069,6 +1156,90 @@ export function CompanyOperatingSystemCentre() {
                 <input value={almUnexpectedOutflow} onChange={(e) => setAlmUnexpectedOutflow(e.target.value)} placeholder="Unexpected outflow LSL" className="h-11 rounded-xl border bg-background px-3" />
               </div>
               <button type="button" disabled={busy} onClick={() => void runAlmStress()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run ALM stress</button>
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "ftp" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><Calculator className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Funds Transfer Pricing & Risk-Adjusted Profitability</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Combines contractual loan yield proxies, explicit funding costs, posted ECL, operating-cost assumptions and allocated-capital charges to show whether lending remains economically attractive after risk and funding.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void refreshFtp()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Refresh profitability</button>
+                <button type="button" disabled={busy} onClick={() => void exportFtpPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate FTP evidence pack</button>
+              </div>
+            </div>
+
+            {ftp ? <>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                <Metric label="Exposure" value={formatMoney(ftp.summary.total_exposure)} />
+                <Metric label="Risk-adjusted profit" value={formatMoney(ftp.summary.risk_adjusted_profit_proxy)} />
+                <Metric label="Risk-adjusted margin" value={ftp.summary.risk_adjusted_margin_percent == null ? "—" : `${ftp.summary.risk_adjusted_margin_percent.toFixed(2)}%`} />
+                <Metric label="Funding cost" value={ftp.funding.weighted_funding_cost_percent == null ? "—" : `${ftp.funding.weighted_funding_cost_percent.toFixed(2)}%`} detail={`${ftp.funding.funding_rate_coverage_percent.toFixed(1)}% funding-rate coverage`} />
+                <Metric label="Below hurdle loans" value={String(ftp.summary.below_hurdle_loan_count)} />
+                <Metric label="Not assessed" value={String(ftp.summary.not_assessed_loan_count)} />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Cost waterfall</h3>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div className="flex justify-between"><span>Gross revenue proxy</span><strong>{formatMoney(ftp.summary.gross_revenue_proxy)}</strong></div>
+                    <div className="flex justify-between"><span>FTP funding charge</span><strong>{formatMoney(ftp.summary.ftp_funding_charge)}</strong></div>
+                    <div className="flex justify-between"><span>ECL risk charge</span><strong>{formatMoney(ftp.summary.ecl_risk_charge)}</strong></div>
+                    <div className="flex justify-between"><span>Operating-cost charge</span><strong>{formatMoney(ftp.summary.operating_cost_charge)}</strong></div>
+                    <div className="flex justify-between"><span>Capital charge</span><strong>{formatMoney(ftp.summary.capital_charge)}</strong></div>
+                    <div className="flex justify-between border-t pt-2"><span className="font-black">Risk-adjusted profit proxy</span><strong>{formatMoney(ftp.summary.risk_adjusted_profit_proxy)}</strong></div>
+                  </div>
+                </article>
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Funding-rate completeness</h3>
+                  <p className="mt-3 text-sm">Rated funding: <strong>{formatMoney(ftp.funding.rated_funding_amount)}</strong></p>
+                  <p className="mt-1 text-sm">Total funding: <strong>{formatMoney(ftp.funding.total_funding_amount)}</strong></p>
+                  <p className="mt-1 text-sm">Missing-rate exposure: <strong>{formatMoney(ftp.funding.missing_rate_amount)}</strong></p>
+                  <p className="mt-1 text-sm">Latest posted ECL: <strong>{ftp.latest_posted_ecl_reference ?? "Unavailable"}</strong></p>
+                </article>
+              </div>
+
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                <article className="rounded-2xl border p-4"><h3 className="font-black">Branch profitability</h3><div className="mt-3 space-y-2">{ftp.by_branch.length ? ftp.by_branch.map((row) => <div key={row.key} className="flex items-center justify-between rounded-xl border p-3 text-sm"><div><p className="font-black">{row.label}</p><p className="text-xs text-muted-foreground">{row.loan_count} assessed loans · {formatMoney(row.exposure)} exposure</p></div><div className="text-right"><p className="font-black">{formatMoney(row.risk_adjusted_profit_proxy)}</p><p className="text-xs text-muted-foreground">{row.risk_adjusted_margin_percent?.toFixed(2) ?? "—"}%</p></div></div>) : <p className="text-sm text-muted-foreground">No assessed branch profitability yet.</p>}</div></article>
+                <article className="rounded-2xl border p-4"><h3 className="font-black">Calculation-method profitability</h3><div className="mt-3 space-y-2">{ftp.by_calculation_method.length ? ftp.by_calculation_method.map((row) => <div key={row.key} className="flex items-center justify-between rounded-xl border p-3 text-sm"><div><p className="font-black">{titleCase(row.label)}</p><p className="text-xs text-muted-foreground">{row.loan_count} assessed loans · {formatMoney(row.exposure)} exposure</p></div><div className="text-right"><p className="font-black">{formatMoney(row.risk_adjusted_profit_proxy)}</p><p className="text-xs text-muted-foreground">{row.risk_adjusted_margin_percent?.toFixed(2) ?? "—"}%</p></div></div>) : <p className="text-sm text-muted-foreground">No assessed method profitability yet.</p>}</div></article>
+              </div>
+
+              <div className="mt-5 overflow-x-auto rounded-2xl border">
+                <table className="min-w-full text-sm"><thead className="bg-muted/40 text-left"><tr><th className="p-3">Loan</th><th className="p-3">Branch</th><th className="p-3 text-right">Exposure</th><th className="p-3 text-right">Yield proxy</th><th className="p-3 text-right">Funding</th><th className="p-3 text-right">ECL</th><th className="p-3 text-right">Risk profit</th><th className="p-3 text-right">Margin</th><th className="p-3">Status</th></tr></thead><tbody>{ftp.loan_profitability.slice(0, 100).map((row) => <tr key={row.loan_id} className="border-t"><td className="p-3"><p className="font-black">{row.loan_reference}</p><p className="text-xs text-muted-foreground">{row.folio_number}</p></td><td className="p-3">{row.branch_name}</td><td className="p-3 text-right">{formatMoney(row.exposure)}</td><td className="p-3 text-right">{row.gross_contractual_yield_proxy_percent.toFixed(2)}%</td><td className="p-3 text-right">{row.ftp_funding_charge == null ? "—" : formatMoney(row.ftp_funding_charge)}</td><td className="p-3 text-right">{row.ecl_risk_charge == null ? "—" : formatMoney(row.ecl_risk_charge)}</td><td className="p-3 text-right">{row.risk_adjusted_profit_proxy == null ? "—" : formatMoney(row.risk_adjusted_profit_proxy)}</td><td className="p-3 text-right">{row.risk_adjusted_margin_percent == null ? "—" : `${row.risk_adjusted_margin_percent.toFixed(2)}%`}</td><td className="p-3 font-black">{titleCase(row.status)}</td></tr>)}</tbody></table>
+              </div>
+              <p className="mt-4 rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{ftp.policy_note}</p>
+            </> : null}
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">FTP profitability policy</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Configure management charges explicitly; these values are not accounting standards or prudential rules.</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <input value={ftpOperatingCost} onChange={(e) => setFtpOperatingCost(e.target.value)} placeholder="Operating cost % of exposure" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={ftpCapitalAllocation} onChange={(e) => setFtpCapitalAllocation(e.target.value)} placeholder="Capital allocation % of exposure" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={ftpHurdleRate} onChange={(e) => setFtpHurdleRate(e.target.value)} placeholder="Capital hurdle rate %" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={ftpMinimumMargin} onChange={(e) => setFtpMinimumMargin(e.target.value)} placeholder="Minimum risk-adjusted margin %" className="h-11 rounded-xl border bg-background px-3" />
+              </div>
+              <input value={ftpSource} onChange={(e) => setFtpSource(e.target.value)} placeholder="Internal policy / board source reference" className="mt-3 h-11 w-full rounded-xl border bg-background px-3" />
+              <button type="button" disabled={busy} onClick={() => void saveFtpConfiguration()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Save FTP policy</button>
+            </section>
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Profitability stress scenario</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Test funding-cost increases, higher ECL and higher operating costs without changing contracts or accounting.</p>
+              <div className="mt-4 grid gap-3">
+                <input value={ftpFundingShift} onChange={(e) => setFtpFundingShift(e.target.value)} placeholder="Funding cost shift bps" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={ftpEclMultiplier} onChange={(e) => setFtpEclMultiplier(e.target.value)} placeholder="ECL multiplier" className="h-11 rounded-xl border bg-background px-3" />
+                <input value={ftpOperatingMultiplier} onChange={(e) => setFtpOperatingMultiplier(e.target.value)} placeholder="Operating cost multiplier" className="h-11 rounded-xl border bg-background px-3" />
+              </div>
+              <button type="button" disabled={busy} onClick={() => void runFtpStress()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run profitability stress</button>
             </section>
           </div>
         </div>
