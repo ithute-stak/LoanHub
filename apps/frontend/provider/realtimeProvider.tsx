@@ -17,10 +17,10 @@ import { prepareWebSocketSession } from "@/api/auth";
 import { resolveApiBaseUrl } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
 import { beginRealtimeCatchupWindow, DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
-import { shouldRefreshRouteForCommit } from "@/lib/realtime-resources";
+import { cacheTagsForResources, resourcesForCommitBatch, shouldRefreshRouteForCommit } from "@/lib/realtime-resources";
 import { useTenant } from "@/provider/tenantProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
+import { cacheScopeInvalidated, cacheTagsInvalidated } from "@/store/features/slices/httpCacheSlice";
 
 export type RealtimePayload = Record<string, unknown>;
 export type RealtimeListener = (payload: RealtimePayload) => void;
@@ -277,6 +277,15 @@ export function RealtimeProvider({
                 setConnected(true);
 
                 beginRealtimeCatchupWindow();
+                dispatch(
+                    cacheScopeInvalidated({
+                        scope: [
+                            userId,
+                            activeCompanyId ?? "platform",
+                            activeRole,
+                        ].join(":"),
+                    }),
+                );
                 window.dispatchEvent(
                     new CustomEvent(DB_COMMIT_EVENT_NAME, {
                         detail: {
@@ -330,16 +339,6 @@ export function RealtimeProvider({
                         }
                     }
 
-                    dispatch(
-                        cacheScopeInvalidated({
-                            scope: [
-                                userId,
-                                activeCompanyId ?? "platform",
-                                activeRole,
-                            ].join(":"),
-                        }),
-                    );
-
                     if (pendingDbEventsRef.current.length < 2_000) {
                         pendingDbEventsRef.current.push(payload);
                     } else {
@@ -383,8 +382,6 @@ export function RealtimeProvider({
                             (item) => !isLocalMutationRequest(item.request_id),
                         );
 
-                        beginRealtimeCatchupWindow();
-
                         const detail = {
                             events,
                             count: events.length,
@@ -392,17 +389,35 @@ export function RealtimeProvider({
                             latest: events.at(-1) ?? null,
                             hasRemoteChanges,
                         };
+                        const resources = resourcesForCommitBatch(detail);
+                        const scope = [
+                            userId,
+                            activeCompanyId ?? "platform",
+                            activeRole,
+                        ].join(":");
+                        const tags = cacheTagsForResources(resources);
+                        if (tags.length) {
+                            dispatch(cacheTagsInvalidated({ scope, tags }));
+                        } else {
+                            dispatch(cacheScopeInvalidated({ scope }));
+                        }
+
+                        beginRealtimeCatchupWindow();
+
+                        const detailForDispatch = {
+                            ...detail,
+                        };
 
                         window.dispatchEvent(
                             new CustomEvent(DB_COMMIT_EVENT_NAME, {
-                                detail,
+                                detail: detailForDispatch,
                             }),
                         );
 
                         if (
                             hasRemoteChanges &&
                             document.visibilityState === "visible" &&
-                            shouldRefreshRouteForCommit(pathname, detail)
+                            shouldRefreshRouteForCommit(pathname, detailForDispatch)
                         ) {
                             router.refresh();
                         }
