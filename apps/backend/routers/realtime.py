@@ -32,6 +32,12 @@ def realtime_configuration(context: TenantContext = Depends(get_user_context)):
     return {
         "websocket_path": "/ws",
         "event_contract": "loanhub.realtime.v1",
+        "database_commit_contract": "loanhub.db-commit.v1",
+        "database_commit_event_type": "DB_EVENT",
+        "database_commit_delivery": "after_commit_only",
+        "database_commit_batching_ms": 180,
+        "screen_refresh_strategy": "shared_state_refetch_plus_screen_fallback",
+        "cross_worker_transport": "redis_pubsub",
         "push_transport": "fcm",
         "push_server_configured": push_configured(),
         "background_strategy": "push_plus_periodic_catchup",
