@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import (
     PaymentDirection,
     PaymentMethod,
@@ -165,6 +166,29 @@ def initiate_payment(
         ))
 
     record_payment_accounting(db, transaction)
+
+    # A confirmed cash loan repayment must never leave an old CDAS schedule
+    # running silently. Mark the loan for post-commit CDAS re-optimisation.
+    # The provider mutation is performed by the CDAS Autopilot worker so the
+    # loan ledger remains authoritative and provider retries stay idempotent.
+    if (
+        transaction.loan_id
+        and transaction.purpose == PaymentPurpose.LOAN_REPAYMENT
+        and transaction.direction == PaymentDirection.INBOUND
+        and transaction.status == PaymentStatus.SUCCEEDED
+    ):
+        loan = db.get(ClientCompanyLoan, transaction.loan_id)
+        if loan and loan.cdas_collection_enabled:
+            plan = dict(loan.cdas_collection_plan or {})
+            plan["autopilot_pending"] = {
+                "reason": "confirmed_cash_payment",
+                "payment_id": str(transaction.id),
+                "payment_amount": str(transaction.amount),
+                "requested_at": now.isoformat(),
+            }
+            loan.cdas_collection_plan = plan
+            db.add(loan)
+
     from services.platform_finance_service import finalize_cash_finance_payment
     from services.billing_service import finalize_billing_payment
     from services.treasury_service import record_payment_treasury_entry
