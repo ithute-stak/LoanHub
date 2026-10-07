@@ -184,8 +184,117 @@ export async function createCompanyWebhook(payload: { name: string; endpoint_url
   return (await api.post<WebhookRecord & { signing_secret: string }>("/company-operating-system/webhooks", payload)).data;
 }
 
-export async function generateCompanyBoardPack(): Promise<Record<string, unknown>> {
-  return (await api.post<Record<string, unknown>>("/company-operating-system/board-packs")).data;
+
+
+export type BoardGovernancePackMetrics = {
+  governance_version: number;
+  generated_at: string;
+  period_start: string;
+  period_end: string;
+  branch_id?: string | null;
+  command: {
+    command_status: string;
+    enterprise_risk_score: number;
+    enterprise_risk_level: string;
+    priority_counts: { critical: number; high: number; medium: number; total: number };
+    priority_actions: Array<{
+      id: string;
+      rank: number;
+      severity: string;
+      domain: string;
+      title: string;
+      why_now: string;
+      recommended_action: string;
+      action_url: string;
+    }>;
+  };
+  accountability: {
+    open_count: number;
+    critical_open_count: number;
+    overdue_count: number;
+    resolved_pending_verification_count: number;
+    verified_count: number;
+    open_actions: ManagementAction[];
+  };
+  finance: {
+    profitability?: Record<string, number | null>;
+    liquidity?: Record<string, number | null>;
+    efficiency?: Record<string, number | null>;
+    capital_structure?: Record<string, number | null>;
+    inputs?: Record<string, number | null>;
+  };
+  treasury: {
+    opening_liquidity: Record<string, number>;
+    total_expected_collections: number;
+    total_approved_obligations: number;
+    projected_closing_cash: number;
+    minimum_projected_cash: number;
+    breach_count: number;
+    scenario: Record<string, number>;
+  };
+  audit: {
+    control_pass_count: number;
+    control_fail_count: number;
+    controls: Record<string, boolean>;
+    audit_integrity: {
+      sealed_event_count: number;
+      chain_valid: boolean;
+      broken_event_id?: string | null;
+      company_period_event_count: number;
+      severity_counts: Record<string, number>;
+    };
+    journal_review: {
+      journal_count: number;
+      flagged_count: number;
+      evidence_missing_count: number;
+    };
+    statutory_assessment: {
+      status: string;
+      jurisdiction: string;
+      note: string;
+    };
+  };
+  board_attention: Array<{
+    severity: string;
+    title: string;
+    evidence: Record<string, unknown>;
+    oversight_question: string;
+  }>;
+  opportunities: Array<{
+    code: string;
+    title: string;
+    management_option: string;
+    action_url: string;
+  }>;
+  prior_pack_summary?: {
+    reference: string;
+    generated_at?: string | null;
+    enterprise_risk_score?: number | null;
+    critical_priorities?: number | null;
+    overdue_actions?: number | null;
+    audit_control_failures?: number | null;
+    projected_closing_cash?: number | null;
+  } | null;
+  governance_notice: string;
+};
+
+export type BoardGovernancePack = {
+  id: string;
+  reference: string;
+  title: string;
+  generated_at: string;
+  period_start?: string | null;
+  period_end?: string | null;
+  status?: string;
+  metrics: BoardGovernancePackMetrics;
+};
+
+export async function generateCompanyBoardPack(): Promise<BoardGovernancePack> {
+  return (await api.post<BoardGovernancePack>("/company-operating-system/board-packs")).data;
+}
+
+export async function listCompanyBoardPacks(): Promise<BoardGovernancePack[]> {
+  return (await api.get<BoardGovernancePack[]>("/company-operating-system/board-packs")).data;
 }
 
 export async function askCompanyDataAssistant(question: string): Promise<{
