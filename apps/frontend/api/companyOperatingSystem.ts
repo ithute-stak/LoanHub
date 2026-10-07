@@ -669,3 +669,104 @@ export async function generateALMEvidencePack(payload: {
 }): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: ALMIntelligence }> {
   return (await api.post("/company-operating-system/alm/evidence-pack", payload)).data;
 }
+
+
+export type InterestRateRiskIntelligence = {
+  as_of: string;
+  horizon_days: number;
+  branch_id?: string | null;
+  summary: {
+    asset_balance: number;
+    funding_balance: number;
+    fixed_asset_balance: number;
+    variable_asset_balance: number;
+    fixed_funding_balance: number;
+    variable_funding_balance: number;
+    weighted_average_asset_rate_percent?: number | null;
+    weighted_average_funding_rate_percent?: number | null;
+    baseline_rate_spread_percent?: number | null;
+    asset_shock_bps: number;
+    funding_shock_bps: number;
+    estimated_delta_interest_income: number;
+    estimated_delta_interest_expense: number;
+    estimated_delta_net_interest_income: number;
+  };
+  repricing_ladder: Array<{
+    bucket: string;
+    asset_balance: number;
+    funding_balance: number;
+    repricing_gap: number;
+    cumulative_gap: number;
+    variable_asset_balance: number;
+    variable_funding_balance: number;
+    variable_repricing_gap: number;
+  }>;
+  loan_profiles: Array<{
+    loan_id: string;
+    loan_reference: string;
+    folio_number: string;
+    balance: number;
+    contractual_rate_percent: number;
+    rate_type: "fixed" | "variable";
+    repricing_date: string;
+    days_to_repricing: number;
+    bucket: string;
+    reference_rate_name?: string | null;
+    spread_percent?: number | null;
+    floor_percent?: number | null;
+    cap_percent?: number | null;
+    shock_sensitive_days: number;
+    shock_delta_interest_income: number;
+    profile_source: string;
+  }>;
+  funding_profiles: Array<{
+    facility_id: string;
+    reference: string;
+    lender_name?: string | null;
+    outstanding_amount: number;
+    contractual_rate_percent: number;
+    rate_type: "fixed" | "variable";
+    repricing_date: string;
+    days_to_repricing: number;
+    bucket: string;
+    shock_sensitive_days: number;
+    shock_delta_interest_expense: number;
+  }>;
+  risk_flags: Record<string, boolean>;
+  policy_note: string;
+};
+
+export async function getInterestRateRiskIntelligence(): Promise<InterestRateRiskIntelligence> {
+  return (await api.get<InterestRateRiskIntelligence>("/company-operating-system/interest-rate-risk")).data;
+}
+
+export async function saveLoanRateProfile(payload: {
+  loan_id: string;
+  rate_type: "fixed" | "variable";
+  next_repricing_date?: string | null;
+  reference_rate_name?: string | null;
+  spread_percent?: number | null;
+  floor_percent?: number | null;
+  cap_percent?: number | null;
+  notes?: string | null;
+}): Promise<Record<string, unknown>> {
+  return (await api.post("/company-operating-system/interest-rate-risk/loan-profiles", payload)).data;
+}
+
+export async function runInterestRateRiskStress(payload: {
+  parallel_shock_bps: number;
+  asset_shock_bps?: number | null;
+  funding_shock_bps?: number | null;
+  horizon_days: number;
+}): Promise<InterestRateRiskIntelligence> {
+  return (await api.post<InterestRateRiskIntelligence>("/company-operating-system/interest-rate-risk/stress-test", payload)).data;
+}
+
+export async function generateInterestRateRiskEvidencePack(payload: {
+  parallel_shock_bps: number;
+  asset_shock_bps?: number | null;
+  funding_shock_bps?: number | null;
+  horizon_days: number;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: InterestRateRiskIntelligence }> {
+  return (await api.post("/company-operating-system/interest-rate-risk/evidence-pack", payload)).data;
+}
