@@ -631,6 +631,65 @@ def _dispatch_after_commit(
     threading.Thread(target=runner, daemon=True).start()
 
 
+@event.listens_for(Session, "do_orm_execute")
+def capture_bulk_crud_change(execute_state) -> None:
+    """Capture Session.execute INSERT/UPDATE/DELETE operations as commit events.
+
+    Normal ORM object writes are captured by before_flush below. This hook closes
+    the gap for deliberate bulk DML so a committed database mutation cannot leave
+    connected screens stale merely because it bypassed the unit-of-work mapper.
+    """
+
+    if not (
+        bool(getattr(execute_state, "is_insert", False))
+        or bool(getattr(execute_state, "is_update", False))
+        or bool(getattr(execute_state, "is_delete", False))
+    ):
+        return
+
+    statement = execute_state.statement
+    table = getattr(statement, "table", None)
+    table_name = getattr(table, "name", None) or "database"
+    if table_name in EXCLUDED_TABLES:
+        return
+
+    if getattr(execute_state, "is_insert", False):
+        action = "created"
+    elif getattr(execute_state, "is_delete", False):
+        action = "deleted"
+    else:
+        action = "updated"
+
+    session = execute_state.session
+    context = session.info.get("loanhub.database_context") or {}
+    company_id = _uuid(context.get("loanhub.company_id"))
+    branch_id = _uuid(context.get("loanhub.branch_id"))
+    actor_user_id = _uuid(context.get("loanhub.user_id"))
+
+    channels: set[str] = {"platform"}
+    if company_id:
+        channels.add(f"company-{company_id}")
+    elif str(context.get("loanhub.actor_scope") or "") == "borrower" and actor_user_id:
+        channels.add(f"user-{actor_user_id}")
+
+    session.info.setdefault("loanhub_db_commit_events", []).append({
+        "channels": sorted(channels),
+        "payload": {
+            "type": "DB_EVENT",
+            "contract": "loanhub.db-commit.v1",
+            "table": table_name,
+            "action": action,
+            "entity_id": None,
+            "company_id": str(company_id) if company_id else None,
+            "branch_id": str(branch_id) if branch_id else None,
+            "changed_fields": [],
+            "committed_at": datetime.utcnow().isoformat(),
+            "request_id": current_request_id.get(),
+            "bulk": True,
+        },
+    })
+
+
 @event.listens_for(Session, "before_flush")
 def capture_crud_changes(session: Session, flush_context, instances) -> None:
     captured = session.info.setdefault("loanhub_crud_events", [])
