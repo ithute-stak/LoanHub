@@ -2243,6 +2243,7 @@ def _ftp_profitability_intelligence(
     unassessed = 0
     below_hurdle = 0
     total_exposure = Decimal("0")
+    assessed_exposure = Decimal("0")
     total_profit = Decimal("0")
     total_gross = Decimal("0")
     total_funding_charge = Decimal("0")
@@ -2293,6 +2294,7 @@ def _ftp_profitability_intelligence(
             margin_pct = risk_profit / exposure * Decimal("100")
             if margin_pct < minimum_margin_pct:
                 below_hurdle += 1
+            assessed_exposure += exposure
             total_profit += risk_profit
             total_funding_charge += funding_charge
             total_ecl += ecl_charge
@@ -2377,7 +2379,7 @@ def _ftp_profitability_intelligence(
             row["risk_adjusted_margin_percent"] if row["risk_adjusted_margin_percent"] is not None else Decimal("999"),
         )
     )
-    overall_margin = total_profit / total_exposure * Decimal("100") if total_exposure > 0 and assessed else None
+    overall_margin = total_profit / assessed_exposure * Decimal("100") if assessed_exposure > 0 else None
     return {
         "as_of": date.today().isoformat(),
         "branch_id": str(branch_id) if branch_id else None,
@@ -2391,6 +2393,7 @@ def _ftp_profitability_intelligence(
         },
         "summary": {
             "total_exposure": float(total_exposure.quantize(Decimal("0.01"))),
+            "assessed_exposure": float(assessed_exposure.quantize(Decimal("0.01"))),
             "assessed_loan_count": assessed,
             "not_assessed_loan_count": unassessed,
             "below_hurdle_loan_count": below_hurdle,
