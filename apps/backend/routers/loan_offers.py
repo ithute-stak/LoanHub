@@ -31,6 +31,7 @@ from integrations.cdas import CdasError
 from services.billing_service import company_has_request_access
 from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
 from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_borrower_experian_enquiry
+from services.external_underwriting_evidence_service import bureau_evidence
 from services.platform_cdas_service import (
     assert_live_credit_available,
     record_successful_operation,
@@ -62,6 +63,7 @@ async def _quick_affordability_for_terms(
     processing_fee,
     calculation_method,
     installment_due_dates,
+    actor_user_id: UUID,
 ):
     if len(installment_due_dates) != term_months:
         raise HTTPException(
@@ -141,7 +143,7 @@ async def _quick_affordability_for_terms(
             company_id=company_id,
             environment=environment,
             operation_type="affordability",
-            actor_user_id=None,
+            actor_user_id=actor_user_id,
             billing_key=f"cdas-quick-affordability:{request.id}:{uuid4().hex}",
             source_reference=str(request.id),
             metadata={
@@ -157,19 +159,38 @@ async def _quick_affordability_for_terms(
         bureau_monthly_commitments=Decimal(str(bureau.monthly_obligations or 0)),
         live_cdas_affordability=live_cdas_affordability,
     )
+    bureau_policy_evidence = bureau_evidence(
+        bureau,
+        policy=bureau_policy,
+        application_id=request.id,
+    )
     affordability["external_evidence"] = {
-        "credit_bureau": {
-            "enquiry_id": str(bureau.id),
-            "score": bureau.score,
-            "risk_grade": bureau.risk_grade,
-            "monthly_commitments": str(bureau.monthly_obligations or 0),
-            "current_exposure": str(bureau.current_exposure or 0),
-        },
+        "credit_bureau": bureau_policy_evidence,
         "cdas": {
             "employee_number_present": bool(verified_cdas_profile),
             "live_affordability": str(live_cdas_affordability) if live_cdas_affordability is not None else None,
         },
     }
+    if bureau_policy_evidence["blockers"]:
+        affordability["passed"] = False
+        affordability["decision"] = "fail"
+        affordability["reasons"].extend(
+            {
+                "severity": "error",
+                "code": item["code"],
+                "message": item["message"],
+            }
+            for item in bureau_policy_evidence["blockers"]
+        )
+    elif bureau_policy_evidence["warnings"]:
+        affordability["reasons"].extend(
+            {
+                "severity": "warning",
+                "code": item["code"],
+                "message": item["message"],
+            }
+            for item in bureau_policy_evidence["warnings"]
+        )
     affordability["approved_amount"] = str(approved_amount)
     affordability["term_months"] = int(term_months)
     affordability["total_repayment"] = str(total)
@@ -211,6 +232,7 @@ async def preview_quick_loan_affordability(
         processing_fee=payload.processing_fee,
         calculation_method=payload.calculation_method,
         installment_due_dates=payload.installment_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     return {
@@ -266,6 +288,7 @@ async def create_offer(
         processing_fee=payload.processing_fee,
         calculation_method=payload.calculation_method,
         installment_due_dates=payload.installment_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     own_risk_reason = (payload.own_risk_reason or "").strip()
@@ -433,6 +456,7 @@ async def update_offer(
         processing_fee=offer.processing_fee or 0,
         calculation_method=offer.calculation_method,
         installment_due_dates=supplied_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     if not affordability["passed"]:
