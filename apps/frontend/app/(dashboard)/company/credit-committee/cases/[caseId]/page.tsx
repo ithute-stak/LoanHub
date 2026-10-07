@@ -20,6 +20,8 @@ import {
   downloadCreditMemo,
   finalizeCommitteeCase,
   getCommitteeCase,
+  generateCommitteeDealStructures,
+  selectCommitteeDealStructure,
   submitUnderwritingAssessment,
   updateCommitteeCondition,
   updateCommitteeGovernance,
@@ -33,6 +35,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
+import type { DealStructureOption, DealStructuringResult } from "@/api/companyOperatingSystem";
 
 function errorText(error: unknown) {
   if (typeof error === "object" && error && "response" in error) {
@@ -68,6 +71,17 @@ export default function CreditCommitteeCasePage() {
   const [overrideDecision, setOverrideDecision] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [governance, setGovernance] = useState({ required_votes: "2", threshold: "66.667", maker_checker: true, reason: "" });
+  const [dealStructuring, setDealStructuring] = useState<DealStructuringResult | null>(null);
+  const [dealMinPrincipal, setDealMinPrincipal] = useState("");
+  const [dealMaxPrincipal, setDealMaxPrincipal] = useState("");
+  const [dealStep, setDealStep] = useState("1000");
+  const [dealTerms, setDealTerms] = useState("");
+  const [dealFeePercent, setDealFeePercent] = useState("0");
+  const [dealMethod, setDealMethod] = useState("micro_loan");
+  const [dealExpectedLoss, setDealExpectedLoss] = useState("");
+  const [dealTargetMargin, setDealTargetMargin] = useState("");
+  const [dealLiquidityBuffer, setDealLiquidityBuffer] = useState("");
+  const [dealSelectionRationale, setDealSelectionRationale] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +90,9 @@ export default function CreditCommitteeCasePage() {
       const next = await getCommitteeCase(params.caseId);
       setItem(next);
       setGovernance({ required_votes: String(next.required_votes), threshold: String(next.approval_threshold_percent), maker_checker: next.maker_checker_required, reason: "" });
+      if (!dealMinPrincipal) setDealMinPrincipal(String(Math.max(Math.round(next.requested_amount * 0.5), 1)));
+      if (!dealMaxPrincipal) setDealMaxPrincipal(String(next.requested_amount));
+      if (!dealTerms) setDealTerms(String(next.term_count || 1));
       const memo = next.latest_assessment;
       if (memo) {
         setAssessment({
@@ -106,6 +123,66 @@ export default function CreditCommitteeCasePage() {
     try { await action(); setNotice(success); await load(); }
     catch (nextError) { setError(errorText(nextError)); }
     finally { setBusy(null); }
+  }
+
+  async function generateDealOptions() {
+    const terms = dealTerms.split(",").map((value) => Number(value.trim())).filter((value) => Number.isFinite(value) && value > 0);
+    if (!terms.length) {
+      setError("Enter at least one valid term.");
+      return;
+    }
+    setBusy("deal-structures");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await generateCommitteeDealStructures(params.caseId, {
+        minimum_principal: Number(dealMinPrincipal),
+        maximum_principal: Number(dealMaxPrincipal),
+        principal_step: Number(dealStep),
+        term_options: terms,
+        processing_fee_percent: Number(dealFeePercent || 0),
+        interest_method: dealMethod,
+        expected_loss_percent: dealExpectedLoss.trim() ? Number(dealExpectedLoss) : null,
+        target_margin_percent: dealTargetMargin.trim() ? Number(dealTargetMargin) : null,
+        maximum_search_rate_percent: 500,
+        minimum_liquidity_buffer: dealLiquidityBuffer.trim() ? Number(dealLiquidityBuffer) : null,
+      });
+      setDealStructuring(result);
+      setNotice(`Generated ${result.viable_structure_count} viable structure(s) from ${result.search.candidate_count} candidates.`);
+    } catch (nextError) {
+      setError(errorText(nextError));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function chooseDealStructure(structure: DealStructureOption) {
+    if (dealSelectionRationale.trim().length < 10) {
+      setError("Add a selection rationale of at least 10 characters.");
+      return;
+    }
+    setBusy("deal-select");
+    setError(null);
+    setNotice(null);
+    try {
+      await selectCommitteeDealStructure(params.caseId, {
+        structure,
+        rationale: dealSelectionRationale.trim(),
+      });
+      setAssessment((current) => ({
+        ...current,
+        proposed_amount: String(structure.principal),
+        proposed_installment: structure.monthly_installment == null ? current.proposed_installment : String(structure.monthly_installment),
+        proposed_term: String(structure.term_months),
+        rationale: current.rationale || `Selected structure: ${formatMoney(structure.principal)} over ${structure.term_months} months at minimum viable rate ${structure.minimum_viable_rate_percent ?? "—"}%. ${dealSelectionRationale.trim()}`,
+      }));
+      setNotice("Deal structure recorded as committee evidence and copied into the analyst proposal fields.");
+      await load();
+    } catch (nextError) {
+      setError(errorText(nextError));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function saveAssessment() {
@@ -166,6 +243,29 @@ export default function CreditCommitteeCasePage() {
           <Metric label="KYC" value={titleCase(String(kyc.status ?? "not available"))} />
           <Metric label="Rules engine" value={titleCase(String(rules.decision ?? "not run"))} />
         </section>
+
+        <Card className="border-primary/20"><CardHeader><CardTitle>Deal Structuring Intelligence</CardTitle><CardDescription>Generate economically viable alternatives inside this case. A selected structure is preserved as committee evidence, but it does not approve the borrower or replace the committee vote.</CardDescription></CardHeader><CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <Field label="Minimum principal"><Input type="number" value={dealMinPrincipal} onChange={(event) => setDealMinPrincipal(event.target.value)} /></Field>
+            <Field label="Maximum principal"><Input type="number" value={dealMaxPrincipal} onChange={(event) => setDealMaxPrincipal(event.target.value)} /></Field>
+            <Field label="Principal step"><Input type="number" value={dealStep} onChange={(event) => setDealStep(event.target.value)} /></Field>
+            <Field label="Terms (comma separated)"><Input value={dealTerms} onChange={(event) => setDealTerms(event.target.value)} /></Field>
+            <Field label="Processing fee %"><Input type="number" value={dealFeePercent} onChange={(event) => setDealFeePercent(event.target.value)} /></Field>
+            <Field label="Pricing method"><Select value={dealMethod} onValueChange={setDealMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="micro_loan">Micro loan</SelectItem><SelectItem value="simple_interest">Simple interest</SelectItem><SelectItem value="flat_rate">Flat rate</SelectItem><SelectItem value="compound_interest">Compound interest</SelectItem><SelectItem value="reducing_balance">Reducing balance</SelectItem><SelectItem value="daily_accrual_reducing">Daily accrual reducing</SelectItem></SelectContent></Select></Field>
+            <Field label="Expected loss % (optional)"><Input type="number" value={dealExpectedLoss} onChange={(event) => setDealExpectedLoss(event.target.value)} /></Field>
+            <Field label="Target margin % (optional)"><Input type="number" value={dealTargetMargin} onChange={(event) => setDealTargetMargin(event.target.value)} /></Field>
+            <Field label="Liquidity buffer (optional)"><Input type="number" value={dealLiquidityBuffer} onChange={(event) => setDealLiquidityBuffer(event.target.value)} /></Field>
+          </div>
+          <Button onClick={() => void generateDealOptions()} disabled={busy === "deal-structures" || !dealMinPrincipal || !dealMaxPrincipal || !dealStep}>{busy === "deal-structures" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />} Generate viable structures</Button>
+
+          {dealStructuring ? <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Candidates" value={String(dealStructuring.search.candidate_count)} /><Metric label="Viable" value={String(dealStructuring.viable_structure_count)} /><Metric label="Fully viable" value={String(dealStructuring.fully_viable_structure_count)} /><Metric label="Decision support" value={titleCase(dealStructuring.decision_support)} /></div>
+            <Field label="Selection rationale"><Textarea rows={3} value={dealSelectionRationale} onChange={(event) => setDealSelectionRationale(event.target.value)} placeholder="Explain why this structure is preferable for the borrower and institution." /></Field>
+            <div className="overflow-x-auto rounded-2xl border"><Table><TableHeader><TableRow><TableHead>Principal</TableHead><TableHead>Term</TableHead><TableHead className="text-right">Min rate</TableHead><TableHead className="text-right">Installment</TableHead><TableHead>Affordability</TableHead><TableHead>Liquidity</TableHead><TableHead>Concentration</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader><TableBody>{dealStructuring.options.slice(0, 50).map((row, index) => <TableRow key={`${row.principal}-${row.term_months}-${index}`}><TableCell className="font-bold">{formatMoney(row.principal)}</TableCell><TableCell>{row.term_months}m</TableCell><TableCell className="text-right">{row.minimum_viable_rate_percent == null ? "—" : `${row.minimum_viable_rate_percent.toFixed(4)}%`}</TableCell><TableCell className="text-right">{row.monthly_installment == null ? "—" : formatMoney(row.monthly_installment)}</TableCell><TableCell>{titleCase(row.affordability.status)}</TableCell><TableCell>{titleCase(row.liquidity.status)}</TableCell><TableCell>{titleCase(row.concentration.status)}</TableCell><TableCell><Badge variant={row.status === "not_viable" ? "destructive" : "secondary"}>{titleCase(row.status)}</Badge></TableCell><TableCell><Button size="sm" variant="outline" disabled={row.status === "not_viable" || busy === "deal-select"} onClick={() => void chooseDealStructure(row)}>Select</Button></TableCell></TableRow>)}</TableBody></Table></div>
+          </div> : null}
+
+          {evidence.selected_deal_structure ? <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-black">Selected committee structure</p><p className="mt-1 text-sm text-muted-foreground">{formatMoney(Number(evidence.selected_deal_structure.structure?.principal ?? 0))} over {String(evidence.selected_deal_structure.structure?.term_months ?? "—")} months · minimum rate {String(evidence.selected_deal_structure.structure?.minimum_viable_rate_percent ?? "—")}%</p><p className="mt-2 text-sm">{String(evidence.selected_deal_structure.rationale ?? "")}</p></div> : null}
+        </CardContent></Card>
 
         <Card><CardHeader><CardTitle>Evidence pack</CardTitle><CardDescription>Captured evidence is frozen into each analyst memo so later source changes do not erase what the committee considered.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Evidence title="Affordability" rows={[['Decision', affordability.decision], ['Headroom', formatMoney(Number(affordability.affordability_headroom ?? 0))], ['Max installment', formatMoney(Number(affordability.maximum_affordable_installment ?? 0))]]} /><Evidence title="Credit bureau" rows={[['Score', bureau.score], ['Risk grade', bureau.risk_grade], ['Adverse records', bureau.adverse_records]]} /><Evidence title="KYC / risk" rows={[['Status', kyc.status], ['Sanctions hit', kyc.sanctions_hit ? 'Yes' : 'No'], ['Fraud flag', kyc.fraud_flag ? 'Yes' : 'No']]} /><Evidence title="Employment" rows={[['Status', employment.employment_status], ['Employer', employment.employer_name], ['Verification', employment.verification_status]]} /></CardContent></Card>
 
