@@ -168,3 +168,35 @@ def test_management_decision_accountability_workflow_is_auditable_and_independen
     assert "Record decision" in panel
     assert "Verify independently" in panel
     assert "Escalate overdue actions" in panel
+
+
+def test_board_governance_pack_combines_verified_management_finance_risk_and_audit_evidence():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "build_management_command_intelligence" in router
+    assert "accounting_audit_compliance_pack" in router
+    assert "financial_ratio_analysis" in router
+    assert "treasury_cash_forecast" in router
+    assert '@router.get("/board-packs")' in router
+    assert '@router.post("/board-packs")' in router
+    assert '"report_type="board_governance_pack"' in router
+    assert '"accountability": accountability' in router
+    assert '"board_attention": board_attention' in router
+    assert '"prior_pack_summary": prior_summary' in router
+    assert "Critical accountability cases remain unresolved" in router
+    assert "30-day downside liquidity forecast falls below zero" in router
+    assert "does not constitute an audit opinion" in router
+
+    assert "BoardGovernancePackMetrics" in api
+    assert "listCompanyBoardPacks" in api
+    assert "generateCompanyBoardPack" in api
+
+    assert "Board & executive governance pack" in centre
+    assert "Board attention" in centre
+    assert "Accountability position" in centre
+    assert "Audit & control" in centre
+    assert "Treasury outlook" in centre
+    assert "Prior pack comparison" in centre
+    assert "Governance pack history" in centre
