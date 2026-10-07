@@ -205,3 +205,38 @@ def test_committee_deal_structuring_is_evidence_only_and_survives_to_final_snaps
     assert "Generate viable structures" in page
     assert "Selected committee structure" in page
     assert "copies into the analyst proposal fields" not in page
+
+
+def test_post_approval_disbursement_integrity_guard_blocks_material_drift_and_is_previewable():
+    root = Path(__file__).resolve().parents[2]
+    committee = (root / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+    loan_service = (root / "backend" / "services" / "loan_service.py").read_text(encoding="utf-8")
+    loans_router = (root / "backend" / "routers" / "loans.py").read_text(encoding="utf-8")
+    loans_api = (root / "frontend" / "api" / "loans.ts").read_text(encoding="utf-8")
+    loans_page = (root / "frontend" / "app" / "(dashboard)" / "company" / "loans" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def _post_approval_deal_integrity(" in committee
+    assert "def preview_loan_disbursement_integrity(" in committee
+    assert "loan principal differs from the committee-selected structure" in committee
+    assert "loan term differs from the committee-selected structure" in committee
+    assert "below the committee-selected minimum viable pricing floor" in committee
+    assert "contract principal differs from the loan" in committee
+    assert "loan installment exceeds the current maximum affordable installment" in committee
+    assert "post-disbursement 30-day liquidity falls below the approved minimum liquidity buffer" in committee
+    assert '"removed_new_loan_collection_credit"' in committee
+    assert '"disbursement_integrity_verified"' in committee
+    assert "actor_user_id=actor_user_id" in committee
+
+    assert "assert_loan_disbursement_conditions(db, loan, actor_user_id=actor_user_id)" in loan_service
+    assert "assert_disbursement_governance_ready(db, loan, actor_user_id=initiated_by_user_id)" in loan_service
+
+    assert '@router.get("/{loan_id}/disbursement-integrity")' in loans_router
+    assert "This preview is read-only" in loans_router
+
+    assert "DisbursementIntegrityPreview" in loans_api
+    assert "getDisbursementIntegrityPreview" in loans_api
+
+    assert "Post-approval integrity verified" in loans_page
+    assert "Disbursement blocked by integrity guard" in loans_page
+    assert "removed_new_loan_collection_credit" not in loans_page
+    assert "disabled={Boolean(disbursementIntegrity && !disbursementIntegrity.passed)}" in loans_page
