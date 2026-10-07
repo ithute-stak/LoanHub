@@ -125,12 +125,15 @@ def cdas_deduction_capacity(
     selected_for_collection: bool,
     proposed_installment: Decimal | int | float | str | None,
     application_id,
+    live_affordability: Decimal | int | float | str | None = None,
 ) -> dict[str, Any]:
     net_salary = money(profile.net_salary if profile else 0)
     existing_deductions = money(profile.existing_deductions if profile else 0)
     maximum_percent = Decimal(str(profile.maximum_deduction_percent or 0)) if profile else Decimal("0")
     maximum_deduction = money(net_salary * maximum_percent / Decimal("100"))
-    available_capacity = money(max(maximum_deduction - existing_deductions, Decimal("0")))
+    calculated_capacity = money(max(maximum_deduction - existing_deductions, Decimal("0")))
+    provider_capacity = money(live_affordability) if live_affordability is not None else None
+    available_capacity = min(calculated_capacity, provider_capacity) if provider_capacity is not None else calculated_capacity
     proposed = money(proposed_installment)
     verified = bool(
         profile
@@ -162,7 +165,10 @@ def cdas_deduction_capacity(
         "existing_deductions": str(existing_deductions),
         "maximum_deduction_percent": str(maximum_percent),
         "maximum_deduction": str(maximum_deduction),
+        "calculated_deduction_capacity": str(calculated_capacity),
+        "live_affordability": str(provider_capacity) if provider_capacity is not None else None,
         "available_deduction_capacity": str(available_capacity),
+        "capacity_source": "minimum_of_profile_and_live_cdas" if provider_capacity is not None else "verified_profile",
         "proposed_installment": str(proposed),
         "capacity_sufficient": capacity_sufficient,
         "blockers": blockers,
@@ -177,6 +183,7 @@ def external_evidence_snapshot(
     cdas_profile: CDASPayrollProfile | None,
     cdas_selected: bool,
     proposed_installment: Decimal | int | float | str | None,
+    live_cdas_affordability: Decimal | int | float | str | None = None,
 ) -> dict[str, Any]:
     bureau_value = bureau_evidence(
         bureau,
@@ -188,6 +195,7 @@ def external_evidence_snapshot(
         selected_for_collection=cdas_selected,
         proposed_installment=proposed_installment,
         application_id=application_id,
+        live_affordability=live_cdas_affordability,
     )
     return {
         "credit_bureau": bureau_value,
@@ -198,6 +206,7 @@ def external_evidence_snapshot(
                 bureau_policy.get("include_bureau_commitments_in_affordability")
             ),
             "cdas_existing_deductions_are_capacity_only": True,
+            "live_cdas_affordability_used": live_cdas_affordability is not None,
             "note": (
                 "CDAS existing deductions constrain payroll collection capacity and are not "
                 "subtracted again from affordability debt commitments."

@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import datetime, timezone
 import secrets
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -48,7 +48,14 @@ from database.schemas.origination import (
     TopUpExceptionApproveRequest,
 )
 from database.session import get_db
+from integrations.cdas import CdasError
 from services.cdas_collection_policy import build_cdas_collection_plan
+from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
+from services.platform_cdas_service import (
+    assert_live_credit_available,
+    record_successful_operation,
+    require_approved_subscription,
+)
 from services.contract_service import (
     contract_pdf_bytes,
     generate_contract,
@@ -536,7 +543,7 @@ def application_integration_status(
 
 
 @router.post("/applications/{application_id}/assess")
-def assess_application(
+async def assess_application(
     application_id: UUID,
     payload: AffordabilityCalculateRequest,
     db: Session = Depends(get_db),
@@ -544,6 +551,53 @@ def assess_application(
 ):
     require_tenant_roles(context, ORIGINATION_EDIT_ROLES)
     application = _application(db, context=context, application_id=application_id, lock=True)
+
+    verified_cdas_profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == application.borrower_id,
+            CDASPayrollProfile.employee_number.isnot(None),
+            CDASPayrollProfile.employee_number != "",
+            CDASPayrollProfile.verified.is_(True),
+        )
+        .first()
+    )
+    live_cdas_affordability = None
+    if verified_cdas_profile:
+        subscription = require_approved_subscription(db, company_id=context.company_id)
+        cdas_configuration = get_configuration(db, context.company_id)
+        environment = selected_environment(cdas_configuration)
+        assert_live_credit_available(
+            db,
+            subscription=subscription,
+            environment=environment,
+            operation_type="affordability",
+        )
+        client = get_company_cdas_client(db, context.company_id)
+        try:
+            live_cdas_affordability = await client.check_affordability(
+                str(verified_cdas_profile.employee_number)
+            )
+        except CdasError as exc:
+            raise HTTPException(
+                status_code=exc.status_code if 400 <= exc.status_code <= 599 else 502,
+                detail=f"CDAS affordability could not be verified: {exc.message}",
+            ) from exc
+        record_successful_operation(
+            db,
+            company_id=context.company_id,
+            environment=environment,
+            operation_type="affordability",
+            actor_user_id=context.user.id,
+            billing_key=f"cdas-affordability:{application.id}:{uuid4().hex}",
+            source_reference=str(application.id),
+            metadata={
+                "request_origin": "origination_affordability",
+                "employee_number_present": True,
+            },
+        )
+
     assessment = calculate_affordability(
         db,
         company_id=context.company_id,
@@ -555,6 +609,7 @@ def assess_application(
         processing_fee=payload.processing_fee,
         interest_method=payload.interest_method,
         calculated_by_user_id=context.user.id,
+        live_cdas_affordability=live_cdas_affordability,
     )
     return serialize(assessment)
 
