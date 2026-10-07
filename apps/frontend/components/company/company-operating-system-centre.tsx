@@ -29,6 +29,7 @@ import {
   createCompanyWebhook,
   createOperatingRecord,
   generateCompanyBoardPack,
+  listCompanyBoardPacks,
   getCollectionsStrategy,
   getCompanyCapabilities,
   getCompanyCommandDashboard,
@@ -40,6 +41,7 @@ import {
   simulateCompanyPricing,
   type APIKeyRecord,
   type CompanyCapability,
+  type BoardGovernancePack,
   type CompanyCommandDashboard,
   type OperatingRecord,
   type WebhookRecord,
@@ -141,7 +143,8 @@ export function CompanyOperatingSystemCentre() {
   const [question, setQuestion] = useState("What needs management attention today?");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
-  const [boardPack, setBoardPack] = useState<Record<string, unknown> | null>(null);
+  const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
+  const [boardPackHistory, setBoardPackHistory] = useState<BoardGovernancePack[]>([]);
   const [busy, setBusy] = useState(false);
 
   const loadCore = useCallback(async () => {
@@ -180,6 +183,13 @@ export function CompanyOperatingSystemCentre() {
   async function chooseTab(nextTab: TabKey) {
     setTab(nextTab);
     if (nextTab === "operations") await loadRecords(module);
+    if (nextTab === "board") {
+      try {
+        setBoardPackHistory(await listCompanyBoardPacks());
+      } catch (nextError) {
+        setError(errorMessage(nextError));
+      }
+    }
   }
 
   async function chooseModule(nextModule: string) {
@@ -320,7 +330,9 @@ export function CompanyOperatingSystemCentre() {
     setBusy(true);
     setError(null);
     try {
-      setBoardPack(await generateCompanyBoardPack());
+      const generated = await generateCompanyBoardPack();
+      setBoardPack(generated);
+      setBoardPackHistory(await listCompanyBoardPacks());
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -571,11 +583,55 @@ export function CompanyOperatingSystemCentre() {
 
       {tab === "board" ? (
         <div className="grid gap-6 xl:grid-cols-2">
-          <section className="rounded-3xl border bg-card p-5">
-            <div className="flex items-center gap-2"><FileBarChart className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Board / management pack</h2></div>
-            <p className="mt-2 text-sm text-muted-foreground">Captures a governed management snapshot in the existing LoanHub GeneratedReport registry for auditability and later scheduled file generation.</p>
-            <button type="button" disabled={busy} onClick={() => void createBoardPack()} className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground"><ChartNoAxesCombined className="h-4 w-4" /> Generate management pack</button>
-            {boardPack ? <div className="mt-4 rounded-2xl border p-4"><p className="font-black">Generated successfully</p><p className="mt-1 text-sm text-muted-foreground">Reference: {String(boardPack.reference ?? "")}</p></div> : null}
+          <section className="rounded-3xl border bg-card p-5 xl:col-span-2">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><FileBarChart className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Board & executive governance pack</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Creates a governed evidence snapshot from finance, treasury, portfolio risk, audit controls, management priorities and accountability cases. The pack is stored in LoanHub’s GeneratedReport registry for auditability and historical comparison.</p>
+              </div>
+              <button type="button" disabled={busy} onClick={() => void createBoardPack()} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground"><ChartNoAxesCombined className="h-4 w-4" /> Generate governance pack</button>
+            </div>
+
+            {boardPack ? <div className="mt-5 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                <Metric label="Enterprise risk" value={`${boardPack.metrics.command.enterprise_risk_score}/100`} detail={titleCase(boardPack.metrics.command.enterprise_risk_level)} />
+                <Metric label="Critical priorities" value={String(boardPack.metrics.command.priority_counts.critical)} />
+                <Metric label="Open actions" value={String(boardPack.metrics.accountability.open_count)} />
+                <Metric label="Overdue actions" value={String(boardPack.metrics.accountability.overdue_count)} />
+                <Metric label="Audit exceptions" value={String(boardPack.metrics.audit.control_fail_count)} />
+                <Metric label="30-day closing cash" value={formatMoney(boardPack.metrics.treasury.projected_closing_cash)} />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border p-4">
+                  <div className="flex items-center justify-between gap-3"><h3 className="font-black">Board attention</h3><span className="text-xs text-muted-foreground">{boardPack.reference}</span></div>
+                  <div className="mt-3 space-y-3">
+                    {boardPack.metrics.board_attention.length ? boardPack.metrics.board_attention.map((item, index) => <div key={`${item.title}-${index}`} className="rounded-xl border p-3"><div className="flex items-center gap-2"><span className="font-black">{item.title}</span><span className={`rounded-full px-2 py-0.5 text-xs font-black ${item.severity === "critical" ? "bg-destructive/10 text-destructive" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>{titleCase(item.severity)}</span></div><p className="mt-2 text-sm leading-6">{item.oversight_question}</p></div>) : <div className="rounded-xl border bg-emerald-500/5 p-3 text-sm font-bold">No board-attention thresholds are currently breached.</div>}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border p-4">
+                  <h3 className="font-black">Accountability position</h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Metric label="Critical open" value={String(boardPack.metrics.accountability.critical_open_count)} />
+                    <Metric label="Pending verification" value={String(boardPack.metrics.accountability.resolved_pending_verification_count)} />
+                    <Metric label="Verified" value={String(boardPack.metrics.accountability.verified_count)} />
+                    <Metric label="Overdue" value={String(boardPack.metrics.accountability.overdue_count)} />
+                  </div>
+                </article>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <article className="rounded-2xl border p-4"><h3 className="font-black">Audit & control</h3><p className="mt-2 text-sm">Hash chain: <span className="font-black">{boardPack.metrics.audit.audit_integrity.chain_valid ? "Valid" : "Broken"}</span></p><p className="mt-1 text-sm">Controls passed: {boardPack.metrics.audit.control_pass_count}</p><p className="mt-1 text-sm">Controls failed: {boardPack.metrics.audit.control_fail_count}</p><p className="mt-1 text-sm">Flagged journals: {boardPack.metrics.audit.journal_review.flagged_count}</p><p className="mt-1 text-sm">Missing evidence: {boardPack.metrics.audit.journal_review.evidence_missing_count}</p></article>
+                <article className="rounded-2xl border p-4"><h3 className="font-black">Treasury outlook</h3><p className="mt-2 text-sm">Expected collections: <span className="font-black">{formatMoney(boardPack.metrics.treasury.total_expected_collections)}</span></p><p className="mt-1 text-sm">Approved obligations: {formatMoney(boardPack.metrics.treasury.total_approved_obligations)}</p><p className="mt-1 text-sm">Minimum projected cash: {formatMoney(boardPack.metrics.treasury.minimum_projected_cash)}</p><p className="mt-1 text-sm">Breach days: {boardPack.metrics.treasury.breach_count}</p></article>
+                <article className="rounded-2xl border p-4"><h3 className="font-black">Prior pack comparison</h3>{boardPack.metrics.prior_pack_summary ? <><p className="mt-2 text-sm">Previous: <span className="font-black">{boardPack.metrics.prior_pack_summary.reference}</span></p><p className="mt-1 text-sm">Prior risk score: {boardPack.metrics.prior_pack_summary.enterprise_risk_score ?? "—"}</p><p className="mt-1 text-sm">Prior critical priorities: {boardPack.metrics.prior_pack_summary.critical_priorities ?? "—"}</p><p className="mt-1 text-sm">Prior overdue actions: {boardPack.metrics.prior_pack_summary.overdue_actions ?? "—"}</p></> : <p className="mt-2 text-sm text-muted-foreground">No previous governance pack exists yet.</p>}</article>
+              </div>
+
+              {boardPack.metrics.opportunities.length ? <article className="rounded-2xl border p-4"><h3 className="font-black">Evidence-backed opportunities</h3><div className="mt-3 grid gap-3 md:grid-cols-2">{boardPack.metrics.opportunities.map((item) => <div key={item.code} className="rounded-xl border p-3"><p className="font-black">{item.title}</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{item.management_option}</p></div>)}</div></article> : null}
+              <p className="rounded-2xl border bg-muted/30 p-4 text-xs leading-5 text-muted-foreground">{boardPack.metrics.governance_notice}</p>
+            </div> : null}
+
+            {boardPackHistory.length ? <div className="mt-6"><h3 className="font-black">Governance pack history</h3><div className="mt-3 space-y-2">{boardPackHistory.slice(0, 10).map((pack) => <button key={pack.id} type="button" onClick={() => setBoardPack(pack)} className="flex w-full items-center justify-between rounded-xl border p-3 text-left hover:bg-muted/40"><div><p className="font-black">{pack.title}</p><p className="text-xs text-muted-foreground">{pack.reference} · {formatDateTime(pack.generated_at)}</p></div><div className="text-right text-xs"><p>Risk {pack.metrics.command.enterprise_risk_score}/100</p><p>{pack.metrics.accountability.overdue_count} overdue</p></div></button>)}</div></div> : null}
           </section>
 
           <section className="rounded-3xl border bg-card p-5">
