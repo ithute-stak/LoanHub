@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import hashlib
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasOfficialMandateEvent, CdasOfficialMandateState
@@ -38,6 +40,25 @@ def _now_naive() -> datetime:
 def _money(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
+
+
+
+def _advisory_lock_key(scope: str) -> int:
+    raw = hashlib.sha256(scope.encode("utf-8")).digest()[:8]
+    value = int.from_bytes(raw, byteorder="big", signed=False)
+    return value - (1 << 64) if value >= (1 << 63) else value
+
+
+def _try_advisory_lock(db: Session, scope: str) -> bool:
+    """Acquire a PostgreSQL session lock that survives commits during provider IO."""
+    key = _advisory_lock_key(scope)
+    result = db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar()
+    return bool(result)
+
+
+def _release_advisory_lock(db: Session, scope: str) -> None:
+    key = _advisory_lock_key(scope)
+    db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
 
 def _actor_from_plan(plan: dict, mandate: CDASDeductionMandate) -> UUID | None:
     raw = plan.get("selected_by_user_id")
@@ -311,55 +332,68 @@ async def process_pending_payment_reoptimizations(db: Session, *, limit: int = 1
         if not isinstance(pending, dict):
             continue
 
-        link = _eligible_link(db, loan)
-        if not link:
+        loan_lock_scope = f"cdas-autopilot-loan:{loan.id}"
+        if not _try_advisory_lock(db, loan_lock_scope):
             skipped += 1
             continue
-        mandate, state, _profile = link
-        actor_user_id = _actor_from_plan(plan, mandate)
-        decision = decide_cdas_autopilot(
-            outstanding_balance=_money(loan.balance),
-            current_deduction=_money(mandate.monthly_deduction),
-            evaluation_date=date.today(),
-            dynamic_top_up_consent=bool(plan.get("dynamic_top_up_consent")),
-            payment_triggered=True,
-        )
-        processed += 1
+        try:
+            db.refresh(loan)
+            plan = dict(loan.cdas_collection_plan or {})
+            pending = plan.get("autopilot_pending")
+            if not isinstance(pending, dict):
+                continue
 
-        confirmed = False
-        if decision.action == "settle":
-            confirmed = await _tracked_settle(
-                db,
-                loan=loan,
-                mandate=mandate,
-                state=state,
-                actor_user_id=actor_user_id,
+            link = _eligible_link(db, loan)
+            if not link:
+                skipped += 1
+                continue
+            mandate, state, _profile = link
+            actor_user_id = _actor_from_plan(plan, mandate)
+            decision = decide_cdas_autopilot(
+                outstanding_balance=_money(loan.balance),
+                current_deduction=_money(mandate.monthly_deduction),
+                evaluation_date=date.today(),
+                dynamic_top_up_consent=bool(plan.get("dynamic_top_up_consent")),
+                payment_triggered=True,
             )
-            settled += int(confirmed)
-        elif decision.action == "shorten_term":
-            confirmed = await _tracked_modify(
-                db,
-                loan=loan,
-                mandate=mandate,
-                state=state,
-                total_installment=decision.proposed_remaining_installments,
-                deduction_amount=decision.proposed_deduction,
-                principal_amount=decision.effective_balance,
-                actor_user_id=actor_user_id,
-                reason="cash-payment term reduction",
-            )
-            shortened += int(confirmed)
+            processed += 1
 
-        if confirmed:
-            plan.pop("autopilot_pending", None)
-            plan["autopilot_last_result"] = {
-                "action": decision.action,
-                "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                "decision": decision.as_dict(),
-            }
-            loan.cdas_collection_plan = plan
-            db.add(loan)
-            db.commit()
+            confirmed = False
+            if decision.action == "settle":
+                confirmed = await _tracked_settle(
+                    db,
+                    loan=loan,
+                    mandate=mandate,
+                    state=state,
+                    actor_user_id=actor_user_id,
+                )
+                settled += int(confirmed)
+            elif decision.action == "shorten_term":
+                confirmed = await _tracked_modify(
+                    db,
+                    loan=loan,
+                    mandate=mandate,
+                    state=state,
+                    total_installment=decision.proposed_remaining_installments,
+                    deduction_amount=decision.proposed_deduction,
+                    principal_amount=decision.effective_balance,
+                    actor_user_id=actor_user_id,
+                    reason="cash-payment term reduction",
+                )
+                shortened += int(confirmed)
+
+            if confirmed:
+                plan.pop("autopilot_pending", None)
+                plan["autopilot_last_result"] = {
+                    "action": decision.action,
+                    "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                    "decision": decision.as_dict(),
+                }
+                loan.cdas_collection_plan = plan
+                db.add(loan)
+                db.commit()
+        finally:
+            _release_advisory_lock(db, loan_lock_scope)
 
     return {
         "processed": processed,
@@ -402,59 +436,69 @@ async def scan_affordability_opportunities(db: Session, *, limit: int = 250) -> 
             f"cdas-autopilot-affordability:{loan.company_id}:"
             f"{profile.employee_number}:{today.isoformat()}"
         )
+        employee_day_lock = (
+            f"cdas-affordability:{loan.company_id}:{environment}:"
+            f"{profile.employee_number}:{today.isoformat()}"
+        )
         if cache_key in affordability_cache:
             live_affordability = affordability_cache[cache_key]
             reused_reads += 1
         else:
-            existing_snapshot = (
-                db.query(PlatformCdasTransaction)
-                .filter(
-                    PlatformCdasTransaction.company_id == loan.company_id,
-                    PlatformCdasTransaction.environment == environment,
-                    PlatformCdasTransaction.operation_type == "affordability",
-                    PlatformCdasTransaction.billing_key == billing_key,
+            if not _try_advisory_lock(db, employee_day_lock):
+                skipped += 1
+                continue
+            try:
+                existing_snapshot = (
+                    db.query(PlatformCdasTransaction)
+                    .filter(
+                        PlatformCdasTransaction.company_id == loan.company_id,
+                        PlatformCdasTransaction.environment == environment,
+                        PlatformCdasTransaction.operation_type == "affordability",
+                        PlatformCdasTransaction.billing_key == billing_key,
+                    )
+                    .first()
                 )
-                .first()
-            )
-            snapshot_metadata = dict(existing_snapshot.metadata_json or {}) if existing_snapshot else {}
-            snapshot_value = snapshot_metadata.get("live_affordability")
-            if snapshot_value is not None:
-                live_affordability = _money(snapshot_value)
-                affordability_cache[cache_key] = live_affordability
-                reused_reads += 1
-            else:
-                client = get_company_cdas_client(db, loan.company_id)
-                subscription = require_approved_subscription(db, company_id=loan.company_id)
-                assert_live_credit_available(
-                    db,
-                    subscription=subscription,
-                    environment=environment,
-                    operation_type="affordability",
-                )
-                try:
-                    live_affordability = _money(await client.check_affordability(profile.employee_number))
-                except CdasError:
-                    skipped += 1
-                    continue
+                snapshot_metadata = dict(existing_snapshot.metadata_json or {}) if existing_snapshot else {}
+                snapshot_value = snapshot_metadata.get("live_affordability")
+                if snapshot_value is not None:
+                    live_affordability = _money(snapshot_value)
+                    affordability_cache[cache_key] = live_affordability
+                    reused_reads += 1
+                else:
+                    client = get_company_cdas_client(db, loan.company_id)
+                    subscription = require_approved_subscription(db, company_id=loan.company_id)
+                    assert_live_credit_available(
+                        db,
+                        subscription=subscription,
+                        environment=environment,
+                        operation_type="affordability",
+                    )
+                    try:
+                        live_affordability = _money(await client.check_affordability(profile.employee_number))
+                    except CdasError:
+                        skipped += 1
+                        continue
 
-                affordability_cache[cache_key] = live_affordability
-                provider_reads += 1
-                record_successful_operation(
-                    db,
-                    company_id=loan.company_id,
-                    environment=environment,
-                    operation_type="affordability",
-                    actor_user_id=actor_user_id,
-                    billing_key=billing_key,
-                    source_reference=str(profile.id),
-                    metadata={
-                        "request_origin": "cdas_autopilot_window",
-                        "dedupe_scope": "company_employee_day",
-                        "employee_number_present": True,
-                        "live_affordability": str(live_affordability),
-                        "snapshot_date": today.isoformat(),
-                    },
-                )
+                    affordability_cache[cache_key] = live_affordability
+                    provider_reads += 1
+                    record_successful_operation(
+                        db,
+                        company_id=loan.company_id,
+                        environment=environment,
+                        operation_type="affordability",
+                        actor_user_id=actor_user_id,
+                        billing_key=billing_key,
+                        source_reference=str(profile.id),
+                        metadata={
+                            "request_origin": "cdas_autopilot_window",
+                            "dedupe_scope": "company_employee_day",
+                            "employee_number_present": True,
+                            "live_affordability": str(live_affordability),
+                            "snapshot_date": today.isoformat(),
+                        },
+                    )
+            finally:
+                _release_advisory_lock(db, employee_day_lock)
 
         decision = decide_cdas_autopilot(
             outstanding_balance=_money(loan.balance),
@@ -479,29 +523,53 @@ async def scan_affordability_opportunities(db: Session, *, limit: int = 250) -> 
         db.commit()
 
         if decision.execute_automatically:
-            confirmed = await _tracked_modify(
-                db,
-                loan=loan,
-                mandate=mandate,
-                state=state,
-                total_installment=decision.proposed_remaining_installments,
-                deduction_amount=decision.proposed_deduction,
-                principal_amount=decision.effective_balance,
-                actor_user_id=actor_user_id,
-                reason="affordability top-up",
-            )
-            if confirmed:
-                topups += 1
-                plan = dict(loan.cdas_collection_plan or {})
-                plan.pop("autopilot_topup_opportunity", None)
-                plan["autopilot_last_result"] = {
-                    "action": "top_up",
-                    "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                    "decision": decision.as_dict(),
-                }
-                loan.cdas_collection_plan = plan
-                db.add(loan)
-                db.commit()
+            topup_lock_scope = f"cdas-autopilot-topup:{loan.id}"
+            if not _try_advisory_lock(db, topup_lock_scope):
+                skipped += 1
+                continue
+            try:
+                db.refresh(loan)
+                refreshed_link = _eligible_link(db, loan)
+                if not refreshed_link:
+                    skipped += 1
+                    continue
+                refreshed_mandate, refreshed_state, _ = refreshed_link
+                refreshed_plan = dict(loan.cdas_collection_plan or {})
+                refreshed_decision = decide_cdas_autopilot(
+                    outstanding_balance=_money(loan.balance),
+                    current_deduction=_money(refreshed_mandate.monthly_deduction),
+                    available_affordability=live_affordability,
+                    evaluation_date=today,
+                    dynamic_top_up_consent=bool(refreshed_plan.get("dynamic_top_up_consent")),
+                    mandate_maximum=refreshed_plan.get("dynamic_top_up_maximum"),
+                )
+                if refreshed_decision.action != "top_up" or not refreshed_decision.execute_automatically:
+                    continue
+
+                confirmed = await _tracked_modify(
+                    db,
+                    loan=loan,
+                    mandate=refreshed_mandate,
+                    state=refreshed_state,
+                    total_installment=refreshed_decision.proposed_remaining_installments,
+                    deduction_amount=refreshed_decision.proposed_deduction,
+                    principal_amount=refreshed_decision.effective_balance,
+                    actor_user_id=actor_user_id,
+                    reason="affordability top-up",
+                )
+                if confirmed:
+                    topups += 1
+                    refreshed_plan.pop("autopilot_topup_opportunity", None)
+                    refreshed_plan["autopilot_last_result"] = {
+                        "action": "top_up",
+                        "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                        "decision": refreshed_decision.as_dict(),
+                    }
+                    loan.cdas_collection_plan = refreshed_plan
+                    db.add(loan)
+                    db.commit()
+            finally:
+                _release_advisory_lock(db, topup_lock_scope)
 
     return {
         "checked": checked,
