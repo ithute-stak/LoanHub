@@ -60,6 +60,8 @@ from database.schemas.company_operating_system import (
 )
 from database.session import get_db
 from services.interest_calculation_service import calculate_loan_terms, generate_monthly_due_dates
+from services.analytics_service import build_management_command_intelligence
+from services.accounting_service import accounting_audit_compliance_pack, financial_ratio_analysis, treasury_cash_forecast
 from services.crypto_service import encrypt_control_secret
 from services.webhook_outbox_service import WEBHOOK_SECRET_PURPOSE, validate_webhook_url
 
@@ -1028,31 +1030,247 @@ def rotate_webhook_secret(webhook_id: UUID, db: Session = Depends(get_db), conte
     return WebhookIssued(**WebhookRead.model_validate(item).model_dump(), signing_secret=raw)
 
 
+@router.get("/board-packs")
+def list_board_packs(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    query = db.query(GeneratedReport).filter(
+        GeneratedReport.company_id == context.company_id,
+        GeneratedReport.report_type == "board_governance_pack",
+    )
+    if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES and context.branch_id:
+        query = query.filter(GeneratedReport.branch_id == context.branch_id)
+    rows = query.order_by(GeneratedReport.generated_at.desc()).limit(limit).all()
+    return [{
+        "id": str(row.id),
+        "reference": row.reference,
+        "title": row.title,
+        "period_start": row.period_start.isoformat() if row.period_start else None,
+        "period_end": row.period_end.isoformat() if row.period_end else None,
+        "generated_at": row.generated_at.isoformat() if row.generated_at else None,
+        "status": row.status,
+        "metrics": row.metrics,
+    } for row in rows]
+
+
 @router.post("/board-packs")
 def generate_board_pack(db: Session = Depends(get_db), context: TenantContext = Depends(get_tenant_context)):
-    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.AUDITOR, UserRole.RISK_MANAGER, UserRole.COMPLIANCE_OFFICER})
-    snapshot = _dashboard(db, context)
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES
+        | FINANCE_ROLES
+        | {UserRole.AUDITOR, UserRole.RISK_MANAGER, UserRole.COMPLIANCE_OFFICER},
+    )
     today = date.today()
+    period_start = today.replace(day=1)
+    period_end = today
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+
+    command = build_management_command_intelligence(
+        db,
+        context=context,
+        date_from=period_start,
+        date_to=period_end,
+        branch_id=branch_id,
+    )
+    audit = accounting_audit_compliance_pack(
+        db,
+        company_id=context.company_id,
+        period_start=period_start,
+        period_end=period_end,
+        branch_id=branch_id,
+    )
+    finance = financial_ratio_analysis(
+        db,
+        company_id=context.company_id,
+        from_date=period_start,
+        to_date=period_end,
+        branch_id=branch_id,
+    )
+    treasury = treasury_cash_forecast(
+        db,
+        company_id=context.company_id,
+        from_date=today,
+        to_date=today + timedelta(days=30),
+        branch_id=branch_id,
+        minimum_cash=Decimal("0"),
+        collection_rate=Decimal("0.85"),
+        obligation_rate=Decimal("1.00"),
+        unexpected_outflow=Decimal("0"),
+    )
+
+    action_rows = _management_action_query(db, context).all()
+    open_actions = [
+        row for row in action_rows
+        if row.status not in {"verified", "cancelled"}
+    ]
+    verified_actions = [row for row in action_rows if row.status == "verified"]
+    resolved_pending_verification = [row for row in action_rows if row.status == "resolved"]
+    overdue_actions = [
+        row for row in open_actions
+        if row.due_at and row.due_at < _now()
+    ]
+    critical_open = [
+        row for row in open_actions
+        if str((row.data or {}).get("severity") or row.priority) == "critical"
+    ]
+
+    accountability = {
+        "open_count": len(open_actions),
+        "critical_open_count": len(critical_open),
+        "overdue_count": len(overdue_actions),
+        "resolved_pending_verification_count": len(resolved_pending_verification),
+        "verified_count": len(verified_actions),
+        "open_actions": [_management_action_payload(row) for row in sorted(
+            open_actions,
+            key=lambda item: (
+                0 if str((item.data or {}).get("severity") or item.priority) == "critical"
+                else 1 if str((item.data or {}).get("severity") or item.priority) == "high"
+                else 2,
+                item.due_at or datetime.max,
+            ),
+        )[:20]],
+    }
+
+    previous = db.query(GeneratedReport).filter(
+        GeneratedReport.company_id == context.company_id,
+        GeneratedReport.report_type == "board_governance_pack",
+    )
+    if branch_id:
+        previous = previous.filter(GeneratedReport.branch_id == branch_id)
+    previous = previous.order_by(GeneratedReport.generated_at.desc()).first()
+    prior_summary = None
+    if previous and previous.metrics:
+        prior_metrics = dict(previous.metrics or {})
+        prior_summary = {
+            "reference": previous.reference,
+            "generated_at": previous.generated_at.isoformat() if previous.generated_at else None,
+            "enterprise_risk_score": (prior_metrics.get("command") or {}).get("enterprise_risk_score"),
+            "critical_priorities": ((prior_metrics.get("command") or {}).get("priority_counts") or {}).get("critical"),
+            "overdue_actions": (prior_metrics.get("accountability") or {}).get("overdue_count"),
+            "audit_control_failures": (prior_metrics.get("audit") or {}).get("control_fail_count"),
+            "projected_closing_cash": (prior_metrics.get("treasury") or {}).get("projected_closing_cash"),
+        }
+
+    board_attention = []
+    if command["priority_counts"]["critical"]:
+        board_attention.append({
+            "severity": "critical",
+            "title": "Critical management priorities remain open",
+            "evidence": {"count": command["priority_counts"]["critical"]},
+            "oversight_question": "What decisions, owners and deadlines are in place for each critical item?",
+        })
+    if critical_open:
+        board_attention.append({
+            "severity": "critical",
+            "title": "Critical accountability cases remain unresolved",
+            "evidence": {"count": len(critical_open), "references": [row.reference for row in critical_open[:10]]},
+            "oversight_question": "Are the accountable owners and deadlines still appropriate, and what is blocking resolution?",
+        })
+    if overdue_actions:
+        board_attention.append({
+            "severity": "high",
+            "title": "Management actions are overdue",
+            "evidence": {"count": len(overdue_actions), "references": [row.reference for row in overdue_actions[:10]]},
+            "oversight_question": "Why are these actions overdue and what escalation has occurred?",
+        })
+    if audit["control_fail_count"]:
+        board_attention.append({
+            "severity": "high",
+            "title": "Finance or audit control exceptions remain open",
+            "evidence": {
+                "failed_control_count": audit["control_fail_count"],
+                "failed_controls": [key for key, passed in audit["controls"].items() if not passed],
+            },
+            "oversight_question": "Which control owners are accountable for remediation before the next close?",
+        })
+    if treasury["minimum_projected_cash"] < 0:
+        board_attention.append({
+            "severity": "critical",
+            "title": "30-day downside liquidity forecast falls below zero",
+            "evidence": {
+                "minimum_projected_cash": treasury["minimum_projected_cash"],
+                "projected_closing_cash": treasury["projected_closing_cash"],
+                "collection_assumption_percent": 85,
+            },
+            "oversight_question": "What funding, collection or commitment actions protect minimum liquidity?",
+        })
+
+    pack = {
+        "governance_version": 2,
+        "generated_at": _now().isoformat(),
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "command": command,
+        "accountability": accountability,
+        "finance": {
+            "profitability": finance.get("profitability"),
+            "liquidity": finance.get("liquidity"),
+            "efficiency": finance.get("efficiency"),
+            "capital_structure": finance.get("capital_structure"),
+            "inputs": finance.get("inputs"),
+        },
+        "treasury": {
+            "opening_liquidity": treasury["opening_liquidity"],
+            "total_expected_collections": treasury["total_expected_collections"],
+            "total_approved_obligations": treasury["total_approved_obligations"],
+            "projected_closing_cash": treasury["projected_closing_cash"],
+            "minimum_projected_cash": treasury["minimum_projected_cash"],
+            "breach_count": treasury["breach_count"],
+            "scenario": treasury["scenario"],
+        },
+        "audit": {
+            "control_pass_count": audit["control_pass_count"],
+            "control_fail_count": audit["control_fail_count"],
+            "controls": audit["controls"],
+            "audit_integrity": audit["audit_integrity"],
+            "journal_review": {
+                "journal_count": audit["journal_review"]["journal_count"],
+                "flagged_count": audit["journal_review"]["flagged_count"],
+                "evidence_missing_count": audit["journal_review"]["evidence_missing_count"],
+            },
+            "statutory_assessment": audit["statutory_assessment"],
+        },
+        "board_attention": board_attention,
+        "opportunities": command["opportunities"],
+        "prior_pack_summary": prior_summary,
+        "governance_notice": (
+            "This board pack is evidence-based management information generated from LoanHub records. "
+            "It does not constitute an audit opinion, statutory filing, legal advice, credit approval, "
+            "or authority to execute management actions without the required human approvals."
+        ),
+    }
+
     reference = f"BOARD-{today:%Y%m%d}-{secrets.token_hex(3).upper()}"
     report = GeneratedReport(
         reference=reference,
         scope_type="company",
         company_id=context.company_id,
-        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        branch_id=branch_id,
         generated_by_user_id=context.user.id,
-        title=f"Management pack - {today:%d %b %Y}",
-        report_type="board_management_pack",
+        title=f"Board governance pack - {today:%d %b %Y}",
+        report_type="board_governance_pack",
         output_format="json",
-        period_start=today.replace(day=1),
-        period_end=today,
+        period_start=period_start,
+        period_end=period_end,
         status="completed",
-        metrics=snapshot,
+        metrics=pack,
         generated_at=_now(),
     )
     db.add(report)
     db.commit()
     db.refresh(report)
-    return {"id": report.id, "reference": report.reference, "title": report.title, "generated_at": report.generated_at, "metrics": snapshot}
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
+    }
 
 
 @router.post("/assistant")
