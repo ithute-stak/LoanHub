@@ -105,6 +105,32 @@ class InterestRateStressRequest(BaseModel):
 
 
 
+
+class DealStructuringRequest(BaseModel):
+    borrower_id: UUID
+    minimum_principal: Decimal = Field(gt=0)
+    maximum_principal: Decimal = Field(gt=0)
+    principal_step: Decimal = Field(gt=0)
+    term_options: list[int] = Field(min_length=1, max_length=24)
+    processing_fee_percent: Decimal = Field(default=Decimal("0"), ge=0)
+    interest_method: str = Field(default="micro_loan", min_length=2, max_length=80)
+    expected_loss_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    target_margin_percent: Decimal | None = None
+    maximum_search_rate_percent: Decimal = Field(default=Decimal("500"), gt=0, le=5000)
+    minimum_liquidity_buffer: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_ranges(self):
+        if self.maximum_principal < self.minimum_principal:
+            raise ValueError("maximum_principal must be greater than or equal to minimum_principal")
+        if any(term < 1 or term > 120 for term in self.term_options):
+            raise ValueError("term_options must be between 1 and 120 months")
+        return self
+
+
+class DealStructuringPackRequest(DealStructuringRequest):
+    title: str = Field(default="Credit approval economics & deal structuring assessment", min_length=3, max_length=240)
+
 class PricingOptimizationRequest(BaseModel):
     principal: Decimal = Field(gt=0)
     term_months: int = Field(ge=1, le=120)
