@@ -389,3 +389,117 @@ export async function verifyManagementAction(id: string, payload: {
 export async function escalateOverdueManagementActions(): Promise<{ escalated_count: number; record_ids: string[] }> {
   return (await api.post("/company-operating-system/management-actions/escalate-overdue")).data;
 }
+
+
+export type PrudentialAssessment = {
+  metric: string;
+  value: number | null;
+  threshold: number | null;
+  unit: string;
+  status: "pass" | "breach" | "not_assessed";
+  reason?: string | null;
+};
+
+export type PrudentialIntelligence = {
+  as_of: string;
+  branch_id?: string | null;
+  profile: {
+    configured: boolean;
+    status: string;
+    jurisdiction: string;
+    framework_name?: string | null;
+    source_reference?: string | null;
+    thresholds: Record<string, number | null>;
+    notes?: string | null;
+  };
+  metrics: {
+    latest_portfolio_snapshot_date?: string | null;
+    portfolio_exposure: number;
+    total_equity: number;
+    capital_to_portfolio_exposure_percent?: number | null;
+    largest_borrower_exposure: number;
+    largest_borrower_exposure_percent_of_equity?: number | null;
+    related_party_exposure: number;
+    related_party_exposure_percent_of_equity?: number | null;
+    related_party_count: number;
+    current_ratio?: number | null;
+    gearing_percent?: number | null;
+    minimum_projected_liquidity_30d?: number | null;
+    latest_posted_provision_reference?: string | null;
+    stage3_exposure?: number | null;
+    required_allowance?: number | null;
+    ecl_coverage_percent?: number | null;
+  };
+  assessments: PrudentialAssessment[];
+  breach_count: number;
+  not_assessed_count: number;
+  filing_readiness: Array<{
+    id: string;
+    reference: string;
+    filing_name: string;
+    status: string;
+    period_end?: string | null;
+    due_at?: string | null;
+    required_evidence: string[];
+    evidence_references: string[];
+    missing_evidence: string[];
+    ready: boolean;
+    overdue: boolean;
+  }>;
+  related_parties: Array<{
+    id: string;
+    reference: string;
+    borrower_id: string | null;
+    relationship_type?: string | null;
+    relationship_description?: string | null;
+    evidence_references: string[];
+    branch_id?: string | null;
+  }>;
+  regulatory_status: "breach" | "not_assessed" | "within_configured_limits";
+  policy_note: string;
+};
+
+export async function getPrudentialIntelligence(): Promise<PrudentialIntelligence> {
+  return (await api.get<PrudentialIntelligence>("/company-operating-system/prudential")).data;
+}
+
+export async function savePrudentialProfile(payload: {
+  jurisdiction: string;
+  framework_name: string;
+  effective_from?: string | null;
+  source_reference?: string | null;
+  minimum_capital_ratio_percent?: number | null;
+  minimum_current_ratio?: number | null;
+  maximum_gearing_percent?: number | null;
+  maximum_single_borrower_exposure_percent_of_equity?: number | null;
+  maximum_related_party_exposure_percent_of_equity?: number | null;
+  minimum_ecl_coverage_percent?: number | null;
+  minimum_liquidity_buffer?: number | null;
+  notes?: string | null;
+}): Promise<PrudentialIntelligence["profile"]> {
+  return (await api.put("/company-operating-system/prudential/profile", payload)).data;
+}
+
+export async function createRelatedPartyRegister(payload: {
+  borrower_id: string;
+  relationship_type: string;
+  relationship_description: string;
+  evidence_references?: string[];
+}): Promise<Record<string, unknown>> {
+  return (await api.post("/company-operating-system/prudential/related-parties", payload)).data;
+}
+
+export async function createPrudentialFiling(payload: {
+  filing_name: string;
+  filing_period_end: string;
+  due_at: string;
+  required_evidence: string[];
+  evidence_references: string[];
+  notes?: string | null;
+}): Promise<Record<string, unknown>> {
+  return (await api.post("/company-operating-system/prudential/filings", payload)).data;
+}
+
+export async function generatePrudentialEvidencePack(): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PrudentialIntelligence }> {
+  return (await api.post("/company-operating-system/prudential/evidence-pack")).data;
+}
