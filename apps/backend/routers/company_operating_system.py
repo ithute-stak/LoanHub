@@ -53,6 +53,8 @@ from database.schemas.company_operating_system import (
     ManagementResolutionCreate,
     ManagementVerificationCreate,
     PrudentialFilingReadinessCreate,
+    PrudentialStressPackRequest,
+    PrudentialStressScenarioRequest,
     PrudentialProfileUpsert,
     RelatedPartyRegisterCreate,
     OperatingRecordCreate,
@@ -1495,6 +1497,317 @@ def get_prudential_intelligence(
 ):
     require_tenant_roles(context, COMPANY_ROLES)
     return _prudential_intelligence(db, context)
+
+
+
+DEFAULT_PRUDENTIAL_STRESS_SCENARIOS = [
+    {
+        "name": "Moderate deterioration",
+        "collection_rate_percent": Decimal("85"),
+        "obligation_rate_percent": Decimal("105"),
+        "unexpected_outflow": Decimal("0"),
+        "additional_stage3_migration_percent": Decimal("8"),
+        "additional_writeoff_percent": Decimal("2"),
+        "stressed_ecl_rate_percent": Decimal("65"),
+    },
+    {
+        "name": "Severe credit and liquidity stress",
+        "collection_rate_percent": Decimal("65"),
+        "obligation_rate_percent": Decimal("115"),
+        "unexpected_outflow": Decimal("0"),
+        "additional_stage3_migration_percent": Decimal("20"),
+        "additional_writeoff_percent": Decimal("8"),
+        "stressed_ecl_rate_percent": Decimal("80"),
+    },
+    {
+        "name": "Extreme combined stress",
+        "collection_rate_percent": Decimal("50"),
+        "obligation_rate_percent": Decimal("125"),
+        "unexpected_outflow": Decimal("0"),
+        "additional_stage3_migration_percent": Decimal("35"),
+        "additional_writeoff_percent": Decimal("15"),
+        "stressed_ecl_rate_percent": Decimal("100"),
+    },
+]
+
+
+def _prudential_stress_scenario(
+    db: Session,
+    context: TenantContext,
+    baseline: dict,
+    scenario: dict,
+) -> dict:
+    metrics = dict(baseline.get("metrics") or {})
+    profile = dict(baseline.get("profile") or {})
+    thresholds = dict(profile.get("thresholds") or {})
+    today = date.today()
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+
+    exposure = Decimal(str(metrics.get("portfolio_exposure") or 0))
+    equity = Decimal(str(metrics.get("total_equity") or 0))
+    largest_exposure = Decimal(str(metrics.get("largest_borrower_exposure") or 0))
+    related_exposure = Decimal(str(metrics.get("related_party_exposure") or 0))
+    stage3 = Decimal(str(metrics.get("stage3_exposure") or 0))
+    allowance = Decimal(str(metrics.get("required_allowance") or 0))
+
+    migration_rate = Decimal(str(scenario["additional_stage3_migration_percent"])) / Decimal("100")
+    writeoff_rate = Decimal(str(scenario["additional_writeoff_percent"])) / Decimal("100")
+    stressed_ecl_rate = Decimal(str(scenario["stressed_ecl_rate_percent"])) / Decimal("100")
+
+    gross_writeoff = min(exposure * writeoff_rate, exposure)
+    exposure_after_writeoff = max(exposure - gross_writeoff, Decimal("0"))
+    migrated_to_stage3 = min(exposure_after_writeoff * migration_rate, max(exposure_after_writeoff - stage3, Decimal("0")))
+    stressed_stage3 = min(max(stage3 + migrated_to_stage3 - gross_writeoff, Decimal("0")), exposure_after_writeoff)
+    target_allowance = stressed_stage3 * stressed_ecl_rate
+    incremental_allowance = max(target_allowance - allowance, Decimal("0"))
+
+    stressed_equity = equity - gross_writeoff - incremental_allowance
+    capital_to_exposure = (
+        float((stressed_equity / exposure_after_writeoff * Decimal("100")).quantize(Decimal("0.01")))
+        if exposure_after_writeoff > 0 else None
+    )
+    single_exposure_pct = (
+        float((largest_exposure / stressed_equity * Decimal("100")).quantize(Decimal("0.01")))
+        if stressed_equity > 0 else None
+    )
+    related_exposure_pct = (
+        float((related_exposure / stressed_equity * Decimal("100")).quantize(Decimal("0.01")))
+        if stressed_equity > 0 else None
+    )
+    ecl_coverage = (
+        float(((allowance + incremental_allowance) / stressed_stage3 * Decimal("100")).quantize(Decimal("0.01")))
+        if stressed_stage3 > 0 else None
+    )
+
+    baseline_gearing = metrics.get("gearing_percent")
+    stressed_gearing = None
+    if baseline_gearing is not None and equity > 0:
+        gearing_decimal = Decimal(str(baseline_gearing)) / Decimal("100")
+        if gearing_decimal < 1:
+            loan_notes = (gearing_decimal * equity) / max(Decimal("1") - gearing_decimal, Decimal("0.0001"))
+            denominator = stressed_equity + loan_notes
+            if denominator > 0:
+                stressed_gearing = float((loan_notes / denominator * Decimal("100")).quantize(Decimal("0.01")))
+
+    current_ratio = metrics.get("current_ratio")
+    stressed_current_ratio = current_ratio
+    liquidity_hit = gross_writeoff + incremental_allowance
+    if current_ratio is not None:
+        current_ratio_decimal = Decimal(str(current_ratio))
+        ratios = financial_ratio_analysis(
+            db,
+            company_id=context.company_id,
+            from_date=today.replace(day=1),
+            to_date=today,
+            branch_id=branch_id,
+        )
+        working_capital = Decimal(str((ratios.get("liquidity") or {}).get("working_capital") or 0))
+        if current_ratio_decimal != Decimal("1"):
+            liabilities = working_capital / (current_ratio_decimal - Decimal("1"))
+            assets = current_ratio_decimal * liabilities
+            stressed_assets = assets - liquidity_hit
+            if liabilities > 0:
+                stressed_current_ratio = float((stressed_assets / liabilities).quantize(Decimal("0.01")))
+
+    treasury = treasury_cash_forecast(
+        db,
+        company_id=context.company_id,
+        from_date=today,
+        to_date=today + timedelta(days=30),
+        branch_id=branch_id,
+        minimum_cash=Decimal(str(thresholds.get("minimum_liquidity_buffer") or 0)),
+        collection_rate=Decimal(str(scenario["collection_rate_percent"])) / Decimal("100"),
+        obligation_rate=Decimal(str(scenario["obligation_rate_percent"])) / Decimal("100"),
+        unexpected_outflow=Decimal(str(scenario["unexpected_outflow"])),
+    )
+
+    assessments = [
+        _prudential_assessment(
+            "capital_to_portfolio_exposure",
+            capital_to_exposure,
+            thresholds.get("minimum_capital_ratio_percent"),
+            direction="minimum",
+        ),
+        _prudential_assessment(
+            "current_ratio",
+            stressed_current_ratio,
+            thresholds.get("minimum_current_ratio"),
+            direction="minimum",
+            unit="ratio",
+        ),
+        _prudential_assessment(
+            "gearing",
+            stressed_gearing,
+            thresholds.get("maximum_gearing_percent"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "single_borrower_exposure_to_equity",
+            single_exposure_pct,
+            thresholds.get("maximum_single_borrower_exposure_percent_of_equity"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "related_party_exposure_to_equity",
+            related_exposure_pct,
+            thresholds.get("maximum_related_party_exposure_percent_of_equity"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "ecl_coverage_of_stage3_exposure",
+            ecl_coverage,
+            thresholds.get("minimum_ecl_coverage_percent"),
+            direction="minimum",
+        ),
+        _prudential_assessment(
+            "minimum_projected_liquidity",
+            treasury["minimum_projected_cash"],
+            thresholds.get("minimum_liquidity_buffer"),
+            direction="minimum",
+            unit="LSL",
+        ),
+    ]
+    breach_count = sum(1 for item in assessments if item["status"] == "breach")
+    not_assessed_count = sum(1 for item in assessments if item["status"] == "not_assessed")
+    return {
+        "name": scenario["name"],
+        "assumptions": {
+            "collection_rate_percent": float(scenario["collection_rate_percent"]),
+            "obligation_rate_percent": float(scenario["obligation_rate_percent"]),
+            "unexpected_outflow": float(scenario["unexpected_outflow"]),
+            "additional_stage3_migration_percent": float(scenario["additional_stage3_migration_percent"]),
+            "additional_writeoff_percent": float(scenario["additional_writeoff_percent"]),
+            "stressed_ecl_rate_percent": float(scenario["stressed_ecl_rate_percent"]),
+        },
+        "impact": {
+            "gross_writeoff": float(gross_writeoff.quantize(Decimal("0.01"))),
+            "migrated_to_stage3": float(migrated_to_stage3.quantize(Decimal("0.01"))),
+            "stressed_stage3_exposure": float(stressed_stage3.quantize(Decimal("0.01"))),
+            "incremental_allowance": float(incremental_allowance.quantize(Decimal("0.01"))),
+            "stressed_equity": float(stressed_equity.quantize(Decimal("0.01"))),
+            "equity_erosion": float((equity - stressed_equity).quantize(Decimal("0.01"))),
+            "stressed_portfolio_exposure": float(exposure_after_writeoff.quantize(Decimal("0.01"))),
+            "projected_closing_cash": treasury["projected_closing_cash"],
+            "minimum_projected_cash": treasury["minimum_projected_cash"],
+            "liquidity_breach_days": treasury["breach_count"],
+        },
+        "ratios": {
+            "capital_to_portfolio_exposure_percent": capital_to_exposure,
+            "current_ratio": stressed_current_ratio,
+            "gearing_percent": stressed_gearing,
+            "largest_borrower_exposure_percent_of_equity": single_exposure_pct,
+            "related_party_exposure_percent_of_equity": related_exposure_pct,
+            "ecl_coverage_percent": ecl_coverage,
+        },
+        "assessments": assessments,
+        "breach_count": breach_count,
+        "not_assessed_count": not_assessed_count,
+        "status": "breach" if breach_count else "not_assessed" if not_assessed_count else "within_configured_limits",
+    }
+
+
+def _prudential_stress_pack(
+    db: Session,
+    context: TenantContext,
+    scenarios: list[dict] | None = None,
+) -> dict:
+    baseline = _prudential_intelligence(db, context)
+    selected = scenarios or DEFAULT_PRUDENTIAL_STRESS_SCENARIOS
+    results = [
+        _prudential_stress_scenario(db, context, baseline, scenario)
+        for scenario in selected
+    ]
+    worst = sorted(
+        results,
+        key=lambda row: (
+            -row["breach_count"],
+            row["impact"]["stressed_equity"],
+            row["impact"]["minimum_projected_cash"],
+        ),
+    )[0] if results else None
+    return {
+        "generated_at": _now().isoformat(),
+        "baseline": {
+            "regulatory_status": baseline["regulatory_status"],
+            "metrics": baseline["metrics"],
+            "assessments": baseline["assessments"],
+            "breach_count": baseline["breach_count"],
+            "not_assessed_count": baseline["not_assessed_count"],
+        },
+        "scenarios": results,
+        "worst_scenario": worst["name"] if worst else None,
+        "policy_note": (
+            "Stress testing is a non-posting management simulation. It changes assumptions only and does not alter loans, "
+            "borrower status, ECL runs, treasury commitments, accounting journals, prudential profiles or regulatory filings. "
+            "Results are only assessed against explicitly configured prudential thresholds."
+        ),
+    }
+
+
+@router.post("/prudential/stress-test")
+def run_prudential_stress_test(
+    payload: PrudentialStressPackRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {
+            UserRole.AUDITOR,
+            UserRole.RISK_MANAGER,
+            UserRole.COMPLIANCE_OFFICER,
+            UserRole.REGULATORY_REPORTING_OFFICER,
+        },
+    )
+    scenarios = None
+    if payload.scenarios:
+        scenarios = [item.model_dump() for item in payload.scenarios]
+    return _prudential_stress_pack(db, context, scenarios)
+
+
+@router.post("/prudential/stress-evidence-pack")
+def generate_prudential_stress_evidence_pack(
+    payload: PrudentialStressPackRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {
+            UserRole.AUDITOR,
+            UserRole.RISK_MANAGER,
+            UserRole.COMPLIANCE_OFFICER,
+            UserRole.REGULATORY_REPORTING_OFFICER,
+        },
+    )
+    scenarios = [item.model_dump() for item in payload.scenarios] if payload.scenarios else None
+    pack = _prudential_stress_pack(db, context, scenarios)
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"PRUDSTRESS-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=f"Prudential stress evidence pack - {today:%d %b %Y}",
+        report_type="prudential_stress_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today + timedelta(days=30),
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
+    }
 
 
 @router.post("/prudential/evidence-pack")
