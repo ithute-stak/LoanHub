@@ -43,3 +43,9 @@ export async function setCompanyStaffUserStatus(
     );
     return response.data;
 }
+
+
+export async function listCompanyStaff(): Promise<CompanyStaff[]> {
+    const response = await api.get<CompanyStaff[]>("/company-staff/");
+    return response.data;
+}
