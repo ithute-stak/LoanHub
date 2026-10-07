@@ -222,6 +222,22 @@ Endpoint: `/api/policy/settled-deduction`
 - [ ] TEST credentials are not present in Git history
 - [ ] No background crawler, roster sync, scheduler or automatic lifecycle process is running
 
+## Stage D — Live release governance
+
+Do not switch a lending company to Live merely because a login test succeeded.
+
+- [ ] Live credential profile is configured centrally by the LoanHub Platform Owner
+- [ ] Live Item Code matches the company allocation from CDAS/DataNet onboarding
+- [ ] Live login test succeeded within the last 24 hours
+- [ ] Platform Owner explicitly approved the exact tested Live profile
+- [ ] `/cdas/readiness` reports every blocking control green
+- [ ] Local request budget has remaining allowance
+- [ ] No unresolved provider mutation remains in the CDAS operation ledger
+- [ ] Shared Redis session coordination is enabled for Live multi-worker deployment
+- [ ] Any profile change or re-test invalidates the previous production approval and is re-approved
+- [ ] External DataNet/CDAS production permission and onboarding approval are retained as separate evidence
+
+Readiness output of `10/10-ready` means LoanHub's internal controls are satisfied. It does not grant DataNet/CDAS permission by itself.
 ## Final UAT decision
 
 ```text
