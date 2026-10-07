@@ -33,11 +33,13 @@ import {
     disburseLoan,
     adjustInstallmentDueDate,
     getLoan,
+    getDisbursementIntegrityPreview,
     listLoanPaymentSlips,
     listLoans,
     payLoanInstallment,
     openLoanDocumentPdf,
     openLoanPaymentSlipPdf,
+    type DisbursementIntegrityPreview,
 } from "@/api/loans";
 import {originationApi} from "@/api/origination";
 import {
@@ -164,6 +166,8 @@ export default function CompanyLoansPage() {
     const [postingInstallmentPayment, setPostingInstallmentPayment] = useState(false);
     const [disburseOpen, setDisburseOpen] = useState(false);
     const [disbursing, setDisbursing] = useState(false);
+    const [disbursementIntegrity, setDisbursementIntegrity] = useState<DisbursementIntegrityPreview | null>(null);
+    const [integrityLoading, setIntegrityLoading] = useState(false);
     const [evidence, setEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
 
     const [documentLoan, setDocumentLoan] = useState<Loan | null>(null);
@@ -448,7 +452,7 @@ export default function CompanyLoansPage() {
         }
     }
 
-    function openDisbursement(loan: Loan) {
+    async function openDisbursement(loan: Loan) {
         const contract = contractByLoan.get(loan.id);
         const contractFullySigned = contract?.status === "signed";
         if (loan.status !== "approved") {
@@ -463,9 +467,24 @@ export default function CompanyLoansPage() {
             });
             return;
         }
-        setSelectedLoan(loan);
-        setEvidence(EMPTY_PAYMENT_EVIDENCE);
-        setDisburseOpen(true);
+        setIntegrityLoading(true);
+        setDisbursementIntegrity(null);
+        try {
+            const integrity = await getDisbursementIntegrityPreview(loan.id);
+            setSelectedLoan(loan);
+            setEvidence(EMPTY_PAYMENT_EVIDENCE);
+            setDisbursementIntegrity(integrity);
+            setDisburseOpen(true);
+            if (!integrity.passed) {
+                toast.warning("Disbursement integrity review required", {
+                    description: integrity.drift[0] ?? "One or more post-approval controls are not satisfied.",
+                });
+            }
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "LoanHub could not verify post-approval deal integrity."));
+        } finally {
+            setIntegrityLoading(false);
+        }
     }
 
     async function disburse() {
@@ -482,6 +501,12 @@ export default function CompanyLoansPage() {
                     : "The loan must remain approved and undisbursed before payout.",
             });
             setDisburseOpen(false);
+            return;
+        }
+        if (disbursementIntegrity && !disbursementIntegrity.passed) {
+            toast.warning("Disbursement integrity guard is not green", {
+                description: disbursementIntegrity.drift[0] ?? "Resolve the blocking controls before payout.",
+            });
             return;
         }
         setDisbursing(true);
@@ -1523,10 +1548,23 @@ export default function CompanyLoansPage() {
                         className="mt-3 text-sm text-muted-foreground">The borrower will
                         repay {formatMoney(selectedLoan.total_repayable)} in {selectedLoan.repayment_period} instalments
                         of approximately {formatMoney(selectedLoan.installment_amount)}.</p></div>
+                    {disbursementIntegrity ? <Alert className={disbursementIntegrity.passed ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}>
+                        <ShieldCheck className="h-4 w-4"/>
+                        <AlertTitle>{disbursementIntegrity.passed ? "Post-approval integrity verified" : "Disbursement blocked by integrity guard"}</AlertTitle>
+                        <AlertDescription className="space-y-2">
+                            <p>{disbursementIntegrity.passed
+                                ? "Committee clearance, deal terms, affordability, contract integrity and liquidity are currently aligned."
+                                : "Resolve the following drift before money leaves LoanHub."}</p>
+                            {!disbursementIntegrity.passed && disbursementIntegrity.drift.length ? <ul className="list-disc space-y-1 pl-5">{disbursementIntegrity.drift.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+                            {disbursementIntegrity.liquidity ? <p className="text-xs">30-day post-disbursement minimum cash: <b>{formatMoney(Number(disbursementIntegrity.liquidity.post_disbursement_30d_minimum_cash))}</b> · Required buffer: <b>{formatMoney(Number(disbursementIntegrity.liquidity.minimum_liquidity_buffer))}</b></p> : null}
+                            <p className="text-xs text-muted-foreground">{disbursementIntegrity.policy_note}</p>
+                        </AlertDescription>
+                    </Alert> : null}
                     <PaymentMethodFields methods={methods} value={evidence} onChange={setEvidence} showGatewayRailPicker={false}/></div>}<DialogFooter
                     className="mx-0 mb-0"><Button variant="outline" onClick={() => setDisburseOpen(false)}
                                                   disabled={disbursing}>Cancel</Button><LoadingButton
-                    loading={disbursing} loadingText="Posting disbursement..."
+                    loading={disbursing || integrityLoading} loadingText={integrityLoading ? "Verifying integrity..." : "Posting disbursement..."}
+                    disabled={Boolean(disbursementIntegrity && !disbursementIntegrity.passed)}
                     onClick={() => void disburse()}><CheckCircle2 className="h-4 w-4"/>Confirm
                     disbursement</LoadingButton></DialogFooter></div>
             </CustomDialog>

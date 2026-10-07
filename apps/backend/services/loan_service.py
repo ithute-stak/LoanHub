@@ -540,12 +540,14 @@ def _require_signed_contract_before_disbursement(
 def assert_disbursement_governance_ready(
     db: Session,
     loan: ClientCompanyLoan,
+    *,
+    actor_user_id: UUID | None = None,
 ) -> None:
     """Enforce governance and payroll-collection readiness before any payout."""
 
     from services.credit_committee_service import assert_loan_disbursement_conditions
 
-    assert_loan_disbursement_conditions(db, loan)
+    assert_loan_disbursement_conditions(db, loan, actor_user_id=actor_user_id)
 
     if not bool(getattr(loan, "cdas_collection_enabled", False)):
         return
@@ -619,7 +621,7 @@ def disburse_cash_loan(
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
     _require_signed_contract_before_disbursement(db, loan)
-    assert_disbursement_governance_ready(db, loan)
+    assert_disbursement_governance_ready(db, loan, actor_user_id=initiated_by_user_id)
 
     key = _payment_idempotency_key(f"loan-disbursement:{loan.id}:{payment_method.value}", idempotency_key)
     existing = _existing_payment(db, key)

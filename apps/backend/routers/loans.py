@@ -68,6 +68,7 @@ from services.loan_service import (
     record_installment_repayment,
 )
 from services.receipt_service import ensure_payment_receipt, generate_payment_receipt_pdf
+from services.credit_committee_service import preview_loan_disbursement_integrity
 from utils.payment_dates import current_payment_date, resolve_payment_date
 
 
@@ -734,6 +735,28 @@ def get_loan(
     context = resolve_tenant_context(db, current_user, x_company_id, x_active_role)
     assert_tenant_loan(context, loan)
     return loan
+
+
+@router.get("/{loan_id}/disbursement-integrity")
+def disbursement_integrity_preview(
+    loan_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FINANCE_ROLES | LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
+    loan = loan_or_404(db, loan_id)
+    assert_tenant_loan(context, loan)
+    report = preview_loan_disbursement_integrity(db, loan)
+    return {
+        "loan_id": str(loan.id),
+        "loan_reference": loan.loan_reference,
+        "status": loan.status.value if hasattr(loan.status, "value") else str(loan.status),
+        **report,
+        "policy_note": (
+            "This preview is read-only. The same integrity controls are re-run inside the locked payout transaction; "
+            "a green preview does not bypass final disbursement validation."
+        ),
+    }
 
 
 @router.post("/{loan_id}/disburse", response_model=CashPaymentResult)

@@ -138,6 +138,50 @@ export type PaymentEvidencePayload = {
   idempotency_key?: string;
 };
 
+export type DisbursementIntegrityPreview = {
+  loan_id: string;
+  loan_reference: string;
+  status: string;
+  applicable: boolean;
+  passed: boolean;
+  committee_clearance?: boolean;
+  open_conditions?: string[];
+  selected_structure_present?: boolean;
+  selected_structure?: {
+    principal?: number | null;
+    term_months?: number | null;
+    minimum_viable_rate_percent?: number | null;
+    status?: string | null;
+  };
+  underwriting_revision?: number | null;
+  contract_number?: string | null;
+  contract_hash?: string | null;
+  contract_status?: string | null;
+  contract_required?: boolean;
+  affordability?: {
+    assessment_id: string;
+    decision: string;
+    maximum_affordable_installment: string;
+    loan_installment: string;
+  };
+  liquidity?: {
+    baseline_30d_minimum_cash: string;
+    disbursement_amount: string;
+    removed_new_loan_collection_credit: string;
+    post_disbursement_30d_minimum_cash: string;
+    minimum_liquidity_buffer: string;
+  };
+  drift: string[];
+  reason?: string;
+  policy_note: string;
+};
+
+export async function getDisbursementIntegrityPreview(
+  loanId: string,
+): Promise<DisbursementIntegrityPreview> {
+  return (await api.get<DisbursementIntegrityPreview>(`/loans/${loanId}/disbursement-integrity`)).data;
+}
+
 export async function disburseLoan(
   loanId: string,
   payload: PaymentEvidencePayload,

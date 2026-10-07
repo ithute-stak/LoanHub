@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,6 +28,8 @@ from database.models.origination import (
     BorrowerDebtObligation,
     BorrowerEmploymentProfile,
     BorrowerKYCProfile,
+    LoanContract,
+    OriginationPolicy,
 )
 from database.models.person import Person
 from database.models.professional_lending import DirectLoanApplication
@@ -971,12 +973,225 @@ def assert_application_committee_rejection(db: Session, application: DirectLoanA
     return case
 
 
-def assert_loan_disbursement_conditions(db: Session, loan: ClientCompanyLoan) -> None:
+def _decimal_equal(left: Any, right: Any, *, tolerance: Decimal = Decimal("0.01")) -> bool:
+    try:
+        return abs(Decimal(str(left or 0)) - Decimal(str(right or 0))) <= tolerance
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def _post_approval_deal_integrity(
+    db: Session,
+    *,
+    loan: ClientCompanyLoan,
+    application: DirectLoanApplication,
+    case: CreditCommitteeCase,
+    raise_on_failure: bool = True,
+) -> dict[str, Any]:
+    final_snapshot = dict(case.final_snapshot or {})
+    selected_wrapper = final_snapshot.get("selected_deal_structure") or (case.evidence_snapshot or {}).get("selected_deal_structure")
+    selected = dict(selected_wrapper.get("structure") or {}) if isinstance(selected_wrapper, dict) else {}
+    latest_assessment = _latest_assessment(db, case.id)
+
+    drift: list[str] = []
+    checks: dict[str, Any] = {
+        "committee_case_reference": case.case_reference,
+        "committee_final_decision": case.final_decision,
+        "selected_structure_present": bool(selected),
+    }
+
+    if selected:
+        selected_principal = selected.get("principal")
+        selected_term = selected.get("term_months")
+        selected_floor = selected.get("minimum_viable_rate_percent")
+        if selected_principal is not None and not _decimal_equal(loan.principal_amount, selected_principal):
+            drift.append("loan principal differs from the committee-selected structure")
+        if selected_term is not None and int(loan.repayment_period or 0) != int(selected_term):
+            drift.append("loan term differs from the committee-selected structure")
+        if selected_floor is not None and Decimal(str(loan.interest_rate or 0)) + Decimal("0.0001") < Decimal(str(selected_floor)):
+            drift.append("loan interest rate is below the committee-selected minimum viable pricing floor")
+        checks["selected_structure"] = {
+            "principal": selected_principal,
+            "term_months": selected_term,
+            "minimum_viable_rate_percent": selected_floor,
+            "status": selected.get("status"),
+        }
+
+    if latest_assessment:
+        if not _decimal_equal(loan.principal_amount, latest_assessment.proposed_amount):
+            drift.append("loan principal differs from the final submitted underwriting proposal")
+        if int(loan.repayment_period or 0) != int(latest_assessment.proposed_term or 0):
+            drift.append("loan term differs from the final submitted underwriting proposal")
+        if Decimal(str(loan.installment_amount or 0)) > Decimal(str(latest_assessment.proposed_installment or 0)) + Decimal("0.01"):
+            drift.append("loan installment exceeds the final submitted underwriting proposal")
+        checks["underwriting_revision"] = latest_assessment.revision
+
+    origination_policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == loan.company_id,
+    ).first()
+    contract_required = True if origination_policy is None else bool(origination_policy.require_signed_contract)
+    contract = db.query(LoanContract).filter(
+        LoanContract.company_id == loan.company_id,
+        LoanContract.loan_id == loan.id,
+    ).first()
+    if contract_required and (not contract or contract.status != "signed"):
+        drift.append("fully signed loan contract is missing")
+    if contract:
+        terms = dict(contract.terms_snapshot or {})
+        contract_pairs = [
+            ("principal_amount", loan.principal_amount, "contract principal differs from the loan"),
+            ("interest_rate", loan.interest_rate, "contract interest rate differs from the loan"),
+            ("processing_fee", loan.processing_fee, "contract processing fee differs from the loan"),
+            ("total_repayable", loan.total_repayable, "contract total repayable differs from the loan"),
+            ("installment_amount", loan.installment_amount, "contract installment differs from the loan"),
+        ]
+        for key, value, message in contract_pairs:
+            if key not in terms or not _decimal_equal(terms.get(key), value):
+                drift.append(message)
+        if int(terms.get("repayment_period") or 0) != int(loan.repayment_period or 0):
+            drift.append("contract repayment period differs from the loan")
+        if str(terms.get("calculation_method") or "") != str(loan.calculation_method or ""):
+            drift.append("contract calculation method differs from the loan")
+        checks["contract_number"] = contract.contract_number
+        checks["contract_hash"] = contract.contract_hash
+        checks["contract_status"] = contract.status
+    checks["contract_required"] = contract_required
+
+    affordability = _latest_affordability(db, application)
+    if not affordability:
+        drift.append("current affordability assessment is missing")
+    else:
+        max_installment = Decimal(str(affordability.maximum_affordable_installment or 0))
+        loan_installment = Decimal(str(loan.installment_amount or 0))
+        affordability_decision = str(affordability.override_decision or affordability.decision or "").lower()
+        if affordability_decision not in {"pass", "approved", "approve", "affordable"}:
+            drift.append("current affordability assessment is not approved/passing")
+        if loan_installment > max_installment + Decimal("0.01"):
+            drift.append("loan installment exceeds the current maximum affordable installment")
+        checks["affordability"] = {
+            "assessment_id": str(affordability.id),
+            "decision": affordability_decision,
+            "maximum_affordable_installment": str(money(max_installment)),
+            "loan_installment": str(money(loan_installment)),
+        }
+
+    from services.accounting_service import treasury_cash_forecast
+
+    horizon_end = date.today() + timedelta(days=30)
+    minimum_buffer = Decimal("0")
+    if selected:
+        liquidity = selected.get("liquidity") if isinstance(selected.get("liquidity"), dict) else {}
+        minimum_buffer = Decimal(str(liquidity.get("minimum_liquidity_buffer") or 0))
+    forecast = treasury_cash_forecast(
+        db,
+        company_id=loan.company_id,
+        from_date=date.today(),
+        to_date=horizon_end,
+        branch_id=loan.branch_id,
+        minimum_cash=minimum_buffer,
+        collection_rate=Decimal("0.85"),
+        obligation_rate=Decimal("1"),
+        unexpected_outflow=Decimal("0"),
+    )
+    disbursement_amount = money(loan.top_up_cash_amount if loan.is_top_up else loan.principal_amount)
+    own_30d_collections = sum(
+        (
+            money(item.total_due) - money(item.paid_amount)
+            for item in loan.installments
+            if not bool(getattr(item, "is_superseded", False))
+            and item.due_date
+            and date.today() <= item.due_date <= horizon_end
+            and money(item.total_due) > money(item.paid_amount)
+        ),
+        Decimal("0"),
+    )
+    conservative_own_collection_credit = (own_30d_collections * Decimal("0.85")).quantize(MONEY)
+    baseline_min_cash = money(forecast.get("minimum_projected_cash"))
+    post_disbursement_min_cash = baseline_min_cash - disbursement_amount - conservative_own_collection_credit
+    if post_disbursement_min_cash < minimum_buffer:
+        drift.append("post-disbursement 30-day liquidity falls below the approved minimum liquidity buffer")
+    checks["liquidity"] = {
+        "baseline_30d_minimum_cash": str(baseline_min_cash),
+        "disbursement_amount": str(disbursement_amount),
+        "removed_new_loan_collection_credit": str(conservative_own_collection_credit),
+        "post_disbursement_30d_minimum_cash": str(money(post_disbursement_min_cash)),
+        "minimum_liquidity_buffer": str(money(minimum_buffer)),
+    }
+
+    checks["drift"] = drift
+    checks["passed"] = not drift
+    if drift and raise_on_failure:
+        raise HTTPException(
+            status_code=409,
+            detail="Disbursement integrity guard blocked payout: " + "; ".join(drift[:8]),
+        )
+    return checks
+
+
+def preview_loan_disbursement_integrity(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
     if not loan.direct_application_id:
-        return
+        return {
+            "applicable": False,
+            "passed": True,
+            "reason": "Loan is not linked to a direct application governed by Credit Committee.",
+            "drift": [],
+        }
     application = db.get(DirectLoanApplication, loan.direct_application_id)
     if not application or not bool(getattr(application, "credit_committee_required", False)):
-        return
+        return {
+            "applicable": False,
+            "passed": True,
+            "reason": "Credit Committee governance is not required for this application.",
+            "drift": [],
+        }
+    case = db.query(CreditCommitteeCase).filter(
+        CreditCommitteeCase.company_id == loan.company_id,
+        CreditCommitteeCase.application_id == application.id,
+    ).first()
+    if not case or case.final_decision not in {"approved", "conditionally_approved"}:
+        return {
+            "applicable": True,
+            "passed": False,
+            "committee_clearance": False,
+            "drift": ["Credit Committee clearance is missing for this loan"],
+        }
+    open_conditions = db.query(CreditCommitteeCondition).filter(
+        CreditCommitteeCondition.case_id == case.id,
+        CreditCommitteeCondition.condition_type.in_(["pre_contract", "pre_disbursement"]),
+        CreditCommitteeCondition.status.notin_(list(RESOLVED_CONDITION_STATUSES)),
+    ).all()
+    if open_conditions:
+        return {
+            "applicable": True,
+            "passed": False,
+            "committee_clearance": True,
+            "open_conditions": [row.title for row in open_conditions],
+            "drift": ["Credit Committee pre-contract/pre-disbursement conditions remain open"],
+        }
+    report = _post_approval_deal_integrity(
+        db,
+        loan=loan,
+        application=application,
+        case=case,
+        raise_on_failure=False,
+    )
+    report["applicable"] = True
+    report["committee_clearance"] = True
+    report["open_conditions"] = []
+    return report
+
+
+def assert_loan_disbursement_conditions(
+    db: Session,
+    loan: ClientCompanyLoan,
+    *,
+    actor_user_id: UUID | None = None,
+) -> dict[str, Any] | None:
+    if not loan.direct_application_id:
+        return None
+    application = db.get(DirectLoanApplication, loan.direct_application_id)
+    if not application or not bool(getattr(application, "credit_committee_required", False)):
+        return None
     case = db.query(CreditCommitteeCase).filter(
         CreditCommitteeCase.company_id == loan.company_id,
         CreditCommitteeCase.application_id == application.id,
@@ -991,3 +1206,12 @@ def assert_loan_disbursement_conditions(db: Session, loan: ClientCompanyLoan) ->
     if open_conditions:
         titles = ", ".join(row.title for row in open_conditions[:5])
         raise HTTPException(status_code=409, detail=f"Credit Committee conditions must be cleared before disbursement: {titles}")
+
+    integrity = _post_approval_deal_integrity(
+        db,
+        loan=loan,
+        application=application,
+        case=case,
+    )
+    _event(db, case, "disbursement_integrity_verified", actor_user_id, integrity)
+    return integrity
