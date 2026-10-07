@@ -200,3 +200,42 @@ def test_board_governance_pack_combines_verified_management_finance_risk_and_aud
     assert "Treasury outlook" in centre
     assert "Prior pack comparison" in centre
     assert "Governance pack history" in centre
+
+
+def test_regulatory_prudential_intelligence_is_configurable_evidence_based_and_non_assumptive():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class PrudentialProfileUpsert" in schema
+    assert "class RelatedPartyRegisterCreate" in schema
+    assert "class PrudentialFilingReadinessCreate" in schema
+
+    assert "def _prudential_intelligence(" in router
+    assert '@router.put("/prudential/profile")' in router
+    assert '@router.post("/prudential/related-parties"' in router
+    assert '@router.post("/prudential/filings"' in router
+    assert '@router.get("/prudential")' in router
+    assert '@router.post("/prudential/evidence-pack")' in router
+    assert '"report_type="prudential_evidence_pack"' in router
+    assert "Capital-to-portfolio exposure is a management monitoring proxy" in router
+    assert "Related-party status is never inferred" in router
+    assert '"status": "not_assessed"' in router
+    assert '"single_borrower_exposure_to_equity"' in router
+    assert '"related_party_exposure_to_equity"' in router
+    assert '"ecl_coverage_of_stage3_exposure"' in router
+    assert '"minimum_projected_liquidity"' in router
+
+    assert "PrudentialIntelligence" in api
+    assert "getPrudentialIntelligence" in api
+    assert "savePrudentialProfile" in api
+    assert "createRelatedPartyRegister" in api
+    assert "createPrudentialFiling" in api
+    assert "generatePrudentialEvidencePack" in api
+
+    assert "Regulatory & prudential intelligence" in centre
+    assert "Prudential framework configuration" in centre
+    assert "Related-party register" in centre
+    assert "Regulatory filing readiness" in centre
+    assert "Generate evidence pack" in centre

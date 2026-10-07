@@ -34,6 +34,11 @@ import {
   getCompanyCapabilities,
   getCompanyCommandDashboard,
   getReconciliationSummary,
+  getPrudentialIntelligence,
+  savePrudentialProfile,
+  createRelatedPartyRegister,
+  createPrudentialFiling,
+  generatePrudentialEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -44,6 +49,7 @@ import {
   type BoardGovernancePack,
   type CompanyCommandDashboard,
   type OperatingRecord,
+  type PrudentialIntelligence,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -74,6 +80,7 @@ const TABS = [
   ["operations", "Operating workflows", BriefcaseBusiness],
   ["credit", "Credit & finance", Calculator],
   ["integrations", "Integrations", Webhook],
+  ["prudential", "Prudential", ShieldCheck],
   ["board", "Board & assistant", Bot],
 ] as const;
 
@@ -144,6 +151,22 @@ export function CompanyOperatingSystemCentre() {
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
   const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
+  const [prudential, setPrudential] = useState<PrudentialIntelligence | null>(null);
+  const [prudentialFramework, setPrudentialFramework] = useState("Configured prudential monitoring framework");
+  const [prudentialSource, setPrudentialSource] = useState("");
+  const [prudentialCapital, setPrudentialCapital] = useState("");
+  const [prudentialCurrentRatio, setPrudentialCurrentRatio] = useState("");
+  const [prudentialGearing, setPrudentialGearing] = useState("");
+  const [prudentialSingleExposure, setPrudentialSingleExposure] = useState("");
+  const [prudentialRelatedExposure, setPrudentialRelatedExposure] = useState("");
+  const [prudentialEclCoverage, setPrudentialEclCoverage] = useState("");
+  const [prudentialLiquidity, setPrudentialLiquidity] = useState("");
+  const [relatedBorrowerId, setRelatedBorrowerId] = useState("");
+  const [relatedType, setRelatedType] = useState("");
+  const [relatedDescription, setRelatedDescription] = useState("");
+  const [filingName, setFilingName] = useState("");
+  const [filingPeriodEnd, setFilingPeriodEnd] = useState("");
+  const [filingDueAt, setFilingDueAt] = useState("");
   const [boardPackHistory, setBoardPackHistory] = useState<BoardGovernancePack[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -186,6 +209,13 @@ export function CompanyOperatingSystemCentre() {
     if (nextTab === "board") {
       try {
         setBoardPackHistory(await listCompanyBoardPacks());
+      } catch (nextError) {
+        setError(errorMessage(nextError));
+      }
+    }
+    if (nextTab === "prudential") {
+      try {
+        setPrudential(await getPrudentialIntelligence());
       } catch (nextError) {
         setError(errorMessage(nextError));
       }
@@ -319,6 +349,86 @@ export function CompanyOperatingSystemCentre() {
       setOneTimeSecret(`Webhook signing secret shown once: ${issued.signing_secret}`);
       setWebhookUrl("");
       setWebhooks(await listCompanyWebhooks());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePrudentialConfiguration() {
+    setBusy(true);
+    setError(null);
+    try {
+      const numeric = (value: string) => value.trim() === "" ? null : Number(value);
+      await savePrudentialProfile({
+        jurisdiction: "Lesotho",
+        framework_name: prudentialFramework.trim(),
+        source_reference: prudentialSource.trim() || null,
+        minimum_capital_ratio_percent: numeric(prudentialCapital),
+        minimum_current_ratio: numeric(prudentialCurrentRatio),
+        maximum_gearing_percent: numeric(prudentialGearing),
+        maximum_single_borrower_exposure_percent_of_equity: numeric(prudentialSingleExposure),
+        maximum_related_party_exposure_percent_of_equity: numeric(prudentialRelatedExposure),
+        minimum_ecl_coverage_percent: numeric(prudentialEclCoverage),
+        minimum_liquidity_buffer: numeric(prudentialLiquidity),
+      });
+      setPrudential(await getPrudentialIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addRelatedParty() {
+    if (!relatedBorrowerId.trim() || !relatedType.trim() || !relatedDescription.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createRelatedPartyRegister({
+        borrower_id: relatedBorrowerId.trim(),
+        relationship_type: relatedType.trim(),
+        relationship_description: relatedDescription.trim(),
+      });
+      setRelatedBorrowerId("");
+      setRelatedType("");
+      setRelatedDescription("");
+      setPrudential(await getPrudentialIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addPrudentialFiling() {
+    if (!filingName.trim() || !filingPeriodEnd || !filingDueAt) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createPrudentialFiling({
+        filing_name: filingName.trim(),
+        filing_period_end: new Date(`${filingPeriodEnd}T23:59:59`).toISOString(),
+        due_at: new Date(`${filingDueAt}T17:00:00`).toISOString(),
+        required_evidence: [],
+        evidence_references: [],
+      });
+      setFilingName("");
+      setPrudential(await getPrudentialIntelligence());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportPrudentialPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const pack = await generatePrudentialEvidencePack();
+      setPrudential(pack.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -578,6 +688,70 @@ export function CompanyOperatingSystemCentre() {
             <div className="flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Integration Hub</h2></div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">Use the Integrations operating module to register bank, mobile-money, payroll, credit-bureau, identity, accounting, SMS/email and debt-collection configurations. Provider credentials still require protected server configuration or dedicated encrypted fields.</p>
           </section>
+        </div>
+      ) : null}
+
+      {tab === "prudential" ? (
+        <div className="space-y-6">
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><h2 className="text-lg font-black">Regulatory & prudential intelligence</h2></div>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">LoanHub assesses prudential metrics only against explicitly configured thresholds. Missing rules remain not assessed rather than being treated as compliant.</p>
+              </div>
+              <button type="button" disabled={busy} onClick={() => void exportPrudentialPack()} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-background px-4 text-sm font-black"><FileBarChart className="h-4 w-4" /> Generate evidence pack</button>
+            </div>
+
+            {prudential ? <>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                <Metric label="Regulatory status" value={titleCase(prudential.regulatory_status)} />
+                <Metric label="Breaches" value={String(prudential.breach_count)} />
+                <Metric label="Not assessed" value={String(prudential.not_assessed_count)} />
+                <Metric label="Capital / exposure" value={prudential.metrics.capital_to_portfolio_exposure_percent == null ? "—" : `${prudential.metrics.capital_to_portfolio_exposure_percent.toFixed(2)}%`} />
+                <Metric label="Largest borrower / equity" value={prudential.metrics.largest_borrower_exposure_percent_of_equity == null ? "—" : `${prudential.metrics.largest_borrower_exposure_percent_of_equity.toFixed(2)}%`} />
+                <Metric label="ECL coverage" value={prudential.metrics.ecl_coverage_percent == null ? "—" : `${prudential.metrics.ecl_coverage_percent.toFixed(2)}%`} />
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{prudential.assessments.map((item) => <div key={item.metric} className="rounded-xl border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-bold">{titleCase(item.metric)}</span><span className={`rounded-full px-2 py-0.5 text-xs font-black ${item.status === "breach" ? "bg-destructive/10 text-destructive" : item.status === "pass" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{titleCase(item.status)}</span></div><p className="mt-2 text-xs text-muted-foreground">Value: {item.value ?? "—"} · Threshold: {item.threshold ?? "—"} {item.unit}</p></div>)}</div>
+              <p className="mt-4 rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prudential.policy_note}</p>
+            </> : null}
+          </section>
+
+          <section className="rounded-3xl border bg-card p-5">
+            <h2 className="text-lg font-black">Prudential framework configuration</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Enter only institution-approved or regulator-sourced thresholds. LoanHub does not assume Lesotho legal limits.</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <input value={prudentialFramework} onChange={(e) => setPrudentialFramework(e.target.value)} placeholder="Framework name" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialSource} onChange={(e) => setPrudentialSource(e.target.value)} placeholder="Source / circular / policy reference" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialCapital} onChange={(e) => setPrudentialCapital(e.target.value)} placeholder="Min capital / exposure %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialCurrentRatio} onChange={(e) => setPrudentialCurrentRatio(e.target.value)} placeholder="Min current ratio" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialGearing} onChange={(e) => setPrudentialGearing(e.target.value)} placeholder="Max gearing %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialSingleExposure} onChange={(e) => setPrudentialSingleExposure(e.target.value)} placeholder="Max single exposure / equity %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialRelatedExposure} onChange={(e) => setPrudentialRelatedExposure(e.target.value)} placeholder="Max related-party / equity %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialEclCoverage} onChange={(e) => setPrudentialEclCoverage(e.target.value)} placeholder="Min ECL coverage %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={prudentialLiquidity} onChange={(e) => setPrudentialLiquidity(e.target.value)} placeholder="Min liquidity buffer LSL" className="h-11 rounded-xl border bg-background px-3" />
+            </div>
+            <button type="button" disabled={busy || !prudentialFramework.trim()} onClick={() => void savePrudentialConfiguration()} className="mt-4 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Save prudential profile</button>
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Related-party register</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Relationships are explicit and evidence-based; LoanHub never infers related parties automatically.</p>
+              <input value={relatedBorrowerId} onChange={(e) => setRelatedBorrowerId(e.target.value)} placeholder="Borrower UUID" className="mt-4 h-11 w-full rounded-xl border bg-background px-3" />
+              <input value={relatedType} onChange={(e) => setRelatedType(e.target.value)} placeholder="Relationship type" className="mt-3 h-11 w-full rounded-xl border bg-background px-3" />
+              <textarea value={relatedDescription} onChange={(e) => setRelatedDescription(e.target.value)} placeholder="Relationship description and evidence basis" className="mt-3 min-h-24 w-full rounded-xl border bg-background p-3 text-sm" />
+              <button type="button" disabled={busy || !relatedBorrowerId.trim() || !relatedType.trim() || !relatedDescription.trim()} onClick={() => void addRelatedParty()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Add related party</button>
+              {prudential?.related_parties?.length ? <div className="mt-4 space-y-2">{prudential.related_parties.map((row) => <div key={row.id} className="rounded-xl border p-3 text-sm"><p className="font-black">{row.relationship_type ?? "Related party"}</p><p className="mt-1 text-xs text-muted-foreground">{row.borrower_id}</p><p className="mt-1">{row.relationship_description}</p></div>)}</div> : null}
+            </section>
+
+            <section className="rounded-3xl border bg-card p-5">
+              <h2 className="text-lg font-black">Regulatory filing readiness</h2>
+              <input value={filingName} onChange={(e) => setFilingName(e.target.value)} placeholder="Filing / return name" className="mt-4 h-11 w-full rounded-xl border bg-background px-3" />
+              <div className="mt-3 grid grid-cols-2 gap-3"><input type="date" value={filingPeriodEnd} onChange={(e) => setFilingPeriodEnd(e.target.value)} className="h-11 rounded-xl border bg-background px-3" /><input type="date" value={filingDueAt} onChange={(e) => setFilingDueAt(e.target.value)} className="h-11 rounded-xl border bg-background px-3" /></div>
+              <button type="button" disabled={busy || !filingName.trim() || !filingPeriodEnd || !filingDueAt} onClick={() => void addPrudentialFiling()} className="mt-3 h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Create filing readiness record</button>
+              {prudential?.filing_readiness?.length ? <div className="mt-4 space-y-2">{prudential.filing_readiness.map((row) => <div key={row.id} className="rounded-xl border p-3 text-sm"><div className="flex items-center justify-between gap-2"><p className="font-black">{row.filing_name}</p><span className={row.overdue ? "text-destructive font-black" : "text-muted-foreground"}>{row.overdue ? "Overdue" : titleCase(row.status)}</span></div><p className="mt-1 text-xs text-muted-foreground">Due {row.due_at ? formatDateTime(row.due_at) : "—"} · Missing evidence {row.missing_evidence.length}</p></div>)}</div> : null}
+            </section>
+          </div>
         </div>
       ) : null}
 

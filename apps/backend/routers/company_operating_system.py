@@ -8,7 +8,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from core.access_control import (
@@ -25,6 +25,8 @@ from core.access_control import (
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
+from database.models.credit_loss_provisioning import CreditLossProvisionLine, CreditLossProvisionRun
+from database.models.portfolio_risk import PortfolioRiskSnapshot
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import InstallmentStatus, LoanStatus, PaymentStatus, TreasuryDirection, UserRole
@@ -50,6 +52,9 @@ from database.schemas.company_operating_system import (
     ManagementDecisionCreate,
     ManagementResolutionCreate,
     ManagementVerificationCreate,
+    PrudentialFilingReadinessCreate,
+    PrudentialProfileUpsert,
+    RelatedPartyRegisterCreate,
     OperatingRecordCreate,
     OperatingRecordRead,
     OperatingRecordUpdate,
@@ -1028,6 +1033,511 @@ def rotate_webhook_secret(webhook_id: UUID, db: Session = Depends(get_db), conte
     db.commit()
     db.refresh(item)
     return WebhookIssued(**WebhookRead.model_validate(item).model_dump(), signing_secret=raw)
+
+
+
+def _prudential_profile_record(db: Session, context: TenantContext):
+    return _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "internal_audit",
+        CompanyOperatingRecord.record_type == "prudential_profile",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).order_by(CompanyOperatingRecord.updated_at.desc()).first()
+
+
+def _prudential_profile_payload(record: CompanyOperatingRecord | None) -> dict:
+    if not record:
+        return {
+            "configured": False,
+            "status": "not_configured",
+            "jurisdiction": "Lesotho",
+            "framework_name": None,
+            "source_reference": None,
+            "thresholds": {},
+            "notes": None,
+        }
+    data = dict(record.data or {})
+    return {
+        "configured": True,
+        "id": str(record.id),
+        "reference": record.reference,
+        "status": record.status,
+        "jurisdiction": data.get("jurisdiction"),
+        "framework_name": record.title,
+        "effective_from": data.get("effective_from"),
+        "source_reference": data.get("source_reference"),
+        "thresholds": data.get("thresholds", {}),
+        "notes": record.description,
+        "updated_at": record.updated_at.isoformat(),
+    }
+
+
+def _prudential_assessment(metric: str, value, threshold, *, direction: str, unit: str = "percent") -> dict:
+    if threshold is None:
+        return {
+            "metric": metric,
+            "value": value,
+            "threshold": None,
+            "unit": unit,
+            "status": "not_assessed",
+            "reason": "No prudential threshold is configured for this metric.",
+        }
+    if value is None:
+        return {
+            "metric": metric,
+            "value": None,
+            "threshold": float(threshold),
+            "unit": unit,
+            "status": "not_assessed",
+            "reason": "Required source evidence is unavailable.",
+        }
+    threshold_value = float(threshold)
+    numeric_value = float(value)
+    passed = numeric_value >= threshold_value if direction == "minimum" else numeric_value <= threshold_value
+    return {
+        "metric": metric,
+        "value": numeric_value,
+        "threshold": threshold_value,
+        "unit": unit,
+        "status": "pass" if passed else "breach",
+        "reason": None,
+    }
+
+
+def _prudential_intelligence(db: Session, context: TenantContext) -> dict:
+    today = date.today()
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+    profile_record = _prudential_profile_record(db, context)
+    profile = _prudential_profile_payload(profile_record)
+    thresholds = dict(profile.get("thresholds") or {})
+
+    ratios = financial_ratio_analysis(
+        db,
+        company_id=context.company_id,
+        from_date=today.replace(day=1),
+        to_date=today,
+        branch_id=branch_id,
+    )
+    treasury = treasury_cash_forecast(
+        db,
+        company_id=context.company_id,
+        from_date=today,
+        to_date=today + timedelta(days=30),
+        branch_id=branch_id,
+        minimum_cash=Decimal(str(thresholds.get("minimum_liquidity_buffer") or 0)),
+        collection_rate=Decimal("0.85"),
+        obligation_rate=Decimal("1.00"),
+        unexpected_outflow=Decimal("0"),
+    )
+
+    latest_snapshot_date = db.query(func.max(PortfolioRiskSnapshot.snapshot_date)).filter(
+        PortfolioRiskSnapshot.company_id == context.company_id,
+    )
+    if branch_id:
+        latest_snapshot_date = latest_snapshot_date.filter(PortfolioRiskSnapshot.branch_id == branch_id)
+    latest_snapshot_date = latest_snapshot_date.scalar()
+
+    exposure_total = Decimal("0.00")
+    borrower_exposures: list[tuple[UUID, Decimal]] = []
+    if latest_snapshot_date:
+        exposure_query = db.query(
+            PortfolioRiskSnapshot.borrower_id,
+            func.coalesce(func.sum(PortfolioRiskSnapshot.outstanding_balance), 0),
+        ).filter(
+            PortfolioRiskSnapshot.company_id == context.company_id,
+            PortfolioRiskSnapshot.snapshot_date == latest_snapshot_date,
+            PortfolioRiskSnapshot.is_written_off.is_(False),
+        )
+        if branch_id:
+            exposure_query = exposure_query.filter(PortfolioRiskSnapshot.branch_id == branch_id)
+        rows = exposure_query.group_by(PortfolioRiskSnapshot.borrower_id).all()
+        borrower_exposures = [(borrower_id, Decimal(amount or 0)) for borrower_id, amount in rows]
+        exposure_total = sum((amount for _, amount in borrower_exposures), Decimal("0.00"))
+
+    equity = Decimal(str((ratios.get("capital_structure") or {}).get("total_equity") or 0))
+    capital_to_exposure = (
+        float((equity / exposure_total * Decimal("100")).quantize(Decimal("0.01")))
+        if exposure_total > 0 else None
+    )
+    max_borrower_exposure = max((amount for _, amount in borrower_exposures), default=Decimal("0.00"))
+    max_borrower_exposure_pct_equity = (
+        float((max_borrower_exposure / equity * Decimal("100")).quantize(Decimal("0.01")))
+        if equity > 0 else None
+    )
+
+    related_records = _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "internal_audit",
+        CompanyOperatingRecord.record_type == "related_party_register",
+        CompanyOperatingRecord.status == "active",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).all()
+    related_borrower_ids = {record.borrower_id for record in related_records if record.borrower_id}
+    related_exposure = sum(
+        (amount for borrower_id, amount in borrower_exposures if borrower_id in related_borrower_ids),
+        Decimal("0.00"),
+    )
+    related_exposure_pct_equity = (
+        float((related_exposure / equity * Decimal("100")).quantize(Decimal("0.01")))
+        if equity > 0 else None
+    )
+
+    latest_provision = db.query(CreditLossProvisionRun).filter(
+        CreditLossProvisionRun.company_id == context.company_id,
+        CreditLossProvisionRun.status == "posted",
+    )
+    if branch_id:
+        latest_provision = latest_provision.filter(CreditLossProvisionRun.branch_id == branch_id)
+    latest_provision = latest_provision.order_by(
+        CreditLossProvisionRun.as_of_date.desc(),
+        CreditLossProvisionRun.approved_at.desc(),
+    ).first()
+
+    ecl_coverage_percent = None
+    stage3_exposure = None
+    if latest_provision:
+        stage3_exposure_value = db.query(
+            func.coalesce(func.sum(CreditLossProvisionLine.exposure), 0)
+        ).filter(
+            CreditLossProvisionLine.run_id == latest_provision.id,
+            CreditLossProvisionLine.stage == 3,
+        ).scalar()
+        stage3_exposure = Decimal(stage3_exposure_value or 0)
+        allowance = Decimal(latest_provision.required_allowance or 0)
+        if stage3_exposure > 0:
+            ecl_coverage_percent = float(
+                (allowance / stage3_exposure * Decimal("100")).quantize(Decimal("0.01"))
+            )
+
+    current_ratio = (ratios.get("liquidity") or {}).get("current_ratio")
+    gearing = (ratios.get("capital_structure") or {}).get("gearing_percent")
+    liquidity_minimum = treasury.get("minimum_projected_cash")
+
+    assessments = [
+        _prudential_assessment(
+            "capital_to_portfolio_exposure",
+            capital_to_exposure,
+            thresholds.get("minimum_capital_ratio_percent"),
+            direction="minimum",
+        ),
+        _prudential_assessment(
+            "current_ratio",
+            current_ratio,
+            thresholds.get("minimum_current_ratio"),
+            direction="minimum",
+            unit="ratio",
+        ),
+        _prudential_assessment(
+            "gearing",
+            gearing,
+            thresholds.get("maximum_gearing_percent"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "single_borrower_exposure_to_equity",
+            max_borrower_exposure_pct_equity,
+            thresholds.get("maximum_single_borrower_exposure_percent_of_equity"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "related_party_exposure_to_equity",
+            related_exposure_pct_equity,
+            thresholds.get("maximum_related_party_exposure_percent_of_equity"),
+            direction="maximum",
+        ),
+        _prudential_assessment(
+            "ecl_coverage_of_stage3_exposure",
+            ecl_coverage_percent,
+            thresholds.get("minimum_ecl_coverage_percent"),
+            direction="minimum",
+        ),
+        _prudential_assessment(
+            "minimum_projected_liquidity",
+            liquidity_minimum,
+            thresholds.get("minimum_liquidity_buffer"),
+            direction="minimum",
+            unit="LSL",
+        ),
+    ]
+
+    filings = _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "internal_audit",
+        CompanyOperatingRecord.record_type == "prudential_filing",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).order_by(CompanyOperatingRecord.due_at.asc()).all()
+    filing_payload = []
+    for record in filings:
+        data = dict(record.data or {})
+        required = list(data.get("required_evidence") or [])
+        supplied = list(data.get("evidence_references") or [])
+        missing = [item for item in required if item not in supplied]
+        overdue = bool(record.due_at and record.due_at < _now() and record.status != "submitted")
+        filing_payload.append({
+            "id": str(record.id),
+            "reference": record.reference,
+            "filing_name": record.title,
+            "status": record.status,
+            "period_end": data.get("filing_period_end"),
+            "due_at": record.due_at.isoformat() if record.due_at else None,
+            "required_evidence": required,
+            "evidence_references": supplied,
+            "missing_evidence": missing,
+            "ready": not missing,
+            "overdue": overdue,
+        })
+
+    breaches = [item for item in assessments if item["status"] == "breach"]
+    not_assessed = [item for item in assessments if item["status"] == "not_assessed"]
+    return {
+        "as_of": today.isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "profile": profile,
+        "metrics": {
+            "latest_portfolio_snapshot_date": latest_snapshot_date.isoformat() if latest_snapshot_date else None,
+            "portfolio_exposure": float(exposure_total),
+            "total_equity": float(equity),
+            "capital_to_portfolio_exposure_percent": capital_to_exposure,
+            "largest_borrower_exposure": float(max_borrower_exposure),
+            "largest_borrower_exposure_percent_of_equity": max_borrower_exposure_pct_equity,
+            "related_party_exposure": float(related_exposure),
+            "related_party_exposure_percent_of_equity": related_exposure_pct_equity,
+            "related_party_count": len(related_records),
+            "current_ratio": current_ratio,
+            "gearing_percent": gearing,
+            "minimum_projected_liquidity_30d": liquidity_minimum,
+            "latest_posted_provision_reference": latest_provision.run_reference if latest_provision else None,
+            "stage3_exposure": float(stage3_exposure) if stage3_exposure is not None else None,
+            "required_allowance": float(latest_provision.required_allowance) if latest_provision else None,
+            "ecl_coverage_percent": ecl_coverage_percent,
+        },
+        "assessments": assessments,
+        "breach_count": len(breaches),
+        "not_assessed_count": len(not_assessed),
+        "filing_readiness": filing_payload,
+        "related_parties": [{
+            "id": str(record.id),
+            "reference": record.reference,
+            "borrower_id": str(record.borrower_id) if record.borrower_id else None,
+            "relationship_type": (record.data or {}).get("relationship_type"),
+            "relationship_description": record.description,
+            "evidence_references": (record.data or {}).get("evidence_references", []),
+            "branch_id": str(record.branch_id) if record.branch_id else None,
+        } for record in related_records],
+        "regulatory_status": (
+            "breach" if breaches
+            else "not_assessed" if not profile["configured"] or not_assessed
+            else "within_configured_limits"
+        ),
+        "policy_note": (
+            "Prudential assessments are performed only against explicitly configured thresholds and available LoanHub evidence. "
+            "Capital-to-portfolio exposure is a management monitoring proxy, not a statutory capital adequacy ratio unless the configured framework explicitly defines it that way. "
+            "Related-party status is never inferred; only borrowers explicitly entered in the related-party register are included."
+        ),
+    }
+
+
+@router.put("/prudential/profile")
+def upsert_prudential_profile(
+    payload: PrudentialProfileUpsert,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | {UserRole.RISK_MANAGER, UserRole.COMPLIANCE_OFFICER, UserRole.REGULATORY_REPORTING_OFFICER},
+    )
+    record = _prudential_profile_record(db, context)
+    thresholds = {
+        key: float(value) if value is not None else None
+        for key, value in {
+            "minimum_capital_ratio_percent": payload.minimum_capital_ratio_percent,
+            "minimum_current_ratio": payload.minimum_current_ratio,
+            "maximum_gearing_percent": payload.maximum_gearing_percent,
+            "maximum_single_borrower_exposure_percent_of_equity": payload.maximum_single_borrower_exposure_percent_of_equity,
+            "maximum_related_party_exposure_percent_of_equity": payload.maximum_related_party_exposure_percent_of_equity,
+            "minimum_ecl_coverage_percent": payload.minimum_ecl_coverage_percent,
+            "minimum_liquidity_buffer": payload.minimum_liquidity_buffer,
+        }.items()
+    }
+    data = {
+        "jurisdiction": payload.jurisdiction,
+        "effective_from": payload.effective_from.isoformat() if payload.effective_from else None,
+        "source_reference": payload.source_reference,
+        "thresholds": thresholds,
+    }
+    if record:
+        record.title = payload.framework_name
+        record.description = payload.notes
+        record.status = "active"
+        record.data = data
+        record.updated_at = _now()
+    else:
+        record = CompanyOperatingRecord(
+            company_id=context.company_id,
+            branch_id=None,
+            module="internal_audit",
+            record_type="prudential_profile",
+            reference=f"PRUD-{secrets.token_hex(4).upper()}",
+            title=payload.framework_name,
+            description=payload.notes,
+            status="active",
+            priority="high",
+            created_by_user_id=context.user.id,
+            data=data,
+            tags=["prudential", "regulatory_profile"],
+        )
+        db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _prudential_profile_payload(record)
+
+
+@router.post("/prudential/related-parties", status_code=201)
+def create_related_party_register(
+    payload: RelatedPartyRegisterCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | {UserRole.RISK_MANAGER, UserRole.COMPLIANCE_OFFICER, UserRole.REGULATORY_REPORTING_OFFICER},
+    )
+    borrower = db.query(CompanyBorrowerAccount).filter(
+        CompanyBorrowerAccount.company_id == context.company_id,
+        CompanyBorrowerAccount.borrower_id == payload.borrower_id,
+    ).first()
+    if not borrower:
+        raise HTTPException(status_code=404, detail="Borrower is not linked to this company")
+    existing = _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "internal_audit",
+        CompanyOperatingRecord.record_type == "related_party_register",
+        CompanyOperatingRecord.borrower_id == payload.borrower_id,
+        CompanyOperatingRecord.status == "active",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Borrower is already in the active related-party register")
+    branch_id = payload.branch_id
+    if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES:
+        branch_id = context.branch_id
+    record = CompanyOperatingRecord(
+        company_id=context.company_id,
+        branch_id=branch_id,
+        module="internal_audit",
+        record_type="related_party_register",
+        reference=f"RP-{secrets.token_hex(4).upper()}",
+        title=f"Related-party borrower {payload.borrower_id}",
+        description=payload.relationship_description,
+        status="active",
+        priority="high",
+        borrower_id=payload.borrower_id,
+        created_by_user_id=context.user.id,
+        data={
+            "relationship_type": payload.relationship_type,
+            "evidence_references": payload.evidence_references,
+            "classified_by_user_id": str(context.user.id),
+            "classified_at": _now().isoformat(),
+        },
+        tags=["prudential", "related_party"],
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {
+        "id": str(record.id),
+        "reference": record.reference,
+        "borrower_id": str(record.borrower_id),
+        "relationship_type": payload.relationship_type,
+        "relationship_description": record.description,
+        "evidence_references": payload.evidence_references,
+    }
+
+
+@router.post("/prudential/filings", status_code=201)
+def create_prudential_filing(
+    payload: PrudentialFilingReadinessCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | {UserRole.COMPLIANCE_OFFICER, UserRole.REGULATORY_REPORTING_OFFICER},
+    )
+    required = list(dict.fromkeys(payload.required_evidence))
+    supplied = list(dict.fromkeys(payload.evidence_references))
+    record = CompanyOperatingRecord(
+        company_id=context.company_id,
+        branch_id=None,
+        module="internal_audit",
+        record_type="prudential_filing",
+        reference=f"REGFILE-{secrets.token_hex(4).upper()}",
+        title=payload.filing_name,
+        description=payload.notes,
+        status="ready" if all(item in supplied for item in required) else "evidence_pending",
+        priority="high",
+        created_by_user_id=context.user.id,
+        due_at=payload.due_at,
+        data={
+            "filing_period_end": payload.filing_period_end.isoformat(),
+            "required_evidence": required,
+            "evidence_references": supplied,
+        },
+        tags=["prudential", "regulatory_filing"],
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {"id": str(record.id), "reference": record.reference, "status": record.status}
+
+
+@router.get("/prudential")
+def get_prudential_intelligence(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    return _prudential_intelligence(db, context)
+
+
+@router.post("/prudential/evidence-pack")
+def generate_prudential_evidence_pack(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(
+        context,
+        COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {
+            UserRole.AUDITOR,
+            UserRole.RISK_MANAGER,
+            UserRole.COMPLIANCE_OFFICER,
+            UserRole.REGULATORY_REPORTING_OFFICER,
+        },
+    )
+    pack = _prudential_intelligence(db, context)
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"PRUDPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=f"Prudential evidence pack - {today:%d %b %Y}",
+        report_type="prudential_evidence_pack",
+        output_format="json",
+        period_start=today.replace(day=1),
+        period_end=today,
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
+    }
 
 
 @router.get("/board-packs")

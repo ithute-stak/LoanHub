@@ -76,6 +76,38 @@ class OperatingRecordRead(BaseModel):
 
 
 
+
+class PrudentialProfileUpsert(BaseModel):
+    jurisdiction: str = Field(default="Lesotho", min_length=2, max_length=120)
+    framework_name: str = Field(min_length=3, max_length=240)
+    effective_from: datetime | None = None
+    source_reference: str | None = Field(default=None, max_length=1000)
+    minimum_capital_ratio_percent: Decimal | None = Field(default=None, ge=0)
+    minimum_current_ratio: Decimal | None = Field(default=None, ge=0)
+    maximum_gearing_percent: Decimal | None = Field(default=None, ge=0)
+    maximum_single_borrower_exposure_percent_of_equity: Decimal | None = Field(default=None, ge=0)
+    maximum_related_party_exposure_percent_of_equity: Decimal | None = Field(default=None, ge=0)
+    minimum_ecl_coverage_percent: Decimal | None = Field(default=None, ge=0)
+    minimum_liquidity_buffer: Decimal | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class RelatedPartyRegisterCreate(BaseModel):
+    borrower_id: UUID
+    relationship_type: str = Field(min_length=2, max_length=120)
+    relationship_description: str = Field(min_length=3, max_length=1000)
+    evidence_references: list[str] = Field(default_factory=list, max_length=30)
+    branch_id: UUID | None = None
+
+
+class PrudentialFilingReadinessCreate(BaseModel):
+    filing_name: str = Field(min_length=3, max_length=240)
+    filing_period_end: datetime
+    due_at: datetime
+    required_evidence: list[str] = Field(default_factory=list, max_length=50)
+    evidence_references: list[str] = Field(default_factory=list, max_length=50)
+    notes: str | None = Field(default=None, max_length=4000)
+
 class ManagementActionCreate(BaseModel):
     source_signal_id: str = Field(min_length=2, max_length=160)
     source: str = Field(default="management_command_intelligence", min_length=2, max_length=80)
