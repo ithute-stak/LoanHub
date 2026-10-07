@@ -39,6 +39,8 @@ import {
   createRelatedPartyRegister,
   createPrudentialFiling,
   generatePrudentialEvidencePack,
+  runPrudentialStressTest,
+  generatePrudentialStressEvidencePack,
   listCompanyApiKeys,
   listCompanyWebhooks,
   listOperatingRecords,
@@ -50,6 +52,7 @@ import {
   type CompanyCommandDashboard,
   type OperatingRecord,
   type PrudentialIntelligence,
+  type PrudentialStressPack,
   type WebhookRecord,
 } from "@/api/companyOperatingSystem";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
@@ -152,6 +155,13 @@ export function CompanyOperatingSystemCentre() {
   const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
   const [boardPack, setBoardPack] = useState<BoardGovernancePack | null>(null);
   const [prudential, setPrudential] = useState<PrudentialIntelligence | null>(null);
+  const [prudentialStress, setPrudentialStress] = useState<PrudentialStressPack | null>(null);
+  const [stressCollectionRate, setStressCollectionRate] = useState("70");
+  const [stressObligationRate, setStressObligationRate] = useState("110");
+  const [stressUnexpectedOutflow, setStressUnexpectedOutflow] = useState("0");
+  const [stressStage3Migration, setStressStage3Migration] = useState("15");
+  const [stressWriteoff, setStressWriteoff] = useState("5");
+  const [stressEclRate, setStressEclRate] = useState("80");
   const [prudentialFramework, setPrudentialFramework] = useState("Configured prudential monitoring framework");
   const [prudentialSource, setPrudentialSource] = useState("");
   const [prudentialCapital, setPrudentialCapital] = useState("");
@@ -349,6 +359,42 @@ export function CompanyOperatingSystemCentre() {
       setOneTimeSecret(`Webhook signing secret shown once: ${issued.signing_secret}`);
       setWebhookUrl("");
       setWebhooks(await listCompanyWebhooks());
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPrudentialStress(custom = false) {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = custom ? {
+        scenarios: [{
+          name: "Custom management stress",
+          collection_rate_percent: Number(stressCollectionRate || 0),
+          obligation_rate_percent: Number(stressObligationRate || 0),
+          unexpected_outflow: Number(stressUnexpectedOutflow || 0),
+          additional_stage3_migration_percent: Number(stressStage3Migration || 0),
+          additional_writeoff_percent: Number(stressWriteoff || 0),
+          stressed_ecl_rate_percent: Number(stressEclRate || 0),
+        }],
+      } : undefined;
+      setPrudentialStress(await runPrudentialStressTest(payload));
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportPrudentialStressPack() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generatePrudentialStressEvidencePack();
+      setPrudentialStress(result.metrics);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -714,6 +760,51 @@ export function CompanyOperatingSystemCentre() {
               <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{prudential.assessments.map((item) => <div key={item.metric} className="rounded-xl border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-bold">{titleCase(item.metric)}</span><span className={`rounded-full px-2 py-0.5 text-xs font-black ${item.status === "breach" ? "bg-destructive/10 text-destructive" : item.status === "pass" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{titleCase(item.status)}</span></div><p className="mt-2 text-xs text-muted-foreground">Value: {item.value ?? "—"} · Threshold: {item.threshold ?? "—"} {item.unit}</p></div>)}</div>
               <p className="mt-4 rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prudential.policy_note}</p>
             </> : null}
+          </section>
+
+          <section className="rounded-3xl border bg-card p-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <h2 className="text-lg font-black">Scenario capital & regulatory stress testing</h2>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">Simulate collection deterioration, higher obligations, Stage 3 migration, write-offs, additional ECL and liquidity shocks without changing live accounting, loans or prudential records.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void runPrudentialStress(false)} className="h-11 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">Run built-in stress scenarios</button>
+                <button type="button" disabled={busy} onClick={() => void exportPrudentialStressPack()} className="h-11 rounded-xl border bg-background px-4 text-sm font-black">Generate stress evidence pack</button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <input value={stressCollectionRate} onChange={(e) => setStressCollectionRate(e.target.value)} placeholder="Collection rate %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={stressObligationRate} onChange={(e) => setStressObligationRate(e.target.value)} placeholder="Obligation rate %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={stressUnexpectedOutflow} onChange={(e) => setStressUnexpectedOutflow(e.target.value)} placeholder="Unexpected outflow LSL" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={stressStage3Migration} onChange={(e) => setStressStage3Migration(e.target.value)} placeholder="Extra Stage 3 migration %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={stressWriteoff} onChange={(e) => setStressWriteoff(e.target.value)} placeholder="Additional write-off %" className="h-11 rounded-xl border bg-background px-3" />
+              <input value={stressEclRate} onChange={(e) => setStressEclRate(e.target.value)} placeholder="Stressed ECL rate %" className="h-11 rounded-xl border bg-background px-3" />
+            </div>
+            <button type="button" disabled={busy} onClick={() => void runPrudentialStress(true)} className="mt-3 h-11 rounded-xl border bg-background px-4 text-sm font-black">Run custom scenario</button>
+
+            {prudentialStress ? <div className="mt-5 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Metric label="Baseline breaches" value={String(prudentialStress.baseline.breach_count)} />
+                <Metric label="Baseline not assessed" value={String(prudentialStress.baseline.not_assessed_count)} />
+                <Metric label="Scenarios" value={String(prudentialStress.scenarios.length)} />
+                <Metric label="Worst scenario" value={prudentialStress.worst_scenario ?? "—"} />
+              </div>
+              <div className="grid gap-4 xl:grid-cols-3">{prudentialStress.scenarios.map((scenario) => <article key={scenario.name} className="rounded-2xl border p-4">
+                <div className="flex items-start justify-between gap-3"><div><h3 className="font-black">{scenario.name}</h3><p className="mt-1 text-xs text-muted-foreground">{scenario.assumptions.collection_rate_percent}% collections · {scenario.assumptions.additional_stage3_migration_percent}% Stage 3 migration · {scenario.assumptions.additional_writeoff_percent}% write-off</p></div><span className={`rounded-full px-2 py-0.5 text-xs font-black ${scenario.status === "breach" ? "bg-destructive/10 text-destructive" : scenario.status === "within_configured_limits" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{titleCase(scenario.status)}</span></div>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div><p className="text-xs text-muted-foreground">Equity erosion</p><p className="font-black">{formatMoney(scenario.impact.equity_erosion)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Stressed equity</p><p className="font-black">{formatMoney(scenario.impact.stressed_equity)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Incremental ECL</p><p className="font-black">{formatMoney(scenario.impact.incremental_allowance)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Minimum cash</p><p className="font-black">{formatMoney(scenario.impact.minimum_projected_cash)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Capital / exposure</p><p className="font-black">{scenario.ratios.capital_to_portfolio_exposure_percent == null ? "—" : `${scenario.ratios.capital_to_portfolio_exposure_percent.toFixed(2)}%`}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Breaches</p><p className="font-black">{scenario.breach_count}</p></div>
+                </div>
+                <div className="mt-4 space-y-2">{scenario.assessments.map((item) => <div key={item.metric} className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs"><span>{titleCase(item.metric)}</span><span className="font-black">{titleCase(item.status)}</span></div>)}</div>
+              </article>)}</div>
+              <p className="rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prudentialStress.policy_note}</p>
+            </div> : null}
           </section>
 
           <section className="rounded-3xl border bg-card p-5">
