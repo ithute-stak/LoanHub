@@ -24,6 +24,7 @@ export function isLocalMutationRequest(requestId: unknown): boolean {
 export type DbCommitBatchDetail = {
     events: Array<Record<string, unknown>>;
     count: number;
+    receivedCount?: number;
     latest: Record<string, unknown> | null;
     hasRemoteChanges: boolean;
 };
