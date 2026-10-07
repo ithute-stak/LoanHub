@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
     DB_COMMIT_EVENT_NAME,
@@ -56,5 +56,5 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
         };
     }, []);
 
-    return <div key={revision} className="contents">{children}</div>;
+    return <Fragment key={revision}>{children}</Fragment>;
 }
