@@ -16,7 +16,7 @@ import {
 import { prepareWebSocketSession } from "@/api/auth";
 import { resolveApiBaseUrl } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
-import { DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
+import { beginRealtimeCatchupWindow, DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
 import { useTenant } from "@/provider/tenantProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
@@ -119,6 +119,7 @@ export function RealtimeProvider({
     const dbRefreshTimerRef = useRef<number | null>(null);
     const pendingDbEventsRef = useRef<RealtimePayload[]>([]);
     const seenEventIdsRef = useRef(new Set<string>());
+    const hasConnectedOnceRef = useRef(false);
 
     const clearReconnectTimer = useCallback(() => {
         if (reconnectTimerRef.current !== null) {
@@ -267,8 +268,34 @@ export function RealtimeProvider({
                     return;
                 }
 
+                const reconnecting = hasConnectedOnceRef.current;
+                hasConnectedOnceRef.current = true;
                 reconnectAttemptRef.current = 0;
                 setConnected(true);
+
+                if (reconnecting) {
+                    beginRealtimeCatchupWindow();
+                    window.dispatchEvent(
+                        new CustomEvent(DB_COMMIT_EVENT_NAME, {
+                            detail: {
+                                events: [{
+                                    type: "DB_EVENT",
+                                    contract: "loanhub.db-commit.v1",
+                                    action: "reconnect_catchup",
+                                    table: "*",
+                                    entity_id: null,
+                                    request_id: null,
+                                }],
+                                count: 1,
+                                latest: null,
+                                hasRemoteChanges: true,
+                            },
+                        }),
+                    );
+                    if (document.visibilityState === "visible") {
+                        router.refresh();
+                    }
+                }
             };
 
             socket.onmessage = (event) => {
@@ -321,6 +348,8 @@ export function RealtimeProvider({
                         const hasRemoteChanges = events.some(
                             (item) => !isLocalMutationRequest(item.request_id),
                         );
+
+                        beginRealtimeCatchupWindow();
 
                         window.dispatchEvent(
                             new CustomEvent(DB_COMMIT_EVENT_NAME, {
