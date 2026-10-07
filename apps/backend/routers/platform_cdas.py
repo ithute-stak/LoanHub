@@ -17,6 +17,7 @@ from database.session import get_db
 from integrations.cdas import CdasError
 from integrations.cdas_compatible import CdasCompatibleClient as CdasClient
 from services.cdas_request_budget import consume_cdas_request_budget
+from services.cdas_config_service import approve_live_release, configuration_summary, get_configuration
 from services.platform_cdas_service import (
     decrypt_profile_password,
     get_profile,
@@ -44,6 +45,10 @@ class CdasProfileWrite(BaseModel):
     item_code: str | None = Field(default=None, max_length=100)
     password: str | None = Field(default=None, max_length=500)
     timeout_seconds: float = Field(default=20, ge=1, le=120)
+
+
+class CdasLiveReleaseApproval(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class CdasTransactionWaiver(BaseModel):
@@ -197,6 +202,25 @@ async def test_cdas_profile(
     db.commit()
     db.refresh(profile)
     return profile_payload(profile)
+
+
+@router.post("/companies/{company_id}/live-release/approve")
+def approve_cdas_live_release(
+    company_id: UUID,
+    payload: CdasLiveReleaseApproval,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_platform_owner),
+):
+    try:
+        row = approve_live_release(
+            db,
+            company_id=company_id,
+            approved_by_user_id=current_user.id,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return configuration_summary(row, db=db, company_id=company_id)
 
 
 @router.get("/transactions")

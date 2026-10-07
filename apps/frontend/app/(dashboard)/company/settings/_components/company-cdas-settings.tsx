@@ -41,6 +41,29 @@ type Subscription = {
     };
 };
 
+type CdasLiveRelease = {
+    approved: boolean;
+    approved_at: string | null;
+    approved_by_user_id: string | null;
+    note: string | null;
+    profile_fingerprint_matches: boolean;
+    connection_test_fresh: boolean;
+    connection_test_age_hours: number | null;
+    connection_test_max_age_hours: number;
+};
+
+type CdasReadiness = {
+    provider: "CDAS";
+    api_contract: string;
+    environment: CdasEnvironment;
+    score: number;
+    ready: boolean;
+    grade: string;
+    checks: Array<{ key: string; label: string; passed: boolean; blocking: boolean; detail?: string | null }>;
+    unresolved_operation_count: number;
+    policy_note: string;
+};
+
 type CdasConfiguration = {
     provider: "cdas";
     environment: CdasEnvironment;
@@ -49,6 +72,7 @@ type CdasConfiguration = {
     last_test_status: string | null;
     last_tested_at: string | null;
     profiles: { test: ProfileState; live: ProfileState };
+    live_release?: CdasLiveRelease;
     subscription: Subscription;
 };
 
@@ -98,6 +122,7 @@ export function CompanyCdasSettings({ canManage }: Props) {
     const [configuration, setConfiguration] = useState<CdasConfiguration | null>(null);
     const [transactions, setTransactions] = useState<CdasTransaction[]>([]);
     const [invoices, setInvoices] = useState<CdasInvoice[]>([]);
+    const [readiness, setReadiness] = useState<CdasReadiness | null>(null);
     const [loading, setLoading] = useState(true);
     const [requesting, setRequesting] = useState(false);
     const [switching, setSwitching] = useState(false);
@@ -107,14 +132,16 @@ export function CompanyCdasSettings({ canManage }: Props) {
         setLoading(true);
         setLoadError(null);
         try {
-            const [configResponse, transactionResponse, invoiceResponse] = await Promise.all([
+            const [configResponse, transactionResponse, invoiceResponse, readinessResponse] = await Promise.all([
                 api.get<CdasConfiguration>("/cdas/configuration"),
                 api.get<CdasTransaction[]>("/cdas/transactions?limit=10"),
                 api.get<CdasInvoice[]>("/cdas/invoices?limit=12"),
+                api.get<CdasReadiness>("/cdas/readiness"),
             ]);
             setConfiguration(configResponse.data);
             setTransactions(transactionResponse.data);
             setInvoices(invoiceResponse.data);
+            setReadiness(readinessResponse.data);
         } catch (error: unknown) {
             setLoadError(getErrorMessage(error, "CDAS service status could not be loaded."));
         } finally {
@@ -239,6 +266,30 @@ export function CompanyCdasSettings({ canManage }: Props) {
                 <Status label="Credit limit" value={usage?.credit_limit == null ? "Unlimited" : formatMoney(usage.credit_limit)} />
                 <Status label="Remaining credit" value={usage?.remaining_credit == null ? "Unlimited" : formatMoney(usage.remaining_credit)} />
             </div>
+
+            <Card className={readiness?.ready ? "border-emerald-500/30" : "border-amber-500/30"}>
+                <CardHeader>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div><CardTitle>CDAS production readiness</CardTitle><CardDescription>LoanHub v1.5 control readiness for the currently selected CDAS environment.</CardDescription></div>
+                        <div className="text-right"><p className="text-2xl font-black">{readiness?.score ?? 0}%</p><Badge variant={readiness?.ready ? "default" : "secondary"}>{readiness?.ready ? "10/10-ready" : "Action required"}</Badge></div>
+                    </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {readiness?.checks.map((check) => (
+                        <div key={check.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
+                            <div><p className="text-sm font-bold">{check.label}</p>{check.detail ? <p className="mt-1 text-xs text-muted-foreground">{check.detail}</p> : null}</div>
+                            <div className="flex items-center gap-2">{check.blocking ? <Badge variant="outline">Blocking</Badge> : null}{check.passed ? <CircleCheck className="h-5 w-5 text-emerald-600" /> : <CircleX className="h-5 w-5 text-destructive" />}</div>
+                        </div>
+                    ))}
+                    {configuration?.environment === "live" ? (
+                        <div className="rounded-xl border bg-muted/20 p-3 text-xs text-muted-foreground">
+                            Live release: <b>{configuration.live_release?.approved ? "Approved for the exact tested profile" : "Not approved"}</b>
+                            {configuration.live_release?.connection_test_age_hours != null ? <> · Test age {configuration.live_release.connection_test_age_hours.toFixed(1)}h</> : null}
+                        </div>
+                    ) : null}
+                    <p className="text-xs leading-5 text-muted-foreground">{readiness?.policy_note}</p>
+                </CardContent>
+            </Card>
 
             <Card>
                 <CardHeader><CardTitle>Live PAYG pricing</CardTitle><CardDescription>Test operations cost M0.00. Pricing below applies only to successful Live business operations; login, token refresh and reconciliation traffic is not billed.</CardDescription></CardHeader>

@@ -111,6 +111,7 @@ export default function PlatformCdasPage() {
     const [billingDueDays, setBillingDueDays] = useState("14");
     const [savingProfile, setSavingProfile] = useState(false);
     const [testingProfile, setTestingProfile] = useState(false);
+    const [approvingLive, setApprovingLive] = useState(false);
     const [savingDecision, setSavingDecision] = useState(false);
     const [transactions, setTransactions] = useState<CdasTransaction[]>([]);
     const [invoices, setInvoices] = useState<CdasInvoice[]>([]);
@@ -225,6 +226,24 @@ export default function PlatformCdasPage() {
             toast.error(getErrorMessage(error, "CDAS profile test failed."));
         } finally {
             setTestingProfile(false);
+        }
+    }
+
+    async function approveLiveRelease() {
+        if (!selectedCompanyId) return;
+        setApprovingLive(true);
+        try {
+            await api.post(`/platform-owner/cdas/companies/${selectedCompanyId}/live-release/approve`, {
+                note: "Platform Owner production approval after successful Live profile verification.",
+            });
+            toast.success("CDAS Live release approved", {
+                description: "The Company Owner may now select Live while this exact tested profile remains valid.",
+            });
+            await load();
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "CDAS Live release could not be approved."));
+        } finally {
+            setApprovingLive(false);
         }
     }
 
@@ -377,7 +396,9 @@ export default function PlatformCdasPage() {
                                 <div className="flex flex-wrap gap-2">
                                     <LoadingButton loading={savingProfile} onClick={() => void saveProfile()}><Save className="h-4 w-4" />Save profile</LoadingButton>
                                     <LoadingButton loading={testingProfile} variant="outline" disabled={!selectedProfile?.configured} onClick={() => void testProfile()}><TestTube2 className="h-4 w-4" />Test login</LoadingButton>
+                                    {environment === "live" ? <LoadingButton loading={approvingLive} variant="outline" disabled={selected.status !== "approved" || selectedProfile?.last_test_status !== "connected" || !selectedProfile?.item_code} onClick={() => void approveLiveRelease()}><ShieldCheck className="h-4 w-4" />Approve exact Live profile</LoadingButton> : null}
                                 </div>
+                                {environment === "live" ? <p className="text-xs leading-5 text-muted-foreground">Production approval is separate from connection testing. Saving or retesting the Live profile changes its approval fingerprint and requires a fresh Platform Owner release approval.</p> : null}
                             </CardContent>
                         </Card>
 

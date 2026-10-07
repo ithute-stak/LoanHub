@@ -172,3 +172,53 @@ def test_clean_company_client_wires_quota_guard_shared_session_and_local_status(
     assert "RedisCdasSessionBroker" in config_source
     assert "session_broker=_shared_session_broker(credentials, generation=signature)" in config_source
     assert '"shared_session_enabled": bool(settings.REDIS_URL)' in config_source
+
+
+def test_cdas_v15_provider_errors_are_structured_and_actionable() -> None:
+    integration = (ROOT / "apps" / "backend" / "integrations" / "cdas.py").read_text(encoding="utf-8")
+    router = ROUTER.read_text(encoding="utf-8")
+
+    for status, code in [
+        (495, "DEDUCTION_MODIFICATION_DISALLOWED"),
+        (496, "INVALID_INSTALLMENT_COUNT"),
+        (497, "INVALID_EFFECTIVE_MONTH"),
+        (498, "ITEM_CODE_OWNERSHIP_MISMATCH"),
+        (499, "DEDUCTION_EXCEEDS_AFFORDABILITY"),
+    ]:
+        assert f'{status}: {{"code": "{code}"' in integration
+
+    assert "cdas_error_semantics" in router
+    assert '"provider_error_code": semantics["code"]' in router
+    assert '"retryable": semantics["retryable"]' in router
+    assert '"action": semantics["action"]' in router
+
+
+def test_live_release_requires_exact_fresh_tested_profile_and_explicit_platform_approval() -> None:
+    config_source = CONFIG_SERVICE.read_text(encoding="utf-8")
+    platform_router = (ROOT / "apps" / "backend" / "routers" / "platform_cdas.py").read_text(encoding="utf-8")
+    company_settings = (ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "settings" / "_components" / "company-cdas-settings.tsx").read_text(encoding="utf-8")
+    platform_page = (ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "superadmin" / "control" / "integrations" / "cdas" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "LIVE_CONNECTION_TEST_MAX_AGE_HOURS = 24" in config_source
+    assert "def _profile_release_fingerprint(" in config_source
+    assert "def live_release_state(" in config_source
+    assert "def approve_live_release(" in config_source
+    assert "profile_fingerprint" in config_source
+    assert "connection_test_fresh" in config_source
+    assert "must explicitly approve this exact tested CDAS Live profile for production" in config_source
+    assert '@router.post("/companies/{company_id}/live-release/approve")' in platform_router
+    assert "Approve exact Live profile" in platform_page
+    assert "CDAS production readiness" in company_settings
+
+
+def test_cdas_readiness_is_explicit_blocking_and_non_authoritative_for_external_approval() -> None:
+    source = ROUTER.read_text(encoding="utf-8")
+    assert '@router.get("/readiness")' in source
+    assert '"api_contract": "v1.5"' in source
+    assert '"10/10-ready"' in source
+    assert '"mutation_reconciliation"' in source
+    assert '"request_budget"' in source
+    assert '"shared_session"' in source
+    assert '"live_release"' in source
+    assert '"live_test_fresh"' in source
+    assert "does not itself grant DataNet/CDAS production permission" in source

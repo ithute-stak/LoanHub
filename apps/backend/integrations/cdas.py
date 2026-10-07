@@ -34,6 +34,34 @@ class CdasError(Exception):
 class CdasConfigurationError(CdasError):
     pass
 
+CDAS_PROVIDER_ERROR_CATALOG: dict[int, dict[str, Any]] = {
+    401: {"code": "TOKEN_MAX_AGE_EXPIRED", "category": "authentication", "retryable": True, "action": "Re-authenticate and retry read-only requests only."},
+    402: {"code": "TOKEN_IDLE_EXPIRED", "category": "authentication", "retryable": True, "action": "Re-authenticate and retry read-only requests only."},
+    406: {"code": "INVALID_TOKEN_FORMAT", "category": "authentication", "retryable": True, "action": "Discard the cached session and obtain a fresh token."},
+    417: {"code": "AUTHORIZATION_TOKEN_MISSING", "category": "authentication", "retryable": True, "action": "Obtain a fresh authenticated session."},
+    419: {"code": "SESSION_INACTIVE", "category": "authentication", "retryable": True, "action": "Obtain a fresh authenticated session; never replay an uncertain mutation automatically."},
+    429: {"code": "PROVIDER_RATE_LIMIT", "category": "rate_limit", "retryable": False, "action": "Stop provider traffic and wait for the provider allowance to reset."},
+    495: {"code": "DEDUCTION_MODIFICATION_DISALLOWED", "category": "business_rule", "retryable": False, "action": "Read the current deduction state and choose the documented lifecycle action."},
+    496: {"code": "INVALID_INSTALLMENT_COUNT", "category": "validation", "retryable": False, "action": "Provide a non-zero installment count."},
+    497: {"code": "INVALID_EFFECTIVE_MONTH", "category": "validation", "retryable": False, "action": "Correct the effective month/date before resubmission."},
+    498: {"code": "ITEM_CODE_OWNERSHIP_MISMATCH", "category": "configuration", "retryable": False, "action": "Verify the Platform Owner configured the Item Code assigned to this company."},
+    499: {"code": "DEDUCTION_EXCEEDS_AFFORDABILITY", "category": "affordability", "retryable": False, "action": "Reduce the deduction or re-check the employee's available affordability."},
+}
+
+
+def cdas_error_semantics(status_code: int) -> dict[str, Any]:
+    return dict(CDAS_PROVIDER_ERROR_CATALOG.get(
+        int(status_code),
+        {
+            "code": "CDAS_PROVIDER_ERROR",
+            "category": "provider",
+            "retryable": False,
+            "action": "Review the provider response and reconcile state before another mutation.",
+        },
+    ))
+
+
+
 
 @dataclass(slots=True)
 class _TokenState:
