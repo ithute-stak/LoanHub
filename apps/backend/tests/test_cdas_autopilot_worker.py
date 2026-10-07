@@ -66,3 +66,22 @@ def test_autopilot_scheduler_runs_only_through_production_lifespan() -> None:
     assert "if not settings.SANDBOX_MODE:" in main
     assert 'name="loanhub-cdas-autopilot"' in scheduler
     assert "timeout=max(300, interval_seconds)" in scheduler
+
+
+def test_affordability_scan_deduplicates_provider_reads_per_company_employee_day() -> None:
+    worker = _read(ROOT / "services/cdas_autopilot_worker.py")
+
+    assert "affordability_cache: dict[tuple[str, str, str], Decimal] = {}" in worker
+    assert "cache_key = (" in worker
+    assert "str(profile.employee_number).strip().casefold()" in worker
+    assert "if cache_key in affordability_cache:" in worker
+    assert "affordability_cache[cache_key] = live_affordability" in worker
+    assert '"dedupe_scope": "company_employee_day"' in worker
+    assert 'f"{profile.employee_number}:{today.isoformat()}"' in worker
+
+
+def test_affordability_scan_reports_provider_read_reuse() -> None:
+    worker = _read(ROOT / "services/cdas_autopilot_worker.py")
+
+    assert '"provider_reads": provider_reads' in worker
+    assert '"reused_reads": reused_reads' in worker
