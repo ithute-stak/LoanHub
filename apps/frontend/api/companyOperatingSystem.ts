@@ -197,3 +197,86 @@ export async function askCompanyDataAssistant(question: string): Promise<{
 }> {
   return (await api.post("/company-operating-system/assistant", { question })).data;
 }
+
+
+export type ManagementAction = {
+  id: string;
+  reference: string;
+  branch_id: string | null;
+  source_signal_id: string;
+  source: string;
+  domain: string;
+  severity: "low" | "medium" | "high" | "critical";
+  title: string;
+  description: string | null;
+  status: "assigned" | "in_progress" | "escalated" | "resolved" | "verified" | "cancelled";
+  priority: string;
+  assigned_user_id: string | null;
+  created_by_user_id: string | null;
+  due_at: string | null;
+  overdue: boolean;
+  days_overdue: number;
+  escalation_level: number;
+  recommended_action: string | null;
+  action_url: string | null;
+  source_signal: Record<string, unknown>;
+  decision?: string | null;
+  decision_note?: string | null;
+  resolution?: string | null;
+  resolved_by_user_id?: string | null;
+  resolved_at?: string | null;
+  verification_outcome?: "verified" | "reopened" | null;
+  verified_by_user_id?: string | null;
+  verified_at?: string | null;
+  timeline: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listManagementActions(): Promise<ManagementAction[]> {
+  return (await api.get<ManagementAction[]>("/company-operating-system/management-actions")).data;
+}
+
+export async function createManagementAction(payload: {
+  source_signal_id: string;
+  source: string;
+  domain: string;
+  severity: "low" | "medium" | "high" | "critical";
+  title: string;
+  why_now: string;
+  recommended_action: string;
+  action_url: string;
+  evidence: Record<string, unknown>;
+  assigned_user_id: string;
+  due_at: string;
+  branch_id?: string | null;
+}): Promise<ManagementAction> {
+  return (await api.post<ManagementAction>("/company-operating-system/management-actions", payload)).data;
+}
+
+export async function recordManagementDecision(id: string, payload: {
+  decision: string;
+  note: string;
+  evidence_references?: string[];
+}): Promise<ManagementAction> {
+  return (await api.post<ManagementAction>(`/company-operating-system/management-actions/${id}/decisions`, payload)).data;
+}
+
+export async function resolveManagementAction(id: string, payload: {
+  resolution: string;
+  evidence_references?: string[];
+}): Promise<ManagementAction> {
+  return (await api.post<ManagementAction>(`/company-operating-system/management-actions/${id}/resolve`, payload)).data;
+}
+
+export async function verifyManagementAction(id: string, payload: {
+  outcome: "verified" | "reopened";
+  note: string;
+  evidence_references?: string[];
+}): Promise<ManagementAction> {
+  return (await api.post<ManagementAction>(`/company-operating-system/management-actions/${id}/verify`, payload)).data;
+}
+
+export async function escalateOverdueManagementActions(): Promise<{ escalated_count: number; record_ids: string[] }> {
+  return (await api.post("/company-operating-system/management-actions/escalate-overdue")).data;
+}
