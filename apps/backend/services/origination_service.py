@@ -782,6 +782,7 @@ def calculate_affordability(
     processing_fee: Decimal,
     interest_method: LoanCalculationMethod | str,
     calculated_by_user_id: UUID,
+    live_cdas_affordability: Decimal | None = None,
 ) -> AffordabilityAssessment:
     policy = get_or_create_policy(db, company_id, calculated_by_user_id)
     profile = financial_profile_payload(db, company_id=company_id, borrower_id=borrower_id)
@@ -830,6 +831,11 @@ def calculate_affordability(
                 max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
                 environment=str(bureau_policy.get("environment") or "sandbox"),
             )
+        if not latest_bureau:
+            raise HTTPException(
+                status_code=409,
+                detail="A fresh credit-bureau report is required before affordability can be calculated.",
+            )
     bureau_fresh = latest_bureau is not None
     bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
     cdas_profile = (
@@ -840,7 +846,7 @@ def calculate_affordability(
         )
         .first()
     )
-    if bureau_fresh and bureau_policy.get("include_bureau_commitments_in_affordability"):
+    if bureau_fresh:
         debt_mode = str(bureau_policy.get("bureau_debt_mode") or "max")
         if debt_mode == "bureau_only":
             debt_installments = bureau_monthly_commitments
@@ -869,6 +875,7 @@ def calculate_affordability(
         cdas_profile=cdas_profile,
         cdas_selected=bool(application.cdas_collection_enabled),
         proposed_installment=monthly,
+        live_cdas_affordability=live_cdas_affordability,
     )
 
     reasons: list[dict[str, str]] = []
@@ -929,6 +936,27 @@ def calculate_affordability(
             })
 
     cdas_capacity = external_evidence["cdas"]
+    if cdas_capacity["verified"] and live_cdas_affordability is None:
+        blocking = True
+        reasons.append({
+            "severity": "error",
+            "code": "cdas_live_affordability_missing",
+            "message": "A live CDAS affordability result is required when the borrower has a verified employee number.",
+        })
+    if cdas_capacity["verified"] and live_cdas_affordability is not None:
+        if monthly > money(live_cdas_affordability):
+            blocking = True
+            reasons.append({
+                "severity": "error",
+                "code": "cdas_live_affordability_insufficient",
+                "message": "The proposed installment exceeds the borrower's live CDAS affordability.",
+            })
+        else:
+            reasons.append({
+                "severity": "pass",
+                "code": "cdas_live_affordability_ok",
+                "message": "The proposed installment fits within the borrower's live CDAS affordability.",
+            })
     if application.cdas_collection_enabled and cdas_capacity["verified"]:
         if not cdas_capacity["capacity_sufficient"]:
             blocking = True
@@ -1009,9 +1037,22 @@ def calculate_affordability(
                 "score": latest_bureau.score if latest_bureau else None,
                 "risk_grade": latest_bureau.risk_grade if latest_bureau else None,
                 "monthly_commitments": str(bureau_monthly_commitments),
+                "included_in_affordability": bureau_fresh,
                 "policy": bureau_policy,
             },
             "external_underwriting_evidence": external_evidence,
+            "composite_affordability": {
+                "bureau_used": bureau_fresh,
+                "bureau_monthly_commitments": str(bureau_monthly_commitments),
+                "cdas_employee_number_present": bool(cdas_profile and str(cdas_profile.employee_number or "").strip()),
+                "cdas_live_affordability": str(money(live_cdas_affordability)) if live_cdas_affordability is not None else None,
+                "internal_maximum_affordable_installment": str(max_installment),
+                "authoritative_installment_limit": str(
+                    min(max_installment, money(live_cdas_affordability))
+                    if live_cdas_affordability is not None
+                    else max_installment
+                ),
+            },
             "policy": serialize(policy),
             "proposal": {
                 "principal": principal,
