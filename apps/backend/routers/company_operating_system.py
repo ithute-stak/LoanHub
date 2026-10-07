@@ -47,6 +47,8 @@ from database.schemas.company_operating_system import (
     APIKeyCreate,
     ALMFundingFacilityCreate,
     ALMStressRequest,
+    InterestRateLoanProfileCreate,
+    InterestRateStressRequest,
     APIKeyIssued,
     APIKeyRead,
     CompanyAssistantRequest,
@@ -1731,6 +1733,357 @@ def _alm_intelligence(
             "ALM maturity analysis uses scheduled loan cash inflows, approved treasury obligations and explicitly registered funding maturities. "
             "The duration-style maturity gap is a weighted cash-flow timing indicator, not market-value duration or interest-rate VaR."
         ),
+    }
+
+
+
+RATE_REPRICING_BUCKETS = ALM_BUCKETS
+
+
+def _loan_rate_profile_query(db: Session, context: TenantContext):
+    return _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "portfolio_alm",
+        CompanyOperatingRecord.record_type == "loan_rate_profile",
+        CompanyOperatingRecord.status == "active",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+
+
+def _interest_rate_risk_intelligence(
+    db: Session,
+    context: TenantContext,
+    *,
+    asset_shock_bps=Decimal("0"),
+    funding_shock_bps=Decimal("0"),
+    horizon_days: int = 365,
+) -> dict:
+    today = date.today()
+    horizon_end = today + timedelta(days=horizon_days)
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+
+    profile_rows = _loan_rate_profile_query(db, context).all()
+    profiles = {row.loan_id: row for row in profile_rows if row.loan_id}
+
+    loans = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == context.company_id,
+        ClientCompanyLoan.balance > 0,
+        ClientCompanyLoan.status.notin_([LoanStatus.COMPLETED, LoanStatus.CANCELLED, LoanStatus.REJECTED]),
+    )
+    if branch_id:
+        loans = loans.filter(ClientCompanyLoan.branch_id == branch_id)
+
+    buckets = {
+        name: {
+            "asset_balance": Decimal("0"),
+            "funding_balance": Decimal("0"),
+            "variable_asset_balance": Decimal("0"),
+            "variable_funding_balance": Decimal("0"),
+        }
+        for name, _, _ in RATE_REPRICING_BUCKETS
+    }
+
+    fixed_assets = Decimal("0")
+    variable_assets = Decimal("0")
+    weighted_asset_rate = Decimal("0")
+    asset_balance_total = Decimal("0")
+    asset_delta_nii = Decimal("0")
+    loan_rows = []
+
+    for loan in loans.all():
+        balance = Decimal(str(loan.balance or 0))
+        if balance <= 0:
+            continue
+        profile = profiles.get(loan.id)
+        data = dict(profile.data or {}) if profile else {}
+        rate_type = str(data.get("rate_type") or "fixed")
+        next_repr_date = None
+        if rate_type == "variable" and data.get("next_repricing_date"):
+            next_repr_date = datetime.fromisoformat(str(data["next_repricing_date"])).date()
+        repricing_date = next_repr_date or loan.maturity_date or horizon_end
+        days_to_repricing = max((repricing_date - today).days, 0)
+        bucket = _alm_bucket(days_to_repricing)
+        buckets[bucket]["asset_balance"] += balance
+        rate = Decimal(str(loan.interest_rate or 0))
+        asset_balance_total += balance
+        weighted_asset_rate += balance * rate
+
+        sensitive_days = 0
+        shock_impact = Decimal("0")
+        if rate_type == "variable":
+            variable_assets += balance
+            buckets[bucket]["variable_asset_balance"] += balance
+            if repricing_date <= horizon_end:
+                sensitive_days = max((horizon_end - max(repricing_date, today)).days, 0)
+                shock_impact = balance * (Decimal(str(asset_shock_bps)) / Decimal("10000")) * Decimal(sensitive_days) / Decimal("365")
+                asset_delta_nii += shock_impact
+        else:
+            fixed_assets += balance
+
+        loan_rows.append({
+            "loan_id": str(loan.id),
+            "loan_reference": loan.loan_reference,
+            "folio_number": loan.folio_number,
+            "balance": float(balance),
+            "contractual_rate_percent": float(rate),
+            "rate_type": rate_type,
+            "repricing_date": repricing_date.isoformat(),
+            "days_to_repricing": days_to_repricing,
+            "bucket": bucket,
+            "reference_rate_name": data.get("reference_rate_name"),
+            "spread_percent": data.get("spread_percent"),
+            "floor_percent": data.get("floor_percent"),
+            "cap_percent": data.get("cap_percent"),
+            "shock_sensitive_days": sensitive_days,
+            "shock_delta_interest_income": float(shock_impact.quantize(Decimal("0.01"))),
+            "profile_source": "explicit" if profile else "fixed_to_maturity_default",
+        })
+
+    facilities = _alm_funding_facilities(db, context)
+    fixed_funding = Decimal("0")
+    variable_funding = Decimal("0")
+    funding_balance_total = Decimal("0")
+    weighted_funding_rate = Decimal("0")
+    funding_delta_nii = Decimal("0")
+    funding_rows = []
+
+    for row in facilities:
+        amount = Decimal(str(row.amount or 0))
+        data = dict(row.data or {})
+        next_repr = data.get("next_repricing_date")
+        rate_type = "variable" if next_repr else "fixed"
+        if next_repr:
+            repricing_date = datetime.fromisoformat(str(next_repr)).date()
+        else:
+            repricing_date = row.due_at.date() if row.due_at else horizon_end
+        days_to_repricing = max((repricing_date - today).days, 0)
+        bucket = _alm_bucket(days_to_repricing)
+        buckets[bucket]["funding_balance"] += amount
+        rate = Decimal(str(data.get("interest_rate_percent") or 0))
+        funding_balance_total += amount
+        weighted_funding_rate += amount * rate
+
+        sensitive_days = 0
+        shock_impact = Decimal("0")
+        if rate_type == "variable":
+            variable_funding += amount
+            buckets[bucket]["variable_funding_balance"] += amount
+            if repricing_date <= horizon_end:
+                sensitive_days = max((horizon_end - max(repricing_date, today)).days, 0)
+                shock_impact = amount * (Decimal(str(funding_shock_bps)) / Decimal("10000")) * Decimal(sensitive_days) / Decimal("365")
+                funding_delta_nii += shock_impact
+        else:
+            fixed_funding += amount
+
+        funding_rows.append({
+            "facility_id": str(row.id),
+            "reference": row.reference,
+            "lender_name": data.get("lender_name") or row.counterparty_name,
+            "outstanding_amount": float(amount),
+            "contractual_rate_percent": float(rate),
+            "rate_type": rate_type,
+            "repricing_date": repricing_date.isoformat(),
+            "days_to_repricing": days_to_repricing,
+            "bucket": bucket,
+            "shock_sensitive_days": sensitive_days,
+            "shock_delta_interest_expense": float(shock_impact.quantize(Decimal("0.01"))),
+        })
+
+    repricing_ladder = []
+    cumulative_gap = Decimal("0")
+    for name, _, _ in RATE_REPRICING_BUCKETS:
+        row = buckets[name]
+        gap = row["asset_balance"] - row["funding_balance"]
+        variable_gap = row["variable_asset_balance"] - row["variable_funding_balance"]
+        cumulative_gap += gap
+        repricing_ladder.append({
+            "bucket": name,
+            "asset_balance": float(row["asset_balance"].quantize(Decimal("0.01"))),
+            "funding_balance": float(row["funding_balance"].quantize(Decimal("0.01"))),
+            "repricing_gap": float(gap.quantize(Decimal("0.01"))),
+            "cumulative_gap": float(cumulative_gap.quantize(Decimal("0.01"))),
+            "variable_asset_balance": float(row["variable_asset_balance"].quantize(Decimal("0.01"))),
+            "variable_funding_balance": float(row["variable_funding_balance"].quantize(Decimal("0.01"))),
+            "variable_repricing_gap": float(variable_gap.quantize(Decimal("0.01"))),
+        })
+
+    avg_asset_rate = float((weighted_asset_rate / asset_balance_total).quantize(Decimal("0.001"))) if asset_balance_total > 0 else None
+    avg_funding_rate = float((weighted_funding_rate / funding_balance_total).quantize(Decimal("0.001"))) if funding_balance_total > 0 else None
+    baseline_spread = (
+        round(avg_asset_rate - avg_funding_rate, 3)
+        if avg_asset_rate is not None and avg_funding_rate is not None
+        else None
+    )
+    delta_nii = asset_delta_nii - funding_delta_nii
+
+    return {
+        "as_of": today.isoformat(),
+        "horizon_days": horizon_days,
+        "branch_id": str(branch_id) if branch_id else None,
+        "summary": {
+            "asset_balance": float(asset_balance_total.quantize(Decimal("0.01"))),
+            "funding_balance": float(funding_balance_total.quantize(Decimal("0.01"))),
+            "fixed_asset_balance": float(fixed_assets.quantize(Decimal("0.01"))),
+            "variable_asset_balance": float(variable_assets.quantize(Decimal("0.01"))),
+            "fixed_funding_balance": float(fixed_funding.quantize(Decimal("0.01"))),
+            "variable_funding_balance": float(variable_funding.quantize(Decimal("0.01"))),
+            "weighted_average_asset_rate_percent": avg_asset_rate,
+            "weighted_average_funding_rate_percent": avg_funding_rate,
+            "baseline_rate_spread_percent": baseline_spread,
+            "asset_shock_bps": float(asset_shock_bps),
+            "funding_shock_bps": float(funding_shock_bps),
+            "estimated_delta_interest_income": float(asset_delta_nii.quantize(Decimal("0.01"))),
+            "estimated_delta_interest_expense": float(funding_delta_nii.quantize(Decimal("0.01"))),
+            "estimated_delta_net_interest_income": float(delta_nii.quantize(Decimal("0.01"))),
+        },
+        "repricing_ladder": repricing_ladder,
+        "loan_profiles": loan_rows,
+        "funding_profiles": funding_rows,
+        "risk_flags": {
+            "asset_variable_share_high": (variable_assets / asset_balance_total) >= Decimal("0.50") if asset_balance_total > 0 else False,
+            "funding_variable_share_high": (variable_funding / funding_balance_total) >= Decimal("0.50") if funding_balance_total > 0 else False,
+            "negative_30d_repricing_gap": sum(
+                Decimal(str(row["repricing_gap"]))
+                for row in repricing_ladder[:2]
+            ) < 0,
+            "rate_shock_reduces_nii": delta_nii < 0,
+        },
+        "policy_note": (
+            "Interest-rate risk is measured from explicit repricing evidence. Loans without a variable-rate profile are treated as fixed to maturity; "
+            "funding facilities without a next repricing date are treated as fixed to maturity. Estimated NII impact is an earnings-at-risk style approximation "
+            "based on current balances and remaining horizon after repricing; it is not market-value duration, VaR or a statutory IRRBB calculation."
+        ),
+    }
+
+
+@router.post("/interest-rate-risk/loan-profiles", status_code=201)
+def create_interest_rate_loan_profile(
+    payload: InterestRateLoanProfileCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == payload.loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan was not found in this company")
+    existing = _loan_rate_profile_query(db, context).filter(
+        CompanyOperatingRecord.loan_id == payload.loan_id,
+    ).first()
+    data = {
+        "rate_type": payload.rate_type,
+        "next_repricing_date": payload.next_repricing_date.isoformat() if payload.next_repricing_date else None,
+        "reference_rate_name": payload.reference_rate_name,
+        "spread_percent": float(payload.spread_percent) if payload.spread_percent is not None else None,
+        "floor_percent": float(payload.floor_percent) if payload.floor_percent is not None else None,
+        "cap_percent": float(payload.cap_percent) if payload.cap_percent is not None else None,
+    }
+    if existing:
+        existing.title = f"Rate profile for {loan.loan_reference}"
+        existing.description = payload.notes
+        existing.data = data
+        existing.updated_at = _now()
+        record = existing
+    else:
+        record = CompanyOperatingRecord(
+            company_id=context.company_id,
+            branch_id=loan.branch_id,
+            module="portfolio_alm",
+            record_type="loan_rate_profile",
+            reference=f"RATE-{secrets.token_hex(4).upper()}",
+            title=f"Rate profile for {loan.loan_reference}",
+            description=payload.notes,
+            status="active",
+            priority="normal",
+            loan_id=loan.id,
+            borrower_id=loan.borrower_id,
+            created_by_user_id=context.user.id,
+            due_at=payload.next_repricing_date,
+            data=data,
+            tags=["alm", "interest_rate_risk", payload.rate_type],
+        )
+        db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {
+        "id": str(record.id),
+        "reference": record.reference,
+        "loan_id": str(loan.id),
+        "loan_reference": loan.loan_reference,
+        "rate_type": payload.rate_type,
+        "next_repricing_date": data["next_repricing_date"],
+    }
+
+
+@router.get("/interest-rate-risk")
+def get_interest_rate_risk(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    return _interest_rate_risk_intelligence(db, context)
+
+
+@router.post("/interest-rate-risk/stress-test")
+def run_interest_rate_stress_test(
+    payload: InterestRateStressRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    asset_shock = payload.asset_shock_bps if payload.asset_shock_bps is not None else payload.parallel_shock_bps
+    funding_shock = payload.funding_shock_bps if payload.funding_shock_bps is not None else payload.parallel_shock_bps
+    return _interest_rate_risk_intelligence(
+        db,
+        context,
+        asset_shock_bps=asset_shock,
+        funding_shock_bps=funding_shock,
+        horizon_days=payload.horizon_days,
+    )
+
+
+@router.post("/interest-rate-risk/evidence-pack")
+def generate_interest_rate_risk_evidence_pack(
+    payload: InterestRateStressRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER, UserRole.AUDITOR})
+    asset_shock = payload.asset_shock_bps if payload.asset_shock_bps is not None else payload.parallel_shock_bps
+    funding_shock = payload.funding_shock_bps if payload.funding_shock_bps is not None else payload.parallel_shock_bps
+    pack = _interest_rate_risk_intelligence(
+        db,
+        context,
+        asset_shock_bps=asset_shock,
+        funding_shock_bps=funding_shock,
+        horizon_days=payload.horizon_days,
+    )
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"RATEPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=f"Interest-rate risk evidence pack - {today:%d %b %Y}",
+        report_type="interest_rate_risk_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today + timedelta(days=payload.horizon_days),
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
     }
 
 
