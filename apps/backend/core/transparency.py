@@ -595,24 +595,38 @@ def _recipients(
     return list(result.items())
 
 
-async def _send_payloads(payloads: list[dict[str, Any]]) -> None:
-    for payload in payloads:
+async def _send_after_commit(
+    notification_payloads: list[dict[str, Any]],
+    commit_events: list[dict[str, Any]],
+) -> None:
+    for payload in notification_payloads:
         await manager.send_to_user(payload["user_id"], payload)
+    for envelope in commit_events:
+        payload = dict(envelope["payload"])
+        for channel in envelope["channels"]:
+            await manager.send_to_channel(channel, payload)
 
 
-def _dispatch_after_commit(payloads: list[dict[str, Any]]) -> None:
-    if not payloads:
+def _dispatch_after_commit(
+    notification_payloads: list[dict[str, Any]],
+    commit_events: list[dict[str, Any]],
+) -> None:
+    if not notification_payloads and not commit_events:
         return
 
     try:
         import anyio
-        anyio.from_thread.run(_send_payloads, payloads)
+        anyio.from_thread.run(
+            _send_after_commit,
+            notification_payloads,
+            commit_events,
+        )
         return
     except Exception:
         pass
 
     def runner() -> None:
-        asyncio.run(_send_payloads(payloads))
+        asyncio.run(_send_after_commit(notification_payloads, commit_events))
 
     threading.Thread(target=runner, daemon=True).start()
 
@@ -694,6 +708,7 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         actor_role = role_value.value if role_value else None
 
     realtime_payloads = session.info.setdefault("loanhub_realtime_payloads", [])
+    commit_events = session.info.setdefault("loanhub_db_commit_events", [])
     now = datetime.utcnow()
     notification_groups: dict[tuple[Any, ...], dict[str, Any]] = {}
 
@@ -710,6 +725,30 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         changed_fields = event_item["changed_fields"]
         borrower_user_id = _borrower_user_id(connection, target, table_name)
         employee_user_id = _employee_subject_user_id(connection, target, table_name)
+
+        channels: set[str] = {"superadmin"}
+        if company_id:
+            channels.add(f"company-{company_id}")
+        if borrower_user_id:
+            channels.add(f"user-{borrower_user_id}")
+        if employee_user_id:
+            channels.add(f"user-{employee_user_id}")
+
+        commit_events.append({
+            "channels": sorted(channels),
+            "payload": {
+                "type": "DB_EVENT",
+                "contract": "loanhub.db-commit.v1",
+                "table": table_name,
+                "action": action,
+                "entity_id": entity_id,
+                "company_id": str(company_id) if company_id else None,
+                "branch_id": str(branch_id) if branch_id else None,
+                "changed_fields": changed_fields,
+                "committed_at": now.isoformat(),
+                "request_id": current_request_id.get(),
+            },
+        })
 
         audit_id = uuid.uuid4()
         connection.execute(
@@ -862,10 +901,12 @@ def persist_transparency_events(session: Session, flush_context) -> None:
 @event.listens_for(Session, "after_commit")
 def deliver_realtime_notifications(session: Session) -> None:
     payloads = session.info.pop("loanhub_realtime_payloads", [])
-    _dispatch_after_commit(payloads)
+    commit_events = session.info.pop("loanhub_db_commit_events", [])
+    _dispatch_after_commit(payloads, commit_events)
 
 
 @event.listens_for(Session, "after_rollback")
 def discard_realtime_notifications(session: Session) -> None:
     session.info.pop("loanhub_realtime_payloads", None)
+    session.info.pop("loanhub_db_commit_events", None)
     session.info.pop("loanhub_crud_events", None)
