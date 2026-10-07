@@ -180,3 +180,28 @@ def test_committee_uses_same_application_scoped_external_evidence_as_decision_ce
     assert '"external_underwriting_evidence": external_evidence' in service
     assert "available_deduction_capacity" in external
     assert "cdas_existing_deductions_are_capacity_only" in external
+
+
+def test_committee_deal_structuring_is_evidence_only_and_survives_to_final_snapshot():
+    root = Path(__file__).resolve().parents[2]
+    router = (root / "backend" / "routers" / "credit_committee.py").read_text(encoding="utf-8")
+    service = (root / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+    api = (root / "frontend" / "api" / "creditCommittee.ts").read_text(encoding="utf-8")
+    page = (root / "frontend" / "app" / "(dashboard)" / "company" / "credit-committee" / "cases" / "[caseId]" / "page.tsx").read_text(encoding="utf-8")
+
+    assert '@router.post("/cases/{case_id}/deal-structures")' in router
+    assert '@router.post("/cases/{case_id}/deal-structures/select")' in router
+    assert '"deal_structures_generated"' in router
+    assert '"deal_structure_selected"' in router
+    assert "A non-viable structure cannot be selected" in router
+    assert "does not approve credit, alter the application or bypass voting" in router
+
+    assert 'snapshot["selected_deal_structure"] = selected_deal_structure' in service
+    assert '"selected_deal_structure": (case.evidence_snapshot or {}).get("selected_deal_structure")' in service
+
+    assert "generateCommitteeDealStructures" in api
+    assert "selectCommitteeDealStructure" in api
+    assert "Deal Structuring Intelligence" in page
+    assert "Generate viable structures" in page
+    assert "Selected committee structure" in page
+    assert "copies into the analyst proposal fields" not in page
