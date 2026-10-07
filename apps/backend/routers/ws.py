@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy.orm import Session, selectinload
 
 from core.websocket_manager import manager
+from core.access_control import PLATFORM_ROLES
 from database.config.config import settings
 from database.models.enums import UserRole
 from database.models.chat import ChatParticipant
@@ -219,8 +220,10 @@ async def websocket_auth_endpoint(
             return
 
     channels: set[str] = {f'user-{user.id}'}
-    if user.role == UserRole.SUPERADMIN:
-        channels.add('superadmin')
+    if user.role in PLATFORM_ROLES:
+        channels.add('platform')
+        if user.role == UserRole.SUPERADMIN:
+            channels.add('superadmin')
     elif user.role == UserRole.BORROWER:
         channels.add(f'borrower-{user.id}')
     for membership in memberships:
