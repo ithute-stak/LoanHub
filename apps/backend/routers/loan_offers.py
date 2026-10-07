@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from core.access_control import (
     resolve_tenant_context,
 )
 from database.models.borrower import Borrower
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.enums import LoanRequestStatus, OfferStatus, UserRole
 from database.models.loan_offer import LoanOffer
 from database.models.loan_request import LoanRequest
@@ -26,7 +27,16 @@ from database.schemas.loan_offer import (
     QuickLoanAffordabilityPreview,
 )
 from database.session import get_db
+from integrations.cdas import CdasError
 from services.billing_service import company_has_request_access
+from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
+from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_borrower_experian_enquiry
+from services.external_underwriting_evidence_service import bureau_evidence
+from services.platform_cdas_service import (
+    assert_live_credit_available,
+    record_successful_operation,
+    require_approved_subscription,
+)
 from services.loan_service import calculate_offer_totals
 from services.origination_service import get_or_create_policy
 from services.quick_loan_affordability_service import quick_loan_affordability
@@ -42,7 +52,7 @@ def offer_or_404(db: Session, offer_id: UUID) -> LoanOffer:
     return offer
 
 
-def _quick_affordability_for_terms(
+async def _quick_affordability_for_terms(
     db: Session,
     *,
     request: LoanRequest,
@@ -53,6 +63,7 @@ def _quick_affordability_for_terms(
     processing_fee,
     calculation_method,
     installment_due_dates,
+    actor_user_id: UUID,
 ):
     if len(installment_due_dates) != term_months:
         raise HTTPException(
@@ -75,11 +86,111 @@ def _quick_affordability_for_terms(
     if not borrower:
         raise HTTPException(status_code=404, detail="Borrower not found")
     policy = get_or_create_policy(db, company_id)
+
+    bureau_integration, bureau_policy = company_experian_policy(db, company_id)
+    if not bureau_integration or not bureau_integration.is_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Credit-bureau integration must be enabled before quick affordability can be calculated.",
+        )
+    bureau = latest_fresh_borrower_experian_enquiry(
+        db,
+        company_id=company_id,
+        borrower_id=request.borrower_id,
+        max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
+        environment=str(bureau_policy.get("environment") or "sandbox"),
+    )
+    if not bureau:
+        raise HTTPException(
+            status_code=409,
+            detail="A fresh credit-bureau report is required before quick affordability can be calculated.",
+        )
+
+    verified_cdas_profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.borrower_id == request.borrower_id,
+            CDASPayrollProfile.employee_number.isnot(None),
+            CDASPayrollProfile.employee_number != "",
+            CDASPayrollProfile.verified.is_(True),
+        )
+        .first()
+    )
+    live_cdas_affordability = None
+    if verified_cdas_profile:
+        subscription = require_approved_subscription(db, company_id=company_id)
+        cdas_configuration = get_configuration(db, company_id)
+        environment = selected_environment(cdas_configuration)
+        assert_live_credit_available(
+            db,
+            subscription=subscription,
+            environment=environment,
+            operation_type="affordability",
+        )
+        client = get_company_cdas_client(db, company_id)
+        try:
+            live_cdas_affordability = await client.check_affordability(
+                str(verified_cdas_profile.employee_number)
+            )
+        except CdasError as exc:
+            raise HTTPException(
+                status_code=exc.status_code if 400 <= exc.status_code <= 599 else 502,
+                detail=f"CDAS affordability could not be verified: {exc.message}",
+            ) from exc
+        record_successful_operation(
+            db,
+            company_id=company_id,
+            environment=environment,
+            operation_type="affordability",
+            actor_user_id=actor_user_id,
+            billing_key=f"cdas-quick-affordability:{request.id}:{uuid4().hex}",
+            source_reference=str(request.id),
+            metadata={
+                "request_origin": "marketplace_quick_affordability",
+                "employee_number_present": True,
+            },
+        )
+
     affordability = quick_loan_affordability(
         borrower=borrower,
         policy=policy,
         proposed_installment=monthly,
+        bureau_monthly_commitments=Decimal(str(bureau.monthly_obligations or 0)),
+        live_cdas_affordability=live_cdas_affordability,
     )
+    bureau_policy_evidence = bureau_evidence(
+        bureau,
+        policy=bureau_policy,
+        application_id=request.id,
+    )
+    affordability["external_evidence"] = {
+        "credit_bureau": bureau_policy_evidence,
+        "cdas": {
+            "employee_number_present": bool(verified_cdas_profile),
+            "live_affordability": str(live_cdas_affordability) if live_cdas_affordability is not None else None,
+        },
+    }
+    if bureau_policy_evidence["blockers"]:
+        affordability["passed"] = False
+        affordability["decision"] = "fail"
+        affordability["reasons"].extend(
+            {
+                "severity": "error",
+                "code": item["code"],
+                "message": item["message"],
+            }
+            for item in bureau_policy_evidence["blockers"]
+        )
+    elif bureau_policy_evidence["warnings"]:
+        affordability["reasons"].extend(
+            {
+                "severity": "warning",
+                "code": item["code"],
+                "message": item["message"],
+            }
+            for item in bureau_policy_evidence["warnings"]
+        )
     affordability["approved_amount"] = str(approved_amount)
     affordability["term_months"] = int(term_months)
     affordability["total_repayment"] = str(total)
@@ -95,7 +206,7 @@ def request_or_404(db: Session, request_id: UUID) -> LoanRequest:
 
 
 @router.post("/quick-affordability-preview")
-def preview_quick_loan_affordability(
+async def preview_quick_loan_affordability(
     payload: QuickLoanAffordabilityPreview,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
@@ -111,7 +222,7 @@ def preview_quick_loan_affordability(
     ):
         raise HTTPException(status_code=402, detail="Unlock this loan request before checking affordability")
 
-    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
         db,
         request=request,
         company_id=context.company_id,
@@ -121,6 +232,7 @@ def preview_quick_loan_affordability(
         processing_fee=payload.processing_fee,
         calculation_method=payload.calculation_method,
         installment_due_dates=payload.installment_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     return {
@@ -134,7 +246,7 @@ def preview_quick_loan_affordability(
 
 
 @router.post("/", response_model=LoanOfferResponse, status_code=status.HTTP_201_CREATED)
-def create_offer(
+async def create_offer(
     payload: LoanOfferCreate,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
@@ -166,7 +278,7 @@ def create_offer(
     if duplicate:
         raise HTTPException(status_code=409, detail="Your company already submitted an offer")
 
-    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
         db,
         request=request,
         company_id=context.company_id,
@@ -176,6 +288,7 @@ def create_offer(
         processing_fee=payload.processing_fee,
         calculation_method=payload.calculation_method,
         installment_due_dates=payload.installment_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     own_risk_reason = (payload.own_risk_reason or "").strip()
@@ -299,7 +412,7 @@ def get_offer(
 
 
 @router.patch("/{offer_id}", response_model=LoanOfferResponse)
-def update_offer(
+async def update_offer(
     offer_id: UUID,
     payload: LoanOfferUpdate,
     db: Session = Depends(get_db),
@@ -333,7 +446,7 @@ def update_offer(
             detail=f"Enter exactly {offer.term_months} installment due dates before updating the offer",
         )
     request = request_or_404(db, offer.loan_request_id)
-    affordability, monthly, total, calculation_breakdown = _quick_affordability_for_terms(
+    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
         db,
         request=request,
         company_id=context.company_id,
@@ -343,6 +456,7 @@ def update_offer(
         processing_fee=offer.processing_fee or 0,
         calculation_method=offer.calculation_method,
         installment_due_dates=supplied_due_dates,
+        actor_user_id=context.user.id,
     )
     policy = get_or_create_policy(db, context.company_id)
     if not affordability["passed"]:
