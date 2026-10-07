@@ -273,28 +273,28 @@ export function RealtimeProvider({
                 reconnectAttemptRef.current = 0;
                 setConnected(true);
 
-                if (reconnecting) {
-                    beginRealtimeCatchupWindow();
-                    window.dispatchEvent(
-                        new CustomEvent(DB_COMMIT_EVENT_NAME, {
-                            detail: {
-                                events: [{
-                                    type: "DB_EVENT",
-                                    contract: "loanhub.db-commit.v1",
-                                    action: "reconnect_catchup",
-                                    table: "*",
-                                    entity_id: null,
-                                    request_id: null,
-                                }],
-                                count: 1,
-                                latest: null,
-                                hasRemoteChanges: true,
-                            },
-                        }),
-                    );
-                    if (document.visibilityState === "visible") {
-                        router.refresh();
-                    }
+                beginRealtimeCatchupWindow();
+                window.dispatchEvent(
+                    new CustomEvent(DB_COMMIT_EVENT_NAME, {
+                        detail: {
+                            events: [{
+                                type: "DB_EVENT",
+                                contract: "loanhub.db-commit.v1",
+                                action: reconnecting
+                                    ? "reconnect_catchup"
+                                    : "initial_socket_catchup",
+                                table: "*",
+                                entity_id: null,
+                                request_id: null,
+                            }],
+                            count: 1,
+                            latest: null,
+                            hasRemoteChanges: true,
+                        },
+                    }),
+                );
+                if (document.visibilityState === "visible") {
+                    router.refresh();
                 }
             };
 
