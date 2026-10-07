@@ -86,6 +86,7 @@ class ManagementActionCreate(BaseModel):
     recommended_action: str = Field(min_length=3, max_length=3000)
     action_url: str = Field(min_length=1, max_length=500)
     evidence: dict[str, Any] = Field(default_factory=dict)
+    branch_id: UUID | None = None
     assigned_user_id: UUID
     due_at: datetime
 
