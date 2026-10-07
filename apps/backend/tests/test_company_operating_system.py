@@ -340,3 +340,39 @@ def test_interest_rate_repricing_intelligence_uses_explicit_profiles_and_nonpost
     assert "Rate-shock assumptions" in centre
     assert "Generate rate-risk evidence pack" in centre
     assert "Δ net interest income" in centre
+
+
+def test_ftp_profitability_is_evidence_driven_conservative_and_nonposting():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class FundsTransferPricingPolicyUpsert" in schema
+    assert "class FundsTransferPricingScenarioRequest" in schema
+
+    assert "def _weighted_ftp_funding_cost(" in router
+    assert "def _ftp_profitability_intelligence(" in router
+    assert '@router.put("/ftp/policy")' in router
+    assert '@router.get("/ftp")' in router
+    assert '@router.post("/ftp/scenario")' in router
+    assert '@router.post("/ftp/evidence-pack")' in router
+    assert '"report_type="ftp_profitability_evidence_pack"' in router
+    assert '"funding_rate_coverage_percent"' in router
+    assert '"ecl_risk_charge"' in router
+    assert '"capital_charge"' in router
+    assert '"risk_adjusted_profit_proxy"' in router
+    assert "Current posted ECL allowance is deducted in full" in router
+    assert "not accounting profit, APR, statutory RAROC or regulatory capital return" in router
+
+    assert "FTPProfitabilityIntelligence" in api
+    assert "getFTPProfitability" in api
+    assert "saveFTPPolicy" in api
+    assert "runFTPScenario" in api
+    assert "generateFTPEvidencePack" in api
+
+    assert "Funds Transfer Pricing & Risk-Adjusted Profitability" in centre
+    assert "FTP profitability policy" in centre
+    assert "Profitability stress scenario" in centre
+    assert "Generate FTP evidence pack" in centre
+    assert "Funding-rate completeness" in centre
