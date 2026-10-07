@@ -8,7 +8,7 @@ from uuid import uuid4
 from database.models.enums import UserRole
 from database.schemas.auth import WebSocketSessionRequest
 from routers import auth
-from routers.ws import _origin_allowed, _websocket_token
+from routers.ws import _membership_realtime_channels, _origin_allowed, _websocket_token
 
 
 class _WebSocketStub:
@@ -106,3 +106,35 @@ def test_frontend_uses_short_lived_subprotocol_not_query_token() -> None:
     assert "loanhub.jwt.${websocketToken}" in provider
     assert "session.websocket_token" in provider
     assert 'url.searchParams.set("token"' not in provider
+
+
+def test_branch_scoped_membership_does_not_subscribe_to_company_wide_stream() -> None:
+    company_id = uuid4()
+    maputsoe_branch_id = uuid4()
+    membership = SimpleNamespace(
+        company_id=company_id,
+        branch_id=maputsoe_branch_id,
+        role=UserRole.BRANCH_MANAGER,
+    )
+
+    channels = _membership_realtime_channels(membership)
+
+    assert f"branch-{maputsoe_branch_id}" in channels
+    assert f"company-shared-{company_id}" in channels
+    assert f"company-{company_id}" not in channels
+
+
+def test_company_owner_receives_company_wide_stream() -> None:
+    company_id = uuid4()
+    maseru_branch_id = uuid4()
+    membership = SimpleNamespace(
+        company_id=company_id,
+        branch_id=maseru_branch_id,
+        role=UserRole.COMPANY_OWNER,
+    )
+
+    channels = _membership_realtime_channels(membership)
+
+    assert f"company-{company_id}" in channels
+    assert f"company-shared-{company_id}" in channels
+    assert f"branch-{maseru_branch_id}" in channels
