@@ -796,6 +796,7 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         commit_events.append({
             "channels": sorted(channels),
             "payload": {
+                "event_id": str(uuid.uuid4()),
                 "type": "DB_EVENT",
                 "contract": "loanhub.db-commit.v1",
                 "table": table_name,
