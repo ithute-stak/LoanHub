@@ -985,6 +985,7 @@ def _post_approval_deal_integrity(
     loan: ClientCompanyLoan,
     application: DirectLoanApplication,
     case: CreditCommitteeCase,
+    raise_on_failure: bool = True,
 ) -> dict[str, Any]:
     final_snapshot = dict(case.final_snapshot or {})
     selected_wrapper = final_snapshot.get("selected_deal_structure") or (case.evidence_snapshot or {}).get("selected_deal_structure")
@@ -1112,7 +1113,7 @@ def _post_approval_deal_integrity(
 
     checks["drift"] = drift
     checks["passed"] = not drift
-    if drift:
+    if drift and raise_on_failure:
         raise HTTPException(
             status_code=409,
             detail="Disbursement integrity guard blocked payout: " + "; ".join(drift[:8]),
@@ -1120,7 +1121,65 @@ def _post_approval_deal_integrity(
     return checks
 
 
-def assert_loan_disbursement_conditions(db: Session, loan: ClientCompanyLoan) -> dict[str, Any] | None:
+def preview_loan_disbursement_integrity(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
+    if not loan.direct_application_id:
+        return {
+            "applicable": False,
+            "passed": True,
+            "reason": "Loan is not linked to a direct application governed by Credit Committee.",
+            "drift": [],
+        }
+    application = db.get(DirectLoanApplication, loan.direct_application_id)
+    if not application or not bool(getattr(application, "credit_committee_required", False)):
+        return {
+            "applicable": False,
+            "passed": True,
+            "reason": "Credit Committee governance is not required for this application.",
+            "drift": [],
+        }
+    case = db.query(CreditCommitteeCase).filter(
+        CreditCommitteeCase.company_id == loan.company_id,
+        CreditCommitteeCase.application_id == application.id,
+    ).first()
+    if not case or case.final_decision not in {"approved", "conditionally_approved"}:
+        return {
+            "applicable": True,
+            "passed": False,
+            "committee_clearance": False,
+            "drift": ["Credit Committee clearance is missing for this loan"],
+        }
+    open_conditions = db.query(CreditCommitteeCondition).filter(
+        CreditCommitteeCondition.case_id == case.id,
+        CreditCommitteeCondition.condition_type.in_(["pre_contract", "pre_disbursement"]),
+        CreditCommitteeCondition.status.notin_(list(RESOLVED_CONDITION_STATUSES)),
+    ).all()
+    if open_conditions:
+        return {
+            "applicable": True,
+            "passed": False,
+            "committee_clearance": True,
+            "open_conditions": [row.title for row in open_conditions],
+            "drift": ["Credit Committee pre-contract/pre-disbursement conditions remain open"],
+        }
+    report = _post_approval_deal_integrity(
+        db,
+        loan=loan,
+        application=application,
+        case=case,
+        raise_on_failure=False,
+    )
+    report["applicable"] = True
+    report["committee_clearance"] = True
+    report["open_conditions"] = []
+    return report
+
+
+def assert_loan_disbursement_conditions(
+    db: Session,
+    loan: ClientCompanyLoan,
+    *,
+    actor_user_id: UUID | None = None,
+) -> dict[str, Any] | None:
     if not loan.direct_application_id:
         return None
     application = db.get(DirectLoanApplication, loan.direct_application_id)
@@ -1147,5 +1206,5 @@ def assert_loan_disbursement_conditions(db: Session, loan: ClientCompanyLoan) ->
         application=application,
         case=case,
     )
-    _event(db, case, "disbursement_integrity_verified", loan.disbursed_by_user_id, integrity)
+    _event(db, case, "disbursement_integrity_verified", actor_user_id, integrity)
     return integrity
