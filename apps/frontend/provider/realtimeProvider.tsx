@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import {
     createContext,
     type ReactNode,
@@ -86,6 +88,7 @@ export function RealtimeProvider({
     children: ReactNode;
 }) {
     const dispatch = useAppDispatch();
+    const router = useRouter();
     const userId = useAppSelector(
         (state) => state.auth.user?.id ?? null,
     );
@@ -112,6 +115,9 @@ export function RealtimeProvider({
         new Set<RealtimeListener>(),
     );
     const disposedRef = useRef(false);
+    const dbRefreshTimerRef = useRef<number | null>(null);
+    const pendingDbEventsRef = useRef<RealtimePayload[]>([]);
+    const seenEventIdsRef = useRef(new Set<string>());
 
     const clearReconnectTimer = useCallback(() => {
         if (reconnectTimerRef.current !== null) {
@@ -280,6 +286,19 @@ export function RealtimeProvider({
                 }
 
                 if (String(payload.type ?? "") === "DB_EVENT") {
+                    const eventId = String(payload.event_id ?? "");
+                    if (eventId && seenEventIdsRef.current.has(eventId)) {
+                        return;
+                    }
+                    if (eventId) {
+                        seenEventIdsRef.current.add(eventId);
+                        if (seenEventIdsRef.current.size > 500) {
+                            seenEventIdsRef.current = new Set(
+                                [...seenEventIdsRef.current].slice(-250),
+                            );
+                        }
+                    }
+
                     dispatch(
                         cacheScopeInvalidated({
                             scope: [
@@ -289,6 +308,29 @@ export function RealtimeProvider({
                             ].join(":"),
                         }),
                     );
+
+                    pendingDbEventsRef.current.push(payload);
+                    if (dbRefreshTimerRef.current !== null) {
+                        window.clearTimeout(dbRefreshTimerRef.current);
+                    }
+                    dbRefreshTimerRef.current = window.setTimeout(() => {
+                        const events = pendingDbEventsRef.current.splice(0);
+                        dbRefreshTimerRef.current = null;
+
+                        window.dispatchEvent(
+                            new CustomEvent("loanhub:db-commit", {
+                                detail: {
+                                    events,
+                                    count: events.length,
+                                    latest: events.at(-1) ?? null,
+                                },
+                            }),
+                        );
+
+                        if (document.visibilityState === "visible") {
+                            router.refresh();
+                        }
+                    }, 180);
                 }
 
                 for (
@@ -339,6 +381,11 @@ export function RealtimeProvider({
             disposedRef.current = true;
             generation += 1;
             window.clearInterval(heartbeat);
+            if (dbRefreshTimerRef.current !== null) {
+                window.clearTimeout(dbRefreshTimerRef.current);
+                dbRefreshTimerRef.current = null;
+            }
+            pendingDbEventsRef.current = [];
             closeCurrentSocket();
         };
     }, [
@@ -350,6 +397,7 @@ export function RealtimeProvider({
         closeCurrentSocket,
         dispatch,
         userId,
+        router,
     ]);
 
     const subscribe = useCallback(
