@@ -578,7 +578,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 resources.has("loanOffers") &&
                 selectedMarketplaceRequest?.id
             ) {
-                tasks.push(loadOffersForRequest(selectedMarketplaceRequest.id));
+                tasks.push(
+                    listOffersByRequest(selectedMarketplaceRequest.id).then(
+                        (offers) => setLoanOffers(stableSmartSort(offers)),
+                    ),
+                );
             }
 
             await Promise.allSettled(tasks);
@@ -594,7 +598,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             loadLoanRequests,
             loadLoansData,
             loadMarketplace,
-            loadOffersForRequest,
             loadPaymentsData,
             selectedMarketplaceRequest?.id,
             user,
