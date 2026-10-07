@@ -971,3 +971,103 @@ export async function generatePricingOptimizationEvidencePack(payload: {
 }): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: PricingOptimizationResult }> {
   return (await api.post("/company-operating-system/pricing/minimum-viable-rate/evidence-pack", payload)).data;
 }
+
+
+export type DealStructuringResult = {
+  as_of: string;
+  borrower_id: string;
+  search: {
+    minimum_principal: number;
+    maximum_principal: number;
+    principal_step: number;
+    term_options: number[];
+    processing_fee_percent: number;
+    interest_method: string;
+    candidate_count: number;
+  };
+  borrower_affordability_policy: {
+    policy_id: string;
+    version: number;
+    max_dti_percent: number;
+    max_installment_income_percent: number;
+    disposable_income_usage_percent: number;
+  };
+  portfolio_constraints: {
+    existing_borrower_exposure: number;
+    total_equity: number;
+    maximum_single_borrower_exposure_percent_of_equity?: number | null;
+    minimum_liquidity_buffer: number;
+    baseline_30d_minimum_cash: number;
+  };
+  best_structure?: DealStructureOption | null;
+  viable_structure_count: number;
+  fully_viable_structure_count: number;
+  options: DealStructureOption[];
+  decision_support: "structures_available" | "no_viable_structure_found";
+  policy_note: string;
+};
+
+export type DealStructureOption = {
+  principal: number;
+  term_months: number;
+  processing_fee: number;
+  minimum_viable_rate_percent?: number | null;
+  monthly_installment?: number | null;
+  total_repayable?: number | null;
+  pricing_status: string;
+  affordability: {
+    status: "pass" | "fail" | "not_assessed";
+    maximum_affordable_installment?: number | null;
+    headroom?: number | null;
+    dti_percent?: number | null;
+  };
+  liquidity: {
+    status: "pass" | "breach";
+    baseline_30d_minimum_cash: number;
+    post_disbursement_30d_minimum_cash_proxy: number;
+    minimum_liquidity_buffer: number;
+  };
+  concentration: {
+    status: "pass" | "breach" | "not_assessed";
+    existing_borrower_exposure: number;
+    post_deal_exposure: number;
+    post_deal_exposure_percent_of_equity?: number | null;
+    maximum_single_borrower_exposure_percent_of_equity?: number | null;
+  };
+  risk_adjusted_margin_target_percent: number;
+  unassessed_controls: string[];
+  status: "fully_viable" | "viable_with_unassessed_controls" | "not_viable";
+};
+
+export async function optimizeCreditDealStructures(payload: {
+  borrower_id: string;
+  minimum_principal: number;
+  maximum_principal: number;
+  principal_step: number;
+  term_options: number[];
+  processing_fee_percent: number;
+  interest_method: string;
+  expected_loss_percent?: number | null;
+  target_margin_percent?: number | null;
+  maximum_search_rate_percent?: number;
+  minimum_liquidity_buffer?: number | null;
+}): Promise<DealStructuringResult> {
+  return (await api.post<DealStructuringResult>("/company-operating-system/pricing/deal-structures", payload)).data;
+}
+
+export async function generateDealStructuringEvidencePack(payload: {
+  title?: string;
+  borrower_id: string;
+  minimum_principal: number;
+  maximum_principal: number;
+  principal_step: number;
+  term_options: number[];
+  processing_fee_percent: number;
+  interest_method: string;
+  expected_loss_percent?: number | null;
+  target_margin_percent?: number | null;
+  maximum_search_rate_percent?: number;
+  minimum_liquidity_buffer?: number | null;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: DealStructuringResult }> {
+  return (await api.post("/company-operating-system/pricing/deal-structures/evidence-pack", payload)).data;
+}

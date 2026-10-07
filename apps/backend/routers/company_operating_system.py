@@ -23,6 +23,7 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.borrower import Borrower
 from database.models.branch import CompanyBranch
 from database.models.company_operating_system import CompanyAPIKey, CompanyOperatingRecord, CompanyWebhookEndpoint
 from database.models.credit_loss_provisioning import CreditLossProvisionLine, CreditLossProvisionPolicy, CreditLossProvisionRun
@@ -37,7 +38,7 @@ from database.models.lending_operations import (
     ReconciliationException,
     WorkflowInstance,
 )
-from database.models.origination import AffordabilityAssessment
+from database.models.origination import AffordabilityAssessment, OriginationPolicy
 from database.models.payment import PaymentTransaction
 from database.models.repayment import RepaymentInstallment
 from database.models.reporting import GeneratedReport
@@ -52,6 +53,8 @@ from database.schemas.company_operating_system import (
     FundsTransferPricingPolicyUpsert,
     FundsTransferPricingScenarioRequest,
     PricingOptimizationPackRequest,
+    DealStructuringPackRequest,
+    DealStructuringRequest,
     PricingOptimizationRequest,
     APIKeyIssued,
     APIKeyRead,
@@ -75,6 +78,7 @@ from database.schemas.company_operating_system import (
 )
 from database.session import get_db
 from services.interest_calculation_service import calculate_loan_terms, generate_monthly_due_dates
+from services.quick_loan_affordability_service import quick_loan_affordability
 from services.analytics_service import build_management_command_intelligence
 from services.accounting_service import accounting_audit_compliance_pack, financial_ratio_analysis, treasury_cash_forecast
 from services.crypto_service import encrypt_control_secret
@@ -2672,6 +2676,278 @@ def _minimum_viable_pricing(
             "and does not claim APR. The solver uses LoanHub's authoritative contractual interest engine and a simple annualized yield proxy to cover explicit funding, "
             "expected-loss, operating-cost, capital-hurdle and target-margin assumptions."
         ),
+    }
+
+
+
+def _deal_structuring_intelligence(
+    db: Session,
+    context: TenantContext,
+    payload: DealStructuringRequest,
+) -> dict:
+    _ensure_borrower_scope(db, context, payload.borrower_id)
+    borrower = db.query(Borrower).filter(Borrower.id == payload.borrower_id).first()
+    if not borrower:
+        raise HTTPException(status_code=404, detail="Borrower profile was not found")
+
+    policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == context.company_id,
+        OriginationPolicy.is_active.is_(True),
+    ).first()
+    if not policy:
+        raise HTTPException(status_code=409, detail="Active origination affordability policy is required for deal structuring")
+
+    candidate_count = int(
+        ((Decimal(payload.maximum_principal) - Decimal(payload.minimum_principal)) / Decimal(payload.principal_step))
+    ) + 1
+    if candidate_count > 200:
+        raise HTTPException(status_code=422, detail="Principal range creates more than 200 candidates; increase principal_step")
+
+    prudential = _prudential_intelligence(db, context)
+    prudential_profile = dict(prudential.get("profile") or {})
+    thresholds = dict(prudential_profile.get("thresholds") or {})
+    equity = Decimal(str((prudential.get("metrics") or {}).get("total_equity") or 0))
+
+    latest_snapshot_date = db.query(func.max(PortfolioRiskSnapshot.snapshot_date)).filter(
+        PortfolioRiskSnapshot.company_id == context.company_id,
+    ).scalar()
+    existing_borrower_exposure = Decimal("0")
+    if latest_snapshot_date:
+        exposure_value = db.query(
+            func.coalesce(func.sum(PortfolioRiskSnapshot.outstanding_balance), 0)
+        ).filter(
+            PortfolioRiskSnapshot.company_id == context.company_id,
+            PortfolioRiskSnapshot.borrower_id == payload.borrower_id,
+            PortfolioRiskSnapshot.snapshot_date == latest_snapshot_date,
+            PortfolioRiskSnapshot.is_written_off.is_(False),
+        ).scalar()
+        existing_borrower_exposure = Decimal(str(exposure_value or 0))
+
+    configured_liquidity_buffer = payload.minimum_liquidity_buffer
+    if configured_liquidity_buffer is None:
+        threshold = thresholds.get("minimum_liquidity_buffer")
+        configured_liquidity_buffer = Decimal(str(threshold)) if threshold is not None else Decimal("0")
+    else:
+        configured_liquidity_buffer = Decimal(payload.minimum_liquidity_buffer)
+
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+    treasury = treasury_cash_forecast(
+        db,
+        company_id=context.company_id,
+        from_date=date.today(),
+        to_date=date.today() + timedelta(days=30),
+        branch_id=branch_id,
+        minimum_cash=configured_liquidity_buffer,
+        collection_rate=Decimal("0.85"),
+        obligation_rate=Decimal("1.00"),
+        unexpected_outflow=Decimal("0"),
+    )
+    baseline_min_cash = Decimal(str(treasury["minimum_projected_cash"]))
+
+    max_single_exposure_pct = thresholds.get("maximum_single_borrower_exposure_percent_of_equity")
+    options = []
+    principal = Decimal(payload.minimum_principal)
+    term_options = sorted(set(int(term) for term in payload.term_options))
+
+    while principal <= Decimal(payload.maximum_principal):
+        fee = (principal * Decimal(payload.processing_fee_percent) / Decimal("100")).quantize(Decimal("0.01"))
+        for term in term_options:
+            pricing_request = PricingOptimizationRequest(
+                principal=principal,
+                term_months=term,
+                processing_fee=fee,
+                interest_method=payload.interest_method,
+                proposed_rate_percent=None,
+                expected_loss_percent=payload.expected_loss_percent,
+                target_margin_percent=payload.target_margin_percent,
+                maximum_search_rate_percent=payload.maximum_search_rate_percent,
+            )
+            pricing = _minimum_viable_pricing(db, context, pricing_request)
+            minimum_rate = pricing.get("minimum_viable_rate_percent")
+            minimum_terms = pricing.get("minimum_viable_terms")
+
+            affordability = None
+            affordability_pass = False
+            monthly_installment = None
+            if minimum_terms is not None:
+                monthly_installment = Decimal(str(minimum_terms["monthly_installment"]))
+                affordability = quick_loan_affordability(
+                    borrower=borrower,
+                    policy=policy,
+                    proposed_installment=monthly_installment,
+                )
+                affordability_pass = bool(affordability.get("passed"))
+
+            stressed_min_cash = baseline_min_cash - principal
+            liquidity_pass = stressed_min_cash >= configured_liquidity_buffer
+
+            post_deal_exposure = existing_borrower_exposure + principal
+            exposure_pct_equity = (
+                post_deal_exposure / equity * Decimal("100")
+                if equity > 0 else None
+            )
+            if max_single_exposure_pct is None:
+                concentration_status = "not_assessed"
+                concentration_pass = None
+            elif exposure_pct_equity is None:
+                concentration_status = "not_assessed"
+                concentration_pass = None
+            else:
+                concentration_pass = exposure_pct_equity <= Decimal(str(max_single_exposure_pct))
+                concentration_status = "pass" if concentration_pass else "breach"
+
+            pricing_pass = pricing.get("solver_status") == "solved"
+            hard_fail = (
+                not pricing_pass
+                or not affordability_pass
+                or not liquidity_pass
+                or concentration_pass is False
+            )
+            unassessed_controls = []
+            if concentration_pass is None:
+                unassessed_controls.append("single_borrower_exposure_limit")
+            if pricing.get("missing_evidence"):
+                unassessed_controls.extend(pricing["missing_evidence"])
+
+            if hard_fail:
+                status = "not_viable"
+            elif unassessed_controls:
+                status = "viable_with_unassessed_controls"
+            else:
+                status = "fully_viable"
+
+            options.append({
+                "principal": float(principal.quantize(Decimal("0.01"))),
+                "term_months": term,
+                "processing_fee": float(fee),
+                "minimum_viable_rate_percent": minimum_rate,
+                "monthly_installment": float(monthly_installment) if monthly_installment is not None else None,
+                "total_repayable": minimum_terms.get("total_repayable") if minimum_terms else None,
+                "pricing_status": pricing.get("solver_status"),
+                "affordability": {
+                    "status": "pass" if affordability_pass else "fail" if affordability is not None else "not_assessed",
+                    "maximum_affordable_installment": float(Decimal(str(affordability["maximum_affordable_installment"]))) if affordability else None,
+                    "headroom": float(Decimal(str(affordability["affordability_headroom"]))) if affordability else None,
+                    "dti_percent": float(Decimal(str(affordability["dti_percent"]))) if affordability else None,
+                },
+                "liquidity": {
+                    "status": "pass" if liquidity_pass else "breach",
+                    "baseline_30d_minimum_cash": float(baseline_min_cash.quantize(Decimal("0.01"))),
+                    "post_disbursement_30d_minimum_cash_proxy": float(stressed_min_cash.quantize(Decimal("0.01"))),
+                    "minimum_liquidity_buffer": float(configured_liquidity_buffer.quantize(Decimal("0.01"))),
+                },
+                "concentration": {
+                    "status": concentration_status,
+                    "existing_borrower_exposure": float(existing_borrower_exposure.quantize(Decimal("0.01"))),
+                    "post_deal_exposure": float(post_deal_exposure.quantize(Decimal("0.01"))),
+                    "post_deal_exposure_percent_of_equity": float(exposure_pct_equity.quantize(Decimal("0.01"))) if exposure_pct_equity is not None else None,
+                    "maximum_single_borrower_exposure_percent_of_equity": float(Decimal(str(max_single_exposure_pct))) if max_single_exposure_pct is not None else None,
+                },
+                "risk_adjusted_margin_target_percent": pricing["cost_stack"]["target_margin_percent"],
+                "unassessed_controls": sorted(set(unassessed_controls)),
+                "status": status,
+            })
+        principal += Decimal(payload.principal_step)
+
+    rank_order = {"fully_viable": 0, "viable_with_unassessed_controls": 1, "not_viable": 2}
+    options.sort(
+        key=lambda row: (
+            rank_order[row["status"]],
+            -row["principal"],
+            -(row["affordability"]["headroom"] or Decimal("-999999999")),
+            row["minimum_viable_rate_percent"] if row["minimum_viable_rate_percent"] is not None else 999999,
+            row["term_months"],
+        )
+    )
+    viable = [row for row in options if row["status"] != "not_viable"]
+    best = viable[0] if viable else None
+
+    return {
+        "as_of": date.today().isoformat(),
+        "borrower_id": str(payload.borrower_id),
+        "search": {
+            "minimum_principal": float(Decimal(payload.minimum_principal)),
+            "maximum_principal": float(Decimal(payload.maximum_principal)),
+            "principal_step": float(Decimal(payload.principal_step)),
+            "term_options": term_options,
+            "processing_fee_percent": float(Decimal(payload.processing_fee_percent)),
+            "interest_method": payload.interest_method,
+            "candidate_count": len(options),
+        },
+        "borrower_affordability_policy": {
+            "policy_id": str(policy.id),
+            "version": int(policy.version or 1),
+            "max_dti_percent": float(policy.max_dti_percent or 0),
+            "max_installment_income_percent": float(policy.max_installment_income_percent or 0),
+            "disposable_income_usage_percent": float(policy.disposable_income_usage_percent or 0),
+        },
+        "portfolio_constraints": {
+            "existing_borrower_exposure": float(existing_borrower_exposure.quantize(Decimal("0.01"))),
+            "total_equity": float(equity.quantize(Decimal("0.01"))),
+            "maximum_single_borrower_exposure_percent_of_equity": float(Decimal(str(max_single_exposure_pct))) if max_single_exposure_pct is not None else None,
+            "minimum_liquidity_buffer": float(configured_liquidity_buffer.quantize(Decimal("0.01"))),
+            "baseline_30d_minimum_cash": float(baseline_min_cash.quantize(Decimal("0.01"))),
+        },
+        "best_structure": best,
+        "viable_structure_count": len(viable),
+        "fully_viable_structure_count": sum(1 for row in viable if row["status"] == "fully_viable"),
+        "options": options[:300],
+        "decision_support": (
+            "structures_available" if best is not None
+            else "no_viable_structure_found"
+        ),
+        "policy_note": (
+            "Deal Structuring Intelligence is pre-approval decision support only. It does not approve credit or change the application. "
+            "Affordability uses the company's active origination policy. Pricing uses the minimum viable rate engine. "
+            "Liquidity uses a conservative 30-day cash proxy that deducts the proposed disbursement without assuming future repayments from the new loan. "
+            "Single-borrower exposure is tested only when an explicit prudential threshold and equity evidence are available."
+        ),
+    }
+
+
+@router.post("/pricing/deal-structures")
+def optimize_credit_deal_structures(
+    payload: DealStructuringRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    return _deal_structuring_intelligence(db, context, payload)
+
+
+@router.post("/pricing/deal-structures/evidence-pack")
+def generate_deal_structuring_evidence_pack(
+    payload: DealStructuringPackRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER, UserRole.AUDITOR})
+    pack = _deal_structuring_intelligence(db, context, payload)
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"DEALPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=payload.title,
+        report_type="credit_deal_structuring_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today,
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
     }
 
 

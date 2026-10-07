@@ -409,3 +409,34 @@ def test_pricing_optimization_solves_economic_floor_without_approving_credit():
     assert "Proposed pricing comparison" in centre
     assert "Minimum-rate contractual illustration" in centre
     assert "Generate pricing evidence pack" in centre
+
+
+def test_credit_deal_structuring_combines_pricing_affordability_liquidity_and_concentration_without_auto_approval():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class DealStructuringRequest" in schema
+    assert "class DealStructuringPackRequest" in schema
+
+    assert "def _deal_structuring_intelligence(" in router
+    assert "quick_loan_affordability(" in router
+    assert "_minimum_viable_pricing(" in router
+    assert "_prudential_intelligence(" in router
+    assert '@router.post("/pricing/deal-structures")' in router
+    assert '@router.post("/pricing/deal-structures/evidence-pack")' in router
+    assert '"report_type="credit_deal_structuring_evidence_pack"' in router
+    assert '"post_disbursement_30d_minimum_cash_proxy"' in router
+    assert '"post_deal_exposure_percent_of_equity"' in router
+    assert '"fully_viable"' in router
+    assert "does not approve credit or change the application" in router
+
+    assert "DealStructuringResult" in api
+    assert "optimizeCreditDealStructures" in api
+    assert "generateDealStructuringEvidencePack" in api
+
+    assert "Credit Approval Economics & Deal Structuring Intelligence" in centre
+    assert "Find viable deal structures" in centre
+    assert "Best available structure" in centre
+    assert "Generate deal evidence pack" in centre
