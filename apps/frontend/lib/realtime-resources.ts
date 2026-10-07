@@ -30,10 +30,11 @@ const TABLE_RESOURCES: Record<string, RealtimeResource[]> = {
 
     client_company_loan: ["loans"],
     repayment_installments: ["loans", "payments"],
-    early_settlements: ["loans", "payments"],
+    loan_early_settlements: ["loans", "payments"],
+    payment_allocations: ["loans", "payments"],
     loan_contracts: ["loans"],
     credit_committee_cases: ["loans"],
-    credit_committee_assessments: ["loans"],
+    underwriting_assessments: ["loans"],
     credit_committee_conditions: ["loans"],
 
     payment_transactions: ["payments", "loans"],
@@ -55,8 +56,6 @@ const SAFE_DELETE_RESOURCE: Record<string, RealtimeResource | undefined> = {
     client_company_loan: "loans",
     payment_transactions: "payments",
     loan_products: "loanProducts",
-    subscription_plans: "billing",
-    company_subscriptions: "billing",
 };
 
 const PREFIX_RESOURCES: Array<[string, RealtimeResource[]]> = [
