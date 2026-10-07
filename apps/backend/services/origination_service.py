@@ -843,6 +843,11 @@ def calculate_affordability(
             )
     bureau_fresh = latest_bureau is not None
     bureau_monthly_commitments = money(latest_bureau.monthly_obligations if latest_bureau else 0)
+    # Preserve the historical policy signal in the assessment audit even though
+    # composite affordability now always counts fresh bureau commitments.
+    configured_bureau_commitment_flag = bool(
+        bureau_policy.get("include_bureau_commitments_in_affordability")
+    )
     cdas_profile = (
         db.query(CDASPayrollProfile)
         .filter(
@@ -1048,6 +1053,7 @@ def calculate_affordability(
                 "risk_grade": latest_bureau.risk_grade if latest_bureau else None,
                 "monthly_commitments": str(bureau_monthly_commitments),
                 "included_in_affordability": bureau_fresh,
+                "configured_include_commitments_flag": configured_bureau_commitment_flag,
                 "policy": bureau_policy,
             },
             "external_underwriting_evidence": external_evidence,
