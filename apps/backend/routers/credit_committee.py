@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -103,6 +103,24 @@ class CommitteeGovernanceUpdate(BaseModel):
     approval_threshold_percent: Decimal = Field(gt=0, le=100)
     maker_checker_required: bool = True
     reason: str = Field(default="", max_length=4000)
+
+
+class CommitteeDealStructuringRequest(BaseModel):
+    minimum_principal: Decimal = Field(gt=0)
+    maximum_principal: Decimal = Field(gt=0)
+    principal_step: Decimal = Field(gt=0)
+    term_options: list[int] = Field(min_length=1, max_length=24)
+    processing_fee_percent: Decimal = Field(default=Decimal("0"), ge=0)
+    interest_method: str = Field(default="micro_loan", min_length=2, max_length=80)
+    expected_loss_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    target_margin_percent: Decimal | None = None
+    maximum_search_rate_percent: Decimal = Field(default=Decimal("500"), gt=0, le=5000)
+    minimum_liquidity_buffer: Decimal | None = Field(default=None, ge=0)
+
+
+class CommitteeDealStructureSelection(BaseModel):
+    structure: dict[str, Any]
+    rationale: str = Field(min_length=10, max_length=8000)
 
 
 class ConditionUpdate(BaseModel):
@@ -219,6 +237,112 @@ def submit_underwriting_assessment(
         proposed_conditions=[item.model_dump(mode="json") for item in payload.proposed_conditions],
     )
     return assessment_payload(row)
+
+
+@router.post("/cases/{case_id}/deal-structures")
+def generate_case_deal_structures(
+    case_id: UUID,
+    payload: CommitteeDealStructuringRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, ANALYST_ROLES)
+    case = case_or_404(db, context, case_id, lock=True)
+    if case.locked_at or case.final_decision:
+        raise HTTPException(status_code=409, detail="The committee case is locked after final decision")
+    if db.query(CreditCommitteeCase.id).filter(
+        CreditCommitteeCase.id == case.id,
+        CreditCommitteeCase.status.in_(["approved", "rejected", "awaiting_conditions"]),
+    ).first():
+        raise HTTPException(status_code=409, detail="Deal structuring is closed after committee finalization")
+
+    from database.schemas.company_operating_system import DealStructuringRequest
+    from routers.company_operating_system import _deal_structuring_intelligence
+    from database.models.credit_committee import CreditCommitteeEvent
+
+    result = _deal_structuring_intelligence(
+        db,
+        context,
+        DealStructuringRequest(
+            borrower_id=case.borrower_id,
+            minimum_principal=payload.minimum_principal,
+            maximum_principal=payload.maximum_principal,
+            principal_step=payload.principal_step,
+            term_options=payload.term_options,
+            processing_fee_percent=payload.processing_fee_percent,
+            interest_method=payload.interest_method,
+            expected_loss_percent=payload.expected_loss_percent,
+            target_margin_percent=payload.target_margin_percent,
+            maximum_search_rate_percent=payload.maximum_search_rate_percent,
+            minimum_liquidity_buffer=payload.minimum_liquidity_buffer,
+        ),
+    )
+    db.add(CreditCommitteeEvent(
+        company_id=case.company_id,
+        case_id=case.id,
+        event_type="deal_structures_generated",
+        actor_user_id=context.user.id,
+        payload={
+            "search": result.get("search"),
+            "decision_support": result.get("decision_support"),
+            "viable_structure_count": result.get("viable_structure_count"),
+            "fully_viable_structure_count": result.get("fully_viable_structure_count"),
+            "best_structure": result.get("best_structure"),
+        },
+    ))
+    db.commit()
+    return result
+
+
+@router.post("/cases/{case_id}/deal-structures/select")
+def select_case_deal_structure(
+    case_id: UUID,
+    payload: CommitteeDealStructureSelection,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, ANALYST_ROLES)
+    case = case_or_404(db, context, case_id, lock=True)
+    if case.locked_at or case.final_decision:
+        raise HTTPException(status_code=409, detail="The committee case is locked after final decision")
+    if db.query(CreditCommitteeCase.id).filter(
+        CreditCommitteeCase.id == case.id,
+        CreditCommitteeCase.status.in_(["approved", "rejected", "awaiting_conditions"]),
+    ).first():
+        raise HTTPException(status_code=409, detail="Deal structure selection is closed after committee finalization")
+
+    structure = dict(payload.structure or {})
+    required = {"principal", "term_months", "minimum_viable_rate_percent", "monthly_installment", "status"}
+    if not required.issubset(structure):
+        raise HTTPException(status_code=422, detail="Selected structure is missing required deal-structure fields")
+    if structure.get("status") == "not_viable":
+        raise HTTPException(status_code=409, detail="A non-viable structure cannot be selected as the committee proposal")
+
+    snapshot = dict(case.evidence_snapshot or {})
+    selected = {
+        "selected_at": datetime.now(timezone.utc).isoformat(),
+        "selected_by_user_id": str(context.user.id),
+        "rationale": payload.rationale.strip(),
+        "structure": structure,
+    }
+    snapshot["selected_deal_structure"] = selected
+    case.evidence_snapshot = snapshot
+
+    from database.models.credit_committee import CreditCommitteeEvent
+    db.add(CreditCommitteeEvent(
+        company_id=case.company_id,
+        case_id=case.id,
+        event_type="deal_structure_selected",
+        actor_user_id=context.user.id,
+        payload=selected,
+    ))
+    db.commit()
+    db.refresh(case)
+    return {
+        "selected_deal_structure": selected,
+        "case": case_payload(db, case, include_events=True),
+        "policy_note": "Selecting a deal structure records committee evidence only. It does not approve credit, alter the application or bypass voting.",
+    }
 
 
 @router.put("/cases/{case_id}/vote")
