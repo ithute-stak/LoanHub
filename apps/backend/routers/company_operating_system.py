@@ -49,6 +49,8 @@ from database.schemas.company_operating_system import (
     ALMStressRequest,
     InterestRateLoanProfileCreate,
     InterestRateStressRequest,
+    FundsTransferPricingPolicyUpsert,
+    FundsTransferPricingScenarioRequest,
     APIKeyIssued,
     APIKeyRead,
     CompanyAssistantRequest,
@@ -2071,6 +2073,438 @@ def generate_interest_rate_risk_evidence_pack(
         output_format="json",
         period_start=today,
         period_end=today + timedelta(days=payload.horizon_days),
+        status="completed",
+        metrics=pack,
+        generated_at=_now(),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {
+        "id": str(report.id),
+        "reference": report.reference,
+        "title": report.title,
+        "generated_at": report.generated_at.isoformat(),
+        "metrics": pack,
+    }
+
+
+
+def _ftp_policy_record(db: Session, context: TenantContext):
+    return _record_query(db, context).filter(
+        CompanyOperatingRecord.module == "pricing_lab",
+        CompanyOperatingRecord.record_type == "ftp_policy",
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).order_by(CompanyOperatingRecord.updated_at.desc()).first()
+
+
+def _ftp_policy_payload(record: CompanyOperatingRecord | None) -> dict:
+    if not record:
+        return {
+            "configured": False,
+            "policy_name": "Default conservative FTP policy",
+            "operating_cost_percent_of_exposure": 2.0,
+            "capital_allocation_percent_of_exposure": 15.0,
+            "capital_hurdle_rate_percent": 18.0,
+            "minimum_risk_adjusted_margin_percent": 0.0,
+            "source_reference": None,
+            "notes": "Defaults are management assumptions, not regulatory or accounting rules.",
+        }
+    data = dict(record.data or {})
+    return {
+        "configured": True,
+        "id": str(record.id),
+        "reference": record.reference,
+        "policy_name": record.title,
+        "operating_cost_percent_of_exposure": float(data.get("operating_cost_percent_of_exposure") or 0),
+        "capital_allocation_percent_of_exposure": float(data.get("capital_allocation_percent_of_exposure") or 0),
+        "capital_hurdle_rate_percent": float(data.get("capital_hurdle_rate_percent") or 0),
+        "minimum_risk_adjusted_margin_percent": float(data.get("minimum_risk_adjusted_margin_percent") or 0),
+        "source_reference": data.get("source_reference"),
+        "notes": record.description,
+        "updated_at": record.updated_at.isoformat(),
+    }
+
+
+def _weighted_ftp_funding_cost(db: Session, context: TenantContext, *, shift_bps=Decimal("0")) -> dict:
+    facilities = _alm_funding_facilities(db, context)
+    rated_amount = Decimal("0")
+    total_amount = Decimal("0")
+    weighted_cost = Decimal("0")
+    missing_rate_amount = Decimal("0")
+    rows = []
+    shift_percent = Decimal(str(shift_bps)) / Decimal("100")
+    for facility in facilities:
+        amount = Decimal(str(facility.amount or 0))
+        total_amount += amount
+        raw_rate = (facility.data or {}).get("interest_rate_percent")
+        if raw_rate is None:
+            missing_rate_amount += amount
+            rows.append({
+                "reference": facility.reference,
+                "lender_name": (facility.data or {}).get("lender_name") or facility.counterparty_name,
+                "outstanding_amount": float(amount),
+                "interest_rate_percent": None,
+                "scenario_rate_percent": None,
+            })
+            continue
+        rate = Decimal(str(raw_rate))
+        scenario_rate = max(rate + shift_percent, Decimal("0"))
+        rated_amount += amount
+        weighted_cost += amount * scenario_rate
+        rows.append({
+            "reference": facility.reference,
+            "lender_name": (facility.data or {}).get("lender_name") or facility.counterparty_name,
+            "outstanding_amount": float(amount),
+            "interest_rate_percent": float(rate),
+            "scenario_rate_percent": float(scenario_rate),
+        })
+    weighted_rate = weighted_cost / rated_amount if rated_amount > 0 else None
+    coverage = rated_amount / total_amount * Decimal("100") if total_amount > 0 else Decimal("0")
+    return {
+        "weighted_funding_cost_percent": float(weighted_rate.quantize(Decimal("0.0001"))) if weighted_rate is not None else None,
+        "rated_funding_amount": float(rated_amount.quantize(Decimal("0.01"))),
+        "total_funding_amount": float(total_amount.quantize(Decimal("0.01"))),
+        "missing_rate_amount": float(missing_rate_amount.quantize(Decimal("0.01"))),
+        "funding_rate_coverage_percent": float(coverage.quantize(Decimal("0.01"))),
+        "funding_cost_shift_bps": float(Decimal(str(shift_bps))),
+        "facilities": rows,
+    }
+
+
+def _ftp_profitability_intelligence(
+    db: Session,
+    context: TenantContext,
+    *,
+    funding_cost_shift_bps=Decimal("0"),
+    ecl_multiplier=Decimal("1"),
+    operating_cost_multiplier=Decimal("1"),
+) -> dict:
+    branch_id = context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None
+    policy = _ftp_policy_payload(_ftp_policy_record(db, context))
+    funding = _weighted_ftp_funding_cost(db, context, shift_bps=funding_cost_shift_bps)
+    funding_rate = funding["weighted_funding_cost_percent"]
+
+    latest_run = db.query(CreditLossProvisionRun).filter(
+        CreditLossProvisionRun.company_id == context.company_id,
+        CreditLossProvisionRun.status == "posted",
+    )
+    if branch_id:
+        latest_run = latest_run.filter(CreditLossProvisionRun.branch_id == branch_id)
+    latest_run = latest_run.order_by(
+        CreditLossProvisionRun.as_of_date.desc(),
+        CreditLossProvisionRun.approved_at.desc(),
+    ).first()
+
+    ecl_by_loan: dict[UUID, CreditLossProvisionLine] = {}
+    if latest_run:
+        lines = db.query(CreditLossProvisionLine).filter(
+            CreditLossProvisionLine.run_id == latest_run.id
+        ).all()
+        ecl_by_loan = {line.loan_id: line for line in lines}
+
+    loans = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == context.company_id,
+        ClientCompanyLoan.balance > 0,
+    )
+    if branch_id:
+        loans = loans.filter(ClientCompanyLoan.branch_id == branch_id)
+
+    branch_names = {
+        row.id: row.name
+        for row in db.query(CompanyBranch).filter(CompanyBranch.company_id == context.company_id).all()
+    }
+    operating_pct = Decimal(str(policy["operating_cost_percent_of_exposure"])) / Decimal("100")
+    capital_pct = Decimal(str(policy["capital_allocation_percent_of_exposure"])) / Decimal("100")
+    hurdle_pct = Decimal(str(policy["capital_hurdle_rate_percent"])) / Decimal("100")
+    minimum_margin_pct = Decimal(str(policy["minimum_risk_adjusted_margin_percent"]))
+    ecl_multiplier = Decimal(str(ecl_multiplier))
+    operating_cost_multiplier = Decimal(str(operating_cost_multiplier))
+
+    loan_rows = []
+    by_branch: dict[str, dict] = defaultdict(lambda: {
+        "exposure": Decimal("0"),
+        "gross_revenue_proxy": Decimal("0"),
+        "ftp_funding_charge": Decimal("0"),
+        "ecl_risk_charge": Decimal("0"),
+        "operating_cost_charge": Decimal("0"),
+        "capital_charge": Decimal("0"),
+        "risk_adjusted_profit_proxy": Decimal("0"),
+        "loan_count": 0,
+    })
+    by_method: dict[str, dict] = defaultdict(lambda: {
+        "exposure": Decimal("0"),
+        "gross_revenue_proxy": Decimal("0"),
+        "risk_adjusted_profit_proxy": Decimal("0"),
+        "loan_count": 0,
+    })
+
+    assessed = 0
+    unassessed = 0
+    below_hurdle = 0
+    total_exposure = Decimal("0")
+    total_profit = Decimal("0")
+    total_gross = Decimal("0")
+    total_funding_charge = Decimal("0")
+    total_ecl = Decimal("0")
+    total_operating = Decimal("0")
+    total_capital_charge = Decimal("0")
+
+    for loan in loans.all():
+        ecl_line = ecl_by_loan.get(loan.id)
+        exposure = Decimal(str(ecl_line.exposure if ecl_line else loan.balance or 0))
+        if exposure <= 0:
+            continue
+        principal = Decimal(str(loan.principal_amount or 0))
+        term_months = max(int(loan.repayment_period or 0), 1)
+        term_years = Decimal(term_months) / Decimal("12")
+        contractual_interest = max(
+            Decimal(str(loan.total_repayable or 0))
+            - principal
+            - Decimal(str(loan.processing_fee or 0)),
+            Decimal("0"),
+        )
+        fee = Decimal(str(loan.processing_fee or 0))
+        if principal > 0 and term_years > 0:
+            simple_interest_yield_pct = contractual_interest / principal / term_years * Decimal("100")
+            fee_yield_pct = fee / principal / term_years * Decimal("100")
+        else:
+            simple_interest_yield_pct = Decimal("0")
+            fee_yield_pct = Decimal("0")
+        gross_yield_pct = simple_interest_yield_pct + fee_yield_pct
+        gross_revenue = exposure * gross_yield_pct / Decimal("100")
+
+        ecl_charge = (
+            Decimal(str(ecl_line.required_allowance or 0)) * ecl_multiplier
+            if ecl_line is not None else None
+        )
+        operating_charge = exposure * operating_pct * operating_cost_multiplier
+        allocated_capital = exposure * capital_pct
+        capital_charge = allocated_capital * hurdle_pct
+        funding_charge = (
+            exposure * Decimal(str(funding_rate)) / Decimal("100")
+            if funding_rate is not None else None
+        )
+
+        assessable = funding_charge is not None and ecl_charge is not None
+        if assessable:
+            assessed += 1
+            risk_profit = gross_revenue - funding_charge - ecl_charge - operating_charge - capital_charge
+            margin_pct = risk_profit / exposure * Decimal("100")
+            if margin_pct < minimum_margin_pct:
+                below_hurdle += 1
+            total_profit += risk_profit
+            total_funding_charge += funding_charge
+            total_ecl += ecl_charge
+        else:
+            unassessed += 1
+            risk_profit = None
+            margin_pct = None
+
+        total_exposure += exposure
+        total_gross += gross_revenue
+        total_operating += operating_charge
+        total_capital_charge += capital_charge
+
+        branch_key = str(loan.branch_id) if loan.branch_id else "unassigned"
+        branch_label = branch_names.get(loan.branch_id, "Unassigned branch")
+        method = str(loan.calculation_method or "unknown")
+        if assessable:
+            branch_row = by_branch[branch_key]
+            branch_row["label"] = branch_label
+            branch_row["exposure"] += exposure
+            branch_row["gross_revenue_proxy"] += gross_revenue
+            branch_row["ftp_funding_charge"] += funding_charge
+            branch_row["ecl_risk_charge"] += ecl_charge
+            branch_row["operating_cost_charge"] += operating_charge
+            branch_row["capital_charge"] += capital_charge
+            branch_row["risk_adjusted_profit_proxy"] += risk_profit
+            branch_row["loan_count"] += 1
+
+            method_row = by_method[method]
+            method_row["label"] = method
+            method_row["exposure"] += exposure
+            method_row["gross_revenue_proxy"] += gross_revenue
+            method_row["risk_adjusted_profit_proxy"] += risk_profit
+            method_row["loan_count"] += 1
+
+        loan_rows.append({
+            "loan_id": str(loan.id),
+            "loan_reference": loan.loan_reference,
+            "folio_number": loan.folio_number,
+            "branch_id": str(loan.branch_id) if loan.branch_id else None,
+            "branch_name": branch_label,
+            "calculation_method": method,
+            "exposure": float(exposure.quantize(Decimal("0.01"))),
+            "simple_annualized_interest_yield_proxy_percent": float(simple_interest_yield_pct.quantize(Decimal("0.01"))),
+            "annualized_fee_yield_proxy_percent": float(fee_yield_pct.quantize(Decimal("0.01"))),
+            "gross_contractual_yield_proxy_percent": float(gross_yield_pct.quantize(Decimal("0.01"))),
+            "gross_revenue_proxy": float(gross_revenue.quantize(Decimal("0.01"))),
+            "ftp_funding_charge": float(funding_charge.quantize(Decimal("0.01"))) if funding_charge is not None else None,
+            "ecl_risk_charge": float(ecl_charge.quantize(Decimal("0.01"))) if ecl_charge is not None else None,
+            "ecl_stage": int(ecl_line.stage) if ecl_line is not None else None,
+            "operating_cost_charge": float(operating_charge.quantize(Decimal("0.01"))),
+            "allocated_capital": float(allocated_capital.quantize(Decimal("0.01"))),
+            "capital_charge": float(capital_charge.quantize(Decimal("0.01"))),
+            "risk_adjusted_profit_proxy": float(risk_profit.quantize(Decimal("0.01"))) if risk_profit is not None else None,
+            "risk_adjusted_margin_percent": float(margin_pct.quantize(Decimal("0.01"))) if margin_pct is not None else None,
+            "status": (
+                "below_hurdle" if margin_pct is not None and margin_pct < minimum_margin_pct
+                else "profitable" if margin_pct is not None
+                else "not_assessed"
+            ),
+        })
+
+    def aggregate_rows(source: dict[str, dict]) -> list[dict]:
+        result = []
+        for key, row in source.items():
+            exposure = row["exposure"]
+            profit = row["risk_adjusted_profit_proxy"]
+            result.append({
+                "key": key,
+                "label": row.get("label") or key,
+                "loan_count": row["loan_count"],
+                "exposure": float(exposure.quantize(Decimal("0.01"))),
+                "gross_revenue_proxy": float(row["gross_revenue_proxy"].quantize(Decimal("0.01"))),
+                "risk_adjusted_profit_proxy": float(profit.quantize(Decimal("0.01"))),
+                "risk_adjusted_margin_percent": float((profit / exposure * Decimal("100")).quantize(Decimal("0.01"))) if exposure > 0 else None,
+            })
+        return sorted(result, key=lambda item: item["risk_adjusted_profit_proxy"])
+
+    loan_rows.sort(
+        key=lambda row: (
+            0 if row["status"] == "below_hurdle" else 1 if row["status"] == "profitable" else 2,
+            row["risk_adjusted_margin_percent"] if row["risk_adjusted_margin_percent"] is not None else Decimal("999"),
+        )
+    )
+    overall_margin = total_profit / total_exposure * Decimal("100") if total_exposure > 0 and assessed else None
+    return {
+        "as_of": date.today().isoformat(),
+        "branch_id": str(branch_id) if branch_id else None,
+        "policy": policy,
+        "funding": funding,
+        "latest_posted_ecl_reference": latest_run.run_reference if latest_run else None,
+        "scenario": {
+            "funding_cost_shift_bps": float(Decimal(str(funding_cost_shift_bps))),
+            "ecl_multiplier": float(ecl_multiplier),
+            "operating_cost_multiplier": float(operating_cost_multiplier),
+        },
+        "summary": {
+            "total_exposure": float(total_exposure.quantize(Decimal("0.01"))),
+            "assessed_loan_count": assessed,
+            "not_assessed_loan_count": unassessed,
+            "below_hurdle_loan_count": below_hurdle,
+            "gross_revenue_proxy": float(total_gross.quantize(Decimal("0.01"))),
+            "ftp_funding_charge": float(total_funding_charge.quantize(Decimal("0.01"))),
+            "ecl_risk_charge": float(total_ecl.quantize(Decimal("0.01"))),
+            "operating_cost_charge": float(total_operating.quantize(Decimal("0.01"))),
+            "capital_charge": float(total_capital_charge.quantize(Decimal("0.01"))),
+            "risk_adjusted_profit_proxy": float(total_profit.quantize(Decimal("0.01"))),
+            "risk_adjusted_margin_percent": float(overall_margin.quantize(Decimal("0.01"))) if overall_margin is not None else None,
+        },
+        "by_branch": aggregate_rows(by_branch),
+        "by_calculation_method": aggregate_rows(by_method),
+        "loan_profitability": loan_rows[:250],
+        "policy_note": (
+            "FTP profitability is management decision support, not accounting profit, APR, statutory RAROC or regulatory capital return. "
+            "Loan yield is a simple annualized contractual-yield proxy. Current posted ECL allowance is deducted in full as a conservative point-in-time risk charge. "
+            "Funding cost uses only explicitly registered facilities with rates; incomplete rate coverage remains visible."
+        ),
+    }
+
+
+@router.put("/ftp/policy")
+def upsert_ftp_policy(
+    payload: FundsTransferPricingPolicyUpsert,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    record = _ftp_policy_record(db, context)
+    data = {
+        "operating_cost_percent_of_exposure": float(payload.operating_cost_percent_of_exposure),
+        "capital_allocation_percent_of_exposure": float(payload.capital_allocation_percent_of_exposure),
+        "capital_hurdle_rate_percent": float(payload.capital_hurdle_rate_percent),
+        "minimum_risk_adjusted_margin_percent": float(payload.minimum_risk_adjusted_margin_percent),
+        "source_reference": payload.source_reference,
+    }
+    if record:
+        record.title = payload.policy_name
+        record.description = payload.notes
+        record.data = data
+        record.status = "active"
+    else:
+        record = CompanyOperatingRecord(
+            company_id=context.company_id,
+            branch_id=None,
+            module="pricing_lab",
+            record_type="ftp_policy",
+            reference=f"FTPPOL-{secrets.token_hex(4).upper()}",
+            title=payload.policy_name,
+            description=payload.notes,
+            status="active",
+            priority="high",
+            created_by_user_id=context.user.id,
+            data=data,
+            tags=["ftp", "risk_adjusted_profitability"],
+        )
+        db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _ftp_policy_payload(record)
+
+
+@router.get("/ftp")
+def get_ftp_profitability(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_ROLES)
+    return _ftp_profitability_intelligence(db, context)
+
+
+@router.post("/ftp/scenario")
+def run_ftp_scenario(
+    payload: FundsTransferPricingScenarioRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER})
+    return _ftp_profitability_intelligence(
+        db,
+        context,
+        funding_cost_shift_bps=payload.funding_cost_shift_bps,
+        ecl_multiplier=payload.ecl_multiplier,
+        operating_cost_multiplier=payload.operating_cost_multiplier,
+    )
+
+
+@router.post("/ftp/evidence-pack")
+def generate_ftp_evidence_pack(
+    payload: FundsTransferPricingScenarioRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | FINANCE_ROLES | {UserRole.RISK_MANAGER, UserRole.AUDITOR})
+    pack = _ftp_profitability_intelligence(
+        db,
+        context,
+        funding_cost_shift_bps=payload.funding_cost_shift_bps,
+        ecl_multiplier=payload.ecl_multiplier,
+        operating_cost_multiplier=payload.operating_cost_multiplier,
+    )
+    today = date.today()
+    report = GeneratedReport(
+        reference=f"FTPPACK-{today:%Y%m%d}-{secrets.token_hex(3).upper()}",
+        scope_type="company",
+        company_id=context.company_id,
+        branch_id=context.branch_id if context.staff and context.staff.role not in COMPANY_MANAGEMENT_ROLES else None,
+        generated_by_user_id=context.user.id,
+        title=f"FTP & risk-adjusted profitability pack - {today:%d %b %Y}",
+        report_type="ftp_profitability_evidence_pack",
+        output_format="json",
+        period_start=today,
+        period_end=today,
         status="completed",
         metrics=pack,
         generated_at=_now(),
