@@ -815,6 +815,11 @@ def calculate_affordability(
     debt_installments = money(totals["existing_debt_installments"])
 
     bureau_policy_row, bureau_policy = company_experian_policy(db, company_id)
+    if not bureau_policy_row or not bureau_policy_row.is_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Credit-bureau integration must be enabled before affordability can be calculated.",
+        )
     latest_bureau = None
     if bureau_policy_row and bureau_policy_row.is_enabled:
         latest_bureau = assert_experian_requirement(
@@ -864,7 +869,12 @@ def calculate_affordability(
     disposable_limit = money(max(disposable, Decimal("0")) * Decimal(policy.disposable_income_usage_percent or 0) / Decimal("100"))
     dti_limit = money(max(verified_income * Decimal(policy.max_dti_percent or 0) / Decimal("100") - debt_installments, Decimal("0")))
     installment_income_limit = money(verified_income * Decimal(policy.max_installment_income_percent or 0) / Decimal("100"))
-    max_installment = money(min(disposable_limit, dti_limit, installment_income_limit))
+    internal_max_installment = money(min(disposable_limit, dti_limit, installment_income_limit))
+    max_installment = (
+        money(min(internal_max_installment, money(live_cdas_affordability)))
+        if live_cdas_affordability is not None
+        else internal_max_installment
+    )
     headroom = money(max_installment - monthly)
     dti = percent((debt_installments + monthly) * Decimal("100") / verified_income) if verified_income > 0 else Decimal("100")
 
@@ -1046,12 +1056,8 @@ def calculate_affordability(
                 "bureau_monthly_commitments": str(bureau_monthly_commitments),
                 "cdas_employee_number_present": bool(cdas_profile and str(cdas_profile.employee_number or "").strip()),
                 "cdas_live_affordability": str(money(live_cdas_affordability)) if live_cdas_affordability is not None else None,
-                "internal_maximum_affordable_installment": str(max_installment),
-                "authoritative_installment_limit": str(
-                    min(max_installment, money(live_cdas_affordability))
-                    if live_cdas_affordability is not None
-                    else max_installment
-                ),
+                "internal_maximum_affordable_installment": str(internal_max_installment),
+                "authoritative_installment_limit": str(max_installment),
             },
             "policy": serialize(policy),
             "proposal": {
