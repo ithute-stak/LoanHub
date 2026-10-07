@@ -69,6 +69,20 @@ const PREFIX_RESOURCES: Array<[string, RealtimeResource[]]> = [
     ["loan_product", ["loanProducts"]],
 ];
 
+const RESOURCE_CACHE_TAGS: Record<RealtimeResource, string[]> = {
+    companies: ["companies"],
+    companyStaff: ["company-staff", "staff", "employees"],
+    branches: ["branches"],
+    borrowers: ["borrowers", "clients"],
+    loanRequests: ["loan-requests"],
+    loanOffers: ["loan-offers"],
+    marketplace: ["marketplace"],
+    loans: ["loans"],
+    payments: ["payments"],
+    billing: ["billing", "subscriptions"],
+    loanProducts: ["loan-products", "products"],
+};
+
 const RESOURCE_ROUTE_HINTS: Record<RealtimeResource, string[]> = {
     companies: ["/superadmin", "/company/settings", "/companies"],
     companyStaff: ["/company/staff", "/company/hr", "/company/settings", "/superadmin"],
@@ -133,6 +147,19 @@ export function resourcesForCommitBatch(
     }
     return resources;
 }
+
+export function cacheTagsForResources(
+    resources: Iterable<RealtimeResource>,
+): string[] {
+    const tags = new Set<string>();
+    for (const resource of resources) {
+        for (const tag of RESOURCE_CACHE_TAGS[resource]) {
+            tags.add(tag);
+        }
+    }
+    return [...tags];
+}
+
 
 export function shouldRefreshRouteForCommit(
     pathname: string,
