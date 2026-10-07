@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import datetime, timezone
 import secrets
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -48,6 +48,7 @@ from database.schemas.origination import (
     TopUpExceptionApproveRequest,
 )
 from database.session import get_db
+from integrations.cdas import CdasError
 from services.cdas_collection_policy import build_cdas_collection_plan
 from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
 from services.platform_cdas_service import (
@@ -574,9 +575,15 @@ async def assess_application(
             operation_type="affordability",
         )
         client = get_company_cdas_client(db, context.company_id)
-        live_cdas_affordability = await client.check_affordability(
-            str(verified_cdas_profile.employee_number)
-        )
+        try:
+            live_cdas_affordability = await client.check_affordability(
+                str(verified_cdas_profile.employee_number)
+            )
+        except CdasError as exc:
+            raise HTTPException(
+                status_code=exc.status_code if 400 <= exc.status_code <= 599 else 502,
+                detail=f"CDAS affordability could not be verified: {exc.message}",
+            ) from exc
         record_successful_operation(
             db,
             company_id=context.company_id,
