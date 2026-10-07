@@ -726,12 +726,12 @@ def persist_transparency_events(session: Session, flush_context) -> None:
         borrower_user_id = _borrower_user_id(connection, target, table_name)
         employee_user_id = _employee_subject_user_id(connection, target, table_name)
 
-        channels: set[str] = {"superadmin"}
+        channels: set[str] = {"platform"}
         if company_id:
             channels.add(f"company-{company_id}")
         if borrower_user_id:
             channels.add(f"user-{borrower_user_id}")
-        if employee_user_id:
+        if employee_user_id and not company_id:
             channels.add(f"user-{employee_user_id}")
 
         commit_events.append({
