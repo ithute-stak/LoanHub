@@ -16,6 +16,7 @@ import {
 import { prepareWebSocketSession } from "@/api/auth";
 import { resolveApiBaseUrl } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
+import { DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
 import { useTenant } from "@/provider/tenantProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
@@ -317,17 +318,25 @@ export function RealtimeProvider({
                         const events = pendingDbEventsRef.current.splice(0);
                         dbRefreshTimerRef.current = null;
 
+                        const hasRemoteChanges = events.some(
+                            (item) => !isLocalMutationRequest(item.request_id),
+                        );
+
                         window.dispatchEvent(
-                            new CustomEvent("loanhub:db-commit", {
+                            new CustomEvent(DB_COMMIT_EVENT_NAME, {
                                 detail: {
                                     events,
                                     count: events.length,
                                     latest: events.at(-1) ?? null,
+                                    hasRemoteChanges,
                                 },
                             }),
                         );
 
-                        if (document.visibilityState === "visible") {
+                        if (
+                            hasRemoteChanges &&
+                            document.visibilityState === "visible"
+                        ) {
                             router.refresh();
                         }
                     }, 180);
