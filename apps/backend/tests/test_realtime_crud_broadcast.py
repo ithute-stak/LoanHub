@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
+
+from core.transparency import _database_event_channels
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -44,8 +47,7 @@ def test_realtime_scope_does_not_broadcast_record_contents() -> None:
     assert '"before"' not in commit_payload
     assert '"after"' not in commit_payload
     assert '"password"' not in commit_payload
-    assert '{"platform"}' in commit_payload
-    assert 'f"company-{company_id}"' in commit_payload
+    assert "_database_event_channels(company_id, branch_id)" in commit_payload
 
 
 def test_platform_roles_subscribe_to_shared_database_channel() -> None:
@@ -130,3 +132,29 @@ def test_shared_collections_refresh_only_affected_resources_and_sort_determinist
     assert "newest first" in sorting
     assert "localeCompare" in sorting
     assert "return left.index - right.index" in sorting
+
+
+def test_branch_commit_routes_only_to_affected_branch_plus_company_wide_scope() -> None:
+    company_id = uuid4()
+    maputsoe_branch_id = uuid4()
+
+    channels = _database_event_channels(company_id, maputsoe_branch_id)
+
+    assert channels == {
+        "platform",
+        f"company-{company_id}",
+        f"branch-{maputsoe_branch_id}",
+    }
+    assert f"company-shared-{company_id}" not in channels
+
+
+def test_company_wide_commit_reaches_all_company_members_without_branch_leakage() -> None:
+    company_id = uuid4()
+
+    channels = _database_event_channels(company_id, None)
+
+    assert channels == {
+        "platform",
+        f"company-{company_id}",
+        f"company-shared-{company_id}",
+    }
