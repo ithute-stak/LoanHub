@@ -386,12 +386,12 @@ async def reconcile_provider_operation(
     mutation_snapshot = operation.response_snapshot if isinstance(operation.response_snapshot, dict) else {}
 
     try:
-        if operation.operation_type == "deduction.modify_active":
+        if operation.operation_type in {"deduction.modify_active", "deduction.modify_active.autopilot"}:
             record = await client.get_active_and_approved_deduction(operation.employee_no)
             matched = _modified_values_match(operation, record)
             reconciliation_snapshot: Any = record
         else:
-            if operation.operation_type == "deduction.settle":
+            if operation.operation_type in {"deduction.settle", "deduction.settle.autopilot"}:
                 expected_status = 7
             elif operation.operation_type.startswith("deduction.lifecycle."):
                 try:
