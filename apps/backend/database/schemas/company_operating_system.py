@@ -77,6 +77,20 @@ class OperatingRecordRead(BaseModel):
 
 
 
+
+class PrudentialStressScenarioRequest(BaseModel):
+    name: str = Field(default="Custom stress", min_length=2, max_length=160)
+    collection_rate_percent: Decimal = Field(default=Decimal("70"), ge=0, le=100)
+    obligation_rate_percent: Decimal = Field(default=Decimal("100"), ge=0)
+    unexpected_outflow: Decimal = Field(default=Decimal("0"), ge=0)
+    additional_stage3_migration_percent: Decimal = Field(default=Decimal("10"), ge=0, le=100)
+    additional_writeoff_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    stressed_ecl_rate_percent: Decimal = Field(default=Decimal("75"), ge=0, le=100)
+
+
+class PrudentialStressPackRequest(BaseModel):
+    scenarios: list[PrudentialStressScenarioRequest] | None = Field(default=None, max_length=12)
+
 class PrudentialProfileUpsert(BaseModel):
     jurisdiction: str = Field(default="Lesotho", min_length=2, max_length=120)
     framework_name: str = Field(min_length=3, max_length=240)
