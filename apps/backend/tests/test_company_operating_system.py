@@ -239,3 +239,36 @@ def test_regulatory_prudential_intelligence_is_configurable_evidence_based_and_n
     assert "Related-party register" in centre
     assert "Regulatory filing readiness" in centre
     assert "Generate evidence pack" in centre
+
+
+def test_prudential_stress_testing_is_nonposting_transparent_and_threshold_driven():
+    router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
+    schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
+    centre = (ROOT / "frontend" / "components" / "company" / "company-operating-system-centre.tsx").read_text(encoding="utf-8")
+
+    assert "class PrudentialStressScenarioRequest" in schema
+    assert "class PrudentialStressPackRequest" in schema
+
+    assert "DEFAULT_PRUDENTIAL_STRESS_SCENARIOS" in router
+    assert "def _prudential_stress_scenario(" in router
+    assert "def _prudential_stress_pack(" in router
+    assert '@router.post("/prudential/stress-test")' in router
+    assert '@router.post("/prudential/stress-evidence-pack")' in router
+    assert '"report_type="prudential_stress_evidence_pack"' in router
+    assert '"incremental_allowance"' in router
+    assert '"equity_erosion"' in router
+    assert '"stressed_equity"' in router
+    assert '"minimum_projected_cash"' in router
+    assert "Stress testing is a non-posting management simulation" in router
+    assert "Results are only assessed against explicitly configured prudential thresholds" in router
+
+    assert "PrudentialStressPack" in api
+    assert "runPrudentialStressTest" in api
+    assert "generatePrudentialStressEvidencePack" in api
+
+    assert "Scenario capital & regulatory stress testing" in centre
+    assert "Run built-in stress scenarios" in centre
+    assert "Run custom scenario" in centre
+    assert "Generate stress evidence pack" in centre
+    assert "Equity erosion" in centre
