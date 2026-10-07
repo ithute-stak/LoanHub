@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import {
     createContext,
     type ReactNode,
@@ -14,6 +16,7 @@ import {
 import { prepareWebSocketSession } from "@/api/auth";
 import { resolveApiBaseUrl } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
+import { beginRealtimeCatchupWindow, DB_COMMIT_EVENT_NAME, isLocalMutationRequest } from "@/lib/realtime-commit";
 import { useTenant } from "@/provider/tenantProvider";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
@@ -86,6 +89,7 @@ export function RealtimeProvider({
     children: ReactNode;
 }) {
     const dispatch = useAppDispatch();
+    const router = useRouter();
     const userId = useAppSelector(
         (state) => state.auth.user?.id ?? null,
     );
@@ -112,6 +116,10 @@ export function RealtimeProvider({
         new Set<RealtimeListener>(),
     );
     const disposedRef = useRef(false);
+    const dbRefreshTimerRef = useRef<number | null>(null);
+    const pendingDbEventsRef = useRef<RealtimePayload[]>([]);
+    const seenEventIdsRef = useRef(new Set<string>());
+    const hasConnectedOnceRef = useRef(false);
 
     const clearReconnectTimer = useCallback(() => {
         if (reconnectTimerRef.current !== null) {
@@ -260,8 +268,34 @@ export function RealtimeProvider({
                     return;
                 }
 
+                const reconnecting = hasConnectedOnceRef.current;
+                hasConnectedOnceRef.current = true;
                 reconnectAttemptRef.current = 0;
                 setConnected(true);
+
+                beginRealtimeCatchupWindow();
+                window.dispatchEvent(
+                    new CustomEvent(DB_COMMIT_EVENT_NAME, {
+                        detail: {
+                            events: [{
+                                type: "DB_EVENT",
+                                contract: "loanhub.db-commit.v1",
+                                action: reconnecting
+                                    ? "reconnect_catchup"
+                                    : "initial_socket_catchup",
+                                table: "*",
+                                entity_id: null,
+                                request_id: null,
+                            }],
+                            count: 1,
+                            latest: null,
+                            hasRemoteChanges: true,
+                        },
+                    }),
+                );
+                if (document.visibilityState === "visible") {
+                    router.refresh();
+                }
             };
 
             socket.onmessage = (event) => {
@@ -280,6 +314,19 @@ export function RealtimeProvider({
                 }
 
                 if (String(payload.type ?? "") === "DB_EVENT") {
+                    const eventId = String(payload.event_id ?? "");
+                    if (eventId && seenEventIdsRef.current.has(eventId)) {
+                        return;
+                    }
+                    if (eventId) {
+                        seenEventIdsRef.current.add(eventId);
+                        if (seenEventIdsRef.current.size > 500) {
+                            seenEventIdsRef.current = new Set(
+                                [...seenEventIdsRef.current].slice(-250),
+                            );
+                        }
+                    }
+
                     dispatch(
                         cacheScopeInvalidated({
                             scope: [
@@ -289,6 +336,39 @@ export function RealtimeProvider({
                             ].join(":"),
                         }),
                     );
+
+                    pendingDbEventsRef.current.push(payload);
+                    if (dbRefreshTimerRef.current !== null) {
+                        window.clearTimeout(dbRefreshTimerRef.current);
+                    }
+                    dbRefreshTimerRef.current = window.setTimeout(() => {
+                        const events = pendingDbEventsRef.current.splice(0);
+                        dbRefreshTimerRef.current = null;
+
+                        const hasRemoteChanges = events.some(
+                            (item) => !isLocalMutationRequest(item.request_id),
+                        );
+
+                        beginRealtimeCatchupWindow();
+
+                        window.dispatchEvent(
+                            new CustomEvent(DB_COMMIT_EVENT_NAME, {
+                                detail: {
+                                    events,
+                                    count: events.length,
+                                    latest: events.at(-1) ?? null,
+                                    hasRemoteChanges,
+                                },
+                            }),
+                        );
+
+                        if (
+                            hasRemoteChanges &&
+                            document.visibilityState === "visible"
+                        ) {
+                            router.refresh();
+                        }
+                    }, 180);
                 }
 
                 for (
@@ -339,6 +419,11 @@ export function RealtimeProvider({
             disposedRef.current = true;
             generation += 1;
             window.clearInterval(heartbeat);
+            if (dbRefreshTimerRef.current !== null) {
+                window.clearTimeout(dbRefreshTimerRef.current);
+                dbRefreshTimerRef.current = null;
+            }
+            pendingDbEventsRef.current = [];
             closeCurrentSocket();
         };
     }, [
@@ -350,6 +435,7 @@ export function RealtimeProvider({
         closeCurrentSocket,
         dispatch,
         userId,
+        router,
     ]);
 
     const subscribe = useCallback(
