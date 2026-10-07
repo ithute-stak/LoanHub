@@ -13,7 +13,7 @@ import {
 } from "@/lib/storage";
 import type { AuthUser, RefreshResponse } from "@/types/auth";
 import { createUuid } from "@/lib/uuid";
-import { rememberLocalMutationRequest } from "@/lib/realtime-commit";
+import { rememberLocalMutationRequest, shouldBypassCacheForRealtime } from "@/lib/realtime-commit";
 
 const DEFAULT_API_URL =
     process.env.NEXT_PUBLIC_API_URL ??
@@ -104,6 +104,10 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
         const requestId = String(config.headers["X-Request-ID"] ?? createUuid());
         config.headers["X-Request-ID"] = requestId;
         rememberLocalMutationRequest(requestId);
+    }
+
+    if ((method === "get" || method === "head") && shouldBypassCacheForRealtime()) {
+        config.headers["X-LoanHub-Cache"] = "bypass";
     }
 
     // Never force application/json for FormData. The browser must generate the
