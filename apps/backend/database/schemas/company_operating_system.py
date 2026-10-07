@@ -103,6 +103,22 @@ class InterestRateStressRequest(BaseModel):
     funding_shock_bps: Decimal | None = Field(default=None, ge=-2000, le=2000)
     horizon_days: int = Field(default=365, ge=1, le=1095)
 
+
+class FundsTransferPricingPolicyUpsert(BaseModel):
+    policy_name: str = Field(default="LoanHub FTP & risk-adjusted profitability", min_length=3, max_length=240)
+    operating_cost_percent_of_exposure: Decimal = Field(default=Decimal("2.00"), ge=0)
+    capital_allocation_percent_of_exposure: Decimal = Field(default=Decimal("15.00"), ge=0)
+    capital_hurdle_rate_percent: Decimal = Field(default=Decimal("18.00"), ge=0)
+    minimum_risk_adjusted_margin_percent: Decimal = Field(default=Decimal("0.00"))
+    source_reference: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=3000)
+
+
+class FundsTransferPricingScenarioRequest(BaseModel):
+    funding_cost_shift_bps: Decimal = Field(default=Decimal("0"))
+    ecl_multiplier: Decimal = Field(default=Decimal("1.00"), ge=0)
+    operating_cost_multiplier: Decimal = Field(default=Decimal("1.00"), ge=0)
+
 class ALMFundingFacilityCreate(BaseModel):
     lender_name: str = Field(min_length=2, max_length=240)
     facility_type: str = Field(default="term_funding", min_length=2, max_length=120)
