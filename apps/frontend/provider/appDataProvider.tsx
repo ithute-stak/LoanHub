@@ -537,12 +537,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 return;
             }
 
-            dispatch(
-                cacheScopeInvalidated({
-                    scope: `${user.id}:${activeCompanyId ?? "platform"}:${activeMembership?.role ?? user.role}`,
-                }),
-            );
-
             const tasks: Promise<unknown>[] = [];
             if (resources.has("companies")) {
                 tasks.push(dispatch(fetchCompanies()).unwrap());
