@@ -770,3 +770,116 @@ export async function generateInterestRateRiskEvidencePack(payload: {
 }): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: InterestRateRiskIntelligence }> {
   return (await api.post("/company-operating-system/interest-rate-risk/evidence-pack", payload)).data;
 }
+
+
+export type FTPProfitabilityIntelligence = {
+  as_of: string;
+  branch_id?: string | null;
+  policy: {
+    configured: boolean;
+    policy_name: string;
+    operating_cost_percent_of_exposure: number;
+    capital_allocation_percent_of_exposure: number;
+    capital_hurdle_rate_percent: number;
+    minimum_risk_adjusted_margin_percent: number;
+    source_reference?: string | null;
+    notes?: string | null;
+  };
+  funding: {
+    weighted_funding_cost_percent?: number | null;
+    rated_funding_amount: number;
+    total_funding_amount: number;
+    missing_rate_amount: number;
+    funding_rate_coverage_percent: number;
+    funding_cost_shift_bps: number;
+  };
+  latest_posted_ecl_reference?: string | null;
+  scenario: {
+    funding_cost_shift_bps: number;
+    ecl_multiplier: number;
+    operating_cost_multiplier: number;
+  };
+  summary: {
+    total_exposure: number;
+    assessed_loan_count: number;
+    not_assessed_loan_count: number;
+    below_hurdle_loan_count: number;
+    gross_revenue_proxy: number;
+    ftp_funding_charge: number;
+    ecl_risk_charge: number;
+    operating_cost_charge: number;
+    capital_charge: number;
+    risk_adjusted_profit_proxy: number;
+    risk_adjusted_margin_percent?: number | null;
+  };
+  by_branch: Array<{
+    key: string;
+    label: string;
+    loan_count: number;
+    exposure: number;
+    gross_revenue_proxy: number;
+    risk_adjusted_profit_proxy: number;
+    risk_adjusted_margin_percent?: number | null;
+  }>;
+  by_calculation_method: Array<{
+    key: string;
+    label: string;
+    loan_count: number;
+    exposure: number;
+    gross_revenue_proxy: number;
+    risk_adjusted_profit_proxy: number;
+    risk_adjusted_margin_percent?: number | null;
+  }>;
+  loan_profitability: Array<{
+    loan_id: string;
+    loan_reference: string;
+    folio_number: string;
+    branch_name: string;
+    calculation_method: string;
+    exposure: number;
+    gross_contractual_yield_proxy_percent: number;
+    gross_revenue_proxy: number;
+    ftp_funding_charge?: number | null;
+    ecl_risk_charge?: number | null;
+    ecl_stage?: number | null;
+    operating_cost_charge: number;
+    allocated_capital: number;
+    capital_charge: number;
+    risk_adjusted_profit_proxy?: number | null;
+    risk_adjusted_margin_percent?: number | null;
+    status: "profitable" | "below_hurdle" | "not_assessed";
+  }>;
+  policy_note: string;
+};
+
+export async function getFTPProfitability(): Promise<FTPProfitabilityIntelligence> {
+  return (await api.get<FTPProfitabilityIntelligence>("/company-operating-system/ftp")).data;
+}
+
+export async function saveFTPPolicy(payload: {
+  policy_name: string;
+  operating_cost_percent_of_exposure: number;
+  capital_allocation_percent_of_exposure: number;
+  capital_hurdle_rate_percent: number;
+  minimum_risk_adjusted_margin_percent: number;
+  source_reference?: string | null;
+  notes?: string | null;
+}): Promise<FTPProfitabilityIntelligence["policy"]> {
+  return (await api.put("/company-operating-system/ftp/policy", payload)).data;
+}
+
+export async function runFTPScenario(payload: {
+  funding_cost_shift_bps: number;
+  ecl_multiplier: number;
+  operating_cost_multiplier: number;
+}): Promise<FTPProfitabilityIntelligence> {
+  return (await api.post<FTPProfitabilityIntelligence>("/company-operating-system/ftp/scenario", payload)).data;
+}
+
+export async function generateFTPEvidencePack(payload: {
+  funding_cost_shift_bps: number;
+  ecl_multiplier: number;
+  operating_cost_multiplier: number;
+}): Promise<{ id: string; reference: string; title: string; generated_at: string; metrics: FTPProfitabilityIntelligence }> {
+  return (await api.post("/company-operating-system/ftp/evidence-pack", payload)).data;
+}
