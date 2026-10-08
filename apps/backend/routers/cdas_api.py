@@ -632,6 +632,102 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
     return None
 
 
+
+@router.get("/loans/operations")
+def list_cdas_operational_loans(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return one operational CDAS row per company loan.
+
+    This endpoint is intentionally LoanHub-first: the UI can present Add to CDAS,
+    Track, Reconcile, Modify and Settle without making operators understand raw
+    provider lifecycle fields.
+    """
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    loans = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
+        )
+        .order_by(ClientCompanyLoan.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    items = []
+    for loan in loans:
+        mandate = (
+            db.query(CDASDeductionMandate)
+            .filter(
+                CDASDeductionMandate.company_id == context.company_id,
+                CDASDeductionMandate.loan_id == loan.id,
+            )
+            .first()
+        )
+        state = None
+        if mandate:
+            state = (
+                db.query(CdasOfficialMandateState)
+                .filter(
+                    CdasOfficialMandateState.company_id == context.company_id,
+                    CdasOfficialMandateState.mandate_id == mandate.id,
+                )
+                .first()
+            )
+
+        person = getattr(getattr(loan.borrower, "user", None), "person", None)
+        borrower_name = getattr(person, "full_name", None) or str(loan.borrower_id)
+        plan = dict(loan.cdas_collection_plan or {})
+        lifecycle_status = state.lifecycle_status if state else "not_registered"
+        if state and state.requires_reconciliation:
+            next_action = "reconcile"
+        elif not mandate or not state or (
+            state.deduction_id is None
+            and lifecycle_status == "registration_failed"
+            and not state.requires_reconciliation
+        ):
+            next_action = "register"
+        elif lifecycle_status in {"registered", "registration_pending"}:
+            next_action = "track"
+        elif lifecycle_status in {"approved", "active", "changed"}:
+            next_action = "manage"
+        elif lifecycle_status == "settled":
+            next_action = "complete"
+        else:
+            next_action = "track"
+
+        items.append(
+            {
+                "loan_id": str(loan.id),
+                "loan_reference": loan.loan_reference,
+                "borrower_id": str(loan.borrower_id),
+                "borrower_name": borrower_name,
+                "loan_status": getattr(loan.status, "value", str(loan.status)),
+                "balance": str(loan.balance or 0),
+                "installment_amount": str(loan.installment_amount or 0),
+                "repayment_period": int(loan.repayment_period or 0),
+                "employee_number": mandate.employee_number if mandate else None,
+                "mandate_id": str(mandate.id) if mandate else None,
+                "mandate_status": mandate.status if mandate else None,
+                "deduction_id": state.deduction_id if state else None,
+                "cdas_status": state.cdas_status if state else None,
+                "lifecycle_status": lifecycle_status,
+                "requires_reconciliation": bool(state.requires_reconciliation) if state else False,
+                "next_action": next_action,
+                "autopilot_enabled": bool(plan),
+                "autopilot_pending": plan.get("autopilot_pending"),
+                "autopilot_last_result": plan.get("autopilot_last_result"),
+                "autopilot_topup_opportunity": plan.get("autopilot_topup_opportunity"),
+                "first_payment_due": loan.first_payment_due.isoformat() if loan.first_payment_due else None,
+                "maturity_date": loan.maturity_date.isoformat() if loan.maturity_date else None,
+            }
+        )
+    return {"items": items, "count": len(items)}
+
+
 @router.get("/loans/{loan_id}/registration-draft")
 def get_cdas_loan_registration_draft(
     loan_id: UUID,
@@ -919,6 +1015,112 @@ def get_cdas_loan_state(
         "requires_reconciliation": bool(state.requires_reconciliation),
         "last_request_type": state.last_request_type,
         "last_synced_at": state.last_synced_at,
+    }
+
+
+
+@router.post("/loans/{loan_id}/reconcile")
+async def reconcile_linked_cdas_loan(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Reconcile the latest unresolved provider mutation for a linked loan."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state:
+        raise HTTPException(status_code=404, detail="This loan has no official CDAS provider state")
+
+    operation_query = db.query(CdasProviderOperation).filter(
+        CdasProviderOperation.company_id == context.company_id,
+        CdasProviderOperation.environment == state.environment,
+        CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES),
+    )
+    if state.deduction_id is not None:
+        operation_query = operation_query.filter(
+            CdasProviderOperation.deduction_id == state.deduction_id
+        )
+    else:
+        operation_query = operation_query.filter(
+            CdasProviderOperation.reference_no == state.reference_no
+        )
+    operation = operation_query.order_by(CdasProviderOperation.created_at.desc()).first()
+    if operation is None:
+        return {
+            "ok": True,
+            "reconciled": not bool(state.requires_reconciliation),
+            "message": "No unresolved CDAS provider operation exists for this loan.",
+            "operation": None,
+        }
+
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        matched, operation = await reconcile_provider_operation(db, operation=operation, client=client)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CdasError as exc:
+        db.refresh(operation)
+        raise _cdas_http_error(exc, operation=operation) from exc
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    state.requires_reconciliation = not matched
+    state.last_synced_at = now
+    if matched:
+        response_snapshot = operation.response_snapshot if isinstance(operation.response_snapshot, dict) else {}
+        reconciliation_snapshot = response_snapshot.get("reconciliation")
+        reconciled_deduction_id = _first_provider_int(
+            reconciliation_snapshot,
+            "DeductionID",
+            "deductionId",
+            "deduction_id",
+        )
+        if reconciled_deduction_id is not None:
+            state.deduction_id = reconciled_deduction_id
+            mandate.external_reference = str(reconciled_deduction_id)
+
+        if operation.operation_type in {"deduction.settle", "deduction.settle.autopilot"}:
+            state.lifecycle_status = "settled"
+            state.cdas_status = 7
+            state.settled_at = now
+            mandate.status = "settled"
+            mandate.completed_at = now
+        elif operation.operation_type in {"deduction.modify_active", "deduction.modify_active.autopilot"}:
+            state.lifecycle_status = "changed"
+            state.cdas_status = 10
+            mandate.status = "changed"
+        elif operation.operation_type.startswith("deduction.lifecycle."):
+            request_type = int((operation.request_snapshot or {}).get("RequestType") or 0)
+            lifecycle_by_type = {1: ("registered", 1), 3: ("reviewed", 3), 4: ("approved", 4), 6: ("cancelled", 6), 10: ("changed", 10)}
+            if request_type in lifecycle_by_type:
+                state.lifecycle_status, state.cdas_status = lifecycle_by_type[request_type]
+                mandate.status = state.lifecycle_status
+
+    db.commit()
+    return {
+        "ok": True,
+        "reconciled": matched,
+        "operation": operation_summary(operation),
+        "lifecycle_status": state.lifecycle_status,
+        "requires_reconciliation": bool(state.requires_reconciliation),
     }
 
 
