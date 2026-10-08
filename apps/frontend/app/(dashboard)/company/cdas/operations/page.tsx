@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -102,13 +103,14 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 }
 
 export default function CdasOperationsPage() {
+    const searchParams = useSearchParams();
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [loading, setLoading] = useState<"prepare" | "lifecycle" | "modify" | "settle" | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<{ title: string; record: ProviderRecord } | null>(null);
     const [approvedCdasApplications, setApprovedCdasApplications] = useState<DirectLoanApplication[]>([]);
-    const [selectedLoanId, setSelectedLoanId] = useState("");
+    const [selectedLoanId, setSelectedLoanId] = useState(() => searchParams.get("loan") || "");
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
@@ -146,12 +148,6 @@ export default function CdasOperationsPage() {
         settlement_reason: 2,
         confirmed: false,
     });
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        const loanId = new URLSearchParams(window.location.search).get("loan");
-        if (loanId) setSelectedLoanId(loanId);
-    }, []);
 
     async function loadApprovedCdasLoans() {
         if (loading) return;
