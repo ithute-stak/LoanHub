@@ -269,18 +269,18 @@ export default function CdasWorkspacePage() {
             <section className="rounded-2xl border bg-card p-5 shadow-sm 2xl:rounded-3xl 2xl:p-7">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="max-w-4xl">
-                        <div className="mb-3 flex flex-wrap gap-2"><Badge variant="secondary">Documented manual CDAS integration</Badge><Badge variant="outline">CDAS API v1.5</Badge></div>
+                        <div className="mb-3 flex flex-wrap gap-2"><Badge variant="secondary">LoanHub-managed CDAS operations</Badge><Badge variant="outline">CDAS API v1.5</Badge></div>
                         <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight sm:text-3xl">
                             <ShieldCheck className="h-7 w-7 text-primary" />
                             CDAS lending workspace
                         </h1>
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                            Perform deliberate employee, affordability and deduction lookups against CDAS.
-                            Nothing on this page runs in the background. State-changing deduction actions are separated into a management-only workspace with explicit confirmation and audit logging.
+                            Verify employees and affordability against CDAS, then manage payroll deductions from approved LoanHub loans.
+                            CDAS Autopilot can safely re-optimise eligible deductions after confirmed payments and during the monthly affordability window; state-changing manual actions remain permission-controlled and audited.
                         </p>
                     </div>
                     <div className="flex min-w-56 flex-col items-start gap-2 lg:items-end">
-                        <Badge>Manual requests only</Badge>
+                        <Badge>Live operations + Autopilot</Badge>
                         {requestBudget ? (
                             <div className="rounded-xl border bg-muted/30 px-3 py-2 text-xs lg:text-right">
                                 <p className="font-black tabular-nums">{requestBudget.remaining} / {requestBudget.limit} requests remaining</p>
@@ -299,10 +299,10 @@ export default function CdasWorkspacePage() {
                 <div className="grid gap-4 md:grid-cols-2">
                     <Card className="border-destructive/20">
                         <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base"><ShieldAlert className="h-5 w-5 text-destructive" /> Deduction operations</CardTitle>
-                            <CardDescription>Registration, review, approval/cancellation, active modification and settlement. Every write requires explicit confirmation.</CardDescription>
+                            <CardTitle className="flex items-center gap-2 text-base"><ShieldAlert className="h-5 w-5 text-destructive" /> Deduction management</CardTitle>
+                            <CardDescription>Add approved loans to CDAS, track status, reconcile exceptions and manage active deductions from one LoanHub-first workflow.</CardDescription>
                         </CardHeader>
-                        <CardContent><Button asChild variant="outline"><Link href="/company/cdas/operations">Open deduction operations</Link></Button></CardContent>
+                        <CardContent><Button asChild><Link href="/company/cdas/manage">Manage deductions</Link></Button></CardContent>
                     </Card>
                     <Card>
                         <CardHeader>
