@@ -52,6 +52,7 @@ from services.cdas_operation_ledger import (
     reconcile_provider_operation,
 )
 from services.cdas_request_budget import get_cdas_request_budget_status
+from services.cdas_roster_intelligence import latest_roster_snapshot, sync_company_roster
 from services.cdas_operation_ledger import UNRESOLVED_OPERATION_STATES
 from services.platform_cdas_service import (
     assert_live_credit_available,
@@ -631,6 +632,40 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
                 return None
     return None
 
+
+
+
+@router.get("/roster-intelligence")
+def get_cdas_roster_intelligence(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+    snapshot = latest_roster_snapshot(db, company_id=context.company_id)
+    return {
+        "available": snapshot is not None,
+        "snapshot": snapshot,
+    }
+
+
+@router.post("/roster-intelligence/refresh")
+async def refresh_cdas_roster_intelligence(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    try:
+        return await sync_company_roster(
+            db,
+            company_id=context.company_id,
+            actor_user_id=context.user.id,
+        )
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/loans/operations")
