@@ -60,6 +60,108 @@ def _release_advisory_lock(db: Session, scope: str) -> None:
     key = _advisory_lock_key(scope)
     db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
 
+
+def _allocation_billing_prefix(company_id, employee_number: str, value: date) -> str:
+    return (
+        f"cdas-autopilot-affordability-allocation:{company_id}:"
+        f"{str(employee_number).strip().casefold()}:{value.isoformat()}:"
+    )
+
+
+def _allocated_headroom(
+    db: Session,
+    *,
+    company_id,
+    environment: str,
+    employee_number: str,
+    value: date,
+) -> Decimal:
+    prefix = _allocation_billing_prefix(company_id, employee_number, value)
+    rows = (
+        db.query(PlatformCdasTransaction)
+        .filter(
+            PlatformCdasTransaction.company_id == company_id,
+            PlatformCdasTransaction.environment == environment,
+            PlatformCdasTransaction.operation_type == "affordability_allocation",
+            PlatformCdasTransaction.billing_key.like(f"{prefix}%"),
+        )
+        .all()
+    )
+    total = Decimal("0.00")
+    for row in rows:
+        metadata = dict(row.metadata_json or {})
+        if metadata.get("allocation_status") == "released":
+            continue
+        total += _money(metadata.get("allocated_headroom"))
+    return _money(total)
+
+
+def _reserve_headroom(
+    db: Session,
+    *,
+    loan: ClientCompanyLoan,
+    environment: str,
+    employee_number: str,
+    value: date,
+    amount: Decimal,
+    actor_user_id: UUID | None,
+) -> PlatformCdasTransaction:
+    key = _allocation_billing_prefix(loan.company_id, employee_number, value) + str(loan.id)
+    existing = (
+        db.query(PlatformCdasTransaction)
+        .filter(PlatformCdasTransaction.billing_key == key)
+        .first()
+    )
+    if existing:
+        metadata = dict(existing.metadata_json or {})
+        metadata.update(
+            {
+                "allocation_status": "reserved",
+                "allocated_headroom": str(_money(amount)),
+                "loan_id": str(loan.id),
+                "employee_number_present": True,
+                "snapshot_date": value.isoformat(),
+            }
+        )
+        existing.metadata_json = metadata
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    return record_successful_operation(
+        db,
+        company_id=loan.company_id,
+        environment=environment,
+        operation_type="affordability_allocation",
+        actor_user_id=actor_user_id,
+        billing_key=key,
+        source_reference=str(loan.id),
+        metadata={
+            "request_origin": "cdas_autopilot_shared_headroom",
+            "allocation_status": "reserved",
+            "allocated_headroom": str(_money(amount)),
+            "loan_id": str(loan.id),
+            "employee_number_present": True,
+            "snapshot_date": value.isoformat(),
+        },
+    )
+
+
+def _set_allocation_status(
+    db: Session,
+    row: PlatformCdasTransaction,
+    *,
+    status: str,
+) -> None:
+    metadata = dict(row.metadata_json or {})
+    metadata["allocation_status"] = status
+    metadata["allocation_updated_at"] = datetime.now(timezone.utc).isoformat()
+    row.metadata_json = metadata
+    db.add(row)
+    db.commit()
+
+
 def _actor_from_plan(plan: dict, mandate: CDASDeductionMandate) -> UUID | None:
     raw = plan.get("selected_by_user_id")
     if raw:
@@ -523,53 +625,111 @@ async def scan_affordability_opportunities(db: Session, *, limit: int = 250) -> 
         db.commit()
 
         if decision.execute_automatically:
-            topup_lock_scope = f"cdas-autopilot-topup:{loan.id}"
-            if not _try_advisory_lock(db, topup_lock_scope):
+            allocation_lock_scope = (
+                f"cdas-autopilot-allocation:{loan.company_id}:{environment}:"
+                f"{str(profile.employee_number).strip().casefold()}:{today.isoformat()}"
+            )
+            if not _try_advisory_lock(db, allocation_lock_scope):
                 skipped += 1
                 continue
             try:
-                db.refresh(loan)
-                refreshed_link = _eligible_link(db, loan)
-                if not refreshed_link:
+                consumed_headroom = _allocated_headroom(
+                    db,
+                    company_id=loan.company_id,
+                    environment=environment,
+                    employee_number=profile.employee_number,
+                    value=today,
+                )
+                remaining_headroom = max(
+                    _money(live_affordability) - consumed_headroom,
+                    Decimal("0.00"),
+                )
+                if remaining_headroom <= 0:
                     skipped += 1
                     continue
-                refreshed_mandate, refreshed_state, _ = refreshed_link
-                refreshed_plan = dict(loan.cdas_collection_plan or {})
-                refreshed_decision = decide_cdas_autopilot(
-                    outstanding_balance=_money(loan.balance),
-                    current_deduction=_money(refreshed_mandate.monthly_deduction),
-                    available_affordability=live_affordability,
-                    evaluation_date=today,
-                    dynamic_top_up_consent=bool(refreshed_plan.get("dynamic_top_up_consent")),
-                    mandate_maximum=refreshed_plan.get("dynamic_top_up_maximum"),
-                )
-                if refreshed_decision.action != "top_up" or not refreshed_decision.execute_automatically:
-                    continue
 
-                confirmed = await _tracked_modify(
-                    db,
-                    loan=loan,
-                    mandate=refreshed_mandate,
-                    state=refreshed_state,
-                    total_installment=refreshed_decision.proposed_remaining_installments,
-                    deduction_amount=refreshed_decision.proposed_deduction,
-                    principal_amount=refreshed_decision.effective_balance,
-                    actor_user_id=actor_user_id,
-                    reason="affordability top-up",
-                )
-                if confirmed:
-                    topups += 1
-                    refreshed_plan.pop("autopilot_topup_opportunity", None)
-                    refreshed_plan["autopilot_last_result"] = {
-                        "action": "top_up",
-                        "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                        "decision": refreshed_decision.as_dict(),
-                    }
-                    loan.cdas_collection_plan = refreshed_plan
-                    db.add(loan)
-                    db.commit()
+                topup_lock_scope = f"cdas-autopilot-topup:{loan.id}"
+                if not _try_advisory_lock(db, topup_lock_scope):
+                    skipped += 1
+                    continue
+                try:
+                    db.refresh(loan)
+                    refreshed_link = _eligible_link(db, loan)
+                    if not refreshed_link:
+                        skipped += 1
+                        continue
+                    refreshed_mandate, refreshed_state, _ = refreshed_link
+                    refreshed_plan = dict(loan.cdas_collection_plan or {})
+                    refreshed_decision = decide_cdas_autopilot(
+                        outstanding_balance=_money(loan.balance),
+                        current_deduction=_money(refreshed_mandate.monthly_deduction),
+                        available_affordability=remaining_headroom,
+                        evaluation_date=today,
+                        dynamic_top_up_consent=bool(refreshed_plan.get("dynamic_top_up_consent")),
+                        mandate_maximum=refreshed_plan.get("dynamic_top_up_maximum"),
+                    )
+                    if refreshed_decision.action != "top_up" or not refreshed_decision.execute_automatically:
+                        continue
+
+                    allocated_increment = max(
+                        _money(refreshed_decision.proposed_deduction)
+                        - _money(refreshed_mandate.monthly_deduction),
+                        Decimal("0.00"),
+                    )
+                    if allocated_increment <= 0:
+                        continue
+
+                    allocation = _reserve_headroom(
+                        db,
+                        loan=loan,
+                        environment=environment,
+                        employee_number=profile.employee_number,
+                        value=today,
+                        amount=allocated_increment,
+                        actor_user_id=actor_user_id,
+                    )
+                    confirmed = await _tracked_modify(
+                        db,
+                        loan=loan,
+                        mandate=refreshed_mandate,
+                        state=refreshed_state,
+                        total_installment=refreshed_decision.proposed_remaining_installments,
+                        deduction_amount=refreshed_decision.proposed_deduction,
+                        principal_amount=refreshed_decision.effective_balance,
+                        actor_user_id=actor_user_id,
+                        reason="affordability top-up",
+                    )
+                    _set_allocation_status(
+                        db,
+                        allocation,
+                        status="confirmed" if confirmed else "released",
+                    )
+                    if confirmed:
+                        topups += 1
+                        refreshed_plan.pop("autopilot_topup_opportunity", None)
+                        refreshed_plan["autopilot_last_result"] = {
+                            "action": "top_up",
+                            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                            "decision": refreshed_decision.as_dict(),
+                            "shared_affordability_budget": {
+                                "provider_headroom": str(_money(live_affordability)),
+                                "previously_allocated": str(consumed_headroom),
+                                "allocated_to_this_loan": str(allocated_increment),
+                                "remaining_after_confirmation": str(
+                                    max(
+                                        remaining_headroom - allocated_increment,
+                                        Decimal("0.00"),
+                                    )
+                                ),
+                            },
+                        }
+                        loan.cdas_collection_plan = refreshed_plan
+                        db.add(loan)
+                        db.commit()
+                finally:
+                    _release_advisory_lock(db, topup_lock_scope)
             finally:
-                _release_advisory_lock(db, topup_lock_scope)
+                _release_advisory_lock(db, allocation_lock_scope)
 
     return {
         "checked": checked,
