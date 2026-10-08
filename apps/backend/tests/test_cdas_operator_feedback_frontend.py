@@ -48,3 +48,28 @@ def test_operations_screen_honours_deep_linked_action_without_effect_remount() -
     assert 'id="modify-active"' in source
     assert 'id="settle"' in source
     assert "useEffect" not in source
+
+
+def test_original_cdas_portal_parity_is_visible_and_honest() -> None:
+    source = WORKSPACE.read_text(encoding="utf-8")
+
+    assert "Cancel / reject deduction" in source
+    assert "/company/cdas/operations?action=cancel#lifecycle" in source
+    assert "Transaction log" in source
+    assert "Deduction history" in source
+    assert "Audit log" in source
+    assert "Download reports" in source
+    assert "Original CDAS portal-only functions" in source
+    for label in ("Consolidation", "Bulk Upload", "Manage User", "Session Log", "Inbox"):
+        assert label in source
+    assert "does not document third-party endpoints" in source
+
+
+def test_cdas_history_workspace_uses_durable_loanhub_evidence() -> None:
+    page = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "cdas" / "history" / "page.tsx"
+    source = page.read_text(encoding="utf-8")
+
+    assert 'api.get<TransactionResponse>("/cdas/history/transactions?limit=200")' in source
+    assert 'api.get<DeductionResponse>("/cdas/history/deductions?limit=200")' in source
+    assert "CDAS transaction & deduction history" in source
+    assert "do not consume the CDAS 400-request daily allowance" in source
