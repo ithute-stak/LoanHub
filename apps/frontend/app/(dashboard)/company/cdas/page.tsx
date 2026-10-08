@@ -276,11 +276,11 @@ export default function CdasWorkspacePage() {
                         </h1>
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">
                             Verify employees and affordability against CDAS, then manage payroll deductions from approved LoanHub loans.
-                            CDAS Autopilot can safely re-optimise eligible deductions after confirmed payments and during the monthly affordability window; state-changing manual actions remain permission-controlled and audited.
+                            CDAS Autopilot can safely re-optimise eligible deductions after confirmed payments and during the monthly affordability window. State-changing manual actions remain separated behind explicit confirmation and audit logging.
                         </p>
                     </div>
                     <div className="flex min-w-56 flex-col items-start gap-2 lg:items-end">
-                        <Badge>Live operations + Autopilot</Badge>
+                        <Badge>Manual requests only</Badge><Badge variant="outline">Autopilot enabled</Badge>
                         {requestBudget ? (
                             <div className="rounded-xl border bg-muted/30 px-3 py-2 text-xs lg:text-right">
                                 <p className="font-black tabular-nums">{requestBudget.remaining} / {requestBudget.limit} requests remaining</p>
@@ -302,7 +302,7 @@ export default function CdasWorkspacePage() {
                             <CardTitle className="flex items-center gap-2 text-base"><ShieldAlert className="h-5 w-5 text-destructive" /> Deduction management</CardTitle>
                             <CardDescription>Add approved loans to CDAS, track status, reconcile exceptions and manage active deductions from one LoanHub-first workflow.</CardDescription>
                         </CardHeader>
-                        <CardContent><Button asChild><Link href="/company/cdas/manage">Manage deductions</Link></Button></CardContent>
+                        <CardContent className="flex flex-wrap gap-2"><Button asChild><Link href="/company/cdas/manage">Manage deductions</Link></Button><Button asChild variant="outline"><Link href="/company/cdas/operations">Advanced deduction operations</Link></Button></CardContent>
                     </Card>
                     <Card>
                         <CardHeader>
