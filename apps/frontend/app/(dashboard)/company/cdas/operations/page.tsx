@@ -104,6 +104,16 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 
 export default function CdasOperationsPage() {
     const searchParams = useSearchParams();
+    const requestedAction = searchParams.get("action") || "";
+    const initialLifecycleType = requestedAction === "review"
+        ? 3
+        : requestedAction === "approve"
+            ? 4
+            : requestedAction === "cancel"
+                ? 6
+                : requestedAction === "change"
+                    ? 10
+                    : 1;
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [loading, setLoading] = useState<"prepare" | "lifecycle" | "modify" | "settle" | null>(null);
@@ -116,7 +126,7 @@ export default function CdasOperationsPage() {
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
-        request_type: 1,
+        request_type: initialLifecycleType,
         deduction_id: 0,
         employee_no: "",
         loan_policy: 1,
@@ -460,7 +470,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Card id="lifecycle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Add / update / review / approve / cancel</CardTitle>
                     <CardDescription>
@@ -518,7 +528,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Card id="modify-active" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Modify active deduction</CardTitle>
                     <CardDescription>Uses the official modify-active-deduction contract. CDAS may reject disallowed active or approved changes.</CardDescription>
@@ -543,7 +553,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Card id="settle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Settle deduction</CardTitle>
                     <CardDescription>Settlement reasons are the four codes documented by CDAS.</CardDescription>
