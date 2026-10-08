@@ -122,3 +122,27 @@ def test_autopilot_operation_names_are_reconcilable() -> None:
 
     assert '"deduction.modify_active.autopilot"' in ledger
     assert '"deduction.settle.autopilot"' in ledger
+
+
+def test_affordability_headroom_is_shared_across_employee_loans() -> None:
+    source = WORKER.read_text(encoding="utf-8")
+
+    assert 'operation_type="affordability_allocation"' in source
+    assert "cdas-autopilot-affordability-allocation:" in source
+    assert 'metadata.get("allocation_status") == "released"' in source
+    assert "consumed_headroom = _allocated_headroom(" in source
+    assert "remaining_headroom = max(" in source
+    assert "available_affordability=remaining_headroom" in source
+    assert "allocated_increment = max(" in source
+    assert "_reserve_headroom(" in source
+    assert 'status="confirmed" if confirmed else "released"' in source
+    assert '"shared_affordability_budget"' in source
+
+
+def test_shared_headroom_allocation_is_employee_day_locked() -> None:
+    source = WORKER.read_text(encoding="utf-8")
+
+    assert "cdas-autopilot-allocation:" in source
+    assert "_try_advisory_lock(db, allocation_lock_scope)" in source
+    assert "_release_advisory_lock(db, allocation_lock_scope)" in source
+    assert "str(profile.employee_number).strip().casefold()" in source
