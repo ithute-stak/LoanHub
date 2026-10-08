@@ -53,6 +53,7 @@ from services.cdas_operation_ledger import (
 )
 from services.cdas_request_budget import get_cdas_request_budget_status
 from services.cdas_roster_intelligence import latest_roster_snapshot, sync_company_roster
+from services.cdas_operations_kpis import build_cdas_operations_kpis
 from services.cdas_operation_ledger import UNRESOLVED_OPERATION_STATES
 from services.platform_cdas_service import (
     assert_live_credit_available,
@@ -633,6 +634,21 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
     return None
 
 
+
+
+
+@router.get("/operations-kpis")
+def get_cdas_operations_kpis(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_lending_user(context)
+    assert context.company_id is not None
+    return build_cdas_operations_kpis(
+        db,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+    )
 
 
 @router.get("/roster-intelligence")
