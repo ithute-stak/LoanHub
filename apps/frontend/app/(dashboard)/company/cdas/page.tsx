@@ -11,6 +11,8 @@ import {
     Gauge,
     HandCoins,
     Loader2,
+    Pencil,
+    PlusCircle,
     Search,
     ShieldAlert,
     ShieldCheck,
@@ -20,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
@@ -52,6 +55,11 @@ type EmployeeLookupResponse = {
 type AffordabilityResponse = { ok: boolean; affordability: number };
 type DeductionsResponse = { ok: boolean; deductions: ProviderRecord[] };
 type ActiveDeductionResponse = { ok: boolean; deduction: ProviderRecord };
+type ReadFeedback = {
+    title: string;
+    description: string;
+    records: Array<{ title: string; record: ProviderRecord }>;
+};
 type CdasRequestBudget = {
     environment: string;
     request_date: string;
@@ -124,6 +132,7 @@ export default function CdasWorkspacePage() {
     const [budgetLoading, setBudgetLoading] = useState(false);
     const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
     const [error, setError] = useState<string | null>(null);
+    const [readFeedback, setReadFeedback] = useState<ReadFeedback | null>(null);
 
     const normalizedEmployeeNo = employeeNo.trim();
     const busy = loadingAction !== null;
@@ -192,6 +201,11 @@ export default function CdasWorkspacePage() {
             });
             setEmployee(response.data.employee);
             setLinkedPayrollProfile(response.data.payroll_profile ?? null);
+            setReadFeedback({
+                title: "Employee verified",
+                description: "CDAS returned the employee record successfully.",
+                records: [{ title: "Employee details", record: { ...response.data.employee } }],
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS employee verification failed."));
         } finally {
@@ -208,6 +222,20 @@ export default function CdasWorkspacePage() {
                 employee_no: normalizedEmployeeNo,
             });
             setAffordability(response.data.affordability);
+            setReadFeedback({
+                title: "Affordability result",
+                description: "CDAS returned the employee affordability amount.",
+                records: [{
+                    title: "CDAS affordability",
+                    record: {
+                        EmployeeNo: normalizedEmployeeNo,
+                        Affordability: "M " + response.data.affordability.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                        }),
+                    },
+                }],
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS affordability check failed."));
         } finally {
@@ -224,6 +252,16 @@ export default function CdasWorkspacePage() {
                 employee_no: normalizedEmployeeNo,
             });
             setAllDeductions(response.data.deductions);
+            setReadFeedback({
+                title: "All third-party deductions",
+                description: response.data.deductions.length
+                    ? `CDAS returned ${response.data.deductions.length} deduction record${response.data.deductions.length === 1 ? "" : "s"}.`
+                    : "CDAS returned no third-party deductions for this employee.",
+                records: response.data.deductions.map((record, index) => ({
+                    title: `Deduction ${index + 1}`,
+                    record,
+                })),
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS third-party deduction lookup failed."));
         } finally {
@@ -241,6 +279,16 @@ export default function CdasWorkspacePage() {
                 deduction_status: deductionStatus,
             });
             setOwnDeductions(response.data.deductions);
+            setReadFeedback({
+                title: "Own deductions by status",
+                description: response.data.deductions.length
+                    ? `CDAS returned ${response.data.deductions.length} matching deduction record${response.data.deductions.length === 1 ? "" : "s"}.`
+                    : "CDAS returned no deductions for the selected status.",
+                records: response.data.deductions.map((record, index) => ({
+                    title: `Own deduction ${index + 1}`,
+                    record,
+                })),
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS own-deduction lookup failed."));
         } finally {
@@ -257,6 +305,11 @@ export default function CdasWorkspacePage() {
                 employee_no: normalizedEmployeeNo,
             });
             setActiveDeduction(response.data.deduction);
+            setReadFeedback({
+                title: "Active / approved deduction",
+                description: "CDAS returned the current active or approved deduction.",
+                records: [{ title: "Active / approved deduction", record: response.data.deduction }],
+            });
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS active/approved deduction lookup failed."));
         } finally {
@@ -312,6 +365,57 @@ export default function CdasWorkspacePage() {
                         <CardContent><Button asChild variant="outline"><Link href="/company/cdas/documents">Open document retrieval</Link></Button></CardContent>
                     </Card>
                 </div>
+            )}
+
+            {canManage && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <ShieldCheck className="h-5 w-5 text-primary" /> Deduction lifecycle
+                        </CardTitle>
+                        <CardDescription>
+                            The core CDAS deduction actions are available directly from LoanHub. State-changing actions remain protected by explicit confirmation and audit logging.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <Button asChild className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=register#lifecycle">
+                                <PlusCircle className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Add deduction</strong><span className="block text-xs font-normal opacity-80">Register an approved LoanHub loan with CDAS</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=review#lifecycle">
+                                <FileSearch className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Review deduction</strong><span className="block text-xs font-normal text-muted-foreground">Send the documented Review lifecycle action</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=approve#lifecycle">
+                                <ShieldCheck className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Approve deduction</strong><span className="block text-xs font-normal text-muted-foreground">Approve a reviewed deduction</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=modify#modify-active">
+                                <Pencil className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Modify active deduction</strong><span className="block text-xs font-normal text-muted-foreground">Change allowed active-deduction values</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=settle#settle">
+                                <HandCoins className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Settle deduction</strong><span className="block text-xs font-normal text-muted-foreground">Submit a documented settlement reason</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/manage">
+                                <ShieldAlert className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Reconcile / manage</strong><span className="block text-xs font-normal text-muted-foreground">Resolve uncertain provider state and manage linked loans</span></span>
+                            </Link>
+                        </Button>
+                    </CardContent>
+                </Card>
             )}
 
             <Card>
@@ -524,6 +628,27 @@ export default function CdasWorkspacePage() {
                     </CardContent>
                 </Card>
             )}
+
+            <Dialog open={readFeedback !== null} onOpenChange={(open) => { if (!open) setReadFeedback(null); }}>
+                <DialogContent className="sm:max-w-4xl">
+                    <DialogHeader>
+                        <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
+                        <DialogDescription>{readFeedback?.description}</DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
+                        {readFeedback?.records.length ? (
+                            readFeedback.records.map((item, index) => (
+                                <ProviderRecordCard key={item.title + index} title={item.title} record={item.record} />
+                            ))
+                        ) : (
+                            <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                                No matching CDAS records were returned.
+                            </div>
+                        )}
+                    </div>
+                    <DialogFooter showCloseButton />
+                </DialogContent>
+            </Dialog>
 
             <Alert>
                 <AlertCircle className="h-4 w-4" />
