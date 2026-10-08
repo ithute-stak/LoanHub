@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     RATE_LIMIT: str = '100/minute'
+    AUTHENTICATED_RATE_LIMIT: str = '600/minute'
     AUTH_RATE_LIMIT: str = '10/minute'
     AUTH_LOCKOUT_MAX_ATTEMPTS: int = 5
     AUTH_LOCKOUT_MINUTES: int = 15
