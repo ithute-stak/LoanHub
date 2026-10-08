@@ -120,7 +120,7 @@ export function FinancialBooksWorkspace() {
         branchId: effectiveBranchId,
         fromDate,
         toDate,
-        includeLedgerDetail: true,
+        includeLedgerDetail: false,
       });
       setBooks(result);
     } catch (error) {
@@ -158,11 +158,10 @@ export function FinancialBooksWorkspace() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadBooks();
       void loadControls();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadBooks, loadControls]);
+  }, [loadControls]);
 
   const openingTotals = useMemo(
     () => openingLines.reduce(

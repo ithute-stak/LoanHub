@@ -498,6 +498,92 @@ def trial_balance_data(
     return lines
 
 
+
+def _ledger_book_summary_data(
+    db: Session,
+    *,
+    key: str,
+    accounts: list[AccountingAccount],
+    from_date: date,
+    to_date: date,
+    branch_id: UUID | None,
+) -> list[dict]:
+    """Build ledger account summaries with two grouped queries instead of N+1 queries."""
+
+    opening_q = (
+        db.query(
+            JournalLine.account_id,
+            func.coalesce(func.sum(JournalLine.debit), 0).label("debit_total"),
+            func.coalesce(func.sum(JournalLine.credit), 0).label("credit_total"),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .filter(
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.entry_date < from_date,
+        )
+        .group_by(JournalLine.account_id)
+    )
+    period_q = (
+        db.query(
+            JournalLine.account_id,
+            func.coalesce(func.sum(JournalLine.debit), 0).label("debit_total"),
+            func.coalesce(func.sum(JournalLine.credit), 0).label("credit_total"),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .filter(
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.entry_date >= from_date,
+            JournalEntry.entry_date <= to_date,
+        )
+        .group_by(JournalLine.account_id)
+    )
+    if branch_id:
+        opening_q = opening_q.filter(JournalEntry.branch_id == branch_id)
+        period_q = period_q.filter(JournalEntry.branch_id == branch_id)
+
+    opening_by_account = {
+        account_id: (Decimal(debit_total), Decimal(credit_total))
+        for account_id, debit_total, credit_total in opening_q.all()
+    }
+    period_by_account = {
+        account_id: (Decimal(debit_total), Decimal(credit_total))
+        for account_id, debit_total, credit_total in period_q.all()
+    }
+
+    rows: list[dict] = []
+    for account in accounts:
+        opening_debit, opening_credit = opening_by_account.get(
+            account.id, (Decimal("0.00"), Decimal("0.00"))
+        )
+        period_debit, period_credit = period_by_account.get(
+            account.id, (Decimal("0.00"), Decimal("0.00"))
+        )
+
+        opening = opening_debit - opening_credit
+        movement = period_debit - period_credit
+        if account.normal_balance == "credit":
+            opening = -opening
+            movement = -movement
+
+        rows.append(
+            {
+                "account_id": str(account.id),
+                "account_code": account.code,
+                "account_name": account.name,
+                "account_type": account.account_type,
+                "normal_balance": account.normal_balance,
+                "opening_balance": opening,
+                "period_debit": period_debit,
+                "period_credit": period_credit,
+                "closing_balance": opening + movement,
+                "lines": [],
+            }
+        )
+    return rows
+
+
 def _ledger_book_data(
     db: Session,
     *,
@@ -615,18 +701,29 @@ def financial_books_pack_data(
         AccountingAccount.scope_key == key,
         AccountingAccount.is_active.is_(True),
     ).order_by(AccountingAccount.code.asc()).all()
-    general_ledger = [
-        _ledger_book_data(
+    general_ledger = (
+        [
+            _ledger_book_data(
+                db,
+                key=key,
+                account=account,
+                from_date=from_date,
+                to_date=to_date,
+                branch_id=branch_id,
+                include_detail=True,
+            )
+            for account in accounts
+        ]
+        if include_ledger_detail
+        else _ledger_book_summary_data(
             db,
             key=key,
-            account=account,
+            accounts=accounts,
             from_date=from_date,
             to_date=to_date,
             branch_id=branch_id,
-            include_detail=include_ledger_detail,
         )
-        for account in accounts
-    ]
+    )
 
     income = statement(
         db,
