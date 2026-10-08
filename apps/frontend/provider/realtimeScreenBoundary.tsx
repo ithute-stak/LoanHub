@@ -40,7 +40,17 @@ export function RealtimeScreenBoundary({ children }: { children: ReactNode }) {
 
         function onCommit(event: Event) {
             const detail = (event as CustomEvent<DbCommitBatchDetail>).detail;
-            if (!detail?.count || !shouldRefreshRouteForCommit(pathname, detail)) return;
+            if (!detail?.count) return;
+
+            // A mutation initiated by this browser is already reflected in the
+            // local component state that handled the successful response.
+            // Remounting the entire screen for that same commit destroys
+            // transient form/results state (for example a freshly returned
+            // CDAS affordability result). Remote/device commits still use the
+            // universal remount fallback below.
+            if (detail.hasRemoteChanges === false) return;
+
+            if (!shouldRefreshRouteForCommit(pathname, detail)) return;
 
             if (userIsEditing()) {
                 pendingRef.current = true;
