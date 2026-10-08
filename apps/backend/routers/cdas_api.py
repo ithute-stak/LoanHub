@@ -684,7 +684,11 @@ def list_cdas_operational_loans(
         lifecycle_status = state.lifecycle_status if state else "not_registered"
         if state and state.requires_reconciliation:
             next_action = "reconcile"
-        elif not mandate:
+        elif not mandate or not state or (
+            state.deduction_id is None
+            and lifecycle_status == "registration_failed"
+            and not state.requires_reconciliation
+        ):
             next_action = "register"
         elif lifecycle_status in {"registered", "registration_pending"}:
             next_action = "track"
@@ -1046,17 +1050,20 @@ async def reconcile_linked_cdas_loan(
     if not state:
         raise HTTPException(status_code=404, detail="This loan has no official CDAS provider state")
 
-    operation = (
-        db.query(CdasProviderOperation)
-        .filter(
-            CdasProviderOperation.company_id == context.company_id,
-            CdasProviderOperation.environment == state.environment,
-            CdasProviderOperation.deduction_id == state.deduction_id,
-            CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES),
-        )
-        .order_by(CdasProviderOperation.created_at.desc())
-        .first()
+    operation_query = db.query(CdasProviderOperation).filter(
+        CdasProviderOperation.company_id == context.company_id,
+        CdasProviderOperation.environment == state.environment,
+        CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES),
     )
+    if state.deduction_id is not None:
+        operation_query = operation_query.filter(
+            CdasProviderOperation.deduction_id == state.deduction_id
+        )
+    else:
+        operation_query = operation_query.filter(
+            CdasProviderOperation.reference_no == state.reference_no
+        )
+    operation = operation_query.order_by(CdasProviderOperation.created_at.desc()).first()
     if operation is None:
         return {
             "ok": True,
@@ -1078,6 +1085,18 @@ async def reconcile_linked_cdas_loan(
     state.requires_reconciliation = not matched
     state.last_synced_at = now
     if matched:
+        response_snapshot = operation.response_snapshot if isinstance(operation.response_snapshot, dict) else {}
+        reconciliation_snapshot = response_snapshot.get("reconciliation")
+        reconciled_deduction_id = _first_provider_int(
+            reconciliation_snapshot,
+            "DeductionID",
+            "deductionId",
+            "deduction_id",
+        )
+        if reconciled_deduction_id is not None:
+            state.deduction_id = reconciled_deduction_id
+            mandate.external_reference = str(reconciled_deduction_id)
+
         if operation.operation_type in {"deduction.settle", "deduction.settle.autopilot"}:
             state.lifecycle_status = "settled"
             state.cdas_status = 7
