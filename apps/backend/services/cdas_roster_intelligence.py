@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from database.models.origination import OriginationIntegrationConfiguration
 from database.models.platform_cdas import PlatformCdasTransaction
-from integrations.cdas import CdasDocumentType, CdasError
+from integrations.cdas import CdasError
 from services.cdas_config_service import (
     CDAS_PROVIDER,
     get_company_cdas_client,
@@ -330,7 +330,7 @@ async def sync_company_roster(
     document = await client.get_document(
         year=year,
         month=month,
-        document_type=int(CdasDocumentType.OUTPUT_FILE),
+        document_type=1,
     )
     rows, content_sha256 = parse_cdas_roster_document(document)
     snapshot = build_roster_snapshot(rows)
