@@ -9,6 +9,8 @@ import {
     FileDown,
     FileSearch,
     Gauge,
+    History,
+    ListChecks,
     HandCoins,
     Loader2,
     Pencil,
@@ -403,6 +405,12 @@ export default function CdasWorkspacePage() {
                             </Link>
                         </Button>
                         <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/operations?action=cancel#lifecycle">
+                                <ShieldAlert className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Cancel / reject deduction</strong><span className="block text-xs font-normal text-muted-foreground">Use documented request code 6</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
                             <Link href="/company/cdas/operations?action=settle#settle">
                                 <HandCoins className="h-5 w-5" />
                                 <span className="text-left"><strong className="block">Settle deduction</strong><span className="block text-xs font-normal text-muted-foreground">Submit a documented settlement reason</span></span>
@@ -416,6 +424,55 @@ export default function CdasWorkspacePage() {
                         </Button>
                     </CardContent>
                 </Card>
+            )}
+
+            {canManage && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> CDAS history & control records</CardTitle>
+                        <CardDescription>
+                            LoanHub mirrors the original portal&apos;s reporting and audit functions from its durable CDAS provider ledger and immutable activity log.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/history?tab=transactions">
+                                <ListChecks className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Transaction log</strong><span className="block text-xs font-normal text-muted-foreground">Provider calls, status and reconciliation state</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/history?tab=deductions">
+                                <History className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Deduction history</strong><span className="block text-xs font-normal text-muted-foreground">Append-only lifecycle events by deduction</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/activity">
+                                <ShieldCheck className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Audit log</strong><span className="block text-xs font-normal text-muted-foreground">Actor, request ID, before/after and timestamps</span></span>
+                            </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="h-auto justify-start py-4">
+                            <Link href="/company/cdas/documents">
+                                <FileDown className="h-5 w-5" />
+                                <span className="text-left"><strong className="block">Download reports</strong><span className="block text-xs font-normal text-muted-foreground">Output File and Statement from CDAS</span></span>
+                            </Link>
+                        </Button>
+                    </CardContent>
+                </Card>
+            )}
+
+            {canManage && (
+                <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Original CDAS portal-only functions</AlertTitle>
+                    <AlertDescription>
+                        The original portal also shows Consolidation, Bulk Upload, Manage User, Session Log and Inbox screens.
+                        CDAS API v1.5 does not document third-party endpoints for those screens, so LoanHub does not fabricate provider calls for them.
+                        Consolidation is preserved as settlement reason 3 where the official API documents it; user administration, security sessions and inbox functions remain governed by LoanHub&apos;s own administration, security and notification systems.
+                    </AlertDescription>
+                </Alert>
             )}
 
             <Card>
