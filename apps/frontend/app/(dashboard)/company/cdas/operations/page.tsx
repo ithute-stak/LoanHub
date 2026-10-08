@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -146,6 +146,12 @@ export default function CdasOperationsPage() {
         settlement_reason: 2,
         confirmed: false,
     });
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const loanId = new URLSearchParams(window.location.search).get("loan");
+        if (loanId) setSelectedLoanId(loanId);
+    }, []);
 
     async function loadApprovedCdasLoans() {
         if (loading) return;
