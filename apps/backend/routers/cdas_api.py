@@ -632,6 +632,98 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
     return None
 
 
+
+@router.get("/loans/operations")
+def list_cdas_operational_loans(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Return one operational CDAS row per company loan.
+
+    This endpoint is intentionally LoanHub-first: the UI can present Add to CDAS,
+    Track, Reconcile, Modify and Settle without making operators understand raw
+    provider lifecycle fields.
+    """
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    loans = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
+        )
+        .order_by(ClientCompanyLoan.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    items = []
+    for loan in loans:
+        mandate = (
+            db.query(CDASDeductionMandate)
+            .filter(
+                CDASDeductionMandate.company_id == context.company_id,
+                CDASDeductionMandate.loan_id == loan.id,
+            )
+            .first()
+        )
+        state = None
+        if mandate:
+            state = (
+                db.query(CdasOfficialMandateState)
+                .filter(
+                    CdasOfficialMandateState.company_id == context.company_id,
+                    CdasOfficialMandateState.mandate_id == mandate.id,
+                )
+                .first()
+            )
+
+        person = getattr(getattr(loan.borrower, "user", None), "person", None)
+        borrower_name = getattr(person, "full_name", None) or str(loan.borrower_id)
+        plan = dict(loan.cdas_collection_plan or {})
+        lifecycle_status = state.lifecycle_status if state else "not_registered"
+        if state and state.requires_reconciliation:
+            next_action = "reconcile"
+        elif not mandate:
+            next_action = "register"
+        elif lifecycle_status in {"registered", "registration_pending"}:
+            next_action = "track"
+        elif lifecycle_status in {"approved", "active", "changed"}:
+            next_action = "manage"
+        elif lifecycle_status == "settled":
+            next_action = "complete"
+        else:
+            next_action = "track"
+
+        items.append(
+            {
+                "loan_id": str(loan.id),
+                "loan_reference": loan.loan_reference,
+                "borrower_id": str(loan.borrower_id),
+                "borrower_name": borrower_name,
+                "loan_status": getattr(loan.status, "value", str(loan.status)),
+                "balance": str(loan.balance or 0),
+                "installment_amount": str(loan.installment_amount or 0),
+                "repayment_period": int(loan.repayment_period or 0),
+                "employee_number": mandate.employee_number if mandate else None,
+                "mandate_id": str(mandate.id) if mandate else None,
+                "mandate_status": mandate.status if mandate else None,
+                "deduction_id": state.deduction_id if state else None,
+                "cdas_status": state.cdas_status if state else None,
+                "lifecycle_status": lifecycle_status,
+                "requires_reconciliation": bool(state.requires_reconciliation) if state else False,
+                "next_action": next_action,
+                "autopilot_enabled": bool(plan),
+                "autopilot_pending": plan.get("autopilot_pending"),
+                "autopilot_last_result": plan.get("autopilot_last_result"),
+                "autopilot_topup_opportunity": plan.get("autopilot_topup_opportunity"),
+                "first_payment_due": loan.first_payment_due.isoformat() if loan.first_payment_due else None,
+                "maturity_date": loan.maturity_date.isoformat() if loan.maturity_date else None,
+            }
+        )
+    return {"items": items, "count": len(items)}
+
+
 @router.get("/loans/{loan_id}/registration-draft")
 def get_cdas_loan_registration_draft(
     loan_id: UUID,
