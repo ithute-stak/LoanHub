@@ -53,13 +53,13 @@ def test_cdas_home_routes_normal_staff_to_operator_workspace() -> None:
 
     assert 'href="/company/cdas/manage"' in page
     assert "Manage deductions" in page
-    assert "Live operations + Autopilot" in page
+    assert "Autopilot enabled" in page
     assert "Nothing on this page runs in the background" not in page
 
 
 def test_advanced_controls_accept_selected_loan_deep_link() -> None:
     page = _read(FRONTEND / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert "useEffect" in page
-    assert 'new URLSearchParams(window.location.search).get("loan")' in page
-    assert "setSelectedLoanId(loanId)" in page
+    assert "useSearchParams" in page
+    assert 'searchParams.get("loan")' in page
+    assert "useEffect" not in page
