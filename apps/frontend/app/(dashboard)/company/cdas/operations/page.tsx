@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
@@ -104,6 +105,16 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 
 export default function CdasOperationsPage() {
     const searchParams = useSearchParams();
+    const requestedAction = searchParams.get("action") || "";
+    const initialLifecycleType = requestedAction === "review"
+        ? 3
+        : requestedAction === "approve"
+            ? 4
+            : requestedAction === "cancel"
+                ? 6
+                : requestedAction === "change"
+                    ? 10
+                    : 1;
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const [loading, setLoading] = useState<"prepare" | "lifecycle" | "modify" | "settle" | null>(null);
@@ -116,7 +127,7 @@ export default function CdasOperationsPage() {
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
-        request_type: 1,
+        request_type: initialLifecycleType,
         deduction_id: 0,
         employee_no: "",
         loan_policy: 1,
@@ -383,12 +394,6 @@ export default function CdasOperationsPage() {
                 </Alert>
             )}
 
-            {result && (
-                <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5" /> Provider response</CardTitle></CardHeader>
-                    <CardContent><ResultCard title={result.title} record={result.record} /></CardContent>
-                </Card>
-            )}
 
             <Card>
                 <CardHeader>
@@ -460,7 +465,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Card id="lifecycle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Add / update / review / approve / cancel</CardTitle>
                     <CardDescription>
@@ -518,7 +523,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Card id="modify-active" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Modify active deduction</CardTitle>
                     <CardDescription>Uses the official modify-active-deduction contract. CDAS may reject disallowed active or approved changes.</CardDescription>
@@ -543,7 +548,24 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card>
+            <Dialog open={result !== null} onOpenChange={(open) => { if (!open) setResult(null); }}>
+                <DialogContent className="sm:max-w-4xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-primary" /> CDAS operation completed</DialogTitle>
+                        <DialogDescription>
+                            The provider response has been recorded in LoanHub&apos;s audit and CDAS operation history.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {result ? <ResultCard title={result.title} record={result.record} /> : null}
+                    <DialogFooter showCloseButton>
+                        <Button asChild variant="outline">
+                            <Link href="/company/cdas/history?tab=transactions">View transaction log</Link>
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Card id="settle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Settle deduction</CardTitle>
                     <CardDescription>Settlement reasons are the four codes documented by CDAS.</CardDescription>

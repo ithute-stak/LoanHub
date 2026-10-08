@@ -28,6 +28,7 @@ from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
 from database.models.professional_lending import DirectLoanApplication
+from database.models.platform_cdas import PlatformCdasTransaction
 from database.session import get_db
 from integrations.cdas import CdasClient, CdasError, cdas_error_semantics
 from integrations.cdas_contracts import (
@@ -635,6 +636,159 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
 
 
 
+
+
+
+@router.get("/history/transactions")
+def get_cdas_transaction_log(
+    limit: int = Query(100, ge=1, le=500),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """LoanHub-side equivalent of the original CDAS portal transaction log.
+
+    The provider API does not expose a transaction-log endpoint. LoanHub uses
+    its durable provider-operation ledger plus PAYG transaction ledger instead
+    of fabricating an undocumented CDAS call.
+    """
+    _require_lending_user(context)
+    assert context.company_id is not None
+    environment = _company_cdas_environment(db, context.company_id)
+
+    operation_query = db.query(CdasProviderOperation).filter(
+        CdasProviderOperation.company_id == context.company_id,
+        CdasProviderOperation.environment == environment,
+    )
+    if context.branch_id is not None:
+        operation_query = operation_query.filter(
+            CdasProviderOperation.branch_id == context.branch_id
+        )
+    operations = (
+        operation_query
+        .order_by(CdasProviderOperation.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    payg_rows = (
+        db.query(PlatformCdasTransaction)
+        .filter(
+            PlatformCdasTransaction.company_id == context.company_id,
+            PlatformCdasTransaction.environment == environment,
+        )
+        .order_by(PlatformCdasTransaction.accrued_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in operations:
+        items.append(
+            {
+                "source": "provider_operation",
+                "id": str(row.id),
+                "occurred_at": row.completed_at or row.submitted_at or row.created_at,
+                "operation_type": row.operation_type,
+                "state": row.state,
+                "employee_no": row.employee_no,
+                "deduction_id": row.deduction_id,
+                "reference_no": row.reference_no,
+                "provider_status_code": row.provider_status_code,
+                "requires_reconciliation": bool(row.requires_reconciliation),
+                "error_message": row.error_message,
+                "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
+                "request_snapshot": row.request_snapshot or {},
+                "response_snapshot": row.response_snapshot or {},
+            }
+        )
+
+    for row in payg_rows:
+        metadata = dict(row.metadata_json or {})
+        items.append(
+            {
+                "source": "metered_transaction",
+                "id": str(row.id),
+                "occurred_at": row.accrued_at,
+                "operation_type": row.operation_type,
+                "state": row.status,
+                "employee_no": metadata.get("employee_number"),
+                "deduction_id": metadata.get("deduction_id"),
+                "reference_no": row.source_reference,
+                "provider_status_code": metadata.get("provider_status_code"),
+                "requires_reconciliation": bool(metadata.get("requires_reconciliation")),
+                "error_message": None,
+                "actor_user_id": str(row.actor_user_id) if row.actor_user_id else None,
+                "request_snapshot": {},
+                "response_snapshot": metadata,
+                "amount": str(row.amount),
+                "currency": row.currency,
+                "transaction_reference": row.transaction_reference,
+            }
+        )
+
+    def sort_key(item: dict[str, Any]):
+        value = item.get("occurred_at")
+        return value or datetime.min
+
+    items.sort(key=sort_key, reverse=True)
+    return {
+        "environment": environment,
+        "items": items[:limit],
+        "count": min(len(items), limit),
+    }
+
+
+@router.get("/history/deductions")
+def get_cdas_deduction_history(
+    limit: int = Query(100, ge=1, le=500),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Append-only LoanHub lifecycle history for official CDAS deductions."""
+    _require_lending_user(context)
+    assert context.company_id is not None
+
+    query = (
+        db.query(CdasOfficialMandateEvent, CdasOfficialMandateState, CDASDeductionMandate)
+        .join(CdasOfficialMandateState, CdasOfficialMandateState.id == CdasOfficialMandateEvent.state_id)
+        .join(CDASDeductionMandate, CDASDeductionMandate.id == CdasOfficialMandateState.mandate_id)
+        .filter(
+            CdasOfficialMandateEvent.company_id == context.company_id,
+            CdasOfficialMandateState.company_id == context.company_id,
+            CDASDeductionMandate.company_id == context.company_id,
+        )
+    )
+    if context.branch_id is not None:
+        query = query.filter(CDASDeductionMandate.branch_id == context.branch_id)
+
+    rows = (
+        query.order_by(CdasOfficialMandateEvent.occurred_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "event_id": str(event.id),
+                "occurred_at": event.occurred_at,
+                "event_type": event.event_type,
+                "request_type": event.request_type,
+                "success": bool(event.success),
+                "message": event.message,
+                "provider_status_code": event.provider_status_code,
+                "actor_user_id": str(event.actor_user_id) if event.actor_user_id else None,
+                "employee_no": mandate.employee_number,
+                "deduction_id": state.deduction_id,
+                "reference_no": state.reference_no,
+                "lifecycle_status": state.lifecycle_status,
+                "mandate_status": mandate.status,
+                "request_snapshot": event.request_snapshot or {},
+                "response_snapshot": event.response_snapshot or {},
+            }
+            for event, state, mandate in rows
+        ],
+        "count": len(rows),
+    }
 
 
 @router.get("/operations-kpis")
