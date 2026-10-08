@@ -35,6 +35,19 @@ type CdasOperationalLoan = {
 };
 
 type OperationsResponse = { items: CdasOperationalLoan[]; count: number };
+type RosterSnapshot = {
+  environment: string;
+  captured_at: string;
+  source_reference: string;
+  snapshot_date: string;
+  provider_year: number;
+  provider_month: number;
+  file_name: string | null;
+  employee_count: number;
+  total_monthly_deductions: string;
+  truncated: boolean;
+};
+type RosterResponse = { available: boolean; snapshot: RosterSnapshot | null };
 type RegistrationDraft = {
   loan_id: string;
   loan_reference: string;
@@ -84,14 +97,20 @@ export default function CdasManagePage() {
   const [search, setSearch] = useState("");
   const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraft | null>(null);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [roster, setRoster] = useState<RosterSnapshot | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(false);
 
   async function load() {
     if (loading) return;
     setLoading(true);
     setError(null);
     try {
-      const response = await api.get<OperationsResponse>("/cdas/loans/operations");
+      const [response, rosterResponse] = await Promise.all([
+        api.get<OperationsResponse>("/cdas/loans/operations"),
+        api.get<RosterResponse>("/cdas/roster-intelligence"),
+      ]);
       setItems(response.data.items);
+      setRoster(rosterResponse.data.snapshot);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS operations could not be loaded."));
     } finally {
@@ -120,6 +139,22 @@ export default function CdasManagePage() {
     topups: items.filter((item) => Boolean(item.autopilot_topup_opportunity)).length,
     settled: items.filter((item) => item.lifecycle_status === "settled").length,
   }), [items]);
+
+
+  async function refreshRoster() {
+    if (rosterLoading) return;
+    setRosterLoading(true);
+    setError(null);
+    try {
+      await api.post("/cdas/roster-intelligence/refresh");
+      const response = await api.get<RosterResponse>("/cdas/roster-intelligence");
+      setRoster(response.data.snapshot);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "CDAS roster intelligence refresh failed."));
+    } finally {
+      setRosterLoading(false);
+    }
+  }
 
   async function prepareRegistration(loanId: string) {
     setWorkingLoanId(loanId);
@@ -232,6 +267,35 @@ export default function CdasManagePage() {
         <Card><CardHeader className="pb-2"><CardDescription>Top-up opportunities</CardDescription><CardTitle>{totals.topups}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Settled</CardDescription><CardTitle>{totals.settled}</CardTitle></CardHeader></Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle>CDAS roster intelligence</CardTitle>
+              <CardDescription>Daily employee and deduction snapshot from the provider Output File.</CardDescription>
+            </div>
+            <Button variant="outline" onClick={() => void refreshRoster()} disabled={rosterLoading}>
+              {rosterLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh roster
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {roster ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Employees</p><p className="mt-1 text-2xl font-black">{roster.employee_count}</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Monthly deductions</p><p className="mt-1 text-2xl font-black">{money(roster.total_monthly_deductions)}</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Provider month</p><p className="mt-1 font-black">{String(roster.provider_month).padStart(2, "0")}/{roster.provider_year}</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Environment</p><p className="mt-1 font-black uppercase">{roster.environment}</p></div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+              No roster snapshot has been captured yet. LoanHub will attempt the daily sync after 03:45 Africa/Maseru, or you can refresh it manually.
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {error ? (
         <Alert variant="destructive">
