@@ -48,6 +48,36 @@ type RosterSnapshot = {
   truncated: boolean;
 };
 type RosterResponse = { available: boolean; snapshot: RosterSnapshot | null };
+type OperationsKpis = {
+  environment: string;
+  active_deduction_count: number;
+  active_client_count: number;
+  monthly_active_deductions: number;
+  pending_lifecycle_count: number;
+  requires_reconciliation_count: number;
+  requires_reconciliation_monthly_amount: number;
+  settled_count: number;
+  starting_within_30_days: number;
+  ending_within_60_days: number;
+  projected_next_month: { month: string; monthly_amount: number };
+  roster: {
+    available: boolean;
+    employee_count: number;
+    monthly_deductions: number;
+    provider_year: number | null;
+    provider_month: number | null;
+  };
+  latest_remittance: {
+    available: boolean;
+    payroll_month: string | null;
+    status: string | null;
+    expected_amount: number;
+    received_amount: number;
+    matched_amount: number;
+    exception_amount: number;
+    exception_count: number;
+  };
+};
 type RegistrationDraft = {
   loan_id: string;
   loan_reference: string;
@@ -99,18 +129,21 @@ export default function CdasManagePage() {
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [roster, setRoster] = useState<RosterSnapshot | null>(null);
   const [rosterLoading, setRosterLoading] = useState(false);
+  const [kpis, setKpis] = useState<OperationsKpis | null>(null);
 
   async function load() {
     if (loading) return;
     setLoading(true);
     setError(null);
     try {
-      const [response, rosterResponse] = await Promise.all([
+      const [response, rosterResponse, kpiResponse] = await Promise.all([
         api.get<OperationsResponse>("/cdas/loans/operations"),
         api.get<RosterResponse>("/cdas/roster-intelligence"),
+        api.get<OperationsKpis>("/cdas/operations-kpis"),
       ]);
       setItems(response.data.items);
       setRoster(rosterResponse.data.snapshot);
+      setKpis(kpiResponse.data);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS operations could not be loaded."));
     } finally {
@@ -267,6 +300,31 @@ export default function CdasManagePage() {
         <Card><CardHeader className="pb-2"><CardDescription>Top-up opportunities</CardDescription><CardTitle>{totals.topups}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Settled</CardDescription><CardTitle>{totals.settled}</CardTitle></CardHeader></Card>
       </div>
+
+      {kpis ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>CDAS operational scorecard</CardTitle>
+            <CardDescription>Current provider-linked deduction exposure and reconciliation health.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Active monthly deductions</p><p className="mt-1 text-2xl font-black">{money(kpis.monthly_active_deductions)}</p><p className="mt-1 text-xs text-muted-foreground">{kpis.active_deduction_count} deductions · {kpis.active_client_count} clients</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Pending lifecycle</p><p className="mt-1 text-2xl font-black">{kpis.pending_lifecycle_count}</p><p className="mt-1 text-xs text-muted-foreground">{kpis.starting_within_30_days} starting within 30 days</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Reconciliation exposure</p><p className="mt-1 text-2xl font-black">{kpis.requires_reconciliation_count}</p><p className="mt-1 text-xs text-muted-foreground">{money(kpis.requires_reconciliation_monthly_amount)} monthly value</p></div>
+              <div className="rounded-xl bg-muted/35 p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Projected next month</p><p className="mt-1 text-2xl font-black">{money(kpis.projected_next_month.monthly_amount)}</p><p className="mt-1 text-xs text-muted-foreground">{kpis.projected_next_month.month}</p></div>
+            </div>
+            {kpis.latest_remittance.available ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Latest remittance</p><p className="mt-1 font-black">{kpis.latest_remittance.payroll_month || "—"}</p><p className="text-xs text-muted-foreground">{kpis.latest_remittance.status || "Unknown status"}</p></div>
+                <div className="rounded-xl border p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Expected</p><p className="mt-1 font-black">{money(kpis.latest_remittance.expected_amount)}</p></div>
+                <div className="rounded-xl border p-3"><p className="text-xs font-bold uppercase text-muted-foreground">Received</p><p className="mt-1 font-black">{money(kpis.latest_remittance.received_amount)}</p></div>
+                <div className={`rounded-xl border p-3 ${kpis.latest_remittance.exception_count ? "border-destructive/40" : ""}`}><p className="text-xs font-bold uppercase text-muted-foreground">Exceptions</p><p className="mt-1 font-black">{kpis.latest_remittance.exception_count}</p><p className="text-xs text-muted-foreground">{money(kpis.latest_remittance.exception_amount)}</p></div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
