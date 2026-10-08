@@ -1,18 +1,18 @@
 # CDAS TEST UAT checklist
 
-This checklist is for controlled acceptance of the rebuilt manual CDAS integration on `cdas-reintegration`.
+This checklist is for controlled acceptance of the current LoanHub CDAS integration before production release.
 
 Use only the official CDAS TEST environment and authorised TEST records. Do not use production payroll records for smoke testing.
 
 ## Preconditions
 
-- branch: `cdas-reintegration`
-- latest branch CI is green
+- exact candidate SHA is recorded
+- exact candidate SHA Quality Gate is green
 - local LoanHub database is isolated from production
 - CDAS environment is `test`
 - official TEST base URL is configured
 - authorised TEST username/password are stored through LoanHub Company Settings
-- no LoanHub maintenance/background CDAS worker is running
+- CDAS Autopilot and roster jobs are configured intentionally for the target environment
 - request allowance is below the daily limit
 
 ## Stage A — read-only acceptance
@@ -183,14 +183,22 @@ Endpoint: `/api/policy/add-update-deduction`
 - [ ] Provider receives one mutation request only
 - [ ] Result is audit-logged
 
-### B4. Change / update
+### B4. Cancel / reject
+
+- [ ] Explicit confirmation required
+- [ ] Request code 6 is shown as the documented Cancel / Reject ambiguity
+- [ ] Correct TEST deduction is targeted
+- [ ] Provider receives one mutation request only
+- [ ] Result opens in the success modal and is present in Transaction Log / Deduction History
+
+### B5. Change / update
 
 - [ ] Explicit confirmation required
 - [ ] Changed values are deliberate and recorded before submission
 - [ ] Provider receives one mutation request only
 - [ ] Updated provider record is re-read separately after the write
 
-### B5. Modify active deduction
+### B6. Modify active deduction
 
 Endpoint: `/api/policy/modify-active-deduction`
 
@@ -200,7 +208,7 @@ Endpoint: `/api/policy/modify-active-deduction`
 - [ ] Provider validation errors are surfaced without automatic replay
 - [ ] Result is audit-logged
 
-### B6. Settlement
+### B7. Settlement
 
 Endpoint: `/api/policy/settled-deduction`
 
@@ -210,7 +218,25 @@ Endpoint: `/api/policy/settled-deduction`
 - [ ] Result is audit-logged
 - [ ] Deduction is re-read separately after settlement to confirm final state
 
-## Stage C — safety acceptance
+## Stage C — operator experience and evidence
+
+- [ ] Employee verification opens a clear result modal
+- [ ] Affordability opens a clear result modal
+- [ ] View All Deductions opens a modal, including a clear empty-result state
+- [ ] View Own Deductions opens a modal, including a clear empty-result state
+- [ ] View Active / Approved opens a modal
+- [ ] Add / Review / Approve / Cancel / Modify / Settle actions are visible from the main CDAS workspace
+- [ ] Successful state-changing actions open a success modal
+- [ ] Transaction Log shows provider-operation evidence
+- [ ] Deduction History shows append-only lifecycle evidence
+- [ ] History search works by employee, deduction ID, reference, state and operation
+- [ ] Transaction-state filtering works
+- [ ] CSV export matches the visible filtered records
+- [ ] Mobile history uses readable cards rather than forcing a desktop-width table
+- [ ] Output File and Statement can be downloaded from the documents workspace
+- [ ] Company Audit Log remains accessible for actor/request evidence
+
+## Stage D — safety acceptance
 
 - [ ] Opening `/company/cdas` generates no provider request
 - [ ] Merely typing an employee number generates no provider request
@@ -222,7 +248,7 @@ Endpoint: `/api/policy/settled-deduction`
 - [ ] TEST credentials are not present in Git history
 - [ ] No background crawler, roster sync, scheduler or automatic lifecycle process is running
 
-## Stage D — Live release governance
+## Stage E — Live release governance
 
 Do not switch a lending company to Live merely because a login test succeeded.
 
@@ -243,7 +269,8 @@ Readiness output of `10/10-ready` means LoanHub's internal controls are satisfie
 ```text
 Read-only Stage A: PASS / FAIL
 Mutation Stage B: PASS / FAIL / NOT EXECUTED
-Safety Stage C: PASS / FAIL
+Operator/evidence Stage C: PASS / FAIL
+Safety Stage D: PASS / FAIL
 
 Open defects:
 
