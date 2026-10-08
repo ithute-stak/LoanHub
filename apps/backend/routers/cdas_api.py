@@ -1014,6 +1014,97 @@ def get_cdas_loan_state(
     }
 
 
+
+@router.post("/loans/{loan_id}/reconcile")
+async def reconcile_linked_cdas_loan(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Reconcile the latest unresolved provider mutation for a linked loan."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+
+    mandate = (
+        db.query(CDASDeductionMandate)
+        .filter(
+            CDASDeductionMandate.company_id == context.company_id,
+            CDASDeductionMandate.loan_id == loan_id,
+        )
+        .first()
+    )
+    if not mandate:
+        raise HTTPException(status_code=404, detail="This loan has no CDAS mandate")
+    state = (
+        db.query(CdasOfficialMandateState)
+        .filter(
+            CdasOfficialMandateState.company_id == context.company_id,
+            CdasOfficialMandateState.mandate_id == mandate.id,
+        )
+        .first()
+    )
+    if not state:
+        raise HTTPException(status_code=404, detail="This loan has no official CDAS provider state")
+
+    operation = (
+        db.query(CdasProviderOperation)
+        .filter(
+            CdasProviderOperation.company_id == context.company_id,
+            CdasProviderOperation.environment == state.environment,
+            CdasProviderOperation.deduction_id == state.deduction_id,
+            CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES),
+        )
+        .order_by(CdasProviderOperation.created_at.desc())
+        .first()
+    )
+    if operation is None:
+        return {
+            "ok": True,
+            "reconciled": not bool(state.requires_reconciliation),
+            "message": "No unresolved CDAS provider operation exists for this loan.",
+            "operation": None,
+        }
+
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        matched, operation = await reconcile_provider_operation(db, operation=operation, client=client)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CdasError as exc:
+        db.refresh(operation)
+        raise _cdas_http_error(exc, operation=operation) from exc
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    state.requires_reconciliation = not matched
+    state.last_synced_at = now
+    if matched:
+        if operation.operation_type in {"deduction.settle", "deduction.settle.autopilot"}:
+            state.lifecycle_status = "settled"
+            state.cdas_status = 7
+            state.settled_at = now
+            mandate.status = "settled"
+            mandate.completed_at = now
+        elif operation.operation_type in {"deduction.modify_active", "deduction.modify_active.autopilot"}:
+            state.lifecycle_status = "changed"
+            state.cdas_status = 10
+            mandate.status = "changed"
+        elif operation.operation_type.startswith("deduction.lifecycle."):
+            request_type = int((operation.request_snapshot or {}).get("RequestType") or 0)
+            lifecycle_by_type = {1: ("registered", 1), 3: ("reviewed", 3), 4: ("approved", 4), 6: ("cancelled", 6), 10: ("changed", 10)}
+            if request_type in lifecycle_by_type:
+                state.lifecycle_status, state.cdas_status = lifecycle_by_type[request_type]
+                mandate.status = state.lifecycle_status
+
+    db.commit()
+    return {
+        "ok": True,
+        "reconciled": matched,
+        "operation": operation_summary(operation),
+        "lifecycle_status": state.lifecycle_status,
+        "requires_reconciliation": bool(state.requires_reconciliation),
+    }
+
+
 @router.post("/loans/{loan_id}/lifecycle")
 async def change_linked_cdas_loan_lifecycle(
     loan_id: UUID,
