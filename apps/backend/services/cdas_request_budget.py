@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from database.models.cdas_official import CdasApiRequestBudget
 from database.models.origination import OriginationIntegrationConfiguration
+from database.models.platform_cdas import PlatformCdasCredentialProfile
 from database.session import SessionLocal
 from integrations.cdas import CdasError
 
@@ -37,6 +38,25 @@ def _account_key(username: str, environment: str) -> str:
 
 
 def _configured_username(db: Session, company_id: UUID, environment: str) -> str | None:
+    # Current CDAS credential custody lives at platform scope. The request
+    # budget must therefore resolve the same PlatformCdasCredentialProfile used
+    # by the provider client, otherwise a valid configured account is rejected
+    # before any provider request is sent.
+    profile = (
+        db.query(PlatformCdasCredentialProfile)
+        .filter(
+            PlatformCdasCredentialProfile.company_id == company_id,
+            PlatformCdasCredentialProfile.environment == environment,
+        )
+        .one_or_none()
+    )
+    if profile is not None:
+        username = str(profile.username or "").strip()
+        if username:
+            return username
+
+    # Compatibility fallback for pre-migration installations only. New writes
+    # never store CDAS credentials in the company integration JSON.
     row = (
         db.query(OriginationIntegrationConfiguration)
         .filter(
