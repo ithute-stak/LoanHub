@@ -73,3 +73,25 @@ def test_cdas_history_workspace_uses_durable_loanhub_evidence() -> None:
     assert 'api.get<DeductionResponse>("/cdas/history/deductions?limit=200")' in source
     assert "CDAS transaction & deduction history" in source
     assert "do not consume the CDAS 400-request daily allowance" in source
+
+
+def test_state_changing_actions_show_success_modal_with_history_link() -> None:
+    operations = OPERATIONS.read_text(encoding="utf-8")
+
+    assert '<Dialog open={result !== null}' in operations
+    assert "CDAS operation completed" in operations
+    assert "View transaction log" in operations
+    assert "/company/cdas/history?tab=transactions" in operations
+
+
+def test_cdas_history_is_searchable_exportable_and_mobile_responsive() -> None:
+    page = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "cdas" / "history" / "page.tsx"
+    source = page.read_text(encoding="utf-8")
+
+    assert "filteredTransactions" in source
+    assert "filteredDeductions" in source
+    assert "All transaction states" in source
+    assert "Export CSV" in source
+    assert "text/csv;charset=utf-8" in source
+    assert "md:hidden" in source
+    assert "hidden overflow-x-auto p-0 md:block" in source
