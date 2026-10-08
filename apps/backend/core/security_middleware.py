@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
 from database.config.config import settings
+from utils.convex import current_user_id
 
 
 _PERIODS: Final[dict[str, int]] = {
@@ -131,9 +132,22 @@ class SecurityControlMiddleware(BaseHTTPMiddleware):
             return response
 
         is_auth = request.url.path.startswith('/api/v1/auth/')
-        rule = parse_rate_rule(settings.AUTH_RATE_LIMIT if is_auth else settings.RATE_LIMIT)
+        authenticated_user_id = current_user_id.get()
+        if is_auth:
+            rule = parse_rate_rule(settings.AUTH_RATE_LIMIT)
+            scope = "auth"
+            identity = _client_identity(request)
+        elif authenticated_user_id:
+            rule = parse_rate_rule(settings.AUTHENTICATED_RATE_LIMIT)
+            scope = "user"
+            identity = hashlib.sha256(str(authenticated_user_id).encode("utf-8")).hexdigest()[:24]
+        else:
+            rule = parse_rate_rule(settings.RATE_LIMIT)
+            scope = "api"
+            identity = _client_identity(request)
+
         bucket = int(time.time()) // rule.window_seconds
-        key = f'loanhub:rate:{"auth" if is_auth else "api"}:{_client_identity(request)}:{bucket}'
+        key = f"loanhub:rate:{scope}:{identity}:{bucket}"
         count = 0
         retry_after = rule.window_seconds
 
@@ -164,5 +178,6 @@ class SecurityControlMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers['X-RateLimit-Limit'] = str(rule.limit)
         response.headers['X-RateLimit-Remaining'] = str(max(0, rule.limit - count))
+        response.headers['X-RateLimit-Scope'] = scope
         _security_headers(response)
         return response
