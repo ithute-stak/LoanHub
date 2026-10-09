@@ -281,18 +281,17 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
     }, 0);
 
     function exportCsv() {
-        const columns: Array<[string, (record: ProviderRecord) => string]> = [
-            ...(showItemCode ? [["Item code", deductionItemCode] as const] : []),
-            ...(showAgency ? [["Agency name", deductionAgencyName] as const] : []),
-            ...(showType ? [["Type", deductionTypeLabel] as const] : []),
-            ...(showAmount ? [["Amount", moneyValue] as const] : []),
-            ...(showPrincipal ? [["Principal amount", principalValue] as const] : []),
-            ...(showInstallments ? [["Installments", deductionInstallments] as const] : []),
-            ...(showEffective ? [["Effective month", deductionEffectiveMonth] as const] : []),
-            ...(showExpiry ? [["Expiry", deductionExpiry] as const] : []),
-            ...(showReference ? [["Reference no.", deductionReference] as const] : []),
-            ["Status", deductionStatusLabel],
-        ];
+        const columns: Array<[string, (record: ProviderRecord) => string]> = [];
+        if (showItemCode) columns.push(["Item code", deductionItemCode]);
+        if (showAgency) columns.push(["Agency name", deductionAgencyName]);
+        if (showType) columns.push(["Type", deductionTypeLabel]);
+        if (showAmount) columns.push(["Amount", moneyValue]);
+        if (showPrincipal) columns.push(["Principal amount", principalValue]);
+        if (showInstallments) columns.push(["Installments", deductionInstallments]);
+        if (showEffective) columns.push(["Effective month", deductionEffectiveMonth]);
+        if (showExpiry) columns.push(["Expiry", deductionExpiry]);
+        if (showReference) columns.push(["Reference no.", deductionReference]);
+        columns.push(["Status", deductionStatusLabel]);
         const csvEscape = (value: string) => `"${value.replaceAll('"', '""')}"`;
         const csv = [
             columns.map(([label]) => label),
