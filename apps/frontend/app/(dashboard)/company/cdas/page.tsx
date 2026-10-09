@@ -512,6 +512,20 @@ export default function CdasWorkspacePage() {
         }
     }
 
+    function openDeductionResults(title: string, emptyDescription: string, records: ProviderRecord[]) {
+        setReadFeedback({
+            kind: "deductions",
+            title,
+            description: records.length
+                ? `CDAS returned ${records.length} deduction record${records.length === 1 ? "" : "s"}.`
+                : emptyDescription,
+            records: records.map((record, index) => ({
+                title: `Deduction ${index + 1}`,
+                record,
+            })),
+        });
+    }
+
     async function viewActiveApprovedDeduction() {
         if (!normalizedEmployeeNo || busy) return;
         setLoadingAction("active");
@@ -801,12 +815,31 @@ export default function CdasWorkspacePage() {
                             View All Deductions
                         </Button>
                         {allDeductions !== null && (
-                            <div className="space-y-3">
-                                {allDeductions.length === 0 ? (
-                                    <p className="rounded-xl border p-4 text-sm text-muted-foreground">CDAS returned no third-party deductions.</p>
-                                ) : allDeductions.map((record, index) => (
-                                    <ProviderRecordCard key={`all-${index}`} record={record} title={`Deduction ${index + 1}`} />
-                                ))}
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-muted/20 p-4">
+                                <div>
+                                    <p className="text-sm font-black">
+                                        {allDeductions.length
+                                            ? `${allDeductions.length} deduction record${allDeductions.length === 1 ? "" : "s"} loaded`
+                                            : "No third-party deductions found"}
+                                    </p>
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        Results are kept compact here; open the full 90% table to search, sort, total and export.
+                                    </p>
+                                </div>
+                                {allDeductions.length > 0 && (
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => openDeductionResults(
+                                            "All third-party deductions",
+                                            "CDAS returned no third-party deductions for this employee.",
+                                            allDeductions,
+                                        )}
+                                    >
+                                        <FileSearch className="h-4 w-4" />
+                                        View results
+                                    </Button>
+                                )}
                             </div>
                         )}
                     </CardContent>
@@ -843,12 +876,31 @@ export default function CdasWorkspacePage() {
                             View Own Deductions
                         </Button>
                         {ownDeductions !== null && (
-                            <div className="space-y-3">
-                                {ownDeductions.length === 0 ? (
-                                    <p className="rounded-xl border p-4 text-sm text-muted-foreground">CDAS returned no deductions for this status.</p>
-                                ) : ownDeductions.map((record, index) => (
-                                    <ProviderRecordCard key={`own-${index}`} record={record} title={`Own deduction ${index + 1}`} />
-                                ))}
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-muted/20 p-4">
+                                <div>
+                                    <p className="text-sm font-black">
+                                        {ownDeductions.length
+                                            ? `${ownDeductions.length} matching deduction record${ownDeductions.length === 1 ? "" : "s"} loaded`
+                                            : "No deductions found for this status"}
+                                    </p>
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        Status {deductionStatus} — {DEDUCTION_STATUSES.find(([value]) => value === deductionStatus)?.[1] || "Unknown"}
+                                    </p>
+                                </div>
+                                {ownDeductions.length > 0 && (
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => openDeductionResults(
+                                            "Own deductions by status",
+                                            "CDAS returned no deductions for the selected status.",
+                                            ownDeductions,
+                                        )}
+                                    >
+                                        <FileSearch className="h-4 w-4" />
+                                        View results
+                                    </Button>
+                                )}
                             </div>
                         )}
                     </CardContent>
@@ -866,7 +918,28 @@ export default function CdasWorkspacePage() {
                             {loadingAction === "active" ? <Loader2 className="h-4 w-4 animate-spin" /> : <HandCoins className="h-4 w-4" />}
                             View Active / Approved
                         </Button>
-                        {activeDeduction && <ProviderRecordCard record={activeDeduction} title="Active / approved deduction" />}
+                        {activeDeduction && (
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-muted/20 p-4">
+                                <div>
+                                    <p className="text-sm font-black">{deductionAgencyName(activeDeduction)}</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        {deductionItemCode(activeDeduction) || "No item code"} · {moneyValue(activeDeduction)} · {deductionStatusLabel(activeDeduction)}
+                                    </p>
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => openDeductionResults(
+                                        "Active / approved deduction",
+                                        "CDAS returned no active or approved deduction.",
+                                        [activeDeduction],
+                                    )}
+                                >
+                                    <FileSearch className="h-4 w-4" />
+                                    View result
+                                </Button>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>
