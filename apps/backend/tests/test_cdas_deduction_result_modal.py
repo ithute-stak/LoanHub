@@ -62,3 +62,20 @@ def test_workspace_keeps_deduction_results_compact_after_lookup() -> None:
     assert "openDeductionResults" in source
     assert "allDeductions.map((record, index)" not in source
     assert "ownDeductions.map((record, index)" not in source
+
+
+def test_deduction_modal_10_of_10_operator_polish() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}' in source
+    assert "[employee.Name, employee.Surname].filter(Boolean).join" in source
+    assert "formatCdasPeriod" in source
+    assert "deductionStatusClasses" in source
+    assert "Print / Save PDF" in source
+    assert 'onClick={() => window.print()}' in source
+    assert "sticky left-0" in source
+    assert "sticky left-[112px]" in source
+    assert ">Clear</button>" not in source
+    assert "Clear" in source
+    assert "print:hidden" in source
+    assert "print:shadow-none" in source
