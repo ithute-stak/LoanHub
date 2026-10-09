@@ -87,6 +87,14 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
+function generatedExpiryMonth(effectiveMonth: string, period: number): string {
+    const match = effectiveMonth.match(/^(\d{4})-(\d{2})$/);
+    if (!match || !Number.isInteger(period) || period <= 0) return "Auto-generated";
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + period - 1, 1));
+    return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+
 function ResultCard({ title, record }: { title: string; record: ProviderRecord }) {
     return (
         <div className="overflow-hidden rounded-2xl border">
@@ -535,11 +543,13 @@ export default function CdasOperationsPage() {
                                             </div>
                                             <Badge variant="secondary">Auto-generated</Badge>
                                         </div>
-                                        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                                        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
                                             <div><dt className="text-xs text-muted-foreground">Employee</dt><dd className="font-bold">{lifecycle.employee_no || "Auto-generated after preparation"}</dd></div>
                                             <div><dt className="text-xs text-muted-foreground">Agency / Item code</dt><dd className="font-bold">{lifecycle.item_code || "Auto-generated"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Principal amount</dt><dd className="font-bold">{lifecycle.principal_amount > 0 ? `M ${lifecycle.principal_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Auto-generated"}</dd></div>
                                             <div><dt className="text-xs text-muted-foreground">Effective month</dt><dd className="font-bold">{lifecycle.effective_month || "Auto-generated"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Reference</dt><dd className="font-bold">{lifecycle.reference_no || "Auto-generated"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Expiry month</dt><dd className="font-bold">{generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Policy / Loan reference</dt><dd className="font-bold">{lifecycle.reference_no || "Auto-generated"}</dd></div>
                                         </dl>
                                     </div>
                                 </>
