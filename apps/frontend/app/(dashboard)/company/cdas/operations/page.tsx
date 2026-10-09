@@ -471,7 +471,7 @@ export default function CdasOperationsPage() {
                 <CardHeader>
                     <CardTitle>{lifecycle.request_type === 1 ? "Approve payroll deduction" : "Manage CDAS lifecycle"}</CardTitle>
                     <CardDescription>
-                        For a new deduction, enter only the monthly amount and deduction period. LoanHub generates the remaining CDAS fields from the verified approved loan and company configuration. Existing deductions still use the documented lifecycle controls.
+                        For a new deduction, enter only the monthly amount and deduction period. LoanHub generates the remaining CDAS fields from the verified approved loan and company configuration. Existing deductions still use the documented lifecycle controls. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
