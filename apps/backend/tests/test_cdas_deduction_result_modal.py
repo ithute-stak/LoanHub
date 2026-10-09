@@ -8,7 +8,10 @@ def test_deduction_results_use_wide_table_modal() -> None:
     source = PAGE.read_text(encoding="utf-8")
 
     assert 'kind: "deductions"' in source
-    assert 'w-[90vw] max-w-[90vw]' in source
+    assert 'CustomDialog' in source
+    assert '!w-[96vw]' in source
+    assert 'sm:!max-w-[96vw]' in source
+    assert 'xl:!max-w-[1500px]' in source
     assert "DeductionResultsTable" in source
     assert "Deduction / agency name" in source
     assert "Effective month" in source
@@ -16,13 +19,15 @@ def test_deduction_results_use_wide_table_modal() -> None:
     assert "sticky top-0" in source
 
 
-def test_employee_and_affordability_keep_compact_result_layout() -> None:
+def test_all_cdas_results_use_loanhub_custom_modal() -> None:
     source = PAGE.read_text(encoding="utf-8")
 
     assert 'kind: "employee"' in source
     assert 'kind: "affordability"' in source
     assert 'readFeedback?.kind === "deductions"' in source
-    assert 'sm:max-w-4xl' in source
+    assert 'import { CustomDialog } from "@/components/ui/custom-dialog";' in source
+    assert '<CustomDialog' in source
+    assert '<Dialog open={readFeedback !== null}' not in source
 
 
 def test_known_cdas_agency_names_have_display_fallbacks() -> None:
@@ -90,6 +95,16 @@ def test_employee_verification_uses_wide_cdas_table_modal() -> None:
     assert 'Date of birth' in source
     assert 'Joining date' in source
     assert 'Termination date' in source
-    assert 'className="w-[90vw] max-w-[90vw]' in source
+    assert '!w-[96vw]' in source
     assert 'readFeedback?.kind === "employee"' in source
     assert "<EmployeeResultsTable" in source
+
+
+def test_cdas_custom_modal_has_full_height_body_and_sticky_footer() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert '!h-[92vh]' in source
+    assert 'bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"' in source
+    assert 'min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8' in source
+    assert 'shrink-0 items-center justify-end border-t bg-card/95' in source
+    assert 'onClick={() => setReadFeedback(null)}' in source
