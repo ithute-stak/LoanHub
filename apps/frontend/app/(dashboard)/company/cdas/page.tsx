@@ -24,7 +24,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CustomDialog } from "@/components/ui/custom-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
@@ -1065,38 +1065,40 @@ export default function CdasWorkspacePage() {
                 </Card>
             )}
 
-            <Dialog open={readFeedback !== null} onOpenChange={(open) => { if (!open) setReadFeedback(null); }}>
-                <DialogContent className="w-[90vw] max-w-[90vw] max-h-[90vh] overflow-hidden print:static print:max-h-none print:w-full print:max-w-none print:border-0 print:shadow-none">
-                    <DialogHeader className="print:mb-4">
-                        <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
-                        <DialogDescription>
-                            {readFeedback?.kind === "deductions" ? (
-                                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                    <span className="font-semibold text-foreground">
-                                        Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}
-                                    </span>
-                                    {employee && (employee.Name || employee.Surname) ? (
-                                        <>
-                                            <span aria-hidden="true">·</span>
-                                            <span>{[employee.Name, employee.Surname].filter(Boolean).join(" ")}</span>
-                                        </>
-                                    ) : null}
+            <CustomDialog
+                open={readFeedback !== null}
+                onOpenChange={(open) => { if (!open) setReadFeedback(null); }}
+                title={readFeedback?.title || "CDAS result"}
+                description={
+                    readFeedback?.kind === "deductions" ? (
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="font-semibold text-white">
+                                Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}
+                            </span>
+                            {employee && (employee.Name || employee.Surname) ? (
+                                <>
                                     <span aria-hidden="true">·</span>
-                                    <span>
-                                        {readFeedback.records.length} deduction record{readFeedback.records.length === 1 ? "" : "s"}
-                                    </span>
-                                </span>
-                            ) : (
-                                readFeedback?.description
-                            )}
-                        </DialogDescription>
-                    </DialogHeader>
-
+                                    <span>{[employee.Name, employee.Surname].filter(Boolean).join(" ")}</span>
+                                </>
+                            ) : null}
+                            <span aria-hidden="true">·</span>
+                            <span>
+                                {readFeedback.records.length} deduction record{readFeedback.records.length === 1 ? "" : "s"}
+                            </span>
+                        </span>
+                    ) : (
+                        readFeedback?.description
+                    )
+                }
+                contentClassName="!h-[92vh] !w-[96vw] !max-w-[96vw] sm:!max-w-[96vw] xl:!w-[94vw] xl:!max-w-[1500px] print:!static print:!h-auto print:!w-full print:!max-w-none print:!border-0 print:!shadow-none"
+                bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+            >
+                <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8 print:p-0">
                     {readFeedback?.kind === "deductions" ? (
                         readFeedback.records.length ? (
                             <DeductionResultsTable records={readFeedback.records.map((item) => item.record)} />
                         ) : (
-                            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                            <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
                                 No matching CDAS deductions were returned.
                             </div>
                         )
@@ -1104,27 +1106,31 @@ export default function CdasWorkspacePage() {
                         readFeedback.records.length ? (
                             <EmployeeResultsTable record={readFeedback.records[0].record} />
                         ) : (
-                            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                            <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
                                 No employee record was returned.
                             </div>
                         )
                     ) : (
-                        <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
+                        <div className="space-y-3">
                             {readFeedback?.records.length ? (
                                 readFeedback.records.map((item, index) => (
                                     <ProviderRecordCard key={item.title + index} title={item.title} record={item.record} />
                                 ))
                             ) : (
-                                <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                                <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
                                     No matching CDAS records were returned.
                                 </div>
                             )}
                         </div>
                     )}
+                </div>
 
-                    <DialogFooter showCloseButton className="print:hidden" />
-                </DialogContent>
-            </Dialog>
+                <div className="flex shrink-0 items-center justify-end border-t bg-card/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8 print:hidden">
+                    <Button type="button" variant="outline" onClick={() => setReadFeedback(null)}>
+                        Close
+                    </Button>
+                </div>
+            </CustomDialog>
 
             <Alert>
                 <AlertCircle className="h-4 w-4" />
