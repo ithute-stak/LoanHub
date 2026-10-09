@@ -978,7 +978,27 @@ export default function CdasWorkspacePage() {
                 <DialogContent className={readFeedback?.kind === "deductions" ? "w-[90vw] max-w-[90vw]" : "sm:max-w-4xl"}>
                     <DialogHeader>
                         <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
-                        <DialogDescription>{readFeedback?.description}</DialogDescription>
+                        <DialogDescription>
+                            {readFeedback?.kind === "deductions" ? (
+                                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span className="font-semibold text-foreground">
+                                        Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}
+                                    </span>
+                                    {employee && (employee.Name || employee.Surname) ? (
+                                        <>
+                                            <span aria-hidden="true">·</span>
+                                            <span>{[employee.Name, employee.Surname].filter(Boolean).join(" ")}</span>
+                                        </>
+                                    ) : null}
+                                    <span aria-hidden="true">·</span>
+                                    <span>
+                                        {readFeedback.records.length} deduction record{readFeedback.records.length === 1 ? "" : "s"}
+                                    </span>
+                                </span>
+                            ) : (
+                                readFeedback?.description
+                            )}
+                        </DialogDescription>
                     </DialogHeader>
 
                     {readFeedback?.kind === "deductions" ? (
