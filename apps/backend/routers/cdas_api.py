@@ -116,6 +116,7 @@ class CdasDirectEmployeeRegistrationRequest(BaseModel):
     employee_no: str = Field(min_length=1, max_length=100)
     deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
     deduction_period: int = Field(gt=0, le=600)
+    authorization_confirmed: bool = False
     confirmed: bool = False
 
 
@@ -1944,6 +1945,11 @@ async def register_direct_employee_deduction(
     """
     _require_company_manager(context)
     _require_confirmed(payload.confirmed)
+    if not payload.authorization_confirmed:
+        raise HTTPException(
+            status_code=409,
+            detail="Confirm the employee's payroll-deduction authorization before CDAS registration",
+        )
     assert context.company_id is not None
 
     employee_no = payload.employee_no.strip()
