@@ -275,6 +275,8 @@ export default function CdasOperationsPage() {
             const response = (
                 lifecycle.request_type === 1 && selectedLoanId && registrationDraft?.ready
                     ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/register`, {
+                        deduction_amount: lifecycle.deduction_amount,
+                        deduction_period: lifecycle.total_installment,
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
                     })
@@ -467,34 +469,95 @@ export default function CdasOperationsPage() {
 
             <Card id="lifecycle" className="scroll-mt-24">
                 <CardHeader>
-                    <CardTitle>Add / update / review / approve / cancel</CardTitle>
+                    <CardTitle>{lifecycle.request_type === 1 ? "Approve payroll deduction" : "Manage CDAS lifecycle"}</CardTitle>
                     <CardDescription>
-                        Uses the official add-update-deduction contract. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy.
+                        For a new deduction, enter only the monthly amount and deduction period. LoanHub generates the remaining CDAS fields from the verified approved loan and company configuration. Existing deductions still use the documented lifecycle controls. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form className="space-y-5" onSubmit={submitLifecycle}>
-                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            <div className="space-y-2">
-                                <Label>Request type</Label>
-                                <select value={lifecycle.request_type} onChange={(event) => setLifecycle((v) => ({ ...v, request_type: Number(event.target.value) }))} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
-                                    {LIFECYCLE_TYPES.map(([value, label]) => <option key={value} value={value}>{value} — {label}</option>)}
-                                </select>
-                            </div>
-                            <div className="space-y-2"><Label>Deduction ID</Label><Input type="number" min={0} value={lifecycle.deduction_id} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_id: Number(e.target.value) }))} /></div>
-                            <div className="space-y-2"><Label>Employee number</Label><Input value={lifecycle.employee_no} onChange={(e) => setLifecycle((v) => ({ ...v, employee_no: e.target.value }))} /></div>
-                            <div className="space-y-2">
-                                <Label>Loan / policy type</Label>
-                                <select value={lifecycle.loan_policy} onChange={(event) => setLifecycle((v) => ({ ...v, loan_policy: Number(event.target.value) }))} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
-                                    {LOAN_POLICY_TYPES.map(([value, label]) => <option key={value} value={value}>{value} — {label}</option>)}
-                                </select>
-                            </div>
-                            <div className="space-y-2"><Label>Item code</Label><Input value={lifecycle.item_code} onChange={(e) => setLifecycle((v) => ({ ...v, item_code: e.target.value }))} /></div>
-                            <div className="space-y-2"><Label>Deduction amount</Label><Input type="number" min={0} step="0.01" value={lifecycle.deduction_amount} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_amount: Number(e.target.value) }))} /></div>
-                            <div className="space-y-2"><Label>Total instalments</Label><Input type="number" min={0} value={lifecycle.total_installment} onChange={(e) => setLifecycle((v) => ({ ...v, total_installment: Number(e.target.value) }))} /></div>
-                            <div className="space-y-2"><Label>Principal amount</Label><Input type="number" min={0} step="0.01" value={lifecycle.principal_amount} onChange={(e) => setLifecycle((v) => ({ ...v, principal_amount: Number(e.target.value) }))} /></div>
-                            <div className="space-y-2"><Label>Effective month</Label><Input type="month" value={lifecycle.effective_month} onChange={(e) => setLifecycle((v) => ({ ...v, effective_month: e.target.value }))} /></div>
-                            <div className="space-y-2 md:col-span-2 xl:col-span-3"><Label>Reference number</Label><Input value={lifecycle.reference_no} onChange={(e) => setLifecycle((v) => ({ ...v, reference_no: e.target.value }))} /></div>
+                        <div className="space-y-5">
+                            {lifecycle.request_type === 1 && registrationDraft?.ready ? (
+                                <>
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                        <div className="space-y-2">
+                                            <Label>Deduction amount</Label>
+                                            <Input
+                                                type="number"
+                                                min={0.01}
+                                                step="0.01"
+                                                value={lifecycle.deduction_amount}
+                                                onChange={(event) => setLifecycle((value) => ({
+                                                    ...value,
+                                                    deduction_amount: Number(event.target.value),
+                                                }))}
+                                            />
+                                            <p className="text-xs text-muted-foreground">Monthly payroll deduction sent to CDAS.</p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Deduction period</Label>
+                                            <div className="relative">
+                                                <Input
+                                                    type="number"
+                                                    min={1}
+                                                    max={600}
+                                                    value={lifecycle.total_installment}
+                                                    onChange={(event) => setLifecycle((value) => ({
+                                                        ...value,
+                                                        total_installment: Number(event.target.value),
+                                                    }))}
+                                                    className="pr-20"
+                                                />
+                                                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                                                    months
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">Number of monthly deductions.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-2xl border bg-muted/20 p-4">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-black">LoanHub will generate the CDAS registration</p>
+                                                <p className="mt-1 text-xs text-muted-foreground">
+                                                    Employee, Item Code, Deduction ID, Loan type, Principal, Effective Month and Reference are taken from the verified loan and CDAS configuration.
+                                                </p>
+                                            </div>
+                                            <Badge variant="secondary">Auto-generated</Badge>
+                                        </div>
+                                        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                                            <div><dt className="text-xs text-muted-foreground">Employee</dt><dd className="font-bold">{lifecycle.employee_no || "Pending"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Item code</dt><dd className="font-bold">{lifecycle.item_code || "Pending"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Effective month</dt><dd className="font-bold">{lifecycle.effective_month || "Pending"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Reference</dt><dd className="font-bold">{lifecycle.reference_no || "Pending"}</dd></div>
+                                        </dl>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                    <div className="space-y-2">
+                                        <Label>Request type</Label>
+                                        <select value={lifecycle.request_type} onChange={(event) => setLifecycle((v) => ({ ...v, request_type: Number(event.target.value) }))} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                                            {LIFECYCLE_TYPES.map(([value, label]) => <option key={value} value={value}>{value} — {label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-2"><Label>Deduction ID</Label><Input type="number" min={0} value={lifecycle.deduction_id} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_id: Number(e.target.value) }))} /></div>
+                                    <div className="space-y-2"><Label>Employee number</Label><Input value={lifecycle.employee_no} onChange={(e) => setLifecycle((v) => ({ ...v, employee_no: e.target.value }))} /></div>
+                                    <div className="space-y-2">
+                                        <Label>Loan / policy type</Label>
+                                        <select value={lifecycle.loan_policy} onChange={(event) => setLifecycle((v) => ({ ...v, loan_policy: Number(event.target.value) }))} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                                            {LOAN_POLICY_TYPES.map(([value, label]) => <option key={value} value={value}>{value} — {label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-2"><Label>Item code</Label><Input value={lifecycle.item_code} onChange={(e) => setLifecycle((v) => ({ ...v, item_code: e.target.value }))} /></div>
+                                    <div className="space-y-2"><Label>Deduction amount</Label><Input type="number" min={0} step="0.01" value={lifecycle.deduction_amount} onChange={(e) => setLifecycle((v) => ({ ...v, deduction_amount: Number(e.target.value) }))} /></div>
+                                    <div className="space-y-2"><Label>Total instalments</Label><Input type="number" min={0} value={lifecycle.total_installment} onChange={(e) => setLifecycle((v) => ({ ...v, total_installment: Number(e.target.value) }))} /></div>
+                                    <div className="space-y-2"><Label>Principal amount</Label><Input type="number" min={0} step="0.01" value={lifecycle.principal_amount} onChange={(e) => setLifecycle((v) => ({ ...v, principal_amount: Number(e.target.value) }))} /></div>
+                                    <div className="space-y-2"><Label>Effective month</Label><Input type="month" value={lifecycle.effective_month} onChange={(e) => setLifecycle((v) => ({ ...v, effective_month: e.target.value }))} /></div>
+                                    <div className="space-y-2 md:col-span-2 xl:col-span-3"><Label>Reference number</Label><Input value={lifecycle.reference_no} onChange={(e) => setLifecycle((v) => ({ ...v, reference_no: e.target.value }))} /></div>
+                                </div>
+                            )}
                         </div>
                         {lifecycle.request_type === 1 && registrationDraft?.ready ? (
                             <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
@@ -518,7 +581,7 @@ export default function CdasOperationsPage() {
                             <input type="checkbox" checked={lifecycle.confirmed} onChange={(e) => setLifecycle((v) => ({ ...v, confirmed: e.target.checked }))} className="mt-1" />
                             <span><strong>I confirm this CDAS lifecycle action.</strong><br /><span className="text-muted-foreground">I have verified the employee and deduction details and understand this request can change the government payroll record.</span></span>
                         </label>
-                        <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed || (lifecycle.request_type === 1 && Boolean(registrationDraft?.ready) && !borrowerConsentConfirmed)}>{loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />} Send Lifecycle Action</Button>
+                        <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed || (lifecycle.request_type === 1 && Boolean(registrationDraft?.ready) && !borrowerConsentConfirmed)}>{loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />} {lifecycle.request_type === 1 ? "Approve & Register Deduction" : "Send Lifecycle Action"}</Button>
                     </form>
                 </CardContent>
             </Card>

@@ -106,6 +106,8 @@ class CdasSettleDeductionRequest(CdasSettlementPayload):
 
 
 class CdasLoanRegistrationConfirmRequest(BaseModel):
+    deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+    deduction_period: int = Field(gt=0, le=600)
     confirmed: bool = False
     borrower_consent: bool = False
 
@@ -998,6 +1000,13 @@ async def register_cdas_deduction_for_loan(
     if reasons or not profile or not provider_request:
         raise HTTPException(status_code=409, detail=" ".join(reasons) or "Loan is not ready for CDAS registration")
 
+    # The operator supplies only the two business values that may vary at
+    # registration time. All provider identity and lifecycle fields remain
+    # server-derived from the approved loan and company CDAS configuration.
+    provider_request = dict(provider_request)
+    provider_request["DeductionAmount"] = payload.deduction_amount
+    provider_request["TotalInstallment"] = payload.deduction_period
+
     existing_mandate = (
         db.query(CDASDeductionMandate)
         .filter(
@@ -1014,10 +1023,10 @@ async def register_cdas_deduction_for_loan(
         payroll_profile_id=profile.id,
         mandate_number=f"CDAS-{loan.loan_reference}"[:80],
         employee_number=profile.employee_number,
-        monthly_deduction=loan.installment_amount or 0,
+        monthly_deduction=payload.deduction_amount,
         start_date=loan.first_payment_due,
         end_date=None,
-        expected_installments=int(loan.repayment_period or 0),
+        expected_installments=payload.deduction_period,
         deductions_received=0,
         total_expected=loan.total_repayable or 0,
         total_received=0,
@@ -1031,9 +1040,9 @@ async def register_cdas_deduction_for_loan(
     else:
         mandate.payroll_profile_id = profile.id
         mandate.employee_number = profile.employee_number
-        mandate.monthly_deduction = loan.installment_amount or 0
+        mandate.monthly_deduction = payload.deduction_amount
         mandate.start_date = loan.first_payment_due
-        mandate.expected_installments = int(loan.repayment_period or 0)
+        mandate.expected_installments = payload.deduction_period
         mandate.total_expected = loan.total_repayable or 0
         mandate.borrower_consent = True
 

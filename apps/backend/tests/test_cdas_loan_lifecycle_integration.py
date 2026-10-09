@@ -161,3 +161,23 @@ def test_cdas_collected_loan_requires_reconciled_provider_mandate_before_disburs
     assert "bool(state.requires_reconciliation)" in service
     assert "Register the mandate before disbursement." in service
     assert "Complete provider registration/reconciliation" in service
+
+
+def test_cdas_registration_requires_only_amount_and_period_from_operator() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert "deduction_amount: Decimal = Field(gt=Decimal(\"0\")" in router
+    assert "deduction_period: int = Field(gt=0, le=600)" in router
+    assert 'provider_request["DeductionAmount"] = payload.deduction_amount' in router
+    assert 'provider_request["TotalInstallment"] = payload.deduction_period' in router
+    assert "monthly_deduction=payload.deduction_amount" in router
+    assert "expected_installments=payload.deduction_period" in router
+
+    assert "<Label>Deduction amount</Label>" in page
+    assert "<Label>Deduction period</Label>" in page
+    assert "LoanHub will generate the CDAS registration" in page
+    assert "Auto-generated" in page
+    assert "Approve & Register Deduction" in page
+    assert "deduction_amount: lifecycle.deduction_amount" in page
+    assert "deduction_period: lifecycle.total_installment" in page
