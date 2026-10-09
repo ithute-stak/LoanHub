@@ -212,7 +212,7 @@ def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form(
     assert "(lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)" in page
     assert 'value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}' in page
     assert 'value={generatedExpiryMonth(lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : ""), lifecycle.total_installment)}' in page
-    assert 'value={lifecycle.reference_no || ""}' in page
+    assert 'value={lifecycle.reference_no || (directEmployeeNo.trim() ? "Auto-generated on registration" : "")}' in page
     assert 'deduction_amount: Number(event.target.value)' in page
     assert 'total_installment: Number(event.target.value)' in page
     assert "Ready for deduction capture" in page
