@@ -87,6 +87,14 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
+function generatedExpiryMonth(effectiveMonth: string, period: number): string {
+    const match = effectiveMonth.match(/^(\d{4})-(\d{2})$/);
+    if (!match || !Number.isInteger(period) || period <= 0) return "Auto-generated";
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + period - 1, 1));
+    return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+
 function ResultCard({ title, record }: { title: string; record: ProviderRecord }) {
     return (
         <div className="overflow-hidden rounded-2xl border">
@@ -106,6 +114,7 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 export default function CdasOperationsPage() {
     const searchParams = useSearchParams();
     const requestedAction = searchParams.get("action") || "";
+    const isRegisterMode = requestedAction === "register" || requestedAction === "";
     const initialLifecycleType = requestedAction === "review"
         ? 3
         : requestedAction === "approve"
@@ -349,6 +358,10 @@ export default function CdasOperationsPage() {
         }
     }
 
+    const selectedApplication = approvedCdasApplications.find(
+        (application) => application.loan_id === selectedLoanId,
+    ) ?? null;
+
     if (!canManage) {
         return (
             <div className="loanhub-page space-y-5">
@@ -373,10 +386,12 @@ export default function CdasOperationsPage() {
 
             <section className="rounded-2xl border border-destructive/30 bg-card p-5 shadow-sm 2xl:rounded-3xl 2xl:p-7">
                 <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight sm:text-3xl">
-                    <ShieldAlert className="h-7 w-7 text-destructive" /> CDAS deduction operations
+                    <ShieldAlert className="h-7 w-7 text-destructive" /> {isRegisterMode ? "Add Deduction" : "CDAS deduction operations"}
                 </h1>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-                    These forms change government payroll-deduction state. LoanHub sends a request only after a company owner or administrator completes the form and explicitly confirms the action. No operation runs automatically.
+                    {isRegisterMode
+                        ? "Create a new payroll deduction using the same business flow as CDAS, but with LoanHub generating the technical fields automatically."
+                        : "These forms change government payroll-deduction state. LoanHub sends a request only after a company owner or administrator completes the form and explicitly confirms the action. No operation runs automatically."}
                 </p>
             </section>
 
@@ -467,74 +482,204 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card id="lifecycle" className="scroll-mt-24">
-                <CardHeader>
-                    <CardTitle>{lifecycle.request_type === 1 ? "Approve payroll deduction" : "Manage CDAS lifecycle"}</CardTitle>
+            <Card id="lifecycle" className="scroll-mt-24 overflow-hidden">
+                <CardHeader className="border-b bg-muted/20">
+                    <CardTitle>{isRegisterMode ? "New Deduction Application" : "Manage CDAS lifecycle"}</CardTitle>
                     <CardDescription>
-                        For a new deduction, enter only the monthly amount and deduction period. LoanHub generates the remaining CDAS fields from the verified approved loan and company configuration. Existing deductions still use the documented lifecycle controls. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code.
+                        {isRegisterMode
+                            ? "LoanHub follows the CDAS Add Deduction layout, while generating provider identifiers and loan values from the verified approved loan."
+                            : "Existing deductions use the documented CDAS lifecycle controls. LoanPolicy is restricted to the documented codes: 1 for Loan and 2 for Policy. The CDAS document assigns code 6 to both Cancelled and Reject; LoanHub preserves that documented ambiguity rather than inventing a new code."}
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
-                    <form className="space-y-5" onSubmit={submitLifecycle}>
-                        <div className="space-y-5">
-                            {lifecycle.request_type === 1 && registrationDraft?.ready ? (
-                                <>
-                                    <div className="grid gap-4 md:grid-cols-2">
-                                        <div className="space-y-2">
-                                            <Label>Deduction amount</Label>
-                                            <Input
-                                                type="number"
-                                                min={0.01}
-                                                step="0.01"
-                                                value={lifecycle.deduction_amount}
-                                                onChange={(event) => setLifecycle((value) => ({
-                                                    ...value,
-                                                    deduction_amount: Number(event.target.value),
-                                                }))}
-                                            />
-                                            <p className="text-xs text-muted-foreground">Monthly payroll deduction sent to CDAS.</p>
+                <CardContent className="p-0">
+                    <form onSubmit={submitLifecycle}>
+                        {isRegisterMode ? (
+                            <div className="grid lg:grid-cols-[320px_minmax(0,1fr)]">
+                                <aside className="border-b bg-muted/15 p-5 lg:border-b-0 lg:border-r">
+                                    <p className="mb-4 text-sm font-black">Employee / Loan</p>
+                                    <dl className="space-y-3 text-sm">
+                                        <div className="grid grid-cols-[120px_1fr] gap-3">
+                                            <dt className="text-muted-foreground">Employee No</dt>
+                                            <dd className="font-bold">{lifecycle.employee_no || "Prepare loan"}</dd>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label>Deduction period</Label>
-                                            <div className="relative">
-                                                <Input
-                                                    type="number"
-                                                    min={1}
-                                                    max={600}
-                                                    value={lifecycle.total_installment}
-                                                    onChange={(event) => setLifecycle((value) => ({
-                                                        ...value,
-                                                        total_installment: Number(event.target.value),
-                                                    }))}
-                                                    className="pr-20"
-                                                />
-                                                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                                                    months
-                                                </span>
-                                            </div>
-                                            <p className="text-xs text-muted-foreground">Number of monthly deductions.</p>
+                                        <div className="grid grid-cols-[120px_1fr] gap-3">
+                                            <dt className="text-muted-foreground">Borrower</dt>
+                                            <dd className="font-bold">{selectedApplication?.borrower_name || "—"}</dd>
                                         </div>
-                                    </div>
+                                        <div className="grid grid-cols-[120px_1fr] gap-3">
+                                            <dt className="text-muted-foreground">Loan reference</dt>
+                                            <dd className="break-all font-bold">{registrationDraft?.loan_reference || selectedApplication?.loan_reference || "—"}</dd>
+                                        </div>
+                                        <div className="grid grid-cols-[120px_1fr] gap-3">
+                                            <dt className="text-muted-foreground">Principal</dt>
+                                            <dd className="font-bold">
+                                                {lifecycle.principal_amount > 0
+                                                    ? `M ${lifecycle.principal_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                    : "Prepare loan"}
+                                            </dd>
+                                        </div>
+                                        <div className="mt-5 rounded-xl border bg-card p-3">
+                                            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Registration status</p>
+                                            <p className="mt-1 font-black">
+                                                {registrationDraft?.ready ? "Ready for deduction capture" : "Select and prepare an approved loan"}
+                                            </p>
+                                        </div>
+                                    </dl>
+                                </aside>
 
-                                    <div className="rounded-2xl border bg-muted/20 p-4">
-                                        <div className="flex flex-wrap items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-sm font-black">LoanHub will generate the CDAS registration</p>
-                                                <p className="mt-1 text-xs text-muted-foreground">
-                                                    Employee, Item Code, Deduction ID, Loan type, Principal, Effective Month and Reference are taken from the verified loan and CDAS configuration.
-                                                </p>
+                                <section className="p-5 sm:p-6">
+                                    <div className="space-y-6">
+                                        <div>
+                                            <div className="mb-3 border-b pb-2">
+                                                <p className="text-sm font-black">Agency</p>
                                             </div>
-                                            <Badge variant="secondary">Auto-generated</Badge>
+                                            <div className="grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center">
+                                                <Label>Agency / Item Code</Label>
+                                                <Input
+                                                    value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}
+                                                    readOnly
+                                                    className="bg-muted/30 font-semibold"
+                                                />
+                                            </div>
                                         </div>
-                                        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-                                            <div><dt className="text-xs text-muted-foreground">Employee</dt><dd className="font-bold">{lifecycle.employee_no || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Item code</dt><dd className="font-bold">{lifecycle.item_code || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Effective month</dt><dd className="font-bold">{lifecycle.effective_month || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Reference</dt><dd className="font-bold">{lifecycle.reference_no || "Pending"}</dd></div>
-                                        </dl>
+
+                                        <div>
+                                            <div className="mb-4 border-b pb-2">
+                                                <p className="text-sm font-black">Deduction Details</p>
+                                            </div>
+                                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                                <div className="space-y-2">
+                                                    <Label>Deduction Amount *</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={0.01}
+                                                        step="0.01"
+                                                        value={lifecycle.deduction_amount}
+                                                        onChange={(event) => setLifecycle((value) => ({
+                                                            ...value,
+                                                            deduction_amount: Number(event.target.value),
+                                                        }))}
+                                                        disabled={!registrationDraft?.ready}
+                                                        placeholder="Enter amount"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <Label>No. of Months *</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={1}
+                                                        max={600}
+                                                        value={lifecycle.total_installment}
+                                                        onChange={(event) => setLifecycle((value) => ({
+                                                            ...value,
+                                                            total_installment: Number(event.target.value),
+                                                        }))}
+                                                        disabled={!registrationDraft?.ready}
+                                                        placeholder="Enter months"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <Label>Principal Amt.</Label>
+                                                    <Input
+                                                        value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}
+                                                        readOnly
+                                                        className="bg-muted/30"
+                                                        placeholder="Auto-generated"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <Label>Effective Month</Label>
+                                                    <Input
+                                                        value={lifecycle.effective_month || ""}
+                                                        readOnly
+                                                        className="bg-muted/30"
+                                                        placeholder="Auto-generated"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <Label>Expiry Month</Label>
+                                                    <Input
+                                                        value={generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}
+                                                        readOnly
+                                                        className="bg-muted/30"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <Label>Policy / Loan Ref No</Label>
+                                                    <Input
+                                                        value={lifecycle.reference_no || ""}
+                                                        readOnly
+                                                        className="bg-muted/30"
+                                                        placeholder="Auto-generated"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {registrationDraft?.ready ? (
+                                            <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={borrowerConsentConfirmed}
+                                                    onChange={(event) => setBorrowerConsentConfirmed(event.target.checked)}
+                                                    className="mt-1"
+                                                />
+                                                <span>
+                                                    <strong>I confirm the borrower authorised payroll deduction for this loan.</strong>
+                                                    <br />
+                                                    <span className="text-muted-foreground">
+                                                        LoanHub records this confirmation before the CDAS registration is sent.
+                                                    </span>
+                                                </span>
+                                            </label>
+                                        ) : null}
+
+                                        <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={lifecycle.confirmed}
+                                                onChange={(event) => setLifecycle((value) => ({ ...value, confirmed: event.target.checked }))}
+                                                className="mt-1"
+                                            />
+                                            <span>
+                                                <strong>I confirm this new deduction application.</strong>
+                                                <br />
+                                                <span className="text-muted-foreground">
+                                                    I have reviewed the generated employee, agency and loan details before sending this payroll deduction to CDAS.
+                                                </span>
+                                            </span>
+                                        </label>
+
+                                        <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                                            <Button asChild type="button" variant="outline">
+                                                <Link href="/company/cdas">Close</Link>
+                                            </Button>
+                                            <Button
+                                                type="submit"
+                                                variant="destructive"
+                                                disabled={
+                                                    Boolean(loading)
+                                                    || !registrationDraft?.ready
+                                                    || lifecycle.deduction_amount <= 0
+                                                    || lifecycle.total_installment <= 0
+                                                    || !borrowerConsentConfirmed
+                                                    || !lifecycle.confirmed
+                                                }
+                                            >
+                                                {loading === "lifecycle" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                                Approve & Register Deduction
+                                            </Button>
+                                        </div>
                                     </div>
-                                </>
-                            ) : (
+                                </section>
+                            </div>
+                        ) : (
+                            <div className="space-y-5 p-5 sm:p-6">
                                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                                     <div className="space-y-2">
                                         <Label>Request type</Label>
@@ -557,36 +702,21 @@ export default function CdasOperationsPage() {
                                     <div className="space-y-2"><Label>Effective month</Label><Input type="month" value={lifecycle.effective_month} onChange={(e) => setLifecycle((v) => ({ ...v, effective_month: e.target.value }))} /></div>
                                     <div className="space-y-2 md:col-span-2 xl:col-span-3"><Label>Reference number</Label><Input value={lifecycle.reference_no} onChange={(e) => setLifecycle((v) => ({ ...v, reference_no: e.target.value }))} /></div>
                                 </div>
-                            )}
-                        </div>
-                        {lifecycle.request_type === 1 && registrationDraft?.ready ? (
-                            <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
-                                <input
-                                    type="checkbox"
-                                    checked={borrowerConsentConfirmed}
-                                    onChange={(event) => setBorrowerConsentConfirmed(event.target.checked)}
-                                    className="mt-1"
-                                />
-                                <span>
-                                    <strong>I confirm the borrower authorised payroll deduction for this loan.</strong>
-                                    <br />
-                                    <span className="text-muted-foreground">
-                                        LoanHub records this confirmation on the CDAS mandate before registration is sent.
-                                    </span>
-                                </span>
-                            </label>
-                        ) : null}
-
-                        <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
-                            <input type="checkbox" checked={lifecycle.confirmed} onChange={(e) => setLifecycle((v) => ({ ...v, confirmed: e.target.checked }))} className="mt-1" />
-                            <span><strong>I confirm this CDAS lifecycle action.</strong><br /><span className="text-muted-foreground">I have verified the employee and deduction details and understand this request can change the government payroll record.</span></span>
-                        </label>
-                        <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed || (lifecycle.request_type === 1 && Boolean(registrationDraft?.ready) && !borrowerConsentConfirmed)}>{loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />} {lifecycle.request_type === 1 ? "Approve & Register Deduction" : "Send Lifecycle Action"}</Button>
+                                <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
+                                    <input type="checkbox" checked={lifecycle.confirmed} onChange={(e) => setLifecycle((v) => ({ ...v, confirmed: e.target.checked }))} className="mt-1" />
+                                    <span><strong>I confirm this CDAS lifecycle action.</strong><br /><span className="text-muted-foreground">I have verified the employee and deduction details and understand this request can change the government payroll record.</span></span>
+                                </label>
+                                <Button type="submit" variant="destructive" disabled={Boolean(loading) || !lifecycle.confirmed}>
+                                    {loading === "lifecycle" && <Loader2 className="h-4 w-4 animate-spin" />}
+                                    Send Lifecycle Action
+                                </Button>
+                            </div>
+                        )}
                     </form>
                 </CardContent>
             </Card>
 
-            <Card id="modify-active" className="scroll-mt-24">
+            {!isRegisterMode ? <Card id="modify-active" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Modify active deduction</CardTitle>
                     <CardDescription>Uses the official modify-active-deduction contract. CDAS may reject disallowed active or approved changes.</CardDescription>
@@ -609,7 +739,7 @@ export default function CdasOperationsPage() {
                         <Button type="submit" variant="destructive" disabled={Boolean(loading) || !modify.confirmed}>{loading === "modify" && <Loader2 className="h-4 w-4 animate-spin" />} Modify Active Deduction</Button>
                     </form>
                 </CardContent>
-            </Card>
+            </Card> : null}
 
             <Dialog open={result !== null} onOpenChange={(open) => { if (!open) setResult(null); }}>
                 <DialogContent className="sm:max-w-4xl">
@@ -628,7 +758,7 @@ export default function CdasOperationsPage() {
                 </DialogContent>
             </Dialog>
 
-            <Card id="settle" className="scroll-mt-24">
+            {!isRegisterMode ? <Card id="settle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Settle deduction</CardTitle>
                     <CardDescription>Settlement reasons are the four codes documented by CDAS.</CardDescription>
@@ -654,7 +784,7 @@ export default function CdasOperationsPage() {
                         <Button type="submit" variant="destructive" disabled={Boolean(loading) || !settle.confirmed}>{loading === "settle" && <Loader2 className="h-4 w-4 animate-spin" />} Settle Deduction</Button>
                     </form>
                 </CardContent>
-            </Card>
+            </Card> : null}
         </div>
     );
 }
