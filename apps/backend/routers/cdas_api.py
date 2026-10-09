@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -110,6 +110,15 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
     deduction_period: int = Field(gt=0, le=600)
     confirmed: bool = False
     borrower_consent: bool = False
+
+
+class CdasDirectEmployeeRegistrationRequest(BaseModel):
+    employee_no: str = Field(min_length=1, max_length=100)
+    deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+    deduction_period: int = Field(gt=0, le=600)
+    confirmed: bool = False
+
+
 
 
 class CdasLoanLifecycleConfirmRequest(BaseModel):
@@ -1920,6 +1929,81 @@ async def get_active_approved_cdas_deduction(
         raise _cdas_http_error(exc) from exc
     _record_cdas_business_operation(db, context=context, environment=environment, operation_type="deduction_lookup", source_reference=payload.employee_no.strip())
     return {"ok": True, "deduction": deduction}
+
+
+@router.post("/deductions/direct-register")
+async def register_direct_employee_deduction(
+    payload: CdasDirectEmployeeRegistrationRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Register a CDAS deduction directly against a verified employee number.
+
+    This path is for operator-led CDAS capture when there is no linked LoanHub
+    loan selected. LoanHub derives the provider-only fields server-side.
+    """
+    _require_company_manager(context)
+    _require_confirmed(payload.confirmed)
+    assert context.company_id is not None
+
+    employee_no = payload.employee_no.strip()
+    client = get_company_cdas_client(db, context.company_id)
+
+    # Verify the employee immediately before creating a payroll deduction.
+    try:
+        employee = await client.get_employee_details(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    returned_employee_no = str(employee.get("EmployeeNo") or "").strip()
+    if returned_employee_no.casefold() != employee_no.casefold():
+        raise HTTPException(
+            status_code=502,
+            detail="CDAS returned a different employee number than the one requested",
+        )
+
+    item_code = get_company_item_code(db, context.company_id)
+    if not item_code:
+        raise HTTPException(status_code=409, detail="Configure the company's CDAS Item Code before registration")
+
+    now = datetime.now(timezone.utc)
+    first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    first_of_next_month = (first_of_this_month + timedelta(days=32)).replace(day=1)
+    effective_month = first_of_next_month.strftime("%Y-%m")
+    reference_no = f"LH-CDAS-{employee_no}-{now.strftime('%Y%m%d%H%M%S')}"
+    principal_amount = (payload.deduction_amount * payload.deduction_period).quantize(Decimal("0.01"))
+
+    lifecycle = CdasLifecyclePayload(
+        request_type=1,
+        deduction_id=0,
+        employee_no=employee_no,
+        loan_policy=1,
+        item_code=item_code,
+        deduction_amount=payload.deduction_amount,
+        total_installment=payload.deduction_period,
+        principal_amount=principal_amount,
+        effective_month=effective_month,
+        reference_no=reference_no,
+    )
+    provider_request = lifecycle.provider_payload()
+    ledger_request = lifecycle.ledger_payload()
+    result = await _execute_tracked_mutation(
+        db=db,
+        context=context,
+        client=client,
+        operation_type="deduction.lifecycle.1",
+        audit_action="cdas.deduction.direct_register",
+        provider_request=provider_request,
+        ledger_request=ledger_request,
+        provider_call=lambda: client.add_update_deduction(provider_request),
+    )
+    result["generated"] = {
+        "employee_no": employee_no,
+        "item_code": item_code,
+        "principal_amount": format(principal_amount, "f"),
+        "effective_month": effective_month,
+        "reference_no": reference_no,
+    }
+    return result
 
 
 @router.post("/deductions/lifecycle")
