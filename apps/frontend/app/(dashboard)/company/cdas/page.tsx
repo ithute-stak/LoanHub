@@ -359,6 +359,48 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
+function EmployeeResultsTable({ record }: { record: ProviderRecord }) {
+    const columns = [
+        ["EmployeeNo", "Employee number"],
+        ["Name", "Name"],
+        ["Surname", "Surname"],
+        ["DOB", "Date of birth"],
+        ["Department", "Department"],
+        ["JoiningDate", "Joining date"],
+        ["TerminationDate", "Termination date"],
+    ] as const;
+
+    return (
+        <div className="overflow-hidden rounded-2xl border bg-card">
+            <div className="overflow-x-auto">
+                <table className="w-full min-w-[1180px] text-sm">
+                    <thead className="bg-muted/70 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <tr>
+                            {columns.map(([key, label]) => (
+                                <th
+                                    key={key}
+                                    className={key === "Department" ? "min-w-[300px] px-4 py-3" : "min-w-[140px] px-4 py-3"}
+                                >
+                                    {label}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr className="border-t align-top">
+                            {columns.map(([key]) => (
+                                <td key={key} className="px-4 py-4 font-semibold">
+                                    {displayValue(record[key])}
+                                </td>
+                            ))}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
 function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: string }) {
     return (
         <div className="overflow-hidden rounded-2xl border">
@@ -1024,9 +1066,7 @@ export default function CdasWorkspacePage() {
             )}
 
             <Dialog open={readFeedback !== null} onOpenChange={(open) => { if (!open) setReadFeedback(null); }}>
-                <DialogContent className={readFeedback?.kind === "deductions"
-                    ? "w-[90vw] max-w-[90vw] max-h-[90vh] overflow-hidden print:static print:max-h-none print:w-full print:max-w-none print:border-0 print:shadow-none"
-                    : "sm:max-w-4xl"}>
+                <DialogContent className="w-[90vw] max-w-[90vw] max-h-[90vh] overflow-hidden print:static print:max-h-none print:w-full print:max-w-none print:border-0 print:shadow-none">
                     <DialogHeader className="print:mb-4">
                         <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
                         <DialogDescription>
@@ -1058,6 +1098,14 @@ export default function CdasWorkspacePage() {
                         ) : (
                             <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
                                 No matching CDAS deductions were returned.
+                            </div>
+                        )
+                    ) : readFeedback?.kind === "employee" ? (
+                        readFeedback.records.length ? (
+                            <EmployeeResultsTable record={readFeedback.records[0].record} />
+                        ) : (
+                            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                                No employee record was returned.
                             </div>
                         )
                     ) : (
