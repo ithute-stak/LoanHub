@@ -44,3 +44,11 @@ grep -F 'refresh_release_deployment_file compose.edge.yml' scripts/deploy-produc
 grep -F 'refresh_release_deployment_file scripts/ensure_database_runtime_role.sh' scripts/deploy-production-manual.sh >/dev/null
 grep -F 'config --services' scripts/deploy-production-manual.sh >/dev/null
 grep -F 'db-role-bootstrap' scripts/deploy-production-manual.sh >/dev/null
+
+
+grep -F 'ensure_runtime_database_credentials' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'openssl rand -hex 32' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'chmod 600 "$temp"' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'DB_RUNTIME_USER=%s' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'DB_RUNTIME_PASSWORD=%s' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'DB_RUNTIME_USER must differ from DB_USER' scripts/deploy-production-manual.sh >/dev/null
