@@ -1220,7 +1220,7 @@ export default function CdasWorkspacePage() {
                                             <ShieldCheck className="h-4 w-4" />
                                             View Active Deduction
                                         </Button>
-                                        {canManage ? (
+                                        {canManage && normalizedEmployeeNo ? (
                                             <Button asChild type="button" variant="ghost" className="w-full justify-start">
                                                 <Link href={`/company/cdas/operations?action=register&employee=${encodeURIComponent(employee?.EmployeeNo || normalizedEmployeeNo)}#lifecycle`}>
                                                     <PlusCircle className="h-4 w-4" />
