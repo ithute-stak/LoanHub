@@ -215,3 +215,39 @@ def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form(
     assert 'deduction_amount: Number(event.target.value)' in page
     assert 'total_installment: Number(event.target.value)' in page
     assert "Ready for deduction capture" in page
+
+
+def test_direct_employee_registration_uses_loaded_employee_and_server_generated_fields() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert '@router.post("/deductions/direct-register")' in router
+    assert "class CdasDirectEmployeeRegistrationRequest" in router
+    assert "authorization_confirmed" in router
+    assert "client.get_employee_details(employee_no)" in router
+    assert "get_company_item_code(db, context.company_id)" in router
+    assert "principal_amount = (payload.deduction_amount * payload.deduction_period)" in router
+    assert "first_of_next_month" in router
+    assert 'reference_no = f"LH-CDAS-' in router
+    assert 'request_type=1' in router
+    assert 'deduction_id=0' in router
+    assert 'loan_policy=1' in router
+    assert 'operation_type="deduction.lifecycle.1"' in router
+
+    assert 'const requestedEmployeeNo = (searchParams.get("employee") || "").trim();' in page
+    assert 'const [directEmployeeNo, setDirectEmployeeNo] = useState(requestedEmployeeNo);' in page
+    assert 'id="cdas-direct-employee"' in page
+    assert 'placeholder="e.g. 0019634"' in page
+    assert '"/cdas/deductions/direct-register"' in page
+    assert "employee_no: directEmployeeNo.trim()" in page
+    assert "authorization_confirmed: borrowerConsentConfirmed" in page
+    assert "Enter an employee number or prepare an approved loan" in page
+
+
+def test_direct_registration_still_supports_approved_loan_mode() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert "Approved CDAS-enabled loan (optional)" in page
+    assert "Prepare selected loan" in page
+    assert "/cdas/loans/${selectedLoanId}/register" in page
+    assert "directEmployeeNo.trim()" in page
