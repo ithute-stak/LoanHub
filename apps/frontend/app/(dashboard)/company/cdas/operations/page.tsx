@@ -106,6 +106,7 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 export default function CdasOperationsPage() {
     const searchParams = useSearchParams();
     const requestedAction = searchParams.get("action") || "";
+    const isRegisterMode = requestedAction === "register" || requestedAction === "";
     const initialLifecycleType = requestedAction === "review"
         ? 3
         : requestedAction === "approve"
@@ -373,10 +374,12 @@ export default function CdasOperationsPage() {
 
             <section className="rounded-2xl border border-destructive/30 bg-card p-5 shadow-sm 2xl:rounded-3xl 2xl:p-7">
                 <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight sm:text-3xl">
-                    <ShieldAlert className="h-7 w-7 text-destructive" /> CDAS deduction operations
+                    <ShieldAlert className="h-7 w-7 text-destructive" /> {isRegisterMode ? "Add Deduction" : "CDAS deduction operations"}
                 </h1>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-                    These forms change government payroll-deduction state. LoanHub sends a request only after a company owner or administrator completes the form and explicitly confirms the action. No operation runs automatically.
+                    {isRegisterMode
+                        ? "Create a new payroll deduction using the same business flow as CDAS, but with LoanHub generating the technical fields automatically."
+                        : "These forms change government payroll-deduction state. LoanHub sends a request only after a company owner or administrator completes the form and explicitly confirms the action. No operation runs automatically."}
                 </p>
             </section>
 
@@ -477,7 +480,7 @@ export default function CdasOperationsPage() {
                 <CardContent>
                     <form className="space-y-5" onSubmit={submitLifecycle}>
                         <div className="space-y-5">
-                            {lifecycle.request_type === 1 && registrationDraft?.ready ? (
+                            {lifecycle.request_type === 1 ? (
                                 <>
                                     <div className="grid gap-4 md:grid-cols-2">
                                         <div className="space-y-2">
@@ -491,8 +494,12 @@ export default function CdasOperationsPage() {
                                                     ...value,
                                                     deduction_amount: Number(event.target.value),
                                                 }))}
+                                                disabled={!registrationDraft?.ready}
+                                                placeholder="Enter monthly deduction"
                                             />
-                                            <p className="text-xs text-muted-foreground">Monthly payroll deduction sent to CDAS.</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {registrationDraft?.ready ? "Monthly payroll deduction sent to CDAS." : "Prepare the selected approved loan first."}
+                                            </p>
                                         </div>
                                         <div className="space-y-2">
                                             <Label>Deduction period</Label>
@@ -506,7 +513,9 @@ export default function CdasOperationsPage() {
                                                         ...value,
                                                         total_installment: Number(event.target.value),
                                                     }))}
+                                                    disabled={!registrationDraft?.ready}
                                                     className="pr-20"
+                                                    placeholder="Enter number of months"
                                                 />
                                                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                                                     months
@@ -527,10 +536,10 @@ export default function CdasOperationsPage() {
                                             <Badge variant="secondary">Auto-generated</Badge>
                                         </div>
                                         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-                                            <div><dt className="text-xs text-muted-foreground">Employee</dt><dd className="font-bold">{lifecycle.employee_no || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Item code</dt><dd className="font-bold">{lifecycle.item_code || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Effective month</dt><dd className="font-bold">{lifecycle.effective_month || "Pending"}</dd></div>
-                                            <div><dt className="text-xs text-muted-foreground">Reference</dt><dd className="font-bold">{lifecycle.reference_no || "Pending"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Employee</dt><dd className="font-bold">{lifecycle.employee_no || "Auto-generated after preparation"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Agency / Item code</dt><dd className="font-bold">{lifecycle.item_code || "Auto-generated"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Effective month</dt><dd className="font-bold">{lifecycle.effective_month || "Auto-generated"}</dd></div>
+                                            <div><dt className="text-xs text-muted-foreground">Reference</dt><dd className="font-bold">{lifecycle.reference_no || "Auto-generated"}</dd></div>
                                         </dl>
                                     </div>
                                 </>
@@ -586,7 +595,7 @@ export default function CdasOperationsPage() {
                 </CardContent>
             </Card>
 
-            <Card id="modify-active" className="scroll-mt-24">
+            {!isRegisterMode ? <Card id="modify-active" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Modify active deduction</CardTitle>
                     <CardDescription>Uses the official modify-active-deduction contract. CDAS may reject disallowed active or approved changes.</CardDescription>
@@ -609,7 +618,7 @@ export default function CdasOperationsPage() {
                         <Button type="submit" variant="destructive" disabled={Boolean(loading) || !modify.confirmed}>{loading === "modify" && <Loader2 className="h-4 w-4 animate-spin" />} Modify Active Deduction</Button>
                     </form>
                 </CardContent>
-            </Card>
+            </Card> : null}
 
             <Dialog open={result !== null} onOpenChange={(open) => { if (!open) setResult(null); }}>
                 <DialogContent className="sm:max-w-4xl">
@@ -628,7 +637,7 @@ export default function CdasOperationsPage() {
                 </DialogContent>
             </Dialog>
 
-            <Card id="settle" className="scroll-mt-24">
+            {!isRegisterMode ? <Card id="settle" className="scroll-mt-24">
                 <CardHeader>
                     <CardTitle>Settle deduction</CardTitle>
                     <CardDescription>Settlement reasons are the four codes documented by CDAS.</CardDescription>
@@ -654,7 +663,7 @@ export default function CdasOperationsPage() {
                         <Button type="submit" variant="destructive" disabled={Boolean(loading) || !settle.confirmed}>{loading === "settle" && <Loader2 className="h-4 w-4 animate-spin" />} Settle Deduction</Button>
                     </form>
                 </CardContent>
-            </Card>
+            </Card> : null}
         </div>
     );
 }
