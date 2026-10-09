@@ -181,3 +181,21 @@ def test_cdas_registration_requires_only_amount_and_period_from_operator() -> No
     assert "Approve & Register Deduction" in page
     assert "deduction_amount: lifecycle.deduction_amount" in page
     assert "deduction_period: lifecycle.total_installment" in page
+
+
+def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert 'const isRegisterMode = requestedAction === "register" || requestedAction === "";' in page
+    assert '{isRegisterMode ? "Add Deduction" : "CDAS deduction operations"}' in page
+    assert "Create a new payroll deduction using the same business flow as CDAS" in page
+    assert "Deduction amount" in page
+    assert "Deduction period" in page
+    assert "Approve & Register Deduction" in page
+    assert "LoanHub will generate the CDAS registration" in page
+    assert "Principal amount" in page
+    assert "Expiry month" in page
+    assert "Policy / Loan reference" in page
+    assert "generatedExpiryMonth" in page
+    assert '{!isRegisterMode ? <Card id="modify-active"' in page
+    assert '{!isRegisterMode ? <Card id="settle"' in page
