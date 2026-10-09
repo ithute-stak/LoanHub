@@ -117,8 +117,17 @@ function recordValue(record: ProviderRecord, ...keys: string[]): unknown {
 }
 
 function deductionItemCode(record: ProviderRecord): string {
-    const value = recordValue(record, "ItemCode", "ItemCodeID", "AgencyCode", "DeductionCode", "DeductionType");
+    const value = recordValue(record, "ItemCode", "ItemCodeID", "AgencyCode", "DeductionCode");
     return value === null ? "" : String(value);
+}
+
+function deductionTypeLabel(record: ProviderRecord): string {
+    const raw = recordValue(record, "DeductionTypeName", "LoanPolicyName", "DeductionType", "DeductionTypeID", "LoanPolicy");
+    if (raw === null) return "";
+    const numeric = Number(raw);
+    if (numeric === 1) return "Loan";
+    if (numeric === 2) return "Policy";
+    return String(raw);
 }
 
 function deductionAgencyName(record: ProviderRecord): string {
@@ -133,7 +142,7 @@ function deductionAgencyName(record: ProviderRecord): string {
     );
     if (providerName) return String(providerName);
     const code = deductionItemCode(record);
-    return KNOWN_CDAS_AGENCIES[code] || "—";
+    return KNOWN_CDAS_AGENCIES[code] || "";
 }
 
 function deductionStatusLabel(record: ProviderRecord): string {
@@ -146,13 +155,27 @@ function deductionStatusLabel(record: ProviderRecord): string {
 
 function moneyValue(record: ProviderRecord): string {
     const raw = recordValue(record, "DeductionAmount", "Amount", "MonthlyDeduction");
-    const amount = Number(raw ?? 0);
+    if (raw === null) return "";
+    const amount = Number(raw);
     if (!Number.isFinite(amount)) return displayValue(raw);
     return "M " + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function principalValue(record: ProviderRecord): string {
+    const raw = recordValue(record, "PrincipalAmount", "Principal");
+    if (raw === null) return "";
+    const amount = Number(raw);
+    if (!Number.isFinite(amount)) return displayValue(raw);
+    return "M " + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function deductionInstallments(record: ProviderRecord): string {
+    const raw = recordValue(record, "TotalInstallment", "TotalInstallments", "Installments", "NoOfMonths");
+    return raw === null ? "" : String(raw);
+}
+
 function formatCdasPeriod(value: unknown): string {
-    if (value === null || value === undefined || value === "") return "—";
+    if (value === null || value === undefined || value === "") return "";
     const raw = String(value).trim();
     const monthMatch = raw.match(/^(\d{4})[-/]?(\d{2})$/);
     if (monthMatch) {
@@ -173,7 +196,17 @@ function deductionEffectiveMonth(record: ProviderRecord): string {
 
 function deductionExpiry(record: ProviderRecord): string {
     const value = recordValue(record, "ExpiryMonth", "ExpiryDate", "EndMonth", "SettlementDate");
-    return formatCdasPeriod(value);
+    if (value !== null) return formatCdasPeriod(value);
+
+    const effective = recordValue(record, "EffectiveMonth", "EffectiveDate", "StartMonth");
+    const installments = Number(recordValue(record, "TotalInstallment", "TotalInstallments", "Installments", "NoOfMonths"));
+    if (effective === null || !Number.isInteger(installments) || installments <= 0) return "";
+
+    const raw = String(effective).trim();
+    const match = raw.match(/^(\d{4})[-/]?(\d{2})/);
+    if (!match) return "";
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + installments - 1, 1));
+    return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date) + " (calculated)";
 }
 
 function deductionStatusClasses(status: string): string {
@@ -195,7 +228,7 @@ function deductionStatusClasses(status: string): string {
 
 function deductionReference(record: ProviderRecord): string {
     const value = recordValue(record, "ReferenceNo", "Reference", "PolicyLoanRefNo", "AuthorizationNo");
-    return displayValue(value);
+    return value === null ? "" : displayValue(value);
 }
 
 function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
@@ -203,14 +236,31 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
     const [sortBy, setSortBy] = useState<"name" | "amount" | "status">("name");
     const normalizedQuery = query.trim().toLowerCase();
 
+    const has = (reader: (record: ProviderRecord) => string) => records.some((record) => Boolean(reader(record)));
+    const showItemCode = has(deductionItemCode);
+    const showAgency = has(deductionAgencyName);
+    const showType = has(deductionTypeLabel);
+    const showAmount = has(moneyValue);
+    const showPrincipal = has(principalValue);
+    const showInstallments = has(deductionInstallments);
+    const showEffective = has(deductionEffectiveMonth);
+    const showExpiry = has(deductionExpiry);
+    const showReference = has(deductionReference);
+
     const visibleRecords = records
         .filter((record) => {
             if (!normalizedQuery) return true;
             return [
                 deductionItemCode(record),
                 deductionAgencyName(record),
+                deductionTypeLabel(record),
                 deductionReference(record),
                 deductionStatusLabel(record),
+                moneyValue(record),
+                principalValue(record),
+                deductionInstallments(record),
+                deductionEffectiveMonth(record),
+                deductionExpiry(record),
             ].some((value) => value.toLowerCase().includes(normalizedQuery));
         })
         .sort((left, right) => {
@@ -219,10 +269,10 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                 const rightAmount = Number(recordValue(right, "DeductionAmount", "Amount", "MonthlyDeduction") ?? 0);
                 return rightAmount - leftAmount;
             }
-            if (sortBy === "status") {
-                return deductionStatusLabel(left).localeCompare(deductionStatusLabel(right));
-            }
-            return deductionAgencyName(left).localeCompare(deductionAgencyName(right));
+            if (sortBy === "status") return deductionStatusLabel(left).localeCompare(deductionStatusLabel(right));
+            const leftName = deductionAgencyName(left) || deductionTypeLabel(left) || deductionItemCode(left);
+            const rightName = deductionAgencyName(right) || deductionTypeLabel(right) || deductionItemCode(right);
+            return leftName.localeCompare(rightName);
         });
 
     const visibleTotal = visibleRecords.reduce((sum, record) => {
@@ -231,18 +281,22 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
     }, 0);
 
     function exportCsv() {
+        const columns: Array<[string, (record: ProviderRecord) => string]> = [];
+        if (showItemCode) columns.push(["Item code", deductionItemCode]);
+        if (showAgency) columns.push(["Agency name", deductionAgencyName]);
+        if (showType) columns.push(["Type", deductionTypeLabel]);
+        if (showAmount) columns.push(["Amount", moneyValue]);
+        if (showPrincipal) columns.push(["Principal amount", principalValue]);
+        if (showInstallments) columns.push(["Installments", deductionInstallments]);
+        if (showEffective) columns.push(["Effective month", deductionEffectiveMonth]);
+        if (showExpiry) columns.push(["Expiry", deductionExpiry]);
+        if (showReference) columns.push(["Reference no.", deductionReference]);
+        columns.push(["Status", deductionStatusLabel]);
         const csvEscape = (value: string) => `"${value.replaceAll('"', '""')}"`;
-        const header = ["Item code", "Deduction / agency name", "Amount", "Effective month", "Expiry", "Reference no.", "Status"];
-        const rows = visibleRecords.map((record) => [
-            deductionItemCode(record),
-            deductionAgencyName(record),
-            moneyValue(record),
-            deductionEffectiveMonth(record),
-            deductionExpiry(record),
-            deductionReference(record),
-            deductionStatusLabel(record),
-        ]);
-        const csv = [header, ...rows].map((row) => row.map((value) => csvEscape(String(value))).join(",")).join("\n");
+        const csv = [
+            columns.map(([label]) => label),
+            ...visibleRecords.map((record) => columns.map(([, reader]) => reader(record))),
+        ].map((row) => row.map((value) => csvEscape(String(value))).join(",")).join("\n");
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -252,38 +306,54 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
         URL.revokeObjectURL(url);
     }
 
+    const columnCount = 2
+        + Number(showItemCode)
+        + Number(showAgency)
+        + Number(showType)
+        + Number(showAmount)
+        + Number(showPrincipal)
+        + Number(showInstallments)
+        + Number(showEffective)
+        + Number(showExpiry)
+        + Number(showReference);
+
     return (
         <div className="overflow-hidden rounded-2xl border bg-card">
             <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="grid gap-2 sm:grid-cols-[minmax(260px,1fr)_180px] lg:min-w-[560px]">
-                    <div className="relative">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Search code, deduction, reference or status"
-                            className="pl-9 pr-16"
-                        />
-                        {query ? (
-                            <button
-                                type="button"
-                                onClick={() => setQuery("")}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground"
-                            >
-                                Clear
-                            </button>
-                        ) : null}
+                <div className="space-y-2">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(260px,1fr)_180px] lg:min-w-[560px]">
+                        <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                value={query}
+                                onChange={(event) => setQuery(event.target.value)}
+                                placeholder="Search returned CDAS fields"
+                                className="pl-9 pr-16"
+                            />
+                            {query ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setQuery("")}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground"
+                                >
+                                    Clear
+                                </button>
+                            ) : null}
+                        </div>
+                        <select
+                            value={sortBy}
+                            onChange={(event) => setSortBy(event.target.value as "name" | "amount" | "status")}
+                            className="h-10 rounded-md border bg-background px-3 text-sm"
+                            aria-label="Sort deductions"
+                        >
+                            <option value="name">Sort by name / type</option>
+                            <option value="amount">Sort by amount</option>
+                            <option value="status">Sort by status</option>
+                        </select>
                     </div>
-                    <select
-                        value={sortBy}
-                        onChange={(event) => setSortBy(event.target.value as "name" | "amount" | "status")}
-                        className="h-10 rounded-md border bg-background px-3 text-sm"
-                        aria-label="Sort deductions"
-                    >
-                        <option value="name">Sort by name</option>
-                        <option value="amount">Sort by amount</option>
-                        <option value="status">Sort by status</option>
-                    </select>
+                    <p className="text-xs text-muted-foreground">
+                        LoanHub shows only fields returned by this CDAS endpoint. Expiry is shown only when supplied by CDAS or safely calculated from effective month and installment count.
+                    </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -292,12 +362,14 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                         <strong>{visibleRecords.length}</strong>
                         <span className="text-muted-foreground"> of {records.length}</span>
                     </div>
-                    <div className="rounded-xl border bg-background px-3 py-2 text-sm">
-                        <span className="text-muted-foreground">Total </span>
-                        <strong className="tabular-nums">
-                            M {visibleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </strong>
-                    </div>
+                    {showAmount ? (
+                        <div className="rounded-xl border bg-background px-3 py-2 text-sm">
+                            <span className="text-muted-foreground">Total </span>
+                            <strong className="tabular-nums">
+                                M {visibleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </strong>
+                        </div>
+                    ) : null}
                     <Button type="button" variant="outline" onClick={exportCsv} disabled={!visibleRecords.length} className="print:hidden">
                         <FileDown className="h-4 w-4" />
                         Export CSV
@@ -310,29 +382,35 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
             </div>
 
             <div className="max-h-[62vh] overflow-auto">
-                <table className="w-full min-w-[1050px] text-sm">
+                <table className="w-full min-w-max text-sm">
                     <thead className="sticky top-0 z-10 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground shadow-sm">
                         <tr>
                             <th className="px-4 py-3">#</th>
-                            <th className="sticky left-0 z-20 bg-muted px-4 py-3">Item code</th>
-                            <th className="sticky left-[112px] z-20 bg-muted px-4 py-3">Deduction / agency name</th>
-                            <th className="px-4 py-3 text-right">Amount</th>
-                            <th className="px-4 py-3">Effective month</th>
-                            <th className="px-4 py-3">Expiry</th>
-                            <th className="px-4 py-3">Reference no.</th>
+                            {showItemCode ? <th className="px-4 py-3">Item code</th> : null}
+                            {showAgency ? <th className="px-4 py-3">Agency name</th> : null}
+                            {showType ? <th className="px-4 py-3">Type</th> : null}
+                            {showAmount ? <th className="px-4 py-3 text-right">Amount</th> : null}
+                            {showPrincipal ? <th className="px-4 py-3 text-right">Principal</th> : null}
+                            {showInstallments ? <th className="px-4 py-3">Installments</th> : null}
+                            {showEffective ? <th className="px-4 py-3">Effective month</th> : null}
+                            {showExpiry ? <th className="px-4 py-3">Expiry</th> : null}
+                            {showReference ? <th className="px-4 py-3">Reference no.</th> : null}
                             <th className="px-4 py-3">Status</th>
                         </tr>
                     </thead>
                     <tbody>
                         {visibleRecords.length ? visibleRecords.map((record, index) => (
-                            <tr key={index} className="group border-t align-top hover:bg-muted/30">
+                            <tr key={index} className="border-t align-top hover:bg-muted/30">
                                 <td className="px-4 py-3 font-semibold text-muted-foreground">{index + 1}</td>
-                                <td className="sticky left-0 z-10 bg-card px-4 py-3 font-mono font-black group-hover:bg-muted">{deductionItemCode(record) || "—"}</td>
-                                <td className="sticky left-[112px] z-10 bg-card px-4 py-3 font-bold group-hover:bg-muted">{deductionAgencyName(record)}</td>
-                                <td className="px-4 py-3 text-right font-black tabular-nums">{moneyValue(record)}</td>
-                                <td className="px-4 py-3 font-semibold">{deductionEffectiveMonth(record)}</td>
-                                <td className="px-4 py-3">{deductionExpiry(record)}</td>
-                                <td className="px-4 py-3 font-mono text-xs font-bold">{deductionReference(record)}</td>
+                                {showItemCode ? <td className="px-4 py-3 font-mono font-black">{deductionItemCode(record) || "Not returned"}</td> : null}
+                                {showAgency ? <td className="px-4 py-3 font-bold">{deductionAgencyName(record) || "Not returned"}</td> : null}
+                                {showType ? <td className="px-4 py-3 font-semibold">{deductionTypeLabel(record) || "Not returned"}</td> : null}
+                                {showAmount ? <td className="px-4 py-3 text-right font-black tabular-nums">{moneyValue(record) || "Not returned"}</td> : null}
+                                {showPrincipal ? <td className="px-4 py-3 text-right font-semibold tabular-nums">{principalValue(record) || "Not returned"}</td> : null}
+                                {showInstallments ? <td className="px-4 py-3">{deductionInstallments(record) || "Not returned"}</td> : null}
+                                {showEffective ? <td className="px-4 py-3 font-semibold">{deductionEffectiveMonth(record) || "Not returned"}</td> : null}
+                                {showExpiry ? <td className="px-4 py-3">{deductionExpiry(record) || "Not returned"}</td> : null}
+                                {showReference ? <td className="px-4 py-3 font-mono text-xs font-bold">{deductionReference(record) || "Not returned"}</td> : null}
                                 <td className="px-4 py-3">
                                     <Badge variant="outline" className={deductionStatusClasses(deductionStatusLabel(record))}>
                                         {deductionStatusLabel(record)}
@@ -341,7 +419,7 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                             </tr>
                         )) : (
                             <tr>
-                                <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                                <td colSpan={columnCount} className="px-4 py-10 text-center text-sm text-muted-foreground">
                                     No deductions match the current search.
                                 </td>
                             </tr>

@@ -13,7 +13,8 @@ def test_deduction_results_use_wide_table_modal() -> None:
     assert 'sm:!max-w-[96vw]' in source
     assert 'xl:!max-w-[1500px]' in source
     assert "DeductionResultsTable" in source
-    assert "Deduction / agency name" in source
+    assert "Agency name" in source
+    assert "Type" in source
     assert "Effective month" in source
     assert "Reference no." in source
     assert "sticky top-0" in source
@@ -50,7 +51,7 @@ def test_known_cdas_agency_names_have_display_fallbacks() -> None:
 def test_deduction_modal_has_search_sort_total_and_export_controls() -> None:
     source = PAGE.read_text(encoding="utf-8")
 
-    assert "Search code, deduction, reference or status" in source
+    assert "Search returned CDAS fields" in source
     assert "Sort by amount" in source
     assert "visibleTotal" in source
     assert "Export CSV" in source
@@ -78,12 +79,11 @@ def test_deduction_modal_10_of_10_operator_polish() -> None:
     assert "deductionStatusClasses" in source
     assert "Print / Save PDF" in source
     assert 'onClick={() => window.print()}' in source
-    assert "sticky left-0" in source
-    assert "sticky left-[112px]" in source
+    assert "min-w-max" in source
+    assert "const showItemCode = has(deductionItemCode);" in source
     assert ">Clear</button>" not in source
     assert "Clear" in source
     assert "print:hidden" in source
-    assert "print:shadow-none" in source
 
 
 def test_employee_verification_uses_wide_cdas_table_modal() -> None:
@@ -105,8 +105,9 @@ def test_cdas_custom_modal_has_full_height_body_and_sticky_footer() -> None:
 
     assert '!h-[92vh]' in source
     assert 'bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"' in source
-    assert 'min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8' in source
-    assert 'shrink-0 items-center justify-end border-t bg-card/95' in source
+    assert 'lg:grid-cols-[280px_minmax(0,1fr)]' in source
+    assert '<main className="min-h-0 overflow-auto p-4 sm:p-6 lg:p-8 print:p-0">' in source
+    assert 'shrink-0 items-center justify-between gap-3 border-t bg-card/95' in source
     assert 'onClick={() => setReadFeedback(null)}' in source
 
 
@@ -126,3 +127,38 @@ def test_cdas_custom_modal_contains_workspace_menu() -> None:
     assert "Requests remaining" in source
     assert 'lg:grid-cols-[280px_minmax(0,1fr)]' in source
     assert 'data-cdas-employee-form="true"' in source
+
+
+def test_cdas_deduction_table_is_endpoint_aware() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert '"ItemCode", "ItemCodeID", "AgencyCode", "DeductionCode"' in source
+    assert '"DeductionType");' not in source
+    assert 'function deductionTypeLabel' in source
+    assert 'if (numeric === 1) return "Loan";' in source
+    assert 'if (numeric === 2) return "Policy";' in source
+    assert 'const showItemCode = has(deductionItemCode);' in source
+    assert 'const showAgency = has(deductionAgencyName);' in source
+    assert 'const showType = has(deductionTypeLabel);' in source
+    assert 'LoanHub shows only fields returned by this CDAS endpoint.' in source
+    assert 'Search returned CDAS fields' in source
+
+
+def test_cdas_expiry_is_only_provider_supplied_or_safely_calculated() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'TotalInstallment' in source
+    assert 'installments - 1' in source
+    assert '" (calculated)"' in source
+    assert 'const showExpiry = has(deductionExpiry);' in source
+
+
+def test_cdas_table_avoids_dash_only_columns() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert '{showItemCode ? <th' in source
+    assert '{showAgency ? <th' in source
+    assert '{showReference ? <th' in source
+    assert '{showEffective ? <th' in source
+    assert '{showExpiry ? <th' in source
+    assert 'Not returned' in source
