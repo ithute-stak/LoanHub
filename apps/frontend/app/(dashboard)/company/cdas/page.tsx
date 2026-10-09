@@ -805,7 +805,7 @@ export default function CdasWorkspacePage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <form className="space-y-4" onSubmit={verifyEmployee}>
+                    <form data-cdas-employee-form="true" className="space-y-4" onSubmit={verifyEmployee}>
                         <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
                             <div className="space-y-2">
                                 <Label htmlFor="cdas-application">Loan application (optional)</Label>
@@ -1093,7 +1093,124 @@ export default function CdasWorkspacePage() {
                 contentClassName="!h-[92vh] !w-[96vw] !max-w-[96vw] sm:!max-w-[96vw] xl:!w-[94vw] xl:!max-w-[1500px] print:!static print:!h-auto print:!w-full print:!max-w-none print:!border-0 print:!shadow-none"
                 bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
             >
-                <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8 print:p-0">
+                <div className="grid min-h-0 flex-1 lg:grid-cols-[280px_minmax(0,1fr)] print:block">
+                    <aside className="min-h-0 overflow-y-auto border-b bg-card lg:border-b-0 lg:border-r print:hidden">
+                        <div className="p-4 sm:p-5">
+                            <div className="mb-4">
+                                <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">CDAS workspace</p>
+                                <p className="mt-1 text-sm font-bold text-foreground">
+                                    Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}
+                                </p>
+                            </div>
+
+                            <nav className="space-y-5" aria-label="CDAS modal actions">
+                                <div>
+                                    <p className="mb-2 border-b pb-2 text-xs font-black uppercase tracking-wide text-muted-foreground">
+                                        Deduction Capture
+                                    </p>
+                                    <div className="space-y-1">
+                                        <Button
+                                            type="button"
+                                            variant={readFeedback?.kind === "employee" ? "secondary" : "ghost"}
+                                            className="w-full justify-start"
+                                            onClick={() => {
+                                                const form = document.querySelector<HTMLFormElement>('form[data-cdas-employee-form="true"]');
+                                                form?.requestSubmit();
+                                            }}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <ContactRound className="h-4 w-4" />
+                                            Employee Details
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={readFeedback?.title === "All third-party deductions" ? "secondary" : "ghost"}
+                                            className="w-full justify-start"
+                                            onClick={() => void viewAllDeductions()}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <FileSearch className="h-4 w-4" />
+                                            View Deductions
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={readFeedback?.title === "Active / approved deduction" ? "secondary" : "ghost"}
+                                            className="w-full justify-start"
+                                            onClick={() => void viewActiveApprovedDeduction()}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <ShieldCheck className="h-4 w-4" />
+                                            View Active Deduction
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className="mb-2 border-b pb-2 text-xs font-black uppercase tracking-wide text-muted-foreground">
+                                        Deduction Review
+                                    </p>
+                                    <div className="space-y-1">
+                                        <Button
+                                            type="button"
+                                            variant={readFeedback?.title === "Own deductions by status" ? "secondary" : "ghost"}
+                                            className="w-full justify-start"
+                                            onClick={() => void viewOwnDeductions()}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <ListChecks className="h-4 w-4" />
+                                            Review Own Deductions
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={readFeedback?.kind === "affordability" ? "secondary" : "ghost"}
+                                            className="w-full justify-start"
+                                            onClick={() => void checkAffordability()}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <BadgeDollarSign className="h-4 w-4" />
+                                            Check Affordability
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className="mb-2 border-b pb-2 text-xs font-black uppercase tracking-wide text-muted-foreground">
+                                        Deduction Approval
+                                    </p>
+                                    <div className="space-y-1">
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            className="w-full justify-start"
+                                            onClick={() => void viewActiveApprovedDeduction()}
+                                            disabled={busy || !normalizedEmployeeNo}
+                                        >
+                                            <HandCoins className="h-4 w-4" />
+                                            Approved / Active
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className="mb-2 border-b pb-2 text-xs font-black uppercase tracking-wide text-muted-foreground">
+                                        Admin
+                                    </p>
+                                    <div className="rounded-xl border bg-muted/20 p-3 text-xs text-muted-foreground">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span>Environment</span>
+                                            <strong className="text-foreground">{requestBudget?.environment || "—"}</strong>
+                                        </div>
+                                        <div className="mt-2 flex items-center justify-between gap-3">
+                                            <span>Requests remaining</span>
+                                            <strong className="text-foreground">{requestBudget?.remaining ?? "—"}</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </nav>
+                        </div>
+                    </aside>
+
+                    <main className="min-h-0 overflow-auto p-4 sm:p-6 lg:p-8 print:p-0">
                     {readFeedback?.kind === "deductions" ? (
                         readFeedback.records.length ? (
                             <DeductionResultsTable records={readFeedback.records.map((item) => item.record)} />
@@ -1123,9 +1240,13 @@ export default function CdasWorkspacePage() {
                             )}
                         </div>
                     )}
+                    </main>
                 </div>
 
-                <div className="flex shrink-0 items-center justify-end border-t bg-card/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8 print:hidden">
+                <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-card/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8 print:hidden">
+                    <div className="hidden text-xs text-muted-foreground sm:block">
+                        Use the CDAS menu to move between employee, deduction and review results without closing this workspace.
+                    </div>
                     <Button type="button" variant="outline" onClick={() => setReadFeedback(null)}>
                         Close
                     </Button>
