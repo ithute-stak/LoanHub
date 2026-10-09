@@ -1,0 +1,42 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+PAGE = ROOT / "apps" / "frontend" / "app" / "(dashboard)" / "company" / "cdas" / "page.tsx"
+
+
+def test_deduction_results_use_wide_table_modal() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'kind: "deductions"' in source
+    assert 'w-[90vw] max-w-[90vw]' in source
+    assert "DeductionResultsTable" in source
+    assert "Deduction / agency name" in source
+    assert "Effective month" in source
+    assert "Reference no." in source
+    assert "sticky top-0" in source
+
+
+def test_employee_and_affordability_keep_compact_result_layout() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'kind: "employee"' in source
+    assert 'kind: "affordability"' in source
+    assert 'readFeedback?.kind === "deductions"' in source
+    assert 'sm:max-w-4xl' in source
+
+
+def test_known_cdas_agency_names_have_display_fallbacks() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    expected = {
+        "2409": "L.A.T. Subscription",
+        "2576": "LESOTHO TEACHERS TRADE UNION",
+        "2261": "Gap Funeral Services",
+        "2330": "Thusong Financial Services",
+        "2355": "PALT Membership Subscriptions",
+    }
+    for code, name in expected.items():
+        assert f'"{code}": "{name}"' in source
+
+    assert "providerName" in source
+    assert "KNOWN_CDAS_AGENCIES[code]" in source

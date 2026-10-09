@@ -57,7 +57,9 @@ type EmployeeLookupResponse = {
 type AffordabilityResponse = { ok: boolean; affordability: number };
 type DeductionsResponse = { ok: boolean; deductions: ProviderRecord[] };
 type ActiveDeductionResponse = { ok: boolean; deduction: ProviderRecord };
+type ReadFeedbackKind = "employee" | "affordability" | "deductions" | "record";
 type ReadFeedback = {
+    kind: ReadFeedbackKind;
     title: string;
     description: string;
     records: Array<{ title: string; record: ProviderRecord }>;
@@ -93,6 +95,113 @@ const DEDUCTION_STATUSES = [
     [9, "Deleted"],
     [10, "Changed"],
 ] as const;
+
+
+const KNOWN_CDAS_AGENCIES: Record<string, string> = {
+    "2409": "L.A.T. Subscription",
+    "2576": "LESOTHO TEACHERS TRADE UNION",
+    "2261": "Gap Funeral Services",
+    "2330": "Thusong Financial Services",
+    "2355": "PALT Membership Subscriptions",
+};
+
+function recordValue(record: ProviderRecord, ...keys: string[]): unknown {
+    const entries = Object.entries(record);
+    for (const key of keys) {
+        const direct = record[key];
+        if (direct !== undefined && direct !== null && direct !== "") return direct;
+        const match = entries.find(([candidate]) => candidate.toLowerCase() === key.toLowerCase());
+        if (match && match[1] !== undefined && match[1] !== null && match[1] !== "") return match[1];
+    }
+    return null;
+}
+
+function deductionItemCode(record: ProviderRecord): string {
+    const value = recordValue(record, "ItemCode", "ItemCodeID", "AgencyCode", "DeductionCode", "DeductionType");
+    return value === null ? "" : String(value);
+}
+
+function deductionAgencyName(record: ProviderRecord): string {
+    const providerName = recordValue(
+        record,
+        "AgencyName",
+        "DeductionName",
+        "DeductionTypeName",
+        "CompanyName",
+        "Description",
+        "PolicyName",
+    );
+    if (providerName) return String(providerName);
+    const code = deductionItemCode(record);
+    return KNOWN_CDAS_AGENCIES[code] || "—";
+}
+
+function deductionStatusLabel(record: ProviderRecord): string {
+    const raw = recordValue(record, "Status", "DeductionStatusName");
+    if (raw) return String(raw);
+    const numeric = Number(recordValue(record, "DeductionStatus", "StatusCode"));
+    const match = DEDUCTION_STATUSES.find(([value]) => value === numeric);
+    return match?.[1] || (Number.isFinite(numeric) && numeric > 0 ? String(numeric) : "—");
+}
+
+function moneyValue(record: ProviderRecord): string {
+    const raw = recordValue(record, "DeductionAmount", "Amount", "MonthlyDeduction");
+    const amount = Number(raw ?? 0);
+    if (!Number.isFinite(amount)) return displayValue(raw);
+    return "M " + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function deductionEffectiveMonth(record: ProviderRecord): string {
+    const value = recordValue(record, "EffectiveMonth", "EffectiveDate", "StartMonth");
+    return displayValue(value);
+}
+
+function deductionExpiry(record: ProviderRecord): string {
+    const value = recordValue(record, "ExpiryMonth", "ExpiryDate", "EndMonth", "SettlementDate");
+    return displayValue(value);
+}
+
+function deductionReference(record: ProviderRecord): string {
+    const value = recordValue(record, "ReferenceNo", "Reference", "PolicyLoanRefNo", "AuthorizationNo");
+    return displayValue(value);
+}
+
+function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
+    return (
+        <div className="overflow-hidden rounded-2xl border bg-card">
+            <div className="max-h-[62vh] overflow-auto">
+                <table className="w-full min-w-[1050px] text-sm">
+                    <thead className="sticky top-0 z-10 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground shadow-sm">
+                        <tr>
+                            <th className="px-4 py-3">#</th>
+                            <th className="px-4 py-3">Item code</th>
+                            <th className="px-4 py-3">Deduction / agency name</th>
+                            <th className="px-4 py-3 text-right">Amount</th>
+                            <th className="px-4 py-3">Effective month</th>
+                            <th className="px-4 py-3">Expiry</th>
+                            <th className="px-4 py-3">Reference no.</th>
+                            <th className="px-4 py-3">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {records.map((record, index) => (
+                            <tr key={index} className="border-t align-top hover:bg-muted/30">
+                                <td className="px-4 py-3 font-semibold text-muted-foreground">{index + 1}</td>
+                                <td className="px-4 py-3 font-mono font-black">{deductionItemCode(record) || "—"}</td>
+                                <td className="px-4 py-3 font-bold">{deductionAgencyName(record)}</td>
+                                <td className="px-4 py-3 text-right font-black tabular-nums">{moneyValue(record)}</td>
+                                <td className="px-4 py-3 font-semibold">{deductionEffectiveMonth(record)}</td>
+                                <td className="px-4 py-3">{deductionExpiry(record)}</td>
+                                <td className="px-4 py-3 font-mono text-xs font-bold">{deductionReference(record)}</td>
+                                <td className="px-4 py-3"><Badge variant="outline">{deductionStatusLabel(record)}</Badge></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
 
 function displayValue(value: unknown): string {
     if (value === null || value === undefined || value === "") return "—";
@@ -204,6 +313,7 @@ export default function CdasWorkspacePage() {
             setEmployee(response.data.employee);
             setLinkedPayrollProfile(response.data.payroll_profile ?? null);
             setReadFeedback({
+                kind: "employee",
                 title: "Employee verified",
                 description: "CDAS returned the employee record successfully.",
                 records: [{ title: "Employee details", record: { ...response.data.employee } }],
@@ -225,6 +335,7 @@ export default function CdasWorkspacePage() {
             });
             setAffordability(response.data.affordability);
             setReadFeedback({
+                kind: "affordability",
                 title: "Affordability result",
                 description: "CDAS returned the employee affordability amount.",
                 records: [{
@@ -255,6 +366,7 @@ export default function CdasWorkspacePage() {
             });
             setAllDeductions(response.data.deductions);
             setReadFeedback({
+                kind: "deductions",
                 title: "All third-party deductions",
                 description: response.data.deductions.length
                     ? `CDAS returned ${response.data.deductions.length} deduction record${response.data.deductions.length === 1 ? "" : "s"}.`
@@ -282,6 +394,7 @@ export default function CdasWorkspacePage() {
             });
             setOwnDeductions(response.data.deductions);
             setReadFeedback({
+                kind: "deductions",
                 title: "Own deductions by status",
                 description: response.data.deductions.length
                     ? `CDAS returned ${response.data.deductions.length} matching deduction record${response.data.deductions.length === 1 ? "" : "s"}.`
@@ -308,6 +421,7 @@ export default function CdasWorkspacePage() {
             });
             setActiveDeduction(response.data.deduction);
             setReadFeedback({
+                kind: "deductions",
                 title: "Active / approved deduction",
                 description: "CDAS returned the current active or approved deduction.",
                 records: [{ title: "Active / approved deduction", record: response.data.deduction }],
@@ -687,22 +801,34 @@ export default function CdasWorkspacePage() {
             )}
 
             <Dialog open={readFeedback !== null} onOpenChange={(open) => { if (!open) setReadFeedback(null); }}>
-                <DialogContent className="sm:max-w-4xl">
+                <DialogContent className={readFeedback?.kind === "deductions" ? "w-[90vw] max-w-[90vw]" : "sm:max-w-4xl"}>
                     <DialogHeader>
                         <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
                         <DialogDescription>{readFeedback?.description}</DialogDescription>
                     </DialogHeader>
-                    <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
-                        {readFeedback?.records.length ? (
-                            readFeedback.records.map((item, index) => (
-                                <ProviderRecordCard key={item.title + index} title={item.title} record={item.record} />
-                            ))
+
+                    {readFeedback?.kind === "deductions" ? (
+                        readFeedback.records.length ? (
+                            <DeductionResultsTable records={readFeedback.records.map((item) => item.record)} />
                         ) : (
-                            <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-                                No matching CDAS records were returned.
+                            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                                No matching CDAS deductions were returned.
                             </div>
-                        )}
-                    </div>
+                        )
+                    ) : (
+                        <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
+                            {readFeedback?.records.length ? (
+                                readFeedback.records.map((item, index) => (
+                                    <ProviderRecordCard key={item.title + index} title={item.title} record={item.record} />
+                                ))
+                            ) : (
+                                <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                                    No matching CDAS records were returned.
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     <DialogFooter showCloseButton />
                 </DialogContent>
             </Dialog>
