@@ -62,3 +62,11 @@ def test_workspace_keeps_deduction_results_compact_after_lookup() -> None:
     assert "openDeductionResults" in source
     assert "allDeductions.map((record, index)" not in source
     assert "ownDeductions.map((record, index)" not in source
+
+
+def test_deduction_modal_header_identifies_employee_and_result_count() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}' in source
+    assert "[employee.Name, employee.Surname].filter(Boolean).join" in source
+    assert "deduction record{readFeedback.records.length === 1 ? \"\" : \"s\"}" in source
