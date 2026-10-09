@@ -158,6 +158,45 @@ set -a
 source .env.production
 set +a
 
+ensure_runtime_database_credentials() {
+  local env_file="$APP_DIR/.env.production"
+  local runtime_user="${DB_RUNTIME_USER:-loanhub_app}"
+  local runtime_password="${DB_RUNTIME_PASSWORD:-}"
+  local generated_password temp
+
+  if [ "$runtime_user" = "${DB_USER:-loanhub}" ]; then
+    echo "[LoanHub] DB_RUNTIME_USER must differ from DB_USER." >&2
+    return 1
+  fi
+
+  if [ -z "$runtime_password" ]; then
+    echo "[LoanHub] Existing production environment has no DB_RUNTIME_PASSWORD; generating a protected runtime credential."
+    generated_password="$(openssl rand -hex 32)"
+    test -n "$generated_password"
+
+    umask 077
+    temp="$(mktemp "$APP_DIR/.env.production.runtime.XXXXXX")"
+    awk '
+      !/^DB_RUNTIME_USER=/ &&
+      !/^DB_RUNTIME_PASSWORD=/
+    ' "$env_file" > "$temp"
+    printf '\n# Runtime database credentials managed by the LoanHub production deployer.\n' >> "$temp"
+    printf 'DB_RUNTIME_USER=%s\n' "$runtime_user" >> "$temp"
+    printf 'DB_RUNTIME_PASSWORD=%s\n' "$generated_password" >> "$temp"
+    chmod 600 "$temp"
+    mv -f "$temp" "$env_file"
+
+    export DB_RUNTIME_USER="$runtime_user"
+    export DB_RUNTIME_PASSWORD="$generated_password"
+    echo "[LoanHub] Generated and persisted least-privilege runtime database credentials."
+  else
+    export DB_RUNTIME_USER="$runtime_user"
+    export DB_RUNTIME_PASSWORD="$runtime_password"
+  fi
+}
+
+ensure_runtime_database_credentials
+
 export LOANHUB_ENV_FILE=.env.production
 export LOANHUB_BACKEND_IMAGE="$BACKEND_IMAGE"
 export LOANHUB_FRONTEND_IMAGE="$FRONTEND_IMAGE"
