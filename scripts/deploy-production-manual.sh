@@ -6,6 +6,7 @@ APP_DIR="${LOANHUB_APP_DIR:-/opt/loanhub}"
 BACKEND_IMAGE="ghcr.io/ithute-stak/loanhub-backend"
 FRONTEND_IMAGE="ghcr.io/ithute-stak/loanhub-frontend"
 GITHUB_REPO_API="https://api.github.com/repos/ithute-stak/LoanHub"
+GITHUB_REPO_RAW="https://raw.githubusercontent.com/ithute-stak/LoanHub"
 
 if [ "$APP_DIR" != "/opt/loanhub" ]; then
   echo "Refusing to operate outside /opt/loanhub." >&2
@@ -116,6 +117,42 @@ if [ -n "$current_release" ]; then
   fi
 fi
 
+refresh_release_deployment_file() {
+  local relative_path="$1"
+  local destination="$APP_DIR/$relative_path"
+  local temp
+
+  mkdir -p "$(dirname "$destination")"
+  temp="$(mktemp "$APP_DIR/.release-file.XXXXXX")"
+  if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "$GITHUB_REPO_RAW/$RELEASE_SHA/$relative_path" \
+    -o "$temp"; then
+    rm -f "$temp"
+    echo "[LoanHub] Failed to refresh exact-release deployment file: $relative_path" >&2
+    return 1
+  fi
+
+  test -s "$temp" || {
+    rm -f "$temp"
+    echo "[LoanHub] Refusing empty exact-release deployment file: $relative_path" >&2
+    return 1
+  }
+
+  case "$relative_path" in
+    *.sh)
+      bash -n "$temp"
+      chmod 755 "$temp"
+      ;;
+  esac
+
+  mv -f "$temp" "$destination"
+}
+
+echo "[LoanHub] Refreshing exact-release deployment manifests and helpers"
+refresh_release_deployment_file compose.yaml
+refresh_release_deployment_file compose.edge.yml
+refresh_release_deployment_file scripts/ensure_database_runtime_role.sh
+
 set -a
 # shellcheck disable=SC1091
 source .env.production
@@ -127,6 +164,15 @@ export LOANHUB_FRONTEND_IMAGE="$FRONTEND_IMAGE"
 export LOANHUB_IMAGE_TAG="$RELEASE_SHA"
 
 compose=(docker compose --env-file .env.production -p loanhub -f compose.yaml -f compose.edge.yml)
+
+echo "[LoanHub] Validating exact-release production Compose model"
+compose_services="$("${compose[@]}" config --services)"
+for required_service in db redis db-role-bootstrap migrate backend maintenance frontend; do
+  if ! grep -Fxq "$required_service" <<<"$compose_services"; then
+    echo "[LoanHub] Exact-release Compose model is missing required service: $required_service" >&2
+    exit 1
+  fi
+done
 
 wait_healthy() {
   local service="$1"

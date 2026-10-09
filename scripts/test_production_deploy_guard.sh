@@ -36,3 +36,11 @@ if [[ -z "$previous_line" || -z "$current_line" || -z "$prune_line" || "$prune_l
 fi
 
 printf 'Production deployment guard checks passed.\n'
+
+
+grep -F 'Refreshing exact-release deployment manifests and helpers' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'refresh_release_deployment_file compose.yaml' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'refresh_release_deployment_file compose.edge.yml' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'refresh_release_deployment_file scripts/ensure_database_runtime_role.sh' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'config --services' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'db-role-bootstrap' scripts/deploy-production-manual.sh >/dev/null
