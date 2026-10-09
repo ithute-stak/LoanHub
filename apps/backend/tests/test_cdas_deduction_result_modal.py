@@ -126,3 +126,38 @@ def test_cdas_custom_modal_contains_workspace_menu() -> None:
     assert "Requests remaining" in source
     assert 'lg:grid-cols-[280px_minmax(0,1fr)]' in source
     assert 'data-cdas-employee-form="true"' in source
+
+
+def test_cdas_deduction_table_is_endpoint_aware() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert '"ItemCode", "ItemCodeID", "AgencyCode", "DeductionCode"' in source
+    assert '"DeductionType");' not in source
+    assert 'function deductionTypeLabel' in source
+    assert 'if (numeric === 1) return "Loan";' in source
+    assert 'if (numeric === 2) return "Policy";' in source
+    assert 'const showItemCode = has(deductionItemCode);' in source
+    assert 'const showAgency = has(deductionAgencyName);' in source
+    assert 'const showType = has(deductionTypeLabel);' in source
+    assert 'LoanHub shows only fields returned by this CDAS endpoint.' in source
+    assert 'Search returned CDAS fields' in source
+
+
+def test_cdas_expiry_is_only_provider_supplied_or_safely_calculated() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'TotalInstallment' in source
+    assert 'installments - 1' in source
+    assert '" (calculated)"' in source
+    assert 'const showExpiry = has(deductionExpiry);' in source
+
+
+def test_cdas_table_avoids_dash_only_columns() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert '{showItemCode ? <th' in source
+    assert '{showAgency ? <th' in source
+    assert '{showReference ? <th' in source
+    assert '{showEffective ? <th' in source
+    assert '{showExpiry ? <th' in source
+    assert 'Not returned' in source
