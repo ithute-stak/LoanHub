@@ -108,3 +108,21 @@ def test_cdas_custom_modal_has_full_height_body_and_sticky_footer() -> None:
     assert 'min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8' in source
     assert 'shrink-0 items-center justify-end border-t bg-card/95' in source
     assert 'onClick={() => setReadFeedback(null)}' in source
+
+
+def test_cdas_custom_modal_contains_workspace_menu() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert 'aria-label="CDAS modal actions"' in source
+    assert "CDAS workspace" in source
+    assert "Deduction Capture" in source
+    assert "Deduction Review" in source
+    assert "Deduction Approval" in source
+    assert "Admin" in source
+    assert "View Deductions" in source
+    assert "View Active Deduction" in source
+    assert "Review Own Deductions" in source
+    assert "Check Affordability" in source
+    assert "Requests remaining" in source
+    assert 'lg:grid-cols-[280px_minmax(0,1fr)]' in source
+    assert 'data-cdas-employee-form="true"' in source
