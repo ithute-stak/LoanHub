@@ -106,7 +106,7 @@ def test_registration_ui_uses_linked_loan_endpoint_and_requires_borrower_consent
     assert "/cdas/loans/${selectedLoanId}/register" in page
     assert "borrower_consent: borrowerConsentConfirmed" in page
     assert "I confirm the borrower authorised payroll deduction for this loan." in page
-    assert "LoanHub records this confirmation on the CDAS mandate before registration is sent." in page
+    assert "LoanHub records this confirmation before the CDAS registration is sent." in page
 
 
 def test_linked_cdas_lifecycle_uses_stored_provider_identifiers() -> None:
@@ -174,10 +174,10 @@ def test_cdas_registration_requires_only_amount_and_period_from_operator() -> No
     assert "monthly_deduction=payload.deduction_amount" in router
     assert "expected_installments=payload.deduction_period" in router
 
-    assert "<Label>Deduction amount</Label>" in page
-    assert "<Label>Deduction period</Label>" in page
-    assert "LoanHub will generate the CDAS registration" in page
-    assert "Auto-generated" in page
+    assert "<Label>Deduction Amount *</Label>" in page
+    assert "<Label>No. of Months *</Label>" in page
+    assert "Agency / Item Code" in page
+    assert 'readOnly' in page
     assert "Approve & Register Deduction" in page
     assert "deduction_amount: lifecycle.deduction_amount" in page
     assert "deduction_period: lifecycle.total_installment" in page
@@ -189,13 +189,29 @@ def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
     assert 'const isRegisterMode = requestedAction === "register" || requestedAction === "";' in page
     assert '{isRegisterMode ? "Add Deduction" : "CDAS deduction operations"}' in page
     assert "Create a new payroll deduction using the same business flow as CDAS" in page
-    assert "Deduction amount" in page
-    assert "Deduction period" in page
+    assert "New Deduction Application" in page
+    assert "Employee / Loan" in page
+    assert "Agency" in page
+    assert "Deduction Details" in page
+    assert "Deduction Amount *" in page
+    assert "No. of Months *" in page
     assert "Approve & Register Deduction" in page
-    assert "LoanHub will generate the CDAS registration" in page
-    assert "Principal amount" in page
-    assert "Expiry month" in page
-    assert "Policy / Loan reference" in page
+    assert "Principal Amt." in page
+    assert "Expiry Month" in page
+    assert "Policy / Loan Ref No" in page
     assert "generatedExpiryMonth" in page
     assert '{!isRegisterMode ? <Card id="modify-active"' in page
     assert '{!isRegisterMode ? <Card id="settle"' in page
+
+
+def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
+    assert 'value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}' in page
+    assert 'value={lifecycle.effective_month || ""}' in page
+    assert 'value={generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}' in page
+    assert 'value={lifecycle.reference_no || ""}' in page
+    assert 'deduction_amount: Number(event.target.value)' in page
+    assert 'total_installment: Number(event.target.value)' in page
+    assert "Ready for deduction capture" in page
