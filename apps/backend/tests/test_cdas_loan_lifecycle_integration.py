@@ -210,7 +210,7 @@ def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form(
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
     assert "directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0" in page
     assert "(lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)" in page
-    assert 'value={lifecycle.effective_month || ""}' in page
+    assert 'value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}' in page
     assert 'value={generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}' in page
     assert 'value={lifecycle.reference_no || ""}' in page
     assert 'deduction_amount: Number(event.target.value)' in page
