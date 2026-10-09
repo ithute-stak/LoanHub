@@ -51,3 +51,14 @@ def test_deduction_modal_has_search_sort_total_and_export_controls() -> None:
     assert "Export CSV" in source
     assert "text/csv;charset=utf-8" in source
     assert "No deductions match the current search." in source
+
+
+def test_workspace_keeps_deduction_results_compact_after_lookup() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert "Results are kept compact here; open the full 90% table" in source
+    assert source.count("View results") >= 2
+    assert "View result" in source
+    assert "openDeductionResults" in source
+    assert "allDeductions.map((record, index)" not in source
+    assert "ownDeductions.map((record, index)" not in source
