@@ -401,7 +401,7 @@ for db_revision in "${db_revisions[@]}"; do
     --entrypoint python \
     -e "LOANHUB_REQUIRED_ALEMBIC_REVISION=$db_revision" \
     "$BACKEND_IMAGE:$RELEASE_SHA" \
-    -c 'import os,pathlib,re,sys; rev=os.environ["LOANHUB_REQUIRED_ALEMBIC_REVISION"]; pattern=re.compile(r"(?m)^revision(?:\\s*:[^=]+)?\\s*=\\s*[\"\x27]"+re.escape(rev)+r"[\"\x27]"); files=pathlib.Path("/app/alembic/versions").glob("*.py"); sys.exit(0 if any(pattern.search(p.read_text(encoding="utf-8")) for p in files) else 42)' \
+    -c 'import os,sys; from alembic.config import Config; from alembic.script import ScriptDirectory; rev=os.environ["LOANHUB_REQUIRED_ALEMBIC_REVISION"]; cfg=Config("/app/alembic.ini"); scripts=ScriptDirectory.from_config(cfg); sys.exit(0 if scripts.get_revision(rev) is not None else 42)' \
     || {
       echo "[LoanHub] REFUSING release $RELEASE_SHA: its migration history does not contain live database revision $db_revision." >&2
       echo "[LoanHub] This is normally a stale/older release. The database was not migrated and application containers were not replaced." >&2
