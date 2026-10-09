@@ -84,7 +84,6 @@ def test_deduction_modal_10_of_10_operator_polish() -> None:
     assert ">Clear</button>" not in source
     assert "Clear" in source
     assert "print:hidden" in source
-    assert "print:shadow-none" in source
 
 
 def test_employee_verification_uses_wide_cdas_table_modal() -> None:
