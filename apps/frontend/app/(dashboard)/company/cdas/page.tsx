@@ -151,14 +151,46 @@ function moneyValue(record: ProviderRecord): string {
     return "M " + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatCdasPeriod(value: unknown): string {
+    if (value === null || value === undefined || value === "") return "—";
+    const raw = String(value).trim();
+    const monthMatch = raw.match(/^(\d{4})[-/]?(\d{2})$/);
+    if (monthMatch) {
+        const date = new Date(Date.UTC(Number(monthMatch[1]), Number(monthMatch[2]) - 1, 1));
+        return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+    }
+    const date = new Date(raw);
+    if (!Number.isNaN(date.getTime())) {
+        return new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", year: "numeric" }).format(date);
+    }
+    return raw;
+}
+
 function deductionEffectiveMonth(record: ProviderRecord): string {
     const value = recordValue(record, "EffectiveMonth", "EffectiveDate", "StartMonth");
-    return displayValue(value);
+    return formatCdasPeriod(value);
 }
 
 function deductionExpiry(record: ProviderRecord): string {
     const value = recordValue(record, "ExpiryMonth", "ExpiryDate", "EndMonth", "SettlementDate");
-    return displayValue(value);
+    return formatCdasPeriod(value);
+}
+
+function deductionStatusClasses(status: string): string {
+    const normalized = status.toLowerCase();
+    if (normalized.includes("active") || normalized.includes("approved")) {
+        return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    }
+    if (normalized.includes("settled")) {
+        return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+    }
+    if (normalized.includes("cancel") || normalized.includes("deleted") || normalized.includes("expired")) {
+        return "border-destructive/30 bg-destructive/10 text-destructive";
+    }
+    if (normalized.includes("review") || normalized.includes("reserved") || normalized.includes("registered")) {
+        return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    }
+    return "border-border bg-muted/40 text-foreground";
 }
 
 function deductionReference(record: ProviderRecord): string {
@@ -230,8 +262,17 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                             value={query}
                             onChange={(event) => setQuery(event.target.value)}
                             placeholder="Search code, deduction, reference or status"
-                            className="pl-9"
+                            className="pl-9 pr-16"
                         />
+                        {query ? (
+                            <button
+                                type="button"
+                                onClick={() => setQuery("")}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground"
+                            >
+                                Clear
+                            </button>
+                        ) : null}
                     </div>
                     <select
                         value={sortBy}
@@ -257,9 +298,13 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                             M {visibleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </strong>
                     </div>
-                    <Button type="button" variant="outline" onClick={exportCsv} disabled={!visibleRecords.length}>
+                    <Button type="button" variant="outline" onClick={exportCsv} disabled={!visibleRecords.length} className="print:hidden">
                         <FileDown className="h-4 w-4" />
                         Export CSV
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => window.print()} disabled={!visibleRecords.length} className="print:hidden">
+                        <FileSearch className="h-4 w-4" />
+                        Print / Save PDF
                     </Button>
                 </div>
             </div>
@@ -269,8 +314,8 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                     <thead className="sticky top-0 z-10 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground shadow-sm">
                         <tr>
                             <th className="px-4 py-3">#</th>
-                            <th className="px-4 py-3">Item code</th>
-                            <th className="px-4 py-3">Deduction / agency name</th>
+                            <th className="sticky left-0 z-20 bg-muted px-4 py-3">Item code</th>
+                            <th className="sticky left-[112px] z-20 bg-muted px-4 py-3">Deduction / agency name</th>
                             <th className="px-4 py-3 text-right">Amount</th>
                             <th className="px-4 py-3">Effective month</th>
                             <th className="px-4 py-3">Expiry</th>
@@ -280,15 +325,19 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                     </thead>
                     <tbody>
                         {visibleRecords.length ? visibleRecords.map((record, index) => (
-                            <tr key={index} className="border-t align-top hover:bg-muted/30">
+                            <tr key={index} className="group border-t align-top hover:bg-muted/30">
                                 <td className="px-4 py-3 font-semibold text-muted-foreground">{index + 1}</td>
-                                <td className="px-4 py-3 font-mono font-black">{deductionItemCode(record) || "—"}</td>
-                                <td className="px-4 py-3 font-bold">{deductionAgencyName(record)}</td>
+                                <td className="sticky left-0 z-10 bg-card px-4 py-3 font-mono font-black group-hover:bg-muted">{deductionItemCode(record) || "—"}</td>
+                                <td className="sticky left-[112px] z-10 bg-card px-4 py-3 font-bold group-hover:bg-muted">{deductionAgencyName(record)}</td>
                                 <td className="px-4 py-3 text-right font-black tabular-nums">{moneyValue(record)}</td>
                                 <td className="px-4 py-3 font-semibold">{deductionEffectiveMonth(record)}</td>
                                 <td className="px-4 py-3">{deductionExpiry(record)}</td>
                                 <td className="px-4 py-3 font-mono text-xs font-bold">{deductionReference(record)}</td>
-                                <td className="px-4 py-3"><Badge variant="outline">{deductionStatusLabel(record)}</Badge></td>
+                                <td className="px-4 py-3">
+                                    <Badge variant="outline" className={deductionStatusClasses(deductionStatusLabel(record))}>
+                                        {deductionStatusLabel(record)}
+                                    </Badge>
+                                </td>
                             </tr>
                         )) : (
                             <tr>
@@ -308,6 +357,48 @@ function displayValue(value: unknown): string {
     if (value === null || value === undefined || value === "") return "—";
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
+}
+
+function EmployeeResultsTable({ record }: { record: ProviderRecord }) {
+    const columns = [
+        ["EmployeeNo", "Employee number"],
+        ["Name", "Name"],
+        ["Surname", "Surname"],
+        ["DOB", "Date of birth"],
+        ["Department", "Department"],
+        ["JoiningDate", "Joining date"],
+        ["TerminationDate", "Termination date"],
+    ] as const;
+
+    return (
+        <div className="overflow-hidden rounded-2xl border bg-card">
+            <div className="overflow-x-auto">
+                <table className="w-full min-w-[1180px] text-sm">
+                    <thead className="bg-muted/70 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <tr>
+                            {columns.map(([key, label]) => (
+                                <th
+                                    key={key}
+                                    className={key === "Department" ? "min-w-[300px] px-4 py-3" : "min-w-[140px] px-4 py-3"}
+                                >
+                                    {label}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr className="border-t align-top">
+                            {columns.map(([key]) => (
+                                <td key={key} className="px-4 py-4 font-semibold">
+                                    {displayValue(record[key])}
+                                </td>
+                            ))}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
 }
 
 function ProviderRecordCard({ record, title }: { record: ProviderRecord; title: string }) {
@@ -975,10 +1066,30 @@ export default function CdasWorkspacePage() {
             )}
 
             <Dialog open={readFeedback !== null} onOpenChange={(open) => { if (!open) setReadFeedback(null); }}>
-                <DialogContent className={readFeedback?.kind === "deductions" ? "w-[90vw] max-w-[90vw]" : "sm:max-w-4xl"}>
-                    <DialogHeader>
+                <DialogContent className="w-[90vw] max-w-[90vw] max-h-[90vh] overflow-hidden print:static print:max-h-none print:w-full print:max-w-none print:border-0 print:shadow-none">
+                    <DialogHeader className="print:mb-4">
                         <DialogTitle>{readFeedback?.title || "CDAS result"}</DialogTitle>
-                        <DialogDescription>{readFeedback?.description}</DialogDescription>
+                        <DialogDescription>
+                            {readFeedback?.kind === "deductions" ? (
+                                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span className="font-semibold text-foreground">
+                                        Employee {employee?.EmployeeNo || normalizedEmployeeNo || "—"}
+                                    </span>
+                                    {employee && (employee.Name || employee.Surname) ? (
+                                        <>
+                                            <span aria-hidden="true">·</span>
+                                            <span>{[employee.Name, employee.Surname].filter(Boolean).join(" ")}</span>
+                                        </>
+                                    ) : null}
+                                    <span aria-hidden="true">·</span>
+                                    <span>
+                                        {readFeedback.records.length} deduction record{readFeedback.records.length === 1 ? "" : "s"}
+                                    </span>
+                                </span>
+                            ) : (
+                                readFeedback?.description
+                            )}
+                        </DialogDescription>
                     </DialogHeader>
 
                     {readFeedback?.kind === "deductions" ? (
@@ -987,6 +1098,14 @@ export default function CdasWorkspacePage() {
                         ) : (
                             <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
                                 No matching CDAS deductions were returned.
+                            </div>
+                        )
+                    ) : readFeedback?.kind === "employee" ? (
+                        readFeedback.records.length ? (
+                            <EmployeeResultsTable record={readFeedback.records[0].record} />
+                        ) : (
+                            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                                No employee record was returned.
                             </div>
                         )
                     ) : (
@@ -1003,7 +1122,7 @@ export default function CdasWorkspacePage() {
                         </div>
                     )}
 
-                    <DialogFooter showCloseButton />
+                    <DialogFooter showCloseButton className="print:hidden" />
                 </DialogContent>
             </Dialog>
 
