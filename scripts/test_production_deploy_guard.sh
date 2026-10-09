@@ -52,3 +52,11 @@ grep -F 'chmod 600 "$temp"' scripts/deploy-production-manual.sh >/dev/null
 grep -F 'DB_RUNTIME_USER=%s' scripts/deploy-production-manual.sh >/dev/null
 grep -F 'DB_RUNTIME_PASSWORD=%s' scripts/deploy-production-manual.sh >/dev/null
 grep -F 'DB_RUNTIME_USER must differ from DB_USER' scripts/deploy-production-manual.sh >/dev/null
+
+
+grep -F 'ScriptDirectory.from_config' scripts/deploy-production-manual.sh >/dev/null
+grep -F 'scripts.get_revision(rev)' scripts/deploy-production-manual.sh >/dev/null
+if grep -Fq 'pathlib.Path("/app/alembic/versions").glob("*.py")' scripts/deploy-production-manual.sh; then
+  echo "production deployer must use Alembic revision resolution instead of source regex scanning" >&2
+  exit 1
+fi
