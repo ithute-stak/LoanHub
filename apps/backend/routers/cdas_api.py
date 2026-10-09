@@ -1953,6 +1953,11 @@ async def register_direct_employee_deduction(
     assert context.company_id is not None
 
     employee_no = payload.employee_no.strip()
+    verification_environment = _prepare_cdas_business_operation(
+        db,
+        company_id=context.company_id,
+        operation_type="employee_verification",
+    )
     client = get_company_cdas_client(db, context.company_id)
 
     # Verify the employee immediately before creating a payroll deduction.
@@ -1966,6 +1971,13 @@ async def register_direct_employee_deduction(
             status_code=502,
             detail="CDAS returned a different employee number than the one requested",
         )
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=verification_environment,
+        operation_type="employee_verification",
+        source_reference=employee_no,
+    )
 
     item_code = get_company_item_code(db, context.company_id)
     if not item_code:
