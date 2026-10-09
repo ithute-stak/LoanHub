@@ -40,3 +40,14 @@ def test_known_cdas_agency_names_have_display_fallbacks() -> None:
 
     assert "providerName" in source
     assert "KNOWN_CDAS_AGENCIES[code]" in source
+
+
+def test_deduction_modal_has_search_sort_total_and_export_controls() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert "Search code, deduction, reference or status" in source
+    assert "Sort by amount" in source
+    assert "visibleTotal" in source
+    assert "Export CSV" in source
+    assert "text/csv;charset=utf-8" in source
+    assert "No deductions match the current search." in source
