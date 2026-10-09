@@ -94,6 +94,12 @@ function generatedExpiryMonth(effectiveMonth: string, period: number): string {
     return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
 }
 
+function nextEffectiveMonth(): string {
+    const now = new Date();
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 
 function ResultCard({ title, record }: { title: string; record: ProviderRecord }) {
     return (
@@ -114,6 +120,7 @@ function ResultCard({ title, record }: { title: string; record: ProviderRecord }
 export default function CdasOperationsPage() {
     const searchParams = useSearchParams();
     const requestedAction = searchParams.get("action") || "";
+    const requestedEmployeeNo = (searchParams.get("employee") || "").trim();
     const isRegisterMode = requestedAction === "register" || requestedAction === "";
     const initialLifecycleType = requestedAction === "review"
         ? 3
@@ -131,6 +138,7 @@ export default function CdasOperationsPage() {
     const [result, setResult] = useState<{ title: string; record: ProviderRecord } | null>(null);
     const [approvedCdasApplications, setApprovedCdasApplications] = useState<DirectLoanApplication[]>([]);
     const [selectedLoanId, setSelectedLoanId] = useState(() => searchParams.get("loan") || "");
+    const [directEmployeeNo, setDirectEmployeeNo] = useState(requestedEmployeeNo);
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
@@ -138,7 +146,7 @@ export default function CdasOperationsPage() {
     const [lifecycle, setLifecycle] = useState({
         request_type: initialLifecycleType,
         deduction_id: 0,
-        employee_no: "",
+        employee_no: requestedEmployeeNo,
         loan_policy: 1,
         item_code: "",
         deduction_amount: 0,
@@ -289,6 +297,14 @@ export default function CdasOperationsPage() {
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
                     })
+                    : lifecycle.request_type === 1 && directEmployeeNo.trim()
+                        ? await api.post<MutationResponse>("/cdas/deductions/direct-register", {
+                            employee_no: directEmployeeNo.trim(),
+                            deduction_amount: lifecycle.deduction_amount,
+                            deduction_period: lifecycle.total_installment,
+                            authorization_confirmed: borrowerConsentConfirmed,
+                            confirmed: lifecycle.confirmed,
+                        })
                     : selectedLoanId && linkedState && [3, 4, 6, 10].includes(lifecycle.request_type)
                         ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/lifecycle`, {
                             request_type: lifecycle.request_type,
@@ -414,49 +430,78 @@ export default function CdasOperationsPage() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Prepare registration from an approved LoanHub loan</CardTitle>
+                    <CardTitle>Choose employee or approved LoanHub loan</CardTitle>
                     <CardDescription>
-                        This step reads LoanHub only. It does not contact CDAS and does not create a payroll deduction. After preparation, review every field below and explicitly confirm Registration before sending it.
+                        Add a deduction directly with an employee number, or select an approved CDAS-enabled LoanHub loan to populate the employee and loan details automatically.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
+                <CardContent className="space-y-5">
+                    <div className="grid gap-4 lg:grid-cols-2">
                         <div className="space-y-2">
-                            <Label htmlFor="cdas-registration-loan">Approved CDAS-enabled loan</Label>
-                            <select
-                                id="cdas-registration-loan"
-                                value={selectedLoanId}
-                                disabled={Boolean(loading)}
+                            <Label htmlFor="cdas-direct-employee">Employee number</Label>
+                            <Input
+                                id="cdas-direct-employee"
+                                value={directEmployeeNo}
                                 onChange={(event) => {
-                                    setSelectedLoanId(event.target.value);
-                                    setRegistrationDraft(null);
-                                    setLinkedState(null);
+                                    const value = event.target.value;
+                                    setDirectEmployeeNo(value);
+                                    if (value.trim()) {
+                                        setSelectedLoanId("");
+                                        setRegistrationDraft(null);
+                                        setLifecycle((current) => ({ ...current, employee_no: value.trim(), principal_amount: 0, effective_month: "", reference_no: "" }));
+                                    }
                                 }}
-                                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                            >
-                                <option value="">Select a loan</option>
-                                {approvedCdasApplications.map((application) => (
-                                    <option key={application.id} value={application.loan_id || ""}>
-                                        {application.loan_reference || application.application_reference} · {application.borrower_name}
-                                    </option>
-                                ))}
-                            </select>
+                                placeholder="e.g. 0019634"
+                                disabled={Boolean(loading)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {requestedEmployeeNo
+                                    ? "Loaded from the employee already open in the CDAS workspace."
+                                    : "Use this when you want to add a deduction directly for a CDAS employee."}
+                            </p>
                         </div>
-                        <div className="flex items-end">
-                            <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadApprovedCdasLoans()}>
-                                {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                Load approved loans
-                            </Button>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="cdas-registration-loan">Approved CDAS-enabled loan (optional)</Label>
+                            <div className="flex gap-2">
+                                <select
+                                    id="cdas-registration-loan"
+                                    value={selectedLoanId}
+                                    disabled={Boolean(loading)}
+                                    onChange={(event) => {
+                                        const loanId = event.target.value;
+                                        setSelectedLoanId(loanId);
+                                        setRegistrationDraft(null);
+                                        setLinkedState(null);
+                                        if (loanId) setDirectEmployeeNo("");
+                                    }}
+                                    className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                                >
+                                    <option value="">Select a loan</option>
+                                    {approvedCdasApplications.map((application) => (
+                                        <option key={application.id} value={application.loan_id || ""}>
+                                            {application.loan_reference || application.application_reference} · {application.borrower_name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadApprovedCdasLoans()}>
+                                    {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                    Load
+                                </Button>
+                            </div>
                         </div>
-                        <div className="flex items-end gap-2">
-                            <Button type="button" disabled={Boolean(loading) || !selectedLoanId} onClick={() => void prepareRegistration()}>
-                                Prepare registration
+                    </div>
+
+                    {selectedLoanId ? (
+                        <div className="flex flex-wrap gap-2">
+                            <Button type="button" disabled={Boolean(loading)} onClick={() => void prepareRegistration()}>
+                                Prepare selected loan
                             </Button>
-                            <Button type="button" variant="outline" disabled={Boolean(loading) || !selectedLoanId} onClick={() => void loadLinkedState()}>
+                            <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadLinkedState()}>
                                 Load linked state
                             </Button>
                         </div>
-                    </div>
+                    ) : null}
 
                     {registrationDraft ? (
                         <Alert>
@@ -464,7 +509,7 @@ export default function CdasOperationsPage() {
                             <AlertTitle>{registrationDraft.ready ? "Registration prepared" : "Loan is not ready"}</AlertTitle>
                             <AlertDescription>
                                 {registrationDraft.ready
-                                    ? `Loan ${registrationDraft.loan_reference} has been copied into the Registration form below. No CDAS request has been sent.`
+                                    ? `Loan ${registrationDraft.loan_reference} has been copied into the deduction form below. No CDAS request has been sent.`
                                     : registrationDraft.reasons.join(" ")}
                             </AlertDescription>
                         </Alert>
@@ -500,28 +545,30 @@ export default function CdasOperationsPage() {
                                     <dl className="space-y-3 text-sm">
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Employee No</dt>
-                                            <dd className="font-bold">{lifecycle.employee_no || "Prepare loan"}</dd>
+                                            <dd className="font-bold">{lifecycle.employee_no || directEmployeeNo.trim() || "Enter employee number"}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Borrower</dt>
-                                            <dd className="font-bold">{selectedApplication?.borrower_name || "—"}</dd>
+                                            <dd className="font-bold">{selectedApplication?.borrower_name || (directEmployeeNo.trim() ? "Direct CDAS employee" : "—")}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Loan reference</dt>
-                                            <dd className="break-all font-bold">{registrationDraft?.loan_reference || selectedApplication?.loan_reference || "—"}</dd>
+                                            <dd className="break-all font-bold">{registrationDraft?.loan_reference || selectedApplication?.loan_reference || (directEmployeeNo.trim() ? "Auto-generated on registration" : "—")}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Principal</dt>
                                             <dd className="font-bold">
                                                 {lifecycle.principal_amount > 0
                                                     ? `M ${lifecycle.principal_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                                    : "Prepare loan"}
+                                                    : directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0
+                                                        ? `M ${(lifecycle.deduction_amount * lifecycle.total_installment).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                        : "Auto-generated"}
                                             </dd>
                                         </div>
                                         <div className="mt-5 rounded-xl border bg-card p-3">
                                             <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Registration status</p>
                                             <p className="mt-1 font-black">
-                                                {registrationDraft?.ready ? "Ready for deduction capture" : "Select and prepare an approved loan"}
+                                                {registrationDraft?.ready || directEmployeeNo.trim() ? "Ready for deduction capture" : "Enter an employee number or prepare an approved loan"}
                                             </p>
                                         </div>
                                     </dl>
@@ -559,7 +606,7 @@ export default function CdasOperationsPage() {
                                                             ...value,
                                                             deduction_amount: Number(event.target.value),
                                                         }))}
-                                                        disabled={!registrationDraft?.ready}
+                                                        disabled={!registrationDraft?.ready && !directEmployeeNo.trim()}
                                                         placeholder="Enter amount"
                                                     />
                                                 </div>
@@ -575,7 +622,7 @@ export default function CdasOperationsPage() {
                                                             ...value,
                                                             total_installment: Number(event.target.value),
                                                         }))}
-                                                        disabled={!registrationDraft?.ready}
+                                                        disabled={!registrationDraft?.ready && !directEmployeeNo.trim()}
                                                         placeholder="Enter months"
                                                     />
                                                 </div>
@@ -583,7 +630,11 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Principal Amt.</Label>
                                                     <Input
-                                                        value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}
+                                                        value={lifecycle.principal_amount > 0
+                                                            ? lifecycle.principal_amount.toFixed(2)
+                                                            : directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0
+                                                                ? (lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)
+                                                                : ""}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -593,7 +644,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Effective Month</Label>
                                                     <Input
-                                                        value={lifecycle.effective_month || ""}
+                                                        value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -603,7 +654,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Expiry Month</Label>
                                                     <Input
-                                                        value={generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}
+                                                        value={generatedExpiryMonth(lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : ""), lifecycle.total_installment)}
                                                         readOnly
                                                         className="bg-muted/30"
                                                     />
@@ -612,7 +663,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Policy / Loan Ref No</Label>
                                                     <Input
-                                                        value={lifecycle.reference_no || ""}
+                                                        value={lifecycle.reference_no || (directEmployeeNo.trim() ? "Auto-generated on registration" : "")}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -621,7 +672,7 @@ export default function CdasOperationsPage() {
                                             </div>
                                         </div>
 
-                                        {registrationDraft?.ready ? (
+                                        {registrationDraft?.ready || directEmployeeNo.trim() ? (
                                             <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
                                                 <input
                                                     type="checkbox"
@@ -630,7 +681,7 @@ export default function CdasOperationsPage() {
                                                     className="mt-1"
                                                 />
                                                 <span>
-                                                    <strong>I confirm the borrower authorised payroll deduction for this loan.</strong>
+                                                    <strong>I confirm this employee authorised the payroll deduction.</strong>
                                                     <br />
                                                     <span className="text-muted-foreground">
                                                         LoanHub records this confirmation before the CDAS registration is sent.
@@ -664,7 +715,7 @@ export default function CdasOperationsPage() {
                                                 variant="destructive"
                                                 disabled={
                                                     Boolean(loading)
-                                                    || !registrationDraft?.ready
+                                                    || (!registrationDraft?.ready && !directEmployeeNo.trim())
                                                     || lifecycle.deduction_amount <= 0
                                                     || lifecycle.total_installment <= 0
                                                     || !borrowerConsentConfirmed
