@@ -167,8 +167,103 @@ function deductionReference(record: ProviderRecord): string {
 }
 
 function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
+    const [query, setQuery] = useState("");
+    const [sortBy, setSortBy] = useState<"name" | "amount" | "status">("name");
+    const normalizedQuery = query.trim().toLowerCase();
+
+    const visibleRecords = records
+        .filter((record) => {
+            if (!normalizedQuery) return true;
+            return [
+                deductionItemCode(record),
+                deductionAgencyName(record),
+                deductionReference(record),
+                deductionStatusLabel(record),
+            ].some((value) => value.toLowerCase().includes(normalizedQuery));
+        })
+        .sort((left, right) => {
+            if (sortBy === "amount") {
+                const leftAmount = Number(recordValue(left, "DeductionAmount", "Amount", "MonthlyDeduction") ?? 0);
+                const rightAmount = Number(recordValue(right, "DeductionAmount", "Amount", "MonthlyDeduction") ?? 0);
+                return rightAmount - leftAmount;
+            }
+            if (sortBy === "status") {
+                return deductionStatusLabel(left).localeCompare(deductionStatusLabel(right));
+            }
+            return deductionAgencyName(left).localeCompare(deductionAgencyName(right));
+        });
+
+    const visibleTotal = visibleRecords.reduce((sum, record) => {
+        const amount = Number(recordValue(record, "DeductionAmount", "Amount", "MonthlyDeduction") ?? 0);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+
+    function exportCsv() {
+        const csvEscape = (value: string) => `"${value.replaceAll('"', '""')}"`;
+        const header = ["Item code", "Deduction / agency name", "Amount", "Effective month", "Expiry", "Reference no.", "Status"];
+        const rows = visibleRecords.map((record) => [
+            deductionItemCode(record),
+            deductionAgencyName(record),
+            moneyValue(record),
+            deductionEffectiveMonth(record),
+            deductionExpiry(record),
+            deductionReference(record),
+            deductionStatusLabel(record),
+        ]);
+        const csv = [header, ...rows].map((row) => row.map((value) => csvEscape(String(value))).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `cdas-deductions-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+
     return (
         <div className="overflow-hidden rounded-2xl border bg-card">
+            <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="grid gap-2 sm:grid-cols-[minmax(260px,1fr)_180px] lg:min-w-[560px]">
+                    <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            placeholder="Search code, deduction, reference or status"
+                            className="pl-9"
+                        />
+                    </div>
+                    <select
+                        value={sortBy}
+                        onChange={(event) => setSortBy(event.target.value as "name" | "amount" | "status")}
+                        className="h-10 rounded-md border bg-background px-3 text-sm"
+                        aria-label="Sort deductions"
+                    >
+                        <option value="name">Sort by name</option>
+                        <option value="amount">Sort by amount</option>
+                        <option value="status">Sort by status</option>
+                    </select>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="rounded-xl border bg-background px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">Showing </span>
+                        <strong>{visibleRecords.length}</strong>
+                        <span className="text-muted-foreground"> of {records.length}</span>
+                    </div>
+                    <div className="rounded-xl border bg-background px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">Total </span>
+                        <strong className="tabular-nums">
+                            M {visibleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </strong>
+                    </div>
+                    <Button type="button" variant="outline" onClick={exportCsv} disabled={!visibleRecords.length}>
+                        <FileDown className="h-4 w-4" />
+                        Export CSV
+                    </Button>
+                </div>
+            </div>
+
             <div className="max-h-[62vh] overflow-auto">
                 <table className="w-full min-w-[1050px] text-sm">
                     <thead className="sticky top-0 z-10 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground shadow-sm">
@@ -184,7 +279,7 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {records.map((record, index) => (
+                        {visibleRecords.length ? visibleRecords.map((record, index) => (
                             <tr key={index} className="border-t align-top hover:bg-muted/30">
                                 <td className="px-4 py-3 font-semibold text-muted-foreground">{index + 1}</td>
                                 <td className="px-4 py-3 font-mono font-black">{deductionItemCode(record) || "—"}</td>
@@ -195,7 +290,13 @@ function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
                                 <td className="px-4 py-3 font-mono text-xs font-bold">{deductionReference(record)}</td>
                                 <td className="px-4 py-3"><Badge variant="outline">{deductionStatusLabel(record)}</Badge></td>
                             </tr>
-                        ))}
+                        )) : (
+                            <tr>
+                                <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                                    No deductions match the current search.
+                                </td>
+                            </tr>
+                        )}
                     </tbody>
                 </table>
             </div>
