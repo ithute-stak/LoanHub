@@ -2104,7 +2104,14 @@ fn main() {
         let url = request.url().to_string();
 
         if request.method() == &Method::Get && url == "/health/ready" {
-            let _ = request.respond(json_response(200, r#"{"status":"ready","runtime":"rust"}"#.to_string()));
+            let body = serde_json::json!({
+                "status": "ready",
+                "runtime": "rust",
+                "native_cpp_boundary": "shared-library",
+                "native_cpp_loaded": cpp_native_library().is_some(),
+            })
+            .to_string();
+            let _ = request.respond(json_response(200, body));
             continue;
         }
 
