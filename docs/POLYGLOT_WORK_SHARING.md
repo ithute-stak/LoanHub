@@ -46,7 +46,10 @@ continues without native acceleration. The shared ABI serializes execution insid
 the library because the current compatibility layer redirects standard streams;
 this preserves deterministic behavior while eliminating process creation
 overhead. Python remains the outer business authority and continues its existing
-worker parity/routing checks.
+worker parity/routing checks. The Rust worker readiness response also exposes
+`native_cpp_boundary: "shared-library"` and `native_cpp_loaded` so operations
+can distinguish native acceleration from safe Rust fallback without treating
+native availability as a readiness requirement.
 
 Phase 3 expands workload routing only after parity tests and benchmarks pass.
 
