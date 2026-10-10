@@ -899,6 +899,8 @@ def cash_disburse_loan(
         proof_notes=payload.proof_notes,
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
+        owner_override_verified=owner_override_verified,
+        owner_override_reason=override_reason,
     )
     receipt_number, receipt_file = payment_receipt_payload(db, payment.id)
     return {
