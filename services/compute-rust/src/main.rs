@@ -70,16 +70,17 @@ fn cpp_fixed_preview(
     months: usize,
     fee: Decimal,
 ) -> Option<CppLoanPreview> {
-    if rate_percent.scale() > 3 || months == 0 || months > 120 {
+    if months == 0 || months > 120 {
+        return None;
+    }
+    let scaled_rate = rate_percent * Decimal::from(1000_i64);
+    if !scaled_rate.fract().is_zero() {
         return None;
     }
     let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
     let fee_cents = (money(fee) * Decimal::from(100_i64)).to_i64()?;
-    let rate_milli_percent = (
-        rate_percent.round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero)
-            * Decimal::from(1000_i64)
-    ).to_i64()?;
+    let rate_milli_percent = scaled_rate.to_i64()?;
     let output = Command::new(path)
         .arg(command)
         .arg(principal_cents.to_string())
