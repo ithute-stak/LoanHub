@@ -16,7 +16,7 @@ untracked Experian/CDAS mutations.
 | Rust | deterministic affordability math, portfolio-risk aggregation, reconciliation kernels, and temporary HTTP adapter duties while loan arithmetic migrates to C++ |
 | Go | bounded concurrent network/background work, webhook fan-out and replayable reconciliation hashing |
 | Java | deterministic underwriting/business-rule evaluation, enterprise event processing and institutional batch pipelines |
-| C++ | fixed-point financial calculation engine. It now owns Simple/Flat Interest and LoanHub Micro Loan arithmetic behind Rust transport/parity protection, with remaining loan methods migrating in later phases |
+| C++ | fixed-point financial calculation engine. It now owns Simple/Flat Interest, LoanHub Micro Loan, Reducing Balance and Compound Interest arithmetic behind Rust transport/parity protection; Daily Accrual remains the next loan-method migration |
 
 ## Rollout
 
@@ -24,9 +24,9 @@ Phase 1 adds compile-tested worker boundaries and health/contract surfaces.
 Phase 2 moves selected read-only or replayable work behind the workers with
 Python fallback. Current examples include Go reconciliation hashing, Rust reconciliation
 classification, Java webhook-event canonicalization, C++ fixed-point
-Simple/Flat and LoanHub Micro Loan previews invoked through the Rust transport
-adapter, and Rust/WASM browser previews checked against the authoritative
-Python API result. Phase 3 expands workload routing only after
+Simple/Flat, LoanHub Micro Loan, Reducing Balance and Compound Interest previews
+invoked through the Rust transport adapter, and Rust/WASM browser previews
+checked against the authoritative Python API result. Phase 3 expands workload routing only after
 parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
