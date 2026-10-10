@@ -1,5 +1,6 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -670,10 +671,150 @@ void daily_accrual_preview(
     emit_preview(schedule.front(), total_interest_cents, total_cents, schedule);
 }
 
+
+struct PortfolioCoreSummary {
+    std::int64_t active_exposure_cents = 0;
+    std::int64_t active_loans = 0;
+    std::array<std::int64_t, 5> par_cents{};
+    std::int64_t top_up_exposure_cents = 0;
+    std::int64_t cdas_exposure_cents = 0;
+    std::array<std::int64_t, 6> bucket_counts{};
+    std::array<std::int64_t, 6> bucket_exposure_cents{};
+};
+
+std::int64_t checked_add_i64(
+    std::int64_t left,
+    std::int64_t right,
+    const char* message
+) {
+    return checked_i64(
+        static_cast<__int128>(left) + static_cast<__int128>(right),
+        message
+    );
+}
+
+int portfolio_bucket_index(const std::string& bucket) {
+    if (bucket == "current") return 0;
+    if (bucket == "1-7") return 1;
+    if (bucket == "8-30") return 2;
+    if (bucket == "31-60") return 3;
+    if (bucket == "61-90") return 4;
+    if (bucket == "90+") return 5;
+    return -1;
+}
+
+void portfolio_risk_core() {
+    PortfolioCoreSummary summary;
+    std::string line;
+    const std::array<std::int64_t, 5> thresholds{1, 7, 30, 60, 90};
+
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        std::vector<std::string> fields;
+        std::size_t start = 0;
+        while (start <= line.size()) {
+            const std::size_t separator = line.find('|', start);
+            fields.push_back(line.substr(
+                start,
+                separator == std::string::npos ? std::string::npos : separator - start
+            ));
+            if (separator == std::string::npos) {
+                break;
+            }
+            start = separator + 1;
+        }
+        if (fields.size() != 6) {
+            throw std::invalid_argument("invalid portfolio row");
+        }
+
+        const std::int64_t balance_cents = std::stoll(fields[0]);
+        const std::int64_t days_past_due = std::stoll(fields[1]);
+        const bool active = fields[2] == "1";
+        const bool is_top_up = fields[3] == "1";
+        const bool cdas_enabled = fields[4] == "1";
+        const int bucket_index = portfolio_bucket_index(fields[5]);
+
+        if (balance_cents < 0) {
+            throw std::invalid_argument("negative portfolio balance");
+        }
+        if (!active) {
+            continue;
+        }
+
+        summary.active_loans = checked_add_i64(
+            summary.active_loans, 1, "active loan count exceeds int64"
+        );
+        summary.active_exposure_cents = checked_add_i64(
+            summary.active_exposure_cents,
+            balance_cents,
+            "active exposure exceeds int64"
+        );
+        for (std::size_t i = 0; i < thresholds.size(); ++i) {
+            if (days_past_due >= thresholds[i]) {
+                summary.par_cents[i] = checked_add_i64(
+                    summary.par_cents[i],
+                    balance_cents,
+                    "portfolio PAR amount exceeds int64"
+                );
+            }
+        }
+        if (is_top_up) {
+            summary.top_up_exposure_cents = checked_add_i64(
+                summary.top_up_exposure_cents,
+                balance_cents,
+                "top-up exposure exceeds int64"
+            );
+        }
+        if (cdas_enabled) {
+            summary.cdas_exposure_cents = checked_add_i64(
+                summary.cdas_exposure_cents,
+                balance_cents,
+                "CDAS exposure exceeds int64"
+            );
+        }
+        if (bucket_index >= 0) {
+            const auto index = static_cast<std::size_t>(bucket_index);
+            summary.bucket_counts[index] = checked_add_i64(
+                summary.bucket_counts[index],
+                1,
+                "bucket count exceeds int64"
+            );
+            summary.bucket_exposure_cents[index] = checked_add_i64(
+                summary.bucket_exposure_cents[index],
+                balance_cents,
+                "bucket exposure exceeds int64"
+            );
+        }
+    }
+
+    std::cout
+        << summary.active_exposure_cents << "|"
+        << summary.active_loans;
+    for (const auto value : summary.par_cents) {
+        std::cout << "|" << value;
+    }
+    std::cout
+        << "|" << summary.top_up_exposure_cents
+        << "|" << summary.cdas_exposure_cents;
+    for (std::size_t i = 0; i < summary.bucket_counts.size(); ++i) {
+        std::cout
+            << "|" << summary.bucket_counts[i]
+            << "|" << summary.bucket_exposure_cents[i];
+    }
+    std::cout << "\n";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "portfolio-risk-core") {
+            portfolio_risk_core();
+            return 0;
+        }
+
         if (argc == 5 && std::string(argv[1]) == "simple-interest") {
             const std::int64_t principal_cents = parse_i64(argv[2]);
             const std::int64_t rate_milli_percent = parse_i64(argv[3]);
@@ -744,7 +885,8 @@ int main(int argc, char** argv) {
         }
 
         std::cerr
-            << "usage: loanhub_native simple-interest <principal_cents> <rate_milli_percent> <months>\n"
+            << "usage: loanhub_native portfolio-risk-core < stdin_rows\n"
+            << "   or: loanhub_native simple-interest <principal_cents> <rate_milli_percent> <months>\n"
             << "   or: loanhub_native simple-flat-preview <principal_cents> <rate_milli_percent> <months> <fee_cents>\n"
             << "   or: loanhub_native micro-loan-preview <principal_cents> <rate_milli_percent> <months> <fee_cents>\n"
             << "   or: loanhub_native reducing-balance-preview <principal_cents> <rate_milli_percent> <months> <fee_cents>\n"
