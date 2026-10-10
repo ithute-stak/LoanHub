@@ -51,6 +51,109 @@ fn decimal(value: &str) -> Result<Decimal, String> {
     value.parse::<Decimal>().map_err(|_| format!("invalid decimal: {value}"))
 }
 
+#[derive(Debug)]
+struct CppLoanPreview {
+    monthly_installment: Decimal,
+    total_interest: Decimal,
+    total_repayable: Decimal,
+    schedule_amounts: Vec<Decimal>,
+}
+
+fn cents_decimal(value: i64) -> Decimal {
+    money(Decimal::from(value) / Decimal::from(100_i64))
+}
+
+fn cpp_fixed_preview(
+    command: &str,
+    principal: Decimal,
+    rate_percent: Decimal,
+    months: usize,
+    fee: Decimal,
+) -> Option<CppLoanPreview> {
+    if months == 0 || months > 120 {
+        return None;
+    }
+    let scaled_rate = rate_percent * Decimal::from(1000_i64);
+    if !scaled_rate.fract().is_zero() {
+        return None;
+    }
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
+    let fee_cents = (money(fee) * Decimal::from(100_i64)).to_i64()?;
+    let rate_milli_percent = scaled_rate.to_i64()?;
+    let output = Command::new(path)
+        .arg(command)
+        .arg(principal_cents.to_string())
+        .arg(rate_milli_percent.to_string())
+        .arg(months.to_string())
+        .arg(fee_cents.to_string())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let fields: Vec<&str> = stdout.trim().split('|').collect();
+    if fields.len() != 4 {
+        return None;
+    }
+    let monthly_cents = fields[0].parse::<i64>().ok()?;
+    let interest_cents = fields[1].parse::<i64>().ok()?;
+    let total_cents = fields[2].parse::<i64>().ok()?;
+    let schedule_cents: Vec<i64> = if fields[3].is_empty() {
+        Vec::new()
+    } else {
+        fields[3]
+            .split(',')
+            .map(|value| value.parse::<i64>())
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?
+    };
+    if schedule_cents.len() != months {
+        return None;
+    }
+
+    Some(CppLoanPreview {
+        monthly_installment: cents_decimal(monthly_cents),
+        total_interest: cents_decimal(interest_cents),
+        total_repayable: cents_decimal(total_cents),
+        schedule_amounts: schedule_cents.into_iter().map(cents_decimal).collect(),
+    })
+}
+
+fn preview_matches(
+    candidate: &CppLoanPreview,
+    monthly_installment: Decimal,
+    total_interest: Decimal,
+    total_repayable: Decimal,
+    schedule_amounts: &[Decimal],
+) -> bool {
+    candidate.monthly_installment == monthly_installment
+        && candidate.total_interest == total_interest
+        && candidate.total_repayable == total_repayable
+        && candidate.schedule_amounts == schedule_amounts
+}
+
+fn response_from_values(
+    req: &LoanPreviewRequest,
+    monthly_installment: Decimal,
+    total_interest: Decimal,
+    total_repayable: Decimal,
+    schedule_amounts: Vec<Decimal>,
+    native_cpp_used: bool,
+) -> LoanPreviewResponse {
+    LoanPreviewResponse {
+        method: req.method.clone(),
+        monthly_installment: monthly_installment.to_string(),
+        total_interest: total_interest.to_string(),
+        total_repayable: total_repayable.to_string(),
+        schedule_amounts: schedule_amounts.into_iter().map(|value| value.to_string()).collect(),
+        authoritative: false,
+        native_cpp_used,
+    }
+}
+
 fn micro_loan(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     let principal = money(decimal(&req.principal)?);
     let rate = decimal(&req.rate_percent)?;
@@ -75,42 +178,35 @@ fn micro_loan(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     let total = money(components.iter().copied().sum::<Decimal>() + fee);
     let schedule = split_amount(total, req.term_months);
     let total_interest = money(total - principal - fee);
-    Ok(LoanPreviewResponse {
-        method: req.method.clone(),
-        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
-        total_interest: total_interest.to_string(),
-        total_repayable: total.to_string(),
-        schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
-        authoritative: false,
-        native_cpp_used: false,
-    })
-}
+    let monthly = schedule.first().copied().unwrap_or(Decimal::ZERO);
 
-fn cpp_simple_interest_cents(
-    principal: Decimal,
-    rate_percent: Decimal,
-    months: usize,
-) -> Option<i64> {
-    if rate_percent.scale() > 3 {
-        return None;
+    if let Some(cpp) = cpp_fixed_preview(
+        "micro-loan-preview",
+        principal,
+        rate,
+        req.term_months,
+        fee,
+    ) {
+        if preview_matches(&cpp, monthly, total_interest, total, &schedule) {
+            return Ok(response_from_values(
+                req,
+                cpp.monthly_installment,
+                cpp.total_interest,
+                cpp.total_repayable,
+                cpp.schedule_amounts,
+                true,
+            ));
+        }
     }
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
-    let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
-    let rate_milli_percent = (
-        rate_percent.round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero)
-            * Decimal::from(1000_i64)
-    ).to_i64()?;
-    let output = Command::new(path)
-        .arg("simple-interest")
-        .arg(principal_cents.to_string())
-        .arg(rate_milli_percent.to_string())
-        .arg(months.to_string())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout).ok()?.trim().parse::<i64>().ok()
+
+    Ok(response_from_values(
+        req,
+        monthly,
+        total_interest,
+        total,
+        schedule,
+        false,
+    ))
 }
 
 fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
@@ -118,22 +214,9 @@ fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Strin
     let rate_percent = decimal(&req.rate_percent)?;
     let fee = money(decimal(&req.processing_fee)?);
     let annual_rate = rate_percent / Decimal::from(100_i64);
-    let rust_total_interest = money(
+    let total_interest = money(
         principal * annual_rate * Decimal::from(req.term_months as i64) / Decimal::from(12_i64),
     );
-    let rust_interest_cents = (rust_total_interest * Decimal::from(100_i64)).to_i64();
-    let cpp_interest_cents = cpp_simple_interest_cents(principal, rate_percent, req.term_months);
-    let native_cpp_used = cpp_interest_cents.is_some()
-        && rust_interest_cents.is_some()
-        && cpp_interest_cents == rust_interest_cents;
-    let total_interest = if native_cpp_used {
-        money(
-            Decimal::from(cpp_interest_cents.unwrap_or_default())
-                / Decimal::from(100_i64)
-        )
-    } else {
-        rust_total_interest
-    };
     let total = money(principal + total_interest + fee);
     let principal_parts = split_amount(principal, req.term_months);
     let interest_parts = split_amount(total_interest, req.term_months);
@@ -141,15 +224,35 @@ fn simple_or_flat(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Strin
     let schedule: Vec<Decimal> = (0..req.term_months)
         .map(|i| money(principal_parts[i] + interest_parts[i] + fee_parts[i]))
         .collect();
-    Ok(LoanPreviewResponse {
-        method: req.method.clone(),
-        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
-        total_interest: total_interest.to_string(),
-        total_repayable: total.to_string(),
-        schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
-        authoritative: false,
-        native_cpp_used,
-    })
+    let monthly = schedule.first().copied().unwrap_or(Decimal::ZERO);
+
+    if let Some(cpp) = cpp_fixed_preview(
+        "simple-flat-preview",
+        principal,
+        rate_percent,
+        req.term_months,
+        fee,
+    ) {
+        if preview_matches(&cpp, monthly, total_interest, total, &schedule) {
+            return Ok(response_from_values(
+                req,
+                cpp.monthly_installment,
+                cpp.total_interest,
+                cpp.total_repayable,
+                cpp.schedule_amounts,
+                true,
+            ));
+        }
+    }
+
+    Ok(response_from_values(
+        req,
+        monthly,
+        total_interest,
+        total,
+        schedule,
+        false,
+    ))
 }
 
 fn reducing_balance(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {

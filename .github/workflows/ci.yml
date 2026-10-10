@@ -115,6 +115,8 @@ jobs:
           cmake -S services/native-cpp -B /tmp/loanhub-native-build
           cmake --build /tmp/loanhub-native-build --config Release
           test "$(/tmp/loanhub-native-build/loanhub_native simple-interest 100000 36000 3)" = "9000"
+          test "$(/tmp/loanhub-native-build/loanhub_native simple-flat-preview 100000 36000 3 0)" = "36333|9000|109000|36333,36333,36334"
+          test "$(/tmp/loanhub-native-build/loanhub_native micro-loan-preview 100000 20000 3 0)" = "46400|39200|139200|46400,46400,46400"
 
       - name: Run project validation
         run: |
