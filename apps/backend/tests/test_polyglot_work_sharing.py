@@ -273,6 +273,8 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "daily_segment_interest_cents" in native
     assert "portfolio-risk-core" in native
     assert "portfolio_risk_core" in native
+    assert "portfolio-risk-groups" in native
+    assert "portfolio_risk_groups" in native
     assert "round_ratio_half_up" in native
     assert "round_big_ratio_half_up" in native
     assert "split_cents" in native
@@ -286,6 +288,10 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "cpp_daily_preview(" in rust
     assert "cpp_portfolio_risk_core(" in rust
     assert "cpp_portfolio_core_matches(" in rust
+    assert "cpp_portfolio_risk_groups(" in rust
+    assert "concentration_from_cpp(" in rust
+    assert "vintages_from_cpp(" in rust
+    assert "top_up_from_cpp(" in rust
     assert "native_cpp_used" in rust
     assert "COPY --from=cpp-build" in dockerfile
     assert "loanhub-native" in dockerfile
@@ -566,6 +572,22 @@ def test_cpp_portfolio_risk_core_is_parity_gated_behind_rust() -> None:
     assert "cpp_portfolio_risk_core(&req.rows)" in rust
     assert "cpp_portfolio_core_matches(" in rust
     assert "native_cpp_used" in rust
+
+
+def test_cpp_portfolio_grouping_is_full_parity_gated() -> None:
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert '"portfolio-risk-groups"' in native
+    assert "struct ConcentrationAggregate" in native
+    assert "struct VintageAggregate" in native
+    assert "struct TopUpAggregate" in native
+    assert "cpp_portfolio_risk_groups(&req.rows)" in rust
+    assert "branch == rust_branch" in rust
+    assert "product == rust_product" in rust
+    assert "employer == rust_employer" in rust
+    assert "vintages == rust_vintages" in rust
+    assert "topups == rust_topups" in rust
 
 
 def test_rust_portfolio_risk_batch_kernel_is_shadow_routed() -> None:

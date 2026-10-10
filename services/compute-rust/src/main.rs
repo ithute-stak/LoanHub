@@ -651,7 +651,7 @@ struct PortfolioRiskRequest {
     rows: Vec<PortfolioRiskRow>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct RiskGroupSummary {
     label: String,
     loan_count: usize,
@@ -661,7 +661,7 @@ struct RiskGroupSummary {
     fpd_rate: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct RiskConcentrationSummary {
     hhi: String,
     top_share_percent: String,
@@ -669,14 +669,14 @@ struct RiskConcentrationSummary {
     groups: Vec<RiskGroupSummary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct DelinquencyBucketSummary {
     bucket: String,
     loan_count: usize,
     exposure: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct VintageSummary {
     vintage: String,
     loan_count: usize,
@@ -688,7 +688,7 @@ struct VintageSummary {
     top_up_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct TopUpPerformanceSummary {
     label: String,
     loan_count: usize,
@@ -833,6 +833,302 @@ fn cpp_portfolio_core_matches(
         }
     }
     true
+}
+
+
+#[derive(Debug)]
+struct CppConcentrationAggregate {
+    label_id: i64,
+    loan_count: usize,
+    exposure: Decimal,
+    par30: Decimal,
+    fpd_eligible: i64,
+    fpd_count: i64,
+}
+
+#[derive(Debug)]
+struct CppVintageAggregate {
+    month: String,
+    loan_count: usize,
+    originated: Decimal,
+    outstanding: Decimal,
+    par30: Decimal,
+    fpd_eligible: i64,
+    fpd_count: i64,
+    write_off_count: usize,
+    top_up_count: usize,
+}
+
+#[derive(Debug)]
+struct CppTopUpAggregate {
+    is_top_up: bool,
+    loan_count: usize,
+    active_exposure: Decimal,
+    par30: Decimal,
+    fpd_eligible: i64,
+    fpd_count: i64,
+    write_off_count: usize,
+}
+
+#[derive(Debug)]
+struct CppPortfolioGroups {
+    branches: Vec<CppConcentrationAggregate>,
+    products: Vec<CppConcentrationAggregate>,
+    employers: Vec<CppConcentrationAggregate>,
+    vintages: Vec<CppVintageAggregate>,
+    topups: Vec<CppTopUpAggregate>,
+    branch_labels: std::collections::BTreeMap<i64, String>,
+    product_labels: std::collections::BTreeMap<i64, String>,
+    employer_labels: std::collections::BTreeMap<i64, String>,
+}
+
+fn portfolio_label_ids(
+    rows: &[PortfolioRiskRow],
+    selector: fn(&PortfolioRiskRow) -> Option<&String>,
+) -> (
+    std::collections::BTreeMap<String, i64>,
+    std::collections::BTreeMap<i64, String>,
+) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let labels: BTreeSet<String> = rows
+        .iter()
+        .map(|row| selector(row).cloned().unwrap_or_else(|| "Unknown".to_string()))
+        .collect();
+    let mut forward = BTreeMap::new();
+    let mut reverse = BTreeMap::new();
+    for (index, label) in labels.into_iter().enumerate() {
+        let id = index as i64;
+        forward.insert(label.clone(), id);
+        reverse.insert(id, label);
+    }
+    (forward, reverse)
+}
+
+fn cpp_portfolio_risk_groups(rows: &[PortfolioRiskRow]) -> Option<CppPortfolioGroups> {
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let (branch_ids, branch_labels) =
+        portfolio_label_ids(rows, |row| row.branch_label.as_ref());
+    let (product_ids, product_labels) =
+        portfolio_label_ids(rows, |row| row.product_label.as_ref());
+    let (employer_ids, employer_labels) =
+        portfolio_label_ids(rows, |row| row.employer_label.as_ref());
+
+    let mut input = String::new();
+    for row in rows {
+        let balance_cents =
+            (money(decimal(&row.outstanding_balance).ok()?) * Decimal::from(100_i64)).to_i64()?;
+        let principal_cents =
+            (money(decimal(&row.principal_amount).ok()?) * Decimal::from(100_i64)).to_i64()?;
+        if balance_cents < 0 || principal_cents < 0 {
+            return None;
+        }
+        let branch_label = row.branch_label.as_deref().unwrap_or("Unknown");
+        let product_label = row.product_label.as_deref().unwrap_or("Unknown");
+        let employer_label = row.employer_label.as_deref().unwrap_or("Unknown");
+        let branch_id = *branch_ids.get(branch_label)?;
+        let product_id = *product_ids.get(product_label)?;
+        let employer_id = *employer_ids.get(employer_label)?;
+        let vintage = row.origination_month.as_deref().unwrap_or("");
+        if vintage.contains('|') || vintage.contains('\n') || vintage.contains('\r') {
+            return None;
+        }
+        input.push_str(&format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+            balance_cents,
+            principal_cents,
+            row.days_past_due,
+            if row.active { 1 } else { 0 },
+            if row.is_written_off { 1 } else { 0 },
+            if row.is_top_up { 1 } else { 0 },
+            if row.first_payment_due { 1 } else { 0 },
+            if row.first_payment_default { 1 } else { 0 },
+            branch_id,
+            product_id,
+            employer_id,
+            if row.origination_month.is_some() { 1 } else { 0 },
+            vintage,
+        ));
+    }
+
+    let mut child = Command::new(path)
+        .arg("portfolio-risk-groups")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let mut branches = Vec::new();
+    let mut products = Vec::new();
+    let mut employers = Vec::new();
+    let mut vintages = Vec::new();
+    let mut topups = Vec::new();
+
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<&str> = line.split('|').collect();
+        match fields.first().copied()? {
+            "C" if fields.len() == 8 => {
+                let item = CppConcentrationAggregate {
+                    label_id: fields[2].parse().ok()?,
+                    loan_count: fields[3].parse().ok()?,
+                    exposure: cents_decimal(fields[4].parse().ok()?),
+                    par30: cents_decimal(fields[5].parse().ok()?),
+                    fpd_eligible: fields[6].parse().ok()?,
+                    fpd_count: fields[7].parse().ok()?,
+                };
+                match fields[1] {
+                    "B" => branches.push(item),
+                    "P" => products.push(item),
+                    "E" => employers.push(item),
+                    _ => return None,
+                }
+            }
+            "V" if fields.len() == 10 => {
+                vintages.push(CppVintageAggregate {
+                    month: fields[1].to_string(),
+                    loan_count: fields[2].parse().ok()?,
+                    originated: cents_decimal(fields[3].parse().ok()?),
+                    outstanding: cents_decimal(fields[4].parse().ok()?),
+                    par30: cents_decimal(fields[5].parse().ok()?),
+                    fpd_eligible: fields[6].parse().ok()?,
+                    fpd_count: fields[7].parse().ok()?,
+                    write_off_count: fields[8].parse().ok()?,
+                    top_up_count: fields[9].parse().ok()?,
+                });
+            }
+            "T" if fields.len() == 8 => {
+                topups.push(CppTopUpAggregate {
+                    is_top_up: match fields[1] {
+                        "0" => false,
+                        "1" => true,
+                        _ => return None,
+                    },
+                    loan_count: fields[2].parse().ok()?,
+                    active_exposure: cents_decimal(fields[3].parse().ok()?),
+                    par30: cents_decimal(fields[4].parse().ok()?),
+                    fpd_eligible: fields[5].parse().ok()?,
+                    fpd_count: fields[6].parse().ok()?,
+                    write_off_count: fields[7].parse().ok()?,
+                });
+            }
+            _ => return None,
+        }
+    }
+
+    Some(CppPortfolioGroups {
+        branches,
+        products,
+        employers,
+        vintages,
+        topups,
+        branch_labels,
+        product_labels,
+        employer_labels,
+    })
+}
+
+fn concentration_from_cpp(
+    aggregates: &[CppConcentrationAggregate],
+    labels: &std::collections::BTreeMap<i64, String>,
+    total: Decimal,
+) -> Option<RiskConcentrationSummary> {
+    let mut groups: Vec<RiskGroupSummary> = aggregates
+        .iter()
+        .map(|item| {
+            let label = labels.get(&item.label_id)?.clone();
+            let exposure = money(item.exposure);
+            Some(RiskGroupSummary {
+                label,
+                loan_count: item.loan_count,
+                exposure: exposure.to_string(),
+                share_percent: percent(exposure, total).to_string(),
+                par_30: percent(item.par30, exposure).to_string(),
+                fpd_rate: percent(
+                    Decimal::from(item.fpd_count),
+                    Decimal::from(item.fpd_eligible),
+                )
+                .to_string(),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    groups.sort_by(|a, b| {
+        let left = decimal(&a.exposure).unwrap_or(Decimal::ZERO);
+        let right = decimal(&b.exposure).unwrap_or(Decimal::ZERO);
+        right.cmp(&left).then_with(|| a.label.cmp(&b.label))
+    });
+
+    let hhi = groups.iter().fold(Decimal::ZERO, |acc, group| {
+        let share = decimal(&group.share_percent).unwrap_or(Decimal::ZERO)
+            / Decimal::from(100_i64);
+        acc + share * share
+    }) * Decimal::from(10_000_i64);
+
+    Some(RiskConcentrationSummary {
+        hhi: hhi
+            .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+            .to_string(),
+        top_share_percent: groups
+            .first()
+            .map(|group| group.share_percent.clone())
+            .unwrap_or_else(|| "0".to_string()),
+        group_count: groups.len(),
+        groups,
+    })
+}
+
+fn vintages_from_cpp(aggregates: &[CppVintageAggregate]) -> Vec<VintageSummary> {
+    let mut result: Vec<VintageSummary> = aggregates
+        .iter()
+        .map(|item| VintageSummary {
+            vintage: item.month.get(..7).unwrap_or(&item.month).to_string(),
+            loan_count: item.loan_count,
+            originated_principal: money(item.originated).to_string(),
+            outstanding_balance: money(item.outstanding).to_string(),
+            par_30: percent(item.par30, item.outstanding).to_string(),
+            fpd_rate: percent(
+                Decimal::from(item.fpd_count),
+                Decimal::from(item.fpd_eligible),
+            )
+            .to_string(),
+            write_off_count: item.write_off_count,
+            top_up_count: item.top_up_count,
+        })
+        .collect();
+    result.sort_by(|left, right| right.vintage.cmp(&left.vintage));
+    result.truncate(18);
+    result
+}
+
+fn top_up_from_cpp(aggregates: &[CppTopUpAggregate]) -> Option<Vec<TopUpPerformanceSummary>> {
+    if aggregates.len() != 2 {
+        return None;
+    }
+    let mut result = Vec::with_capacity(2);
+    for (is_top_up, label) in [
+        (false, "New / non-top-up"),
+        (true, "Top-up"),
+    ] {
+        let item = aggregates.iter().find(|item| item.is_top_up == is_top_up)?;
+        result.push(TopUpPerformanceSummary {
+            label: label.to_string(),
+            loan_count: item.loan_count,
+            active_exposure: money(item.active_exposure).to_string(),
+            par_30: percent(item.par30, item.active_exposure).to_string(),
+            fpd_rate: percent(
+                Decimal::from(item.fpd_count),
+                Decimal::from(item.fpd_eligible),
+            )
+            .to_string(),
+            write_off_count: item.write_off_count,
+        });
+    }
+    Some(result)
 }
 
 fn percent(numerator: Decimal, denominator: Decimal) -> Decimal {
@@ -1115,7 +1411,6 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
             &rust_buckets,
         )
     });
-    let native_cpp_used = cpp_core.is_some();
 
     let selected_exposure = cpp_core
         .as_ref()
@@ -1152,6 +1447,56 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
         rust_buckets
     };
 
+    let rust_branch =
+        concentration(&req.rows, |row| row.branch_label.as_ref(), selected_exposure)?;
+    let rust_product =
+        concentration(&req.rows, |row| row.product_label.as_ref(), selected_exposure)?;
+    let rust_employer =
+        concentration(&req.rows, |row| row.employer_label.as_ref(), selected_exposure)?;
+    let rust_vintages = vintage_summaries(&req.rows)?;
+    let rust_topups = top_up_performance(&req.rows)?;
+
+    let cpp_groups = cpp_portfolio_risk_groups(&req.rows);
+    let cpp_group_selection = cpp_groups.as_ref().and_then(|cpp| {
+        let branch = concentration_from_cpp(
+            &cpp.branches,
+            &cpp.branch_labels,
+            selected_exposure,
+        )?;
+        let product = concentration_from_cpp(
+            &cpp.products,
+            &cpp.product_labels,
+            selected_exposure,
+        )?;
+        let employer = concentration_from_cpp(
+            &cpp.employers,
+            &cpp.employer_labels,
+            selected_exposure,
+        )?;
+        let vintages = vintages_from_cpp(&cpp.vintages);
+        let topups = top_up_from_cpp(&cpp.topups)?;
+        if branch == rust_branch
+            && product == rust_product
+            && employer == rust_employer
+            && vintages == rust_vintages
+            && topups == rust_topups
+        {
+            Some((branch, product, employer, vintages, topups))
+        } else {
+            None
+        }
+    });
+
+    let groups_cpp_used = cpp_group_selection.is_some();
+    let (selected_branch, selected_product, selected_employer, selected_vintages, selected_topups) =
+        cpp_group_selection.unwrap_or((
+            rust_branch,
+            rust_product,
+            rust_employer,
+            rust_vintages,
+            rust_topups,
+        ));
+
     Ok(PortfolioRiskResponse {
         active_exposure: selected_exposure.to_string(),
         active_loans: selected_active_loans,
@@ -1165,16 +1510,16 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
         par_60: percent(selected_par[3], selected_exposure).to_string(),
         par_90_amount: selected_par[4].to_string(),
         par_90: percent(selected_par[4], selected_exposure).to_string(),
-        branch: concentration(&req.rows, |row| row.branch_label.as_ref(), selected_exposure)?,
-        product: concentration(&req.rows, |row| row.product_label.as_ref(), selected_exposure)?,
-        employer: concentration(&req.rows, |row| row.employer_label.as_ref(), selected_exposure)?,
+        branch: selected_branch,
+        product: selected_product,
+        employer: selected_employer,
         delinquency_buckets: selected_buckets,
-        vintages: vintage_summaries(&req.rows)?,
-        top_up_performance: top_up_performance(&req.rows)?,
+        vintages: selected_vintages,
+        top_up_performance: selected_topups,
         top_up_exposure: selected_top_up_exposure.to_string(),
         cdas_exposure: selected_cdas_exposure.to_string(),
         authoritative: false,
-        native_cpp_used,
+        native_cpp_used: cpp_core.is_some() || groups_cpp_used,
     })
 }
 

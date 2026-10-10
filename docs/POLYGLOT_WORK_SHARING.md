@@ -13,10 +13,10 @@ untracked Experian/CDAS mutations.
 | Next.js / TypeScript | UI, workflow state, forms, realtime presentation |
 | Rust/WASM | non-authoritative browser previews and heavy client transforms |
 | Python | final lending authority, provider/database orchestration, accounting, tenancy and audit persistence |
-| Rust | deterministic affordability math, portfolio-risk reference/grouping logic, reconciliation kernels, and temporary HTTP adapter duties while compute-heavy arithmetic migrates to C++ |
+| Rust | deterministic affordability math, portfolio-risk reference/parity logic, reconciliation kernels, and temporary HTTP adapter duties while compute-heavy arithmetic migrates to C++ |
 | Go | bounded concurrent network/background work, webhook fan-out and replayable reconciliation hashing |
 | Java | deterministic underwriting/business-rule evaluation, enterprise event processing and institutional batch pipelines |
-| C++ | fixed-point financial calculation engine. It owns all major loan-calculation kernels plus the portfolio-risk core aggregation for active exposure, PAR thresholds, top-up/CDAS exposure and delinquency-bucket totals behind Rust transport/parity protection |
+| C++ | fixed-point financial calculation engine. It owns all major loan-calculation kernels plus portfolio-risk core totals and grouping aggregates for concentration, vintages and top-up performance behind Rust transport/parity protection |
 
 ## Rollout
 
@@ -26,10 +26,11 @@ Python fallback. Current examples include Go reconciliation hashing, Rust reconc
 classification, Java webhook-event canonicalization, C++ fixed-point
 Simple/Flat, LoanHub Micro Loan, Reducing Balance, Compound Interest and
 date-aware Daily Accrual Reducing previews and the high-volume portfolio-risk
-core aggregation invoked through the Rust transport adapter. Rust retains the
-portfolio grouping/reference path while C++ supplies core totals only after
-exact parity, and Rust/WASM browser previews remain checked against the
-authoritative Python API result. Phase 3 expands workload routing only after
+core aggregation plus concentration, vintage and top-up grouping invoked
+through the Rust transport adapter. Rust retains the independent portfolio
+reference path and accepts native group structures only after exact parity;
+Rust/WASM browser previews remain checked against the authoritative Python API
+result. Phase 3 expands workload routing only after
 parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
