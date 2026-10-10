@@ -308,7 +308,12 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "round_ratio_half_up" in native
     assert "round_big_ratio_half_up" in native
     assert "split_cents" in native
-    assert "LOANHUB_CPP_KERNEL_PATH" in rust
+    assert "LOANHUB_CPP_LIBRARY_PATH" in rust
+    assert "loanhub_native_execute" in rust
+    assert "cpp_native_library(" in rust
+    assert "cpp_execute(" in rust
+    assert "Command::new" not in rust
+    assert "Stdio::" not in rust
     assert "cpp_fixed_preview(" in rust
     assert '"simple-flat-preview"' in rust
     assert '"micro-loan-preview"' in rust
@@ -328,6 +333,26 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "native_cpp_used" in rust
     assert "COPY --from=cpp-build" in dockerfile
     assert "loanhub-native" in dockerfile
+
+
+def test_cpp_shared_library_boundary_replaces_runtime_process_spawning() -> None:
+    cmake = (REPO / "services/native-cpp/CMakeLists.txt").read_text(encoding="utf-8")
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+    dockerfile = (REPO / "services/compute-rust/Dockerfile").read_text(encoding="utf-8")
+
+    assert "add_library(loanhub_native_shared SHARED src/main.cpp)" in cmake
+    assert 'OUTPUT_NAME "loanhub_native"' in cmake
+    assert 'extern "C" int loanhub_native_execute(' in native
+    assert "#ifndef LOANHUB_NATIVE_LIBRARY" in native
+    assert "libloading::Library" not in rust
+    assert "use libloading::Library;" in rust
+    assert "OnceLock<Option<CppNativeLibrary>>" in rust
+    assert "LOANHUB_CPP_LIBRARY_PATH" in rust
+    assert "Command::new" not in rust
+    assert "std::process" not in rust
+    assert "libloanhub_native.so" in dockerfile
+    assert "LOANHUB_CPP_LIBRARY_PATH=/usr/local/lib/libloanhub_native.so" in dockerfile
 
 
 def test_rust_wasm_browser_preview_is_built_and_parity_checked() -> None:
