@@ -863,6 +863,46 @@ def financial_books(
     )
 
 
+@router.get("/financial-books/latest")
+def latest_prepared_financial_books(
+    company_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Return the newest automatically prepared company-wide Financial Books snapshot."""
+    require_read(context)
+    selected_company_id = resolve_scope(context, company_id)
+    if not selected_company_id:
+        raise HTTPException(status_code=422, detail="Select a company for financial books")
+
+    row = (
+        db.query(CompanyOperatingRecord)
+        .filter(
+            CompanyOperatingRecord.company_id == selected_company_id,
+            CompanyOperatingRecord.module == "accounting",
+            CompanyOperatingRecord.record_type == "financial_books_daily_snapshot",
+            CompanyOperatingRecord.branch_id.is_(None),
+            CompanyOperatingRecord.is_archived.is_(False),
+        )
+        .order_by(CompanyOperatingRecord.reference.desc())
+        .first()
+    )
+    if row is None:
+        return {"available": False, "books": None}
+
+    payload = dict(row.data or {})
+    return {
+        "available": True,
+        "reference": row.reference,
+        "prepared_at": payload.get("prepared_at"),
+        "timezone": payload.get("timezone") or "Africa/Maseru",
+        "schedule": payload.get("schedule") or "03:30",
+        "from_date": payload.get("from_date"),
+        "to_date": payload.get("to_date"),
+        "books": payload.get("pack"),
+    }
+
+
 @router.get("/month-end-control-pack")
 def get_month_end_control_pack(
     company_id: UUID | None = None,
