@@ -1639,7 +1639,7 @@ export default function CompanyLoansPage() {
                             />
                         </Field>
                         <p className="text-xs leading-5 text-muted-foreground">
-                            MFA must already be enabled on the owner account. The override reason and verification evidence are written to LoanHub's immutable audit chain.
+                            MFA must already be enabled on the owner account. The override reason and verification evidence are written to LoanHub&apos;s immutable audit chain.
                         </p>
                     </div> : null}</div>}<DialogFooter
                     className="mx-0 mb-0"><Button variant="outline" onClick={() => setDisburseOpen(false)}
