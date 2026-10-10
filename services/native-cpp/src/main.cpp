@@ -406,6 +406,17 @@ unsigned days_in_month(int year, unsigned month) {
     return days[month - 1];
 }
 
+void validate_date(const CivilDate& value) {
+    if (
+        value.month < 1
+        || value.month > 12
+        || value.day < 1
+        || value.day > days_in_month(value.year, value.month)
+    ) {
+        throw std::invalid_argument("invalid calendar date");
+    }
+}
+
 std::int64_t serial_day(const CivilDate& date) {
     int year = date.year;
     const unsigned month = date.month;
@@ -413,9 +424,10 @@ std::int64_t serial_day(const CivilDate& date) {
     year -= month <= 2;
     const int era = (year >= 0 ? year : year - 399) / 400;
     const unsigned yoe = static_cast<unsigned>(year - era * 400);
+    const unsigned adjusted_month =
+        month > 2 ? month - 3 : month + 9;
     const unsigned doy =
-        (153 * (month + (month > 2 ? static_cast<unsigned>(-3) : 9)) + 2) / 5
-        + day - 1;
+        (153 * adjusted_month + 2) / 5 + day - 1;
     const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(doe);
 }
@@ -454,11 +466,27 @@ struct BigRatio {
     cpp_int denominator;
 };
 
+cpp_int big_abs(cpp_int value) {
+    return value < 0 ? -value : value;
+}
+
+cpp_int big_gcd(cpp_int left, cpp_int right) {
+    left = big_abs(std::move(left));
+    right = big_abs(std::move(right));
+    while (right != 0) {
+        cpp_int remainder = left % right;
+        left = std::move(right);
+        right = std::move(remainder);
+    }
+    return left == 0 ? cpp_int(1) : left;
+}
+
 BigRatio normalize_ratio(cpp_int numerator, cpp_int denominator) {
     if (denominator <= 0) {
         throw std::invalid_argument("invalid ratio denominator");
     }
-    return BigRatio{std::move(numerator), std::move(denominator)};
+    const cpp_int divisor = big_gcd(numerator, denominator);
+    return BigRatio{numerator / divisor, denominator / divisor};
 }
 
 BigRatio add_ratio(const BigRatio& left, const BigRatio& right) {
@@ -565,7 +593,11 @@ void daily_accrual_preview(
 ) {
     validate_loan_inputs(principal_cents, rate_milli_percent, months, fee_cents);
     const CivilDate start_date = parse_date(start_raw);
+    validate_date(start_date);
     const auto due_dates = parse_due_dates(due_csv);
+    for (const auto& due_date : due_dates) {
+        validate_date(due_date);
+    }
     if (due_dates.size() != static_cast<std::size_t>(months)) {
         throw std::invalid_argument("due date count must match term");
     }
