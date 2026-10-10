@@ -4,7 +4,7 @@ from decimal import Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -23,8 +23,10 @@ from core.access_control import (
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.early_settlement import LoanEarlySettlement
-from database.models.enums import PaymentStatus, UserRole
+from database.models.enums import PaymentMethod, PaymentStatus, UserRole
+from database.models.audit_log import AuditLog
 from database.models.file_management import ManagedFile
+from database.models.governance_control import UserMFAEnrollment
 from database.models.payment import PaymentTransaction
 from database.models.professional_lending import PaymentReceipt
 from database.models.user import User
@@ -68,6 +70,8 @@ from services.loan_service import (
     record_installment_repayment,
 )
 from services.receipt_service import ensure_payment_receipt, generate_payment_receipt_pdf
+from services.mfa_service import verify_second_factor
+from core.security import verify_password
 from services.credit_committee_service import preview_loan_disbursement_integrity
 from utils.payment_dates import current_payment_date, resolve_payment_date
 
@@ -364,6 +368,8 @@ def pay_early_settlement(
         agreement_reference=payload.agreement_reference,
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
+        owner_override_verified=owner_override_verified,
+        owner_override_reason=override_reason,
     )
     db.refresh(quote)
     receipt_number, receipt_file = payment_receipt_payload(db, payment.id)
@@ -747,11 +753,29 @@ def disbursement_integrity_preview(
     loan = loan_or_404(db, loan_id)
     assert_tenant_loan(context, loan)
     report = preview_loan_disbursement_integrity(db, loan)
+    allowed_override_drift = {
+        "Credit Committee clearance is missing for this loan",
+        "Credit Committee pre-contract/pre-disbursement conditions remain open",
+    }
+    drift = set(report.get("drift") or [])
+    owner_override_available = bool(
+        context.role == UserRole.COMPANY_OWNER
+        and not report.get("passed")
+        and drift
+        and drift.issubset(allowed_override_drift)
+    )
     return {
         "loan_id": str(loan.id),
         "loan_reference": loan.loan_reference,
         "status": loan.status.value if hasattr(loan.status, "value") else str(loan.status),
         **report,
+        "owner_override_available": owner_override_available,
+        "owner_override_policy": (
+            "Company owners may override only Credit Committee clearance/condition blockers for cash payouts. "
+            "MFA re-verification, an explicit confirmation and a documented reason are required."
+            if owner_override_available
+            else None
+        ),
         "policy_note": (
             "This preview is read-only. The same integrity controls are re-run inside the locked payout transaction; "
             "a green preview does not bypass final disbursement validation."
@@ -764,12 +788,107 @@ def disbursement_integrity_preview(
 def cash_disburse_loan(
     loan_id: UUID,
     payload: CashDisbursementCreate,
+    request: Request,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = loan_or_404(db, loan_id)
     assert_tenant_loan(context, loan)
+
+    override_requested = bool(
+        payload.owner_override_confirmed
+        or payload.owner_override_reason
+        or payload.owner_reauth_password
+        or payload.owner_reauth_otp
+        or payload.owner_reauth_recovery_code
+    )
+    owner_override_verified = False
+    override_reason = (payload.owner_override_reason or "").strip() or None
+
+    if override_requested:
+        if context.role != UserRole.COMPANY_OWNER:
+            raise HTTPException(status_code=403, detail="Only the company owner may use the Credit Committee cash-out override")
+        if payload.payment_method != PaymentMethod.CASH:
+            raise HTTPException(status_code=422, detail="The company-owner Credit Committee override is available only for cash disbursement")
+        if not payload.owner_override_confirmed:
+            raise HTTPException(status_code=422, detail="Explicit owner override confirmation is required")
+        if not override_reason or len(override_reason) < 12:
+            raise HTTPException(status_code=422, detail="Enter a documented owner override reason of at least 12 characters")
+
+        preview = preview_loan_disbursement_integrity(db, loan)
+        allowed_override_drift = {
+            "Credit Committee clearance is missing for this loan",
+            "Credit Committee pre-contract/pre-disbursement conditions remain open",
+        }
+        drift = set(preview.get("drift") or [])
+        if preview.get("passed") or not drift or not drift.issubset(allowed_override_drift):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Owner override may bypass only Credit Committee clearance/condition blockers; "
+                    "all other disbursement integrity controls must pass."
+                ),
+            )
+
+        enrollment = (
+            db.query(UserMFAEnrollment)
+            .filter(
+                UserMFAEnrollment.user_id == context.user.id,
+                UserMFAEnrollment.is_enabled.is_(True),
+            )
+            .first()
+        )
+        if enrollment is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Enable MFA on the company-owner account before using the disbursement override",
+            )
+
+        auth_source = str(getattr(context.user, "_auth_source", "loanhub") or "loanhub")
+        if auth_source == "loanhub":
+            if not payload.owner_reauth_password or not verify_password(
+                payload.owner_reauth_password,
+                str(context.user.password_hash),
+            ):
+                raise HTTPException(status_code=400, detail="Owner password re-authentication failed")
+
+        if not verify_second_factor(
+            db,
+            context.user,
+            otp=payload.owner_reauth_otp,
+            recovery_code=payload.owner_reauth_recovery_code,
+        ):
+            raise HTTPException(status_code=400, detail="Owner MFA verification failed")
+
+        owner_override_verified = True
+        db.add(AuditLog(
+            user_id=context.user.id,
+            company_id=loan.company_id,
+            branch_id=loan.branch_id,
+            action="loan.disbursement_owner_committee_override",
+            table_name="client_company_loan",
+            entity_type="loan_disbursement",
+            record_id=loan.id,
+            description="Company owner used the controlled Credit Committee override for a cash disbursement.",
+            actor_role=context.role.value,
+            severity="critical",
+            status="success",
+            changed_fields=["credit_committee_clearance"],
+            event_data={
+                "loan_reference": loan.loan_reference,
+                "payment_method": payload.payment_method.value,
+                "principal_amount": str(loan.principal_amount),
+                "override_reason": override_reason,
+                "overridden_drift": sorted(drift),
+                "auth_source": auth_source,
+                "mfa_verified": True,
+            },
+            request_id=request.headers.get("x-request-id"),
+            ip_address=(request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)),
+            user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+        ))
+
     payment, cash = disburse_cash_loan(
         db,
         loan=loan,
