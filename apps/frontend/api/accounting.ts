@@ -87,6 +87,22 @@ export async function getFinancialBooks(filters: {
   })).data;
 }
 
+export async function getLatestPreparedFinancialBooks(companyId?: string): Promise<{
+  available: boolean;
+  reference?: string;
+  prepared_at?: string | null;
+  timezone?: string;
+  schedule?: string;
+  from_date?: string | null;
+  to_date?: string | null;
+  books: FinancialBooksPack | null;
+}> {
+  return (await api.get("/accounting/financial-books/latest", {
+    params: { company_id: companyId },
+  })).data;
+}
+
+
 export async function createOpeningBalanceMigration(payload: {
   entry_date: string;
   description: string;
