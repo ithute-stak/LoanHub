@@ -1411,7 +1411,6 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
             &rust_buckets,
         )
     });
-    let native_cpp_used = cpp_core.is_some();
 
     let selected_exposure = cpp_core
         .as_ref()
@@ -1448,6 +1447,56 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
         rust_buckets
     };
 
+    let rust_branch =
+        concentration(&req.rows, |row| row.branch_label.as_ref(), selected_exposure)?;
+    let rust_product =
+        concentration(&req.rows, |row| row.product_label.as_ref(), selected_exposure)?;
+    let rust_employer =
+        concentration(&req.rows, |row| row.employer_label.as_ref(), selected_exposure)?;
+    let rust_vintages = vintage_summaries(&req.rows)?;
+    let rust_topups = top_up_performance(&req.rows)?;
+
+    let cpp_groups = cpp_portfolio_risk_groups(&req.rows);
+    let cpp_group_selection = cpp_groups.as_ref().and_then(|cpp| {
+        let branch = concentration_from_cpp(
+            &cpp.branches,
+            &cpp.branch_labels,
+            selected_exposure,
+        )?;
+        let product = concentration_from_cpp(
+            &cpp.products,
+            &cpp.product_labels,
+            selected_exposure,
+        )?;
+        let employer = concentration_from_cpp(
+            &cpp.employers,
+            &cpp.employer_labels,
+            selected_exposure,
+        )?;
+        let vintages = vintages_from_cpp(&cpp.vintages);
+        let topups = top_up_from_cpp(&cpp.topups)?;
+        if branch == rust_branch
+            && product == rust_product
+            && employer == rust_employer
+            && vintages == rust_vintages
+            && topups == rust_topups
+        {
+            Some((branch, product, employer, vintages, topups))
+        } else {
+            None
+        }
+    });
+
+    let groups_cpp_used = cpp_group_selection.is_some();
+    let (selected_branch, selected_product, selected_employer, selected_vintages, selected_topups) =
+        cpp_group_selection.unwrap_or((
+            rust_branch,
+            rust_product,
+            rust_employer,
+            rust_vintages,
+            rust_topups,
+        ));
+
     Ok(PortfolioRiskResponse {
         active_exposure: selected_exposure.to_string(),
         active_loans: selected_active_loans,
@@ -1461,16 +1510,16 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
         par_60: percent(selected_par[3], selected_exposure).to_string(),
         par_90_amount: selected_par[4].to_string(),
         par_90: percent(selected_par[4], selected_exposure).to_string(),
-        branch: concentration(&req.rows, |row| row.branch_label.as_ref(), selected_exposure)?,
-        product: concentration(&req.rows, |row| row.product_label.as_ref(), selected_exposure)?,
-        employer: concentration(&req.rows, |row| row.employer_label.as_ref(), selected_exposure)?,
+        branch: selected_branch,
+        product: selected_product,
+        employer: selected_employer,
         delinquency_buckets: selected_buckets,
-        vintages: vintage_summaries(&req.rows)?,
-        top_up_performance: top_up_performance(&req.rows)?,
+        vintages: selected_vintages,
+        top_up_performance: selected_topups,
         top_up_exposure: selected_top_up_exposure.to_string(),
         cdas_exposure: selected_cdas_exposure.to_string(),
         authoritative: false,
-        native_cpp_used,
+        native_cpp_used: cpp_core.is_some() || groups_cpp_used,
     })
 }
 
