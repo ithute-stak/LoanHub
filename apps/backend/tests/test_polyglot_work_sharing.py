@@ -22,7 +22,10 @@ def test_polyglot_runtime_boundaries_are_present() -> None:
 def test_workers_are_bounded_and_health_checked() -> None:
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
     go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     wasm = (REPO / "apps/frontend/wasm/loanhub-compute/src/lib.rs").read_text(encoding="utf-8")
 
     assert "/health/ready" in rust
@@ -84,7 +87,10 @@ def test_rust_variance_classification_validates_worker_response(monkeypatch) -> 
 
 
 def test_cpp_predictive_risk_is_full_output_parity_gated() -> None:
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
 
     assert '"predictive-risk-batch"' in native
@@ -97,7 +103,10 @@ def test_cpp_predictive_risk_is_full_output_parity_gated() -> None:
 
 
 def test_cpp_reconciliation_variance_is_parity_gated_behind_rust() -> None:
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
 
     assert '"reconciliation-variance"' in native
@@ -285,7 +294,10 @@ def test_webhook_event_canonicalization_falls_back_on_java_mismatch(monkeypatch)
 
 
 def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
     dockerfile = (REPO / "services/compute-rust/Dockerfile").read_text(encoding="utf-8")
 
@@ -339,7 +351,10 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
 
 def test_cpp_shared_library_boundary_replaces_runtime_process_spawning() -> None:
     cmake = (REPO / "services/native-cpp/CMakeLists.txt").read_text(encoding="utf-8")
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
     dockerfile = (REPO / "services/compute-rust/Dockerfile").read_text(encoding="utf-8")
 
@@ -623,7 +638,10 @@ def test_polyglot_benchmark_caps_iterations(monkeypatch) -> None:
 
 
 def test_cpp_portfolio_risk_core_is_parity_gated_behind_rust() -> None:
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
 
     assert '"portfolio-risk-core"' in native
@@ -634,7 +652,10 @@ def test_cpp_portfolio_risk_core_is_parity_gated_behind_rust() -> None:
 
 
 def test_cpp_portfolio_grouping_is_full_parity_gated() -> None:
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
 
     assert '"portfolio-risk-groups"' in native
@@ -1040,7 +1061,10 @@ def test_polyglot_underwriting_routes_rust_math_and_java_rules() -> None:
 def test_polyglot_language_roles_are_not_decorative() -> None:
     architecture = (REPO / "docs/POLYGLOT_WORK_SHARING.md").read_text(encoding="utf-8")
     go = (REPO / "services/worker-go/main.go").read_text(encoding="utf-8")
-    native = "".join(\n        (file.read_text(encoding="utf-8") for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp")))\n    )
+    native = "".join(
+        file.read_text(encoding="utf-8")
+        for file in sorted((REPO / "services/native-cpp/src").glob("*.cpp"))
+    )
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
 
     assert "deterministic affordability math" in architecture
