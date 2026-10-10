@@ -80,7 +80,7 @@ def test_cdas_operations_prepare_registration_from_approved_loanhub_loan() -> No
     assert "/cdas/loans/${loanId}/registration-draft" in page
     assert "matched_loan" in page
     assert "No loan means no deduction registration." in page
-    assert "useEffect" in page
+    assert "useEffect" not in page
     assert "professionalApi.listDirect()" not in page
     assert "Approved CDAS-enabled loan (optional)" not in page
     assert "confirmed: false" in page
