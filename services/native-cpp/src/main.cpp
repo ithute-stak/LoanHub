@@ -1313,6 +1313,10 @@ extern "C" int loanhub_native_execute(
     const std::string payload(payload_raw);
     std::istringstream input_stream(payload);
     std::ostringstream output_stream;
+    const auto prior_input_state = std::cin.rdstate();
+    const auto prior_output_state = std::cout.rdstate();
+    std::cin.clear();
+    std::cout.clear();
     auto* prior_input = std::cin.rdbuf(input_stream.rdbuf());
     auto* prior_output = std::cout.rdbuf(output_stream.rdbuf());
 
@@ -1406,6 +1410,8 @@ extern "C" int loanhub_native_execute(
 
     std::cin.rdbuf(prior_input);
     std::cout.rdbuf(prior_output);
+    std::cin.clear(prior_input_state);
+    std::cout.clear(prior_output_state);
 
     if (status != 0) {
         return status;
