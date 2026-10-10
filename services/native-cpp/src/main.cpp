@@ -1094,7 +1094,17 @@ const char* predictive_bucket_name(std::int64_t days) {
     return "90+";
 }
 
-void predictive_risk_signal(
+struct PredictiveRiskResult {
+    std::int64_t score;
+    std::string band;
+    bool projected_par30;
+    std::string stress_bucket;
+    std::uint64_t reasons;
+    bool has_change;
+    std::int64_t change;
+};
+
+PredictiveRiskResult predictive_risk_result(
     std::int64_t current_dpd,
     bool has_previous_dpd,
     std::int64_t previous_dpd,
@@ -1194,25 +1204,103 @@ void predictive_risk_signal(
             )
             : current_dpd;
 
-    const std::string stress_bucket =
-        current_dpd > 0
-            ? predictive_bucket_name(stress_days)
-            : current_bucket;
+    return PredictiveRiskResult{
+        score,
+        predictive_band_name(score),
+        projected_par30,
+        current_dpd > 0 ? predictive_bucket_name(stress_days) : current_bucket,
+        reasons,
+        has_change,
+        change,
+    };
+}
 
+void emit_predictive_risk_result(const PredictiveRiskResult& result) {
     std::cout
-        << score << "|"
-        << predictive_band_name(score) << "|"
-        << (projected_par30 ? 1 : 0) << "|"
-        << stress_bucket << "|"
-        << reasons << "|"
-        << (has_change ? 1 : 0) << "|"
-        << change << "\n";
+        << result.score << "|"
+        << result.band << "|"
+        << (result.projected_par30 ? 1 : 0) << "|"
+        << result.stress_bucket << "|"
+        << result.reasons << "|"
+        << (result.has_change ? 1 : 0) << "|"
+        << result.change << "\n";
+}
+
+void predictive_risk_signal(
+    std::int64_t current_dpd,
+    bool has_previous_dpd,
+    std::int64_t previous_dpd,
+    const std::string& current_bucket,
+    bool has_previous_bucket,
+    const std::string& previous_bucket,
+    bool first_payment_default,
+    bool is_top_up,
+    bool has_work_item,
+    const std::string& work_priority,
+    std::int64_t work_priority_score_milli
+) {
+    emit_predictive_risk_result(predictive_risk_result(
+        current_dpd,
+        has_previous_dpd,
+        previous_dpd,
+        current_bucket,
+        has_previous_bucket,
+        previous_bucket,
+        first_payment_default,
+        is_top_up,
+        has_work_item,
+        work_priority,
+        work_priority_score_milli
+    ));
+}
+
+void predictive_risk_batch() {
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        std::vector<std::string> fields;
+        std::size_t start = 0;
+        while (start <= line.size()) {
+            const std::size_t separator = line.find('|', start);
+            fields.push_back(line.substr(
+                start,
+                separator == std::string::npos ? std::string::npos : separator - start
+            ));
+            if (separator == std::string::npos) {
+                break;
+            }
+            start = separator + 1;
+        }
+        if (fields.size() != 11) {
+            throw std::invalid_argument("invalid predictive risk row");
+        }
+        emit_predictive_risk_result(predictive_risk_result(
+            std::stoll(fields[0]),
+            fields[1] == "1",
+            std::stoll(fields[2]),
+            fields[3],
+            fields[4] == "1",
+            fields[5],
+            fields[6] == "1",
+            fields[7] == "1",
+            fields[8] == "1",
+            fields[9],
+            std::stoll(fields[10])
+        ));
+    }
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "predictive-risk-batch") {
+            predictive_risk_batch();
+            return 0;
+        }
+
         if (argc == 13 && std::string(argv[1]) == "predictive-risk-signal") {
             predictive_risk_signal(
                 parse_i64(argv[2]),
@@ -1315,7 +1403,8 @@ int main(int argc, char** argv) {
         }
 
         std::cerr
-            << "usage: loanhub_native predictive-risk-signal <current_dpd> <has_previous_dpd> <previous_dpd> <current_bucket> <has_previous_bucket> <previous_bucket> <first_payment_default> <is_top_up> <has_work_item> <work_priority> <work_priority_score_milli>\n"
+            << "usage: loanhub_native predictive-risk-batch < stdin_rows\n"
+            << "   or: loanhub_native predictive-risk-signal <current_dpd> <has_previous_dpd> <previous_dpd> <current_bucket> <has_previous_bucket> <previous_bucket> <first_payment_default> <is_top_up> <has_work_item> <work_priority> <work_priority_score_milli>\n"
             << "   or: loanhub_native reconciliation-variance <expected_cents> <actual_cents>\n"
             << "   or: loanhub_native portfolio-risk-core < stdin_rows\n"
             << "   or: loanhub_native portfolio-risk-groups < stdin_rows\n"
