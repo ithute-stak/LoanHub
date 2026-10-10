@@ -358,7 +358,8 @@ def test_cpp_shared_library_boundary_replaces_runtime_process_spawning() -> None
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
     dockerfile = (REPO / "services/compute-rust/Dockerfile").read_text(encoding="utf-8")
 
-    assert "add_library(loanhub_native_shared SHARED src/ffi.cpp)" in cmake\n    assert "target_link_libraries(loanhub_native_shared PRIVATE loanhub_native_core)" in cmake
+    assert "add_library(loanhub_native_shared SHARED src/ffi.cpp)" in cmake
+    assert "target_link_libraries(loanhub_native_shared PRIVATE loanhub_native_core)" in cmake
     assert 'OUTPUT_NAME "loanhub_native"' in cmake
     assert 'extern "C" int loanhub_native_execute(' in native
     assert "int main(int argc, char** argv)" in native\n    assert (REPO / "services/native-cpp/src/ffi.cpp").is_file()
