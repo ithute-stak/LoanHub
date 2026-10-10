@@ -884,8 +884,8 @@ def cash_disburse_loan(
                 "auth_source": auth_source,
                 "mfa_verified": True,
             },
-            request_id=request.headers.get("x-request-id"),
-            ip_address=(request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)),
+            request_id=(request.headers.get("x-request-id") or "")[:100] or None,
+            ip_address=((request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",", 1)[0].strip()[:100] or None),
             user_agent=(request.headers.get("user-agent") or "")[:500] or None,
         ))
 
