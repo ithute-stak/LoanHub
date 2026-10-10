@@ -122,6 +122,7 @@ jobs:
           test "$(/tmp/loanhub-native-build/loanhub_native reducing-balance-preview 100000 36000 3 0)" = "35353|6059|106059|35353,35353,35353"
           test "$(/tmp/loanhub-native-build/loanhub_native compound-interest-preview 100000 36000 3 0)" = "36333|9273|109273|36333,36423,36517"
           test "$(/tmp/loanhub-native-build/loanhub_native daily-accrual-preview 100000 36000 3 0 2024-04-24 2024-05-24,2024-06-24,2024-07-24)" = "35335|6006|106006|35335,35335,35336"
+          test "$(printf '100000|0|1|0|1|current\n50000|35|1|1|0|31-60\n25000|95|1|1|1|90+\n90000|10|0|1|1|8-30\n' | /tmp/loanhub-native-build/loanhub_native portfolio-risk-core)" = "175000|3|75000|75000|75000|25000|25000|75000|125000|1|100000|0|0|0|0|1|50000|0|0|1|25000"
 
       - name: Run project validation
         run: |
