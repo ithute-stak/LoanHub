@@ -13,10 +13,10 @@ untracked Experian/CDAS mutations.
 | Next.js / TypeScript | UI, workflow state, forms, realtime presentation |
 | Rust/WASM | non-authoritative browser previews and heavy client transforms |
 | Python | final lending authority, provider/database orchestration, accounting, tenancy and audit persistence |
-| Rust | deterministic affordability math, portfolio-risk reference/parity logic, reconciliation reference/parity logic, and temporary HTTP adapter duties while compute-heavy arithmetic migrates to C++ |
+| Rust | deterministic affordability math, portfolio-risk/predictive-risk/reconciliation reference-parity logic, and temporary HTTP adapter duties while compute-heavy arithmetic migrates to C++ |
 | Go | bounded concurrent network/background work, webhook fan-out and replayable reconciliation hashing |
 | Java | deterministic underwriting/business-rule evaluation, enterprise event processing and institutional batch pipelines |
-| C++ | fixed-point financial calculation engine. It owns all major loan-calculation kernels, portfolio-risk core/grouping aggregates, and reconciliation variance classification with exact saturating-cent semantics behind Rust transport/parity protection |
+| C++ | fixed-point financial calculation engine. It owns all major loan-calculation kernels, portfolio-risk core/grouping aggregates, reconciliation variance classification, and predictive-risk scoring/projection kernels behind Rust transport/parity protection |
 
 ## Rollout
 
@@ -30,9 +30,12 @@ core aggregation plus concentration, vintage and top-up grouping invoked
 through the Rust transport adapter. Rust retains the independent portfolio
 reference path and accepts native group structures only after exact parity.
 Reconciliation variance classification is likewise computed in C++ and accepted
-only when it matches Rust's saturating 64-bit cents reference exactly;
-Rust/WASM browser previews remain checked against the authoritative Python API
-result. Phase 3 expands workload routing only after
+only when it matches Rust's saturating 64-bit cents reference exactly.
+Predictive-risk scoring, banding, PAR30 projection and stress-bucket computation
+are batch-computed in C++; Rust reconstructs the existing rationale/action
+output and accepts the native batch only when the full result matches its
+reference exactly. Rust/WASM browser previews remain checked against the
+authoritative Python API result. Phase 3 expands workload routing only after
 parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python

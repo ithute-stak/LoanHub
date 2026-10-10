@@ -1677,7 +1677,7 @@ struct PredictiveSignalBatchRequest {
     rows: Vec<PredictiveSignalInput>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 struct PredictiveSignalOutput {
     key: String,
     risk_score: String,
@@ -1692,6 +1692,173 @@ struct PredictiveSignalOutput {
 struct PredictiveSignalBatchResponse {
     results: Vec<PredictiveSignalOutput>,
     authoritative: bool,
+    native_cpp_used: bool,
+}
+
+#[derive(Debug)]
+struct CppPredictiveSignal {
+    score: i64,
+    band: String,
+    projected_par30_entry: bool,
+    stress_bucket_30d: String,
+    reasons: u64,
+    has_change: bool,
+    change: i64,
+}
+
+fn cpp_predictive_signal_batch(
+    rows: &[PredictiveSignalInput],
+) -> Option<Vec<CppPredictiveSignal>> {
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let mut input = String::new();
+
+    for row in rows {
+        let current_bucket = row.current_bucket.as_str();
+        let previous_bucket = row.previous_bucket.as_deref().unwrap_or("");
+        let priority = row.work_priority.as_deref().unwrap_or("");
+        if [current_bucket, previous_bucket, priority]
+            .iter()
+            .any(|value| value.contains('|') || value.contains('\n') || value.contains('\r'))
+        {
+            return None;
+        }
+
+        let priority_score_milli = row
+            .work_priority_score
+            .as_deref()
+            .map(decimal)
+            .transpose()
+            .ok()?
+            .unwrap_or(Decimal::ZERO)
+            * Decimal::from(1000_i64);
+        let priority_score_milli = priority_score_milli.to_i64()?;
+
+        input.push_str(&format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+            row.current_dpd,
+            if row.previous_dpd.is_some() { 1 } else { 0 },
+            row.previous_dpd.unwrap_or(0),
+            current_bucket,
+            if row.previous_bucket.is_some() { 1 } else { 0 },
+            previous_bucket,
+            if row.first_payment_default { 1 } else { 0 },
+            if row.is_top_up { 1 } else { 0 },
+            if row.has_work_item { 1 } else { 0 },
+            priority,
+            priority_score_milli,
+        ));
+    }
+
+    let mut child = Command::new(path)
+        .arg("predictive-risk-batch")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let mut results = Vec::with_capacity(rows.len());
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<&str> = line.split('|').collect();
+        if fields.len() != 7 {
+            return None;
+        }
+        let band = match fields[1] {
+            "critical" | "high" | "elevated" | "watch" | "stable" => {
+                fields[1].to_string()
+            }
+            _ => return None,
+        };
+        results.push(CppPredictiveSignal {
+            score: fields[0].parse().ok()?,
+            band,
+            projected_par30_entry: match fields[2] {
+                "0" => false,
+                "1" => true,
+                _ => return None,
+            },
+            stress_bucket_30d: fields[3].to_string(),
+            reasons: fields[4].parse().ok()?,
+            has_change: match fields[5] {
+                "0" => false,
+                "1" => true,
+                _ => return None,
+            },
+            change: fields[6].parse().ok()?,
+        });
+    }
+    if results.len() != rows.len() {
+        return None;
+    }
+    Some(results)
+}
+
+fn predictive_output_from_cpp(
+    row: &PredictiveSignalInput,
+    cpp: &CppPredictiveSignal,
+) -> PredictiveSignalOutput {
+    let mut rationale = Vec::new();
+    let dpd = row.current_dpd;
+
+    if cpp.reasons & (1 << 0) != 0 {
+        rationale.push(format!("Current delinquency is {dpd} days past due"));
+    } else if cpp.reasons & (1 << 1) != 0 {
+        rationale.push(format!("Loan is already {dpd} days past due"));
+    } else if cpp.reasons & (1 << 2) != 0 {
+        rationale.push(format!("Loan is {dpd} days past due"));
+    }
+
+    if cpp.reasons & (1 << 3) != 0 && cpp.has_change {
+        rationale.push(format!(
+            "DPD increased by {} days since the prior stored snapshot",
+            cpp.change
+        ));
+    }
+    if cpp.reasons & (1 << 4) != 0 {
+        rationale.push(format!(
+            "Delinquency bucket worsened from {} to {}",
+            row.previous_bucket.as_deref().unwrap_or(""),
+            row.current_bucket
+        ));
+    }
+    if cpp.reasons & (1 << 5) != 0 {
+        rationale.push("First-payment-default evidence is present".to_string());
+    }
+    if cpp.reasons & (1 << 6) != 0 {
+        rationale.push(
+            "This is a top-up exposure already showing repayment stress".to_string()
+        );
+    }
+    if cpp.reasons & (1 << 7) != 0 {
+        rationale.push(format!(
+            "Collections already has a {} work item",
+            row.work_priority.as_deref().unwrap_or("")
+        ));
+    } else if cpp.reasons & (1 << 8) != 0 {
+        rationale.push("Collections already has a high-priority work item".to_string());
+    }
+
+    let action = match cpp.band.as_str() {
+        "critical" | "high" => "Review the loan and active collection evidence now, then assign or reprioritise the appropriate human recovery action.",
+        "elevated" => "Prioritise a human account review and borrower contact before the next repayment date or collection cycle.",
+        "watch" => "Monitor the next scheduled repayment and confirm that the collection route remains valid.",
+        _ => "No predictive escalation is indicated; continue normal servicing and monitoring.",
+    };
+
+    PredictiveSignalOutput {
+        key: row.key.clone(),
+        risk_score: cpp.score.to_string(),
+        risk_band: cpp.band.clone(),
+        projected_par30_entry: cpp.projected_par30_entry,
+        stress_bucket_30d: cpp.stress_bucket_30d.clone(),
+        rationale,
+        recommended_action: action.to_string(),
+    }
 }
 
 fn predictive_band(score: Decimal) -> &'static str {
@@ -1851,13 +2018,31 @@ fn predictive_signal_batch(
     if req.rows.len() > 10_000 {
         return Err("too_many_rows".to_string());
     }
-    let mut results = Vec::with_capacity(req.rows.len());
+
+    let mut rust_results = Vec::with_capacity(req.rows.len());
     for row in &req.rows {
-        results.push(predictive_signal(row)?);
+        rust_results.push(predictive_signal(row)?);
     }
+
+    let cpp_results = cpp_predictive_signal_batch(&req.rows).and_then(|items| {
+        let reconstructed: Vec<PredictiveSignalOutput> = req
+            .rows
+            .iter()
+            .zip(items.iter())
+            .map(|(row, cpp)| predictive_output_from_cpp(row, cpp))
+            .collect();
+        if reconstructed == rust_results {
+            Some(reconstructed)
+        } else {
+            None
+        }
+    });
+    let native_cpp_used = cpp_results.is_some();
+
     Ok(PredictiveSignalBatchResponse {
-        results,
+        results: cpp_results.unwrap_or(rust_results),
         authoritative: false,
+        native_cpp_used,
     })
 }
 
