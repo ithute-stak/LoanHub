@@ -13,10 +13,10 @@ untracked Experian/CDAS mutations.
 | Next.js / TypeScript | UI, workflow state, forms, realtime presentation |
 | Rust/WASM | non-authoritative browser previews and heavy client transforms |
 | Python | final lending authority, provider/database orchestration, accounting, tenancy and audit persistence |
-| Rust | deterministic affordability math, portfolio-risk/predictive-risk/reconciliation reference-parity logic, and temporary HTTP adapter duties while compute-heavy arithmetic migrates to C++ |
+| Rust | deterministic affordability math plus portfolio-risk, predictive-risk and reconciliation reference/parity logic; it is the HTTP adapter around the in-process native compute library |
 | Go | bounded concurrent network/background work, webhook fan-out and replayable reconciliation hashing |
 | Java | deterministic underwriting/business-rule evaluation, enterprise event processing and institutional batch pipelines |
-| C++ | fixed-point financial calculation engine. It owns all major loan-calculation kernels, portfolio-risk core/grouping aggregates, reconciliation variance classification, and predictive-risk scoring/projection kernels behind Rust transport/parity protection |
+| C++ | fixed-point financial calculation engine exposed through a reusable C ABI shared library. It owns all major loan-calculation kernels, portfolio-risk core/grouping aggregates, reconciliation variance classification, and predictive-risk scoring/projection kernels behind Rust parity protection |
 
 ## Rollout
 
@@ -35,8 +35,23 @@ Predictive-risk scoring, banding, PAR30 projection and stress-bucket computation
 are batch-computed in C++; Rust reconstructs the existing rationale/action
 output and accepts the native batch only when the full result matches its
 reference exactly. Rust/WASM browser previews remain checked against the
-authoritative Python API result. Phase 3 expands workload routing only after
-parity tests and benchmarks pass.
+authoritative Python API result.
+
+The Rust compute worker no longer spawns a C++ executable per request. Production
+loads `libloanhub_native.so` once through `libloading` and invokes the exported
+`loanhub_native_execute` C ABI in-process. The native executable is retained only
+for diagnostics and direct CI vectors. If the shared library is unavailable,
+rejects an input, or returns an invalid result, the existing Rust reference path
+continues without native acceleration. The shared ABI serializes execution inside
+the library because the current compatibility layer redirects standard streams;
+this preserves deterministic behavior while eliminating process creation
+overhead. Python remains the outer business authority and continues its existing
+worker parity/routing checks. The Rust worker readiness response also exposes
+`native_cpp_boundary: "shared-library"` and `native_cpp_loaded` so operations
+can distinguish native acceleration from safe Rust fallback without treating
+native availability as a readiness requirement.
+
+Phase 3 expands workload routing only after parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
 safety ledgers. Workers may prepare, hash, parse or reconcile data, but may not
@@ -57,5 +72,6 @@ The quick-loan affordability path now deliberately separates calculation from au
 Shadow remains the default for both new workloads. Controlled promotion to prefer-worker should happen only after the polyglot benchmark history shows 100% parity, 100% worker availability and latency within the configured threshold.
 
 Go is intentionally not inserted into synchronous affordability arithmetic: its production value is concurrent I/O and fan-out, where it already owns bounded webhook delivery and replayable reconciliation hashing. C++ is being promoted deliberately into LoanHub's financial-computation core.
-Rust remains the transport/parity adapter during migration, while Python keeps
-lending authority, persistence, tenancy, accounting and provider orchestration.
+Rust remains the transport/parity adapter, now calling C++ through the in-process
+shared-library boundary, while Python keeps lending authority, persistence,
+tenancy, accounting and provider orchestration.

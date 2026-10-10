@@ -1,10 +1,12 @@
 use chrono::{Datelike, Duration, NaiveDate};
 use rust_decimal::prelude::*;
 use rust_decimal::RoundingStrategy;
+use libloading::Library;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::ffi::{c_char, CString};
+use std::io::Read;
+use std::sync::OnceLock;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 fn money(value: Decimal) -> Decimal {
@@ -63,6 +65,73 @@ fn cents_decimal(value: i64) -> Decimal {
     money(Decimal::from(value) / Decimal::from(100_i64))
 }
 
+type NativeExecute = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *mut c_char,
+    usize,
+) -> i32;
+
+struct CppNativeLibrary {
+    _library: Library,
+    execute: NativeExecute,
+}
+
+fn cpp_native_library() -> Option<&'static CppNativeLibrary> {
+    static NATIVE: OnceLock<Option<CppNativeLibrary>> = OnceLock::new();
+    NATIVE
+        .get_or_init(|| {
+            let path = env::var("LOANHUB_CPP_LIBRARY_PATH").ok()?;
+            unsafe {
+                let library = Library::new(path).ok()?;
+                let execute = {
+                    let symbol: libloading::Symbol<NativeExecute> =
+                        library.get(b"loanhub_native_execute\0").ok()?;
+                    *symbol
+                };
+                Some(CppNativeLibrary {
+                    _library: library,
+                    execute,
+                })
+            }
+        })
+        .as_ref()
+}
+
+fn cpp_execute(command: &str, payload: &str) -> Option<String> {
+    let native = cpp_native_library()?;
+    let command = CString::new(command).ok()?;
+    let payload = CString::new(payload).ok()?;
+    let mut capacity = payload.as_bytes().len().saturating_mul(4).max(64 * 1024);
+
+    for _ in 0..5 {
+        let mut output = vec![0_u8; capacity];
+        let written = unsafe {
+            (native.execute)(
+                command.as_ptr(),
+                payload.as_ptr(),
+                output.as_mut_ptr().cast::<c_char>(),
+                output.len(),
+            )
+        };
+        if written >= 0 {
+            let written = usize::try_from(written).ok()?;
+            if written > output.len() {
+                return None;
+            }
+            return String::from_utf8(output[..written].to_vec()).ok();
+        }
+        if written != -2 {
+            return None;
+        }
+        capacity = capacity.checked_mul(2)?;
+        if capacity > 32 * 1024 * 1024 {
+            return None;
+        }
+    }
+    None
+}
+
 fn cpp_fixed_preview(
     command: &str,
     principal: Decimal,
@@ -77,23 +146,13 @@ fn cpp_fixed_preview(
     if !scaled_rate.fract().is_zero() {
         return None;
     }
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
     let fee_cents = (money(fee) * Decimal::from(100_i64)).to_i64()?;
     let rate_milli_percent = scaled_rate.to_i64()?;
-    let output = Command::new(path)
-        .arg(command)
-        .arg(principal_cents.to_string())
-        .arg(rate_milli_percent.to_string())
-        .arg(months.to_string())
-        .arg(fee_cents.to_string())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let payload = format!(
+        "{principal_cents}|{rate_milli_percent}|{months}|{fee_cents}"
+    );
+    let stdout = cpp_execute(command, &payload)?;
     let fields: Vec<&str> = stdout.trim().split('|').collect();
     if fields.len() != 4 {
         return None;
@@ -137,25 +196,15 @@ fn cpp_daily_preview(
     if !scaled_rate.fract().is_zero() {
         return None;
     }
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
     let fee_cents = (money(fee) * Decimal::from(100_i64)).to_i64()?;
     let rate_milli_percent = scaled_rate.to_i64()?;
-    let output = Command::new(path)
-        .arg("daily-accrual-preview")
-        .arg(principal_cents.to_string())
-        .arg(rate_milli_percent.to_string())
-        .arg(months.to_string())
-        .arg(fee_cents.to_string())
-        .arg(interest_start_date)
-        .arg(due_dates.join(","))
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let payload = format!(
+        "{principal_cents}|{rate_milli_percent}|{months}|{fee_cents}|{}|{}",
+        interest_start_date,
+        due_dates.join(","),
+    );
+    let stdout = cpp_execute("daily-accrual-preview", &payload)?;
     let fields: Vec<&str> = stdout.trim().split('|').collect();
     if fields.len() != 4 {
         return None;
@@ -736,7 +785,6 @@ struct CppPortfolioCore {
 }
 
 fn cpp_portfolio_risk_core(rows: &[PortfolioRiskRow]) -> Option<CppPortfolioCore> {
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let mut input = String::new();
     for row in rows {
         let balance_cents =
@@ -755,19 +803,7 @@ fn cpp_portfolio_risk_core(rows: &[PortfolioRiskRow]) -> Option<CppPortfolioCore
         ));
     }
 
-    let mut child = Command::new(path)
-        .arg("portfolio-risk-core")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let stdout = cpp_execute("portfolio-risk-core", &input)?;
     let fields: Vec<&str> = stdout.trim().split('|').collect();
     if fields.len() != 21 {
         return None;
@@ -905,7 +941,6 @@ fn portfolio_label_ids(
 }
 
 fn cpp_portfolio_risk_groups(rows: &[PortfolioRiskRow]) -> Option<CppPortfolioGroups> {
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let (branch_ids, branch_labels) =
         portfolio_label_ids(rows, |row| row.branch_label.as_ref());
     let (product_ids, product_labels) =
@@ -950,19 +985,7 @@ fn cpp_portfolio_risk_groups(rows: &[PortfolioRiskRow]) -> Option<CppPortfolioGr
         ));
     }
 
-    let mut child = Command::new(path)
-        .arg("portfolio-risk-groups")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let stdout = cpp_execute("portfolio-risk-groups", &input)?;
     let mut branches = Vec::new();
     let mut products = Vec::new();
     let mut employers = Vec::new();
@@ -1709,7 +1732,6 @@ struct CppPredictiveSignal {
 fn cpp_predictive_signal_batch(
     rows: &[PredictiveSignalInput],
 ) -> Option<Vec<CppPredictiveSignal>> {
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
     let mut input = String::new();
 
     for row in rows {
@@ -1749,19 +1771,7 @@ fn cpp_predictive_signal_batch(
         ));
     }
 
-    let mut child = Command::new(path)
-        .arg("predictive-risk-batch")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let stdout = cpp_execute("predictive-risk-batch", &input)?;
     let mut results = Vec::with_capacity(rows.len());
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
         let fields: Vec<&str> = line.split('|').collect();
@@ -2064,17 +2074,8 @@ fn cpp_reconciliation_variance(
     expected_cents: i64,
     actual_cents: i64,
 ) -> Option<(String, i64)> {
-    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
-    let output = Command::new(path)
-        .arg("reconciliation-variance")
-        .arg(expected_cents.to_string())
-        .arg(actual_cents.to_string())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let payload = format!("{expected_cents}|{actual_cents}");
+    let stdout = cpp_execute("reconciliation-variance", &payload)?;
     let fields: Vec<&str> = stdout.trim().split('|').collect();
     if fields.len() != 2 {
         return None;
@@ -2103,7 +2104,14 @@ fn main() {
         let url = request.url().to_string();
 
         if request.method() == &Method::Get && url == "/health/ready" {
-            let _ = request.respond(json_response(200, r#"{"status":"ready","runtime":"rust"}"#.to_string()));
+            let body = serde_json::json!({
+                "status": "ready",
+                "runtime": "rust",
+                "native_cpp_boundary": "shared-library",
+                "native_cpp_loaded": cpp_native_library().is_some(),
+            })
+            .to_string();
+            let _ = request.respond(json_response(200, body));
             continue;
         }
 
