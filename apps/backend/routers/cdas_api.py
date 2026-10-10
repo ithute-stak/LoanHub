@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -107,7 +107,7 @@ class CdasSettleDeductionRequest(CdasSettlementPayload):
 
 class CdasLoanRegistrationConfirmRequest(BaseModel):
     deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
-    deduction_period: int = Field(gt=0, le=600)
+    deduction_period: int | None = Field(default=None, gt=0, le=600)
     confirmed: bool = False
     borrower_consent: bool = False
 
@@ -115,7 +115,6 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
 class CdasDirectEmployeeRegistrationRequest(BaseModel):
     employee_no: str = Field(min_length=1, max_length=100)
     deduction_amount: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
-    deduction_period: int = Field(gt=0, le=600)
     authorization_confirmed: bool = False
     confirmed: bool = False
 
@@ -634,6 +633,53 @@ def _loan_registration_context(
     return loan, profile, provider_payload, reasons, effective_month
 
 
+def _matching_cdas_loan_for_employee(
+    db: Session,
+    *,
+    company_id: UUID,
+    employee_no: str,
+) -> tuple[CDASPayrollProfile | None, ClientCompanyLoan | None]:
+    normalized = employee_no.strip()
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == company_id,
+            CDASPayrollProfile.employee_number == normalized,
+            CDASPayrollProfile.verified.is_(True),
+        )
+        .first()
+    )
+    if not profile:
+        return None, None
+
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.company_id == company_id,
+            ClientCompanyLoan.borrower_id == profile.borrower_id,
+            ClientCompanyLoan.cdas_collection_enabled.is_(True),
+            ClientCompanyLoan.status.in_([LoanStatus.APPROVED, LoanStatus.ACTIVE]),
+        )
+        .order_by(ClientCompanyLoan.approved_at.desc().nullslast(), ClientCompanyLoan.id.desc())
+        .first()
+    )
+    return profile, loan
+
+
+def _auto_deduction_period(*, principal_amount: Decimal, deduction_amount: Decimal) -> int:
+    if deduction_amount <= 0:
+        raise HTTPException(status_code=422, detail="Deduction amount must be greater than zero")
+    period = int((principal_amount / deduction_amount).to_integral_value(rounding=ROUND_CEILING))
+    if period < 1:
+        period = 1
+    if period > 600:
+        raise HTTPException(
+            status_code=409,
+            detail="The calculated deduction period exceeds the CDAS maximum of 600 months",
+        )
+    return period
+
+
 def _first_provider_int(payload: Any, *keys: str) -> int | None:
     if not isinstance(payload, dict):
         return None
@@ -1010,12 +1056,40 @@ async def register_cdas_deduction_for_loan(
     if reasons or not profile or not provider_request:
         raise HTTPException(status_code=409, detail=" ".join(reasons) or "Loan is not ready for CDAS registration")
 
-    # The operator supplies only the two business values that may vary at
-    # registration time. All provider identity and lifecycle fields remain
-    # server-derived from the approved loan and company CDAS configuration.
+    # The operator supplies only the monthly deduction. Affordability and
+    # repayment duration are enforced server-side from live CDAS + LoanHub data.
+    client = get_company_cdas_client(db, context.company_id)
+    affordability_environment = _prepare_cdas_business_operation(
+        db,
+        company_id=context.company_id,
+        operation_type="affordability",
+    )
+    try:
+        affordability = Decimal(str(await client.check_affordability(profile.employee_number)))
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=affordability_environment,
+        operation_type="affordability",
+        source_reference=profile.employee_number,
+    )
+    if payload.deduction_amount > affordability:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deduction amount cannot exceed the employee's CDAS affordability of M {affordability:.2f}",
+        )
+
+    principal_amount = Decimal(str(loan.principal_amount or 0))
+    deduction_period = _auto_deduction_period(
+        principal_amount=principal_amount,
+        deduction_amount=payload.deduction_amount,
+    )
+
     provider_request = dict(provider_request)
     provider_request["DeductionAmount"] = payload.deduction_amount
-    provider_request["TotalInstallment"] = payload.deduction_period
+    provider_request["TotalInstallment"] = deduction_period
 
     existing_mandate = (
         db.query(CDASDeductionMandate)
@@ -1036,7 +1110,7 @@ async def register_cdas_deduction_for_loan(
         monthly_deduction=payload.deduction_amount,
         start_date=loan.first_payment_due,
         end_date=None,
-        expected_installments=payload.deduction_period,
+        expected_installments=deduction_period,
         deductions_received=0,
         total_expected=loan.total_repayable or 0,
         total_received=0,
@@ -1052,7 +1126,7 @@ async def register_cdas_deduction_for_loan(
         mandate.employee_number = profile.employee_number
         mandate.monthly_deduction = payload.deduction_amount
         mandate.start_date = loan.first_payment_due
-        mandate.expected_installments = payload.deduction_period
+        mandate.expected_installments = deduction_period
         mandate.total_expected = loan.total_repayable or 0
         mandate.borrower_consent = True
 
@@ -1097,7 +1171,6 @@ async def register_cdas_deduction_for_loan(
     db.refresh(mandate)
     db.refresh(state)
 
-    client = get_company_cdas_client(db, context.company_id)
     ledger_request = CdasLifecyclePayload(
         request_type=1,
         deduction_id=0,
@@ -1878,6 +1951,80 @@ async def check_cdas_affordability(
     return {"ok": True, "affordability": affordability}
 
 
+@router.post("/employees/registration-context")
+async def get_employee_registration_context(
+    payload: CdasEmployeeLookupRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Resolve one employee to live CDAS affordability and an eligible LoanHub loan."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    employee_no = payload.employee_no.strip()
+
+    environment = _prepare_cdas_business_operation(
+        db,
+        company_id=context.company_id,
+        operation_type="employee_verification",
+    )
+    client = get_company_cdas_client(db, context.company_id)
+    try:
+        employee = await client.get_employee_details(employee_no)
+        affordability = await client.check_affordability(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+
+    returned_employee_no = str(employee.get("EmployeeNo") or "").strip()
+    if returned_employee_no.casefold() != employee_no.casefold():
+        raise HTTPException(
+            status_code=502,
+            detail="CDAS returned a different employee number than the one requested",
+        )
+
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="employee_verification",
+        source_reference=employee_no,
+    )
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="affordability",
+        source_reference=employee_no,
+    )
+
+    profile, loan = _matching_cdas_loan_for_employee(
+        db,
+        company_id=context.company_id,
+        employee_no=employee_no,
+    )
+
+    matched_loan = None
+    if loan is not None:
+        matched_loan = {
+            "loan_id": str(loan.id),
+            "loan_reference": loan.loan_reference,
+            "principal_amount": str(loan.principal_amount or 0),
+            "total_repayable": str(loan.total_repayable or 0),
+            "balance": str(loan.balance or 0),
+            "status": loan.status.value if hasattr(loan.status, "value") else str(loan.status),
+            "first_payment_due": loan.first_payment_due.isoformat() if loan.first_payment_due else None,
+        }
+
+    return {
+        "ok": True,
+        "employee": employee,
+        "affordability": affordability,
+        "payroll_profile_found": profile is not None,
+        "matched_loan": matched_loan,
+        "can_register": profile is not None and loan is not None,
+        "reason": None if loan is not None else "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee",
+    }
+
+
 @router.post("/deductions/all")
 async def view_all_cdas_deductions(
     payload: CdasEmployeeLookupRequest,
@@ -1938,11 +2085,7 @@ async def register_direct_employee_deduction(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Register a CDAS deduction directly against a verified employee number.
-
-    This path is for operator-led CDAS capture when there is no linked LoanHub
-    loan selected. LoanHub derives the provider-only fields server-side.
-    """
+    """Register a deduction only when the employee resolves to an eligible LoanHub loan."""
     _require_company_manager(context)
     _require_confirmed(payload.confirmed)
     if not payload.authorization_confirmed:
@@ -1952,76 +2095,27 @@ async def register_direct_employee_deduction(
         )
     assert context.company_id is not None
 
-    employee_no = payload.employee_no.strip()
-    verification_environment = _prepare_cdas_business_operation(
+    profile, loan = _matching_cdas_loan_for_employee(
         db,
         company_id=context.company_id,
-        operation_type="employee_verification",
+        employee_no=payload.employee_no,
     )
-    client = get_company_cdas_client(db, context.company_id)
-
-    # Verify the employee immediately before creating a payroll deduction.
-    try:
-        employee = await client.get_employee_details(employee_no)
-    except CdasError as exc:
-        raise _cdas_http_error(exc) from exc
-    returned_employee_no = str(employee.get("EmployeeNo") or "").strip()
-    if returned_employee_no.casefold() != employee_no.casefold():
+    if not profile or not loan:
         raise HTTPException(
-            status_code=502,
-            detail="CDAS returned a different employee number than the one requested",
+            status_code=409,
+            detail="No eligible approved or active CDAS-enabled LoanHub loan was found for this employee",
         )
-    _record_cdas_business_operation(
+
+    return await register_cdas_deduction_for_loan(
+        loan.id,
+        CdasLoanRegistrationConfirmRequest(
+            deduction_amount=payload.deduction_amount,
+            confirmed=payload.confirmed,
+            borrower_consent=payload.authorization_confirmed,
+        ),
+        context,
         db,
-        context=context,
-        environment=verification_environment,
-        operation_type="employee_verification",
-        source_reference=employee_no,
     )
-
-    item_code = get_company_item_code(db, context.company_id)
-    if not item_code:
-        raise HTTPException(status_code=409, detail="Configure the company's CDAS Item Code before registration")
-
-    now = datetime.now(timezone.utc)
-    first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    first_of_next_month = (first_of_this_month + timedelta(days=32)).replace(day=1)
-    effective_month = first_of_next_month.strftime("%Y-%m")
-    reference_no = f"LH-CDAS-{employee_no}-{now.strftime('%Y%m%d%H%M%S')}"
-    principal_amount = (payload.deduction_amount * payload.deduction_period).quantize(Decimal("0.01"))
-
-    lifecycle = CdasLifecyclePayload(
-        request_type=1,
-        deduction_id=0,
-        employee_no=employee_no,
-        loan_policy=1,
-        item_code=item_code,
-        deduction_amount=payload.deduction_amount,
-        total_installment=payload.deduction_period,
-        principal_amount=principal_amount,
-        effective_month=effective_month,
-        reference_no=reference_no,
-    )
-    provider_request = lifecycle.provider_payload()
-    ledger_request = lifecycle.ledger_payload()
-    result = await _execute_tracked_mutation(
-        db=db,
-        context=context,
-        client=client,
-        operation_type="deduction.lifecycle.1",
-        audit_action="cdas.deduction.direct_register",
-        provider_request=provider_request,
-        ledger_request=ledger_request,
-        provider_call=lambda: client.add_update_deduction(provider_request),
-    )
-    result["generated"] = {
-        "employee_no": employee_no,
-        "item_code": item_code,
-        "principal_amount": format(principal_amount, "f"),
-        "effective_month": effective_month,
-        "reference_no": reference_no,
-    }
-    return result
 
 
 @router.post("/deductions/lifecycle")
