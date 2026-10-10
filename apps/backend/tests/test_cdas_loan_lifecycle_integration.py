@@ -75,15 +75,16 @@ def test_cdas_workspace_can_manually_link_verification_to_application() -> None:
 def test_cdas_operations_prepare_registration_from_approved_loanhub_loan() -> None:
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert "Approved CDAS-enabled loan (optional)" in page
-    assert "Prepare selected loan" in page
-    assert "professionalApi.listDirect()" in page
-    assert "application.cdas_collection_enabled" in page
-    assert "/cdas/loans/${selectedLoanId}/registration-draft" in page
-    assert "No CDAS request has been sent." in page
+    assert "Employee and LoanHub loan" in page
+    assert "/cdas/employees/registration-context" in page
+    assert "/cdas/loans/${loanId}/registration-draft" in page
+    assert "matched_loan" in page
+    assert "No loan means no deduction registration." in page
+    assert "useEffect" in page
+    assert "professionalApi.listDirect()" not in page
+    assert "Approved CDAS-enabled loan (optional)" not in page
     assert "confirmed: false" in page
     assert 'api.post<MutationResponse>("/cdas/deductions/lifecycle", lifecycle)' in page
-
 
 def test_confirmed_loan_registration_persists_official_cdas_provider_link() -> None:
     router = _read(ROOT / "routers/cdas_api.py")
@@ -163,38 +164,38 @@ def test_cdas_collected_loan_requires_reconciled_provider_mandate_before_disburs
     assert "Complete provider registration/reconciliation" in service
 
 
-def test_cdas_registration_requires_only_amount_and_period_from_operator() -> None:
+def test_cdas_registration_requires_only_monthly_amount_from_operator() -> None:
     router = _read(ROOT / "routers/cdas_api.py")
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert "deduction_amount: Decimal = Field(gt=Decimal(\"0\")" in router
-    assert "deduction_period: int = Field(gt=0, le=600)" in router
+    assert 'deduction_amount: Decimal = Field(gt=Decimal("0")' in router
+    assert "deduction_period: int | None" in router
     assert 'provider_request["DeductionAmount"] = payload.deduction_amount' in router
-    assert 'provider_request["TotalInstallment"] = payload.deduction_period' in router
+    assert 'provider_request["TotalInstallment"] = deduction_period' in router
     assert "monthly_deduction=payload.deduction_amount" in router
-    assert "expected_installments=payload.deduction_period" in router
+    assert "expected_installments=deduction_period" in router
+    assert "_auto_deduction_period(" in router
 
     assert "<Label>Deduction Amount *</Label>" in page
-    assert "<Label>No. of Months *</Label>" in page
-    assert "Agency / Item Code" in page
-    assert 'readOnly' in page
+    assert "<Label>No. of Months</Label>" in page
+    assert "Calculated from loan amount" in page
+    assert "readOnly" in page
     assert "Approve & Register Deduction" in page
     assert "deduction_amount: lifecycle.deduction_amount" in page
-    assert "deduction_period: lifecycle.total_installment" in page
-
+    assert "deduction_period: lifecycle.total_installment" not in page
 
 def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'const isRegisterMode = requestedAction === "register" || requestedAction === "";' in page
     assert '{isRegisterMode ? "Add Deduction" : "CDAS deduction operations"}' in page
-    assert "Create a new payroll deduction using the same business flow as CDAS" in page
     assert "New Deduction Application" in page
     assert "Employee / Loan" in page
+    assert "Affordability" in page
     assert "Agency" in page
     assert "Deduction Details" in page
     assert "Deduction Amount *" in page
-    assert "No. of Months *" in page
+    assert "No. of Months" in page
     assert "Approve & Register Deduction" in page
     assert "Principal Amt." in page
     assert "Expiry Month" in page
@@ -203,52 +204,61 @@ def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
     assert '{!isRegisterMode ? <Card id="modify-active"' in page
     assert '{!isRegisterMode ? <Card id="settle"' in page
 
-
-def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form() -> None:
+def test_register_mode_keeps_only_amount_editable_and_calculates_months() -> None:
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
-    assert "directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0" in page
-    assert "(lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)" in page
-    assert 'value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}' in page
-    assert 'value={generatedExpiryMonth(lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : ""), lifecycle.total_installment)}' in page
-    assert 'value={lifecycle.reference_no || (directEmployeeNo.trim() ? "Auto-generated on registration" : "")}' in page
-    assert 'deduction_amount: Number(event.target.value)' in page
-    assert 'total_installment: Number(event.target.value)' in page
+    assert "Math.ceil(lifecycle.principal_amount / amount)" in page
+    assert "value={calculatedMonths || \"\"}" in page
+    assert "Auto-calculated as loan principal ÷ monthly deduction, rounded up." in page
+    assert 'value={lifecycle.effective_month || ""}' in page
+    assert "generatedExpiryMonth(lifecycle.effective_month, calculatedMonths)" in page
+    assert 'value={lifecycle.reference_no || ""}' in page
+    assert "max={affordability > 0 ? affordability : undefined}" in page
+    assert "amountExceedsAffordability" in page
     assert "Ready for deduction capture" in page
 
-
-def test_direct_employee_registration_uses_loaded_employee_and_server_generated_fields() -> None:
+def test_employee_registration_requires_affordability_and_matched_loanhub_loan() -> None:
     router = _read(ROOT / "routers/cdas_api.py")
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert '@router.post("/deductions/direct-register")' in router
-    assert "class CdasDirectEmployeeRegistrationRequest" in router
-    assert "authorization_confirmed" in router
-    assert "client.get_employee_details(employee_no)" in router
-    assert "get_company_item_code(db, context.company_id)" in router
-    assert "principal_amount = (payload.deduction_amount * payload.deduction_period)" in router
-    assert "first_of_next_month" in router
-    assert 'reference_no = f"LH-CDAS-' in router
-    assert 'request_type=1' in router
-    assert 'deduction_id=0' in router
-    assert 'loan_policy=1' in router
-    assert 'operation_type="deduction.lifecycle.1"' in router
+    assert '@router.post("/employees/registration-context")' in router
+    assert "_matching_cdas_loan_for_employee(" in router
+    assert "ClientCompanyLoan.borrower_id == profile.borrower_id" in router
+    assert "ClientCompanyLoan.cdas_collection_enabled.is_(True)" in router
+    assert "LoanStatus.APPROVED" in router
+    assert "LoanStatus.ACTIVE" in router
+    assert "await client.check_affordability(employee_no)" in router
+    assert '"can_register": profile is not None and loan is not None' in router
+    assert "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee" in router
 
     assert 'const requestedEmployeeNo = (searchParams.get("employee") || "").trim();' in page
     assert 'const [directEmployeeNo, setDirectEmployeeNo] = useState(requestedEmployeeNo);' in page
     assert 'id="cdas-direct-employee"' in page
     assert 'placeholder="e.g. 0019634"' in page
-    assert '"/cdas/deductions/direct-register"' in page
-    assert "employee_no: directEmployeeNo.trim()" in page
-    assert "authorization_confirmed: borrowerConsentConfirmed" in page
-    assert "Enter an employee number or prepare an approved loan" in page
+    assert '"/cdas/employees/registration-context"' in page
+    assert "Verify & Find Loan" in page
+    assert "Maximum monthly deduction" in page
+    assert "No eligible loan" in page
 
-
-def test_direct_registration_still_supports_approved_loan_mode() -> None:
+def test_employee_registration_auto_uses_matched_approved_loan() -> None:
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert "Approved CDAS-enabled loan (optional)" in page
-    assert "Prepare selected loan" in page
+    assert "const matchedLoan = employeeContext?.matched_loan ?? null;" in page
+    assert "const loanId = resolved.matched_loan.loan_id;" in page
+    assert "setSelectedLoanId(loanId)" in page
+    assert "/cdas/loans/${loanId}/registration-draft" in page
     assert "/cdas/loans/${selectedLoanId}/register" in page
-    assert "directEmployeeNo.trim()" in page
+    assert "Select a loan" not in page
+
+
+def test_cdas_registration_enforces_live_affordability_and_server_calculated_period() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+
+    assert "affordability = Decimal(str(await client.check_affordability(profile.employee_number)))" in router
+    assert "if payload.deduction_amount > affordability:" in router
+    assert "Deduction amount cannot exceed the employee's CDAS affordability" in router
+    assert "principal_amount = Decimal(str(loan.principal_amount or 0))" in router
+    assert "rounding=ROUND_CEILING" in router
+    assert 'provider_request["TotalInstallment"] = deduction_period' in router
+    assert "expected_installments=deduction_period" in router
