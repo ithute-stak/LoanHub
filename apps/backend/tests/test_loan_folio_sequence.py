@@ -1,7 +1,9 @@
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 from services.folio_book_service import _FOLIO_PATTERN, _sequence_books
-from services.loan_folio import bfs_paydate_folio_group, company_folio_code, employer_folio_code
+from services.loan_folio import bfs_paydate_folio_group, company_folio_code, employer_folio_code, loan_pay_day
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -41,6 +43,21 @@ def test_bfs_paydate_groups_match_required_boundaries():
     assert _FOLIO_PATTERN.fullmatch("BFS-Force-00001")
     assert _FOLIO_PATTERN.fullmatch("BFS-CIVIL-00001")
     assert _FOLIO_PATTERN.fullmatch("BFS-S/E-00001")
+
+
+def test_bfs_pay_day_resolves_preferred_due_date_and_schedule_fallbacks():
+    assert loan_pay_day(SimpleNamespace(preferred_payment_day=21, first_payment_due=None, calculation_breakdown={})) == 21
+    assert loan_pay_day(SimpleNamespace(preferred_payment_day=None, first_payment_due=date(2026, 11, 25), calculation_breakdown={})) == 25
+    assert loan_pay_day(SimpleNamespace(
+        preferred_payment_day=None,
+        first_payment_due=None,
+        calculation_breakdown={"schedule_rows": [{"due_date": "2026-12-30"}]},
+    )) == 30
+    assert loan_pay_day(SimpleNamespace(
+        preferred_payment_day=None,
+        first_payment_due=None,
+        calculation_breakdown={"due_dates": ["2026-12-18"]},
+    )) == 18
 
 
 def test_bfs_paydate_migration_reclassifies_existing_folios_and_keeps_one_sequence_per_group():
@@ -132,6 +149,8 @@ def test_folio_book_has_integrity_controls_search_and_csv_export():
     assert '"borrower_identity"' in service
     assert '@router.get("")' in router
     assert '@router.get("/export.csv")' in router
+    assert '@router.get("/lookup/{folio_number:path}")' in router
+    assert "func.upper(ClientCompanyLoan.folio_number)" in router
     assert "LoanHub-Folio-Book.csv" in router
 
 
