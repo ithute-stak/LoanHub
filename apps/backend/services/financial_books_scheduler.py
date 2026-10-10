@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
+from database.models.branch import CompanyBranch
 from database.models.company import LoanCompany
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.session import SessionLocal
@@ -23,8 +24,9 @@ _scheduler_task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
 
 
-def _snapshot_reference(company_id, business_date: date) -> str:
-    return f"FINBOOK-{business_date:%Y%m%d}"
+def _snapshot_reference(business_date: date, branch_id=None) -> str:
+    scope = "ALL" if branch_id is None else str(branch_id).replace("-", "")[:12].upper()
+    return f"FINBOOK-{business_date:%Y%m%d}-{scope}"
 
 
 def prepare_daily_financial_books(db, *, business_date: date | None = None) -> int:
@@ -42,60 +44,74 @@ def prepare_daily_financial_books(db, *, business_date: date | None = None) -> i
 
     prepared = 0
     for company in companies:
-        reference = _snapshot_reference(company.id, business_date)
-        existing = (
-            db.query(CompanyOperatingRecord)
+        branches = (
+            db.query(CompanyBranch)
             .filter(
+                CompanyBranch.company_id == company.id,
+                CompanyBranch.is_active.is_(True),
+            )
+            .order_by(CompanyBranch.id.asc())
+            .all()
+        )
+        scopes = [(None, "All branches")] + [(item.id, item.name) for item in branches]
+
+        for branch_id, scope_name in scopes:
+            reference = _snapshot_reference(business_date, branch_id)
+            existing_query = db.query(CompanyOperatingRecord).filter(
                 CompanyOperatingRecord.company_id == company.id,
                 CompanyOperatingRecord.module == "accounting",
                 CompanyOperatingRecord.record_type == "financial_books_daily_snapshot",
                 CompanyOperatingRecord.reference == reference,
-                CompanyOperatingRecord.branch_id.is_(None),
             )
-            .first()
-        )
-        if existing is not None:
-            continue
+            if branch_id is None:
+                existing_query = existing_query.filter(CompanyOperatingRecord.branch_id.is_(None))
+            else:
+                existing_query = existing_query.filter(CompanyOperatingRecord.branch_id == branch_id)
+            if existing_query.first() is not None:
+                continue
 
-        try:
-            pack = financial_books_pack_data(
-                db,
-                company_id=company.id,
-                from_date=from_date,
-                to_date=business_date,
-                branch_id=None,
-                include_ledger_detail=False,
-            )
-            row = CompanyOperatingRecord(
-                company_id=company.id,
-                branch_id=None,
-                module="accounting",
-                record_type="financial_books_daily_snapshot",
-                reference=reference,
-                title=f"Financial Books {business_date.isoformat()}",
-                description="Automatically prepared daily Financial Books snapshot.",
-                status="prepared",
-                priority="normal",
-                data={
-                    "prepared_at": prepared_at.isoformat(),
-                    "timezone": "Africa/Maseru",
-                    "schedule": "03:30",
-                    "from_date": from_date.isoformat(),
-                    "to_date": business_date.isoformat(),
-                    "pack": jsonable_encoder(pack),
-                },
-                tags=["financial-books", "daily-snapshot", "automatic"],
-                is_archived=False,
-            )
-            db.add(row)
-            db.commit()
-            prepared += 1
-        except Exception:
-            db.rollback()
-            logger.exception(
-                "Daily Financial Books preparation failed for company %s",
-                company.id,
-            )
+            try:
+                pack = financial_books_pack_data(
+                    db,
+                    company_id=company.id,
+                    from_date=from_date,
+                    to_date=business_date,
+                    branch_id=branch_id,
+                    include_ledger_detail=False,
+                )
+                row = CompanyOperatingRecord(
+                    company_id=company.id,
+                    branch_id=branch_id,
+                    module="accounting",
+                    record_type="financial_books_daily_snapshot",
+                    reference=reference,
+                    title=f"Financial Books {business_date.isoformat()} · {scope_name}",
+                    description="Automatically prepared daily Financial Books snapshot.",
+                    status="prepared",
+                    priority="normal",
+                    data={
+                        "prepared_at": prepared_at.isoformat(),
+                        "timezone": "Africa/Maseru",
+                        "schedule": "03:30",
+                        "from_date": from_date.isoformat(),
+                        "to_date": business_date.isoformat(),
+                        "branch_id": str(branch_id) if branch_id else None,
+                        "scope_name": scope_name,
+                        "pack": jsonable_encoder(pack),
+                    },
+                    tags=["financial-books", "daily-snapshot", "automatic"],
+                    is_archived=False,
+                )
+                db.add(row)
+                db.commit()
+                prepared += 1
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "Daily Financial Books preparation failed for company %s branch %s",
+                    company.id,
+                    branch_id or "all",
+                )
     return prepared
 
 
