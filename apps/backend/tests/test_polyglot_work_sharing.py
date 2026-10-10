@@ -940,7 +940,7 @@ def test_polyglot_language_roles_are_not_decorative() -> None:
     assert "deterministic affordability math" in architecture
     assert "deterministic underwriting/business-rule evaluation" in architecture
     assert "bounded concurrent network/background work" in architecture
-    assert "exact integer-cents numerical kernels" in architecture
+    assert "fixed-point financial calculation engine" in architecture
     assert "sync.WaitGroup" in go
     assert "/v1/webhooks/deliver-batch" in go
     assert "simple-interest" in native
