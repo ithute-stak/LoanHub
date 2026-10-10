@@ -117,6 +117,8 @@ jobs:
           test "$(/tmp/loanhub-native-build/loanhub_native simple-interest 100000 36000 3)" = "9000"
           test "$(/tmp/loanhub-native-build/loanhub_native simple-flat-preview 100000 36000 3 0)" = "36333|9000|109000|36333,36333,36334"
           test "$(/tmp/loanhub-native-build/loanhub_native micro-loan-preview 100000 20000 3 0)" = "46400|39200|139200|46400,46400,46400"
+          test "$(/tmp/loanhub-native-build/loanhub_native reducing-balance-preview 100000 36000 3 0)" = "35353|6059|106059|35353,35353,35353"
+          test "$(/tmp/loanhub-native-build/loanhub_native compound-interest-preview 100000 36000 3 0)" = "36333|9273|109273|36333,36423,36517"
 
       - name: Run project validation
         run: |
