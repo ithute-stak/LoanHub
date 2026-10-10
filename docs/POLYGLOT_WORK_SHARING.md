@@ -13,20 +13,20 @@ untracked Experian/CDAS mutations.
 | Next.js / TypeScript | UI, workflow state, forms, realtime presentation |
 | Rust/WASM | non-authoritative browser previews and heavy client transforms |
 | Python | final lending authority, provider/database orchestration, accounting, tenancy and audit persistence |
-| Rust | deterministic affordability math, loan calculations, portfolio-risk aggregation and reconciliation kernels |
+| Rust | deterministic affordability math, portfolio-risk aggregation, reconciliation kernels, and temporary HTTP adapter duties while loan arithmetic migrates to C++ |
 | Go | bounded concurrent network/background work, webhook fan-out and replayable reconciliation hashing |
 | Java | deterministic underwriting/business-rule evaluation, enterprise event processing and institutional batch pipelines |
-| C++ | benchmark-proven exact integer-cents numerical kernels invoked behind Rust with parity protection |
+| C++ | fixed-point financial calculation engine. It now owns Simple/Flat Interest and LoanHub Micro Loan arithmetic behind Rust transport/parity protection, with remaining loan methods migrating in later phases |
 
 ## Rollout
 
 Phase 1 adds compile-tested worker boundaries and health/contract surfaces.
 Phase 2 moves selected read-only or replayable work behind the workers with
-Python fallback. Current examples include Go reconciliation hashing, Rust
-reconciliation classification and parity-checked loan previews, Java
-webhook-event canonicalization, a C++ integer-cents simple-interest kernel
-invoked behind Rust, and Rust/WASM browser previews checked against the
-authoritative Python API result. Phase 3 expands workload routing only after
+Python fallback. Current examples include Go reconciliation hashing, Rust reconciliation
+classification, Java webhook-event canonicalization, C++ fixed-point
+Simple/Flat and LoanHub Micro Loan previews invoked through the Rust transport
+adapter, and Rust/WASM browser previews checked against the authoritative
+Python API result. Phase 3 expands workload routing only after
 parity tests and benchmarks pass.
 
 CDAS and Experian financial/provider writes remain under the existing Python
@@ -47,4 +47,6 @@ The quick-loan affordability path now deliberately separates calculation from au
 
 Shadow remains the default for both new workloads. Controlled promotion to prefer-worker should happen only after the polyglot benchmark history shows 100% parity, 100% worker availability and latency within the configured threshold.
 
-Go is intentionally not inserted into synchronous affordability arithmetic: its production value is concurrent I/O and fan-out, where it already owns bounded webhook delivery and replayable reconciliation hashing. C++ remains behind Rust for exact native integer-cents kernels where a native boundary is benchmark-proven; it is not called merely to increase language count.
+Go is intentionally not inserted into synchronous affordability arithmetic: its production value is concurrent I/O and fan-out, where it already owns bounded webhook delivery and replayable reconciliation hashing. C++ is being promoted deliberately into LoanHub's financial-computation core.
+Rust remains the transport/parity adapter during migration, while Python keeps
+lending authority, persistence, tenancy, accounting and provider orchestration.
