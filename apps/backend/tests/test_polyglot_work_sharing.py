@@ -271,6 +271,8 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "daily-accrual-preview" in native
     assert "daily_period_factor_ratio" in native
     assert "daily_segment_interest_cents" in native
+    assert "portfolio-risk-core" in native
+    assert "portfolio_risk_core" in native
     assert "round_ratio_half_up" in native
     assert "round_big_ratio_half_up" in native
     assert "split_cents" in native
@@ -282,6 +284,8 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert '"compound-interest-preview"' in rust
     assert '"daily-accrual-preview"' in rust
     assert "cpp_daily_preview(" in rust
+    assert "cpp_portfolio_risk_core(" in rust
+    assert "cpp_portfolio_core_matches(" in rust
     assert "native_cpp_used" in rust
     assert "COPY --from=cpp-build" in dockerfile
     assert "loanhub-native" in dockerfile
@@ -551,6 +555,17 @@ def test_polyglot_benchmark_caps_iterations(monkeypatch) -> None:
     result = benchmark.run_polyglot_benchmarks(iterations=999)
     assert result["iterations"] == 20
     assert all(item["iterations"] == 20 for item in result["results"])
+
+
+def test_cpp_portfolio_risk_core_is_parity_gated_behind_rust() -> None:
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert '"portfolio-risk-core"' in native
+    assert "struct PortfolioCoreSummary" in native
+    assert "cpp_portfolio_risk_core(&req.rows)" in rust
+    assert "cpp_portfolio_core_matches(" in rust
+    assert "native_cpp_used" in rust
 
 
 def test_rust_portfolio_risk_batch_kernel_is_shadow_routed() -> None:
