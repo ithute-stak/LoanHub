@@ -24,6 +24,7 @@ cpp_int pow_int(cpp_int, std::int64_t);
 std::vector<std::int64_t> split_cents(std::int64_t, std::int64_t);
 std::int64_t checked_i64(__int128, const char*);
 void emit_preview(std::int64_t, std::int64_t, std::int64_t, const std::vector<std::int64_t>&);
+void validate_loan_inputs(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
 void simple_flat_preview(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
 void micro_loan_preview(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
 void reducing_balance_preview(std::int64_t, std::int64_t, std::int64_t, std::int64_t);
