@@ -87,7 +87,7 @@ export async function getFinancialBooks(filters: {
   })).data;
 }
 
-export async function getLatestPreparedFinancialBooks(companyId?: string): Promise<{
+export async function getLatestPreparedFinancialBooks(companyId?: string, branchId?: string | null): Promise<{
   available: boolean;
   reference?: string;
   prepared_at?: string | null;
@@ -98,7 +98,7 @@ export async function getLatestPreparedFinancialBooks(companyId?: string): Promi
   books: FinancialBooksPack | null;
 }> {
   return (await api.get("/accounting/financial-books/latest", {
-    params: { company_id: companyId },
+    params: { company_id: companyId, branch_id: branchId || undefined },
   })).data;
 }
 
