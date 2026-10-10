@@ -13,10 +13,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
-import { professionalApi } from "@/api/professional";
 import { useTenant } from "@/provider/tenantProvider";
 import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
-import type { DirectLoanApplication } from "@/types/professional";
 import { getErrorMessage } from "@/utils/apiError";
 
 type ProviderRecord = Record<string, unknown>;
@@ -61,6 +59,29 @@ type RegistrationDraftResponse = {
     } | null;
 };
 
+type EmployeeRegistrationContext = {
+    ok: boolean;
+    employee: {
+        EmployeeNo: string;
+        Name?: string | null;
+        Surname?: string | null;
+        Department?: string | null;
+    };
+    affordability: number;
+    payroll_profile_found: boolean;
+    can_register: boolean;
+    reason: string | null;
+    matched_loan: {
+        loan_id: string;
+        loan_reference: string;
+        principal_amount: string;
+        total_repayable: string;
+        balance: string;
+        status: string;
+        first_payment_due: string | null;
+    } | null;
+};
+
 const LIFECYCLE_TYPES = [
     [1, "Registration"],
     [3, "Review"],
@@ -93,13 +114,6 @@ function generatedExpiryMonth(effectiveMonth: string, period: number): string {
     const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + period - 1, 1));
     return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
 }
-
-function nextEffectiveMonth(): string {
-    const now = new Date();
-    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
 
 function ResultCard({ title, record }: { title: string; record: ProviderRecord }) {
     return (
@@ -136,9 +150,9 @@ export default function CdasOperationsPage() {
     const [loading, setLoading] = useState<"prepare" | "lifecycle" | "modify" | "settle" | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<{ title: string; record: ProviderRecord } | null>(null);
-    const [approvedCdasApplications, setApprovedCdasApplications] = useState<DirectLoanApplication[]>([]);
     const [selectedLoanId, setSelectedLoanId] = useState(() => searchParams.get("loan") || "");
     const [directEmployeeNo, setDirectEmployeeNo] = useState(requestedEmployeeNo);
+    const [employeeContext, setEmployeeContext] = useState<EmployeeRegistrationContext | null>(null);
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
@@ -177,26 +191,63 @@ export default function CdasOperationsPage() {
         confirmed: false,
     });
 
-    async function loadApprovedCdasLoans() {
-        if (loading) return;
+    async function resolveEmployeeRegistration(employeeNo: string) {
+        const normalized = employeeNo.trim();
+        if (!canManage || loading || !normalized) return;
         setLoading("prepare");
         setError(null);
+        setEmployeeContext(null);
         setRegistrationDraft(null);
+        setLinkedState(null);
+        setSelectedLoanId("");
         try {
-            const applications = await professionalApi.listDirect();
-            const eligible = applications.filter(
-                (application) =>
-                    application.status === "approved"
-                    && application.cdas_collection_enabled
-                    && Boolean(application.loan_id),
+            const contextResponse = await api.post<EmployeeRegistrationContext>(
+                "/cdas/employees/registration-context",
+                { employee_no: normalized },
             );
-            setApprovedCdasApplications(eligible);
-            setSelectedLoanId((current) => current || eligible[0]?.loan_id || "");
-            if (eligible.length === 0) {
-                setError("No approved CDAS-enabled loans are available for registration.");
+            const resolved = contextResponse.data;
+            setEmployeeContext(resolved);
+            setLifecycle((current) => ({
+                ...current,
+                employee_no: resolved.employee.EmployeeNo || normalized,
+                deduction_amount: 0,
+                total_installment: 0,
+                principal_amount: resolved.matched_loan ? Number(resolved.matched_loan.principal_amount) : 0,
+                confirmed: false,
+            }));
+
+            if (!resolved.can_register || !resolved.matched_loan) {
+                setError(resolved.reason || "This employee does not have an eligible LoanHub loan, so no CDAS deduction can be created.");
+                return;
             }
+
+            const loanId = resolved.matched_loan.loan_id;
+            setSelectedLoanId(loanId);
+            const draftResponse = await api.get<RegistrationDraftResponse>(
+                `/cdas/loans/${loanId}/registration-draft`,
+            );
+            setRegistrationDraft(draftResponse.data);
+            if (!draftResponse.data.ready || !draftResponse.data.registration) {
+                setError(draftResponse.data.reasons.join(" ") || "The matched LoanHub loan is not ready for CDAS registration.");
+                return;
+            }
+
+            const draft = draftResponse.data.registration;
+            setLifecycle({
+                request_type: draft.request_type,
+                deduction_id: draft.deduction_id,
+                employee_no: draft.employee_no,
+                loan_policy: draft.loan_policy,
+                item_code: draft.item_code,
+                deduction_amount: 0,
+                total_installment: 0,
+                principal_amount: Number(draft.principal_amount),
+                effective_month: draft.effective_month,
+                reference_no: draft.reference_no,
+                confirmed: false,
+            });
         } catch (requestError: unknown) {
-            setError(getErrorMessage(requestError, "Approved CDAS-enabled loans could not be loaded."));
+            setError(getErrorMessage(requestError, "Employee affordability and LoanHub loan could not be resolved."));
         } finally {
             setLoading(null);
         }
@@ -247,41 +298,6 @@ export default function CdasOperationsPage() {
         }
     }
 
-    async function prepareRegistration() {
-        if (!canManage || loading || !selectedLoanId) return;
-        setLoading("prepare");
-        setError(null);
-        setRegistrationDraft(null);
-        try {
-            const response = await api.get<RegistrationDraftResponse>(
-                `/cdas/loans/${selectedLoanId}/registration-draft`,
-            );
-            setRegistrationDraft(response.data);
-            if (!response.data.ready || !response.data.registration) {
-                setError(response.data.reasons.join(" ") || "This loan is not ready for CDAS registration.");
-                return;
-            }
-            const draft = response.data.registration;
-            setLifecycle({
-                request_type: draft.request_type,
-                deduction_id: draft.deduction_id,
-                employee_no: draft.employee_no,
-                loan_policy: draft.loan_policy,
-                item_code: draft.item_code,
-                deduction_amount: Number(draft.deduction_amount),
-                total_installment: draft.total_installment,
-                principal_amount: Number(draft.principal_amount),
-                effective_month: draft.effective_month,
-                reference_no: draft.reference_no,
-                confirmed: false,
-            });
-        } catch (requestError: unknown) {
-            setError(getErrorMessage(requestError, "CDAS registration preparation failed."));
-        } finally {
-            setLoading(null);
-        }
-    }
-
     async function submitLifecycle(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!canManage || loading || !lifecycle.confirmed) return;
@@ -293,18 +309,9 @@ export default function CdasOperationsPage() {
                 lifecycle.request_type === 1 && selectedLoanId && registrationDraft?.ready
                     ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/register`, {
                         deduction_amount: lifecycle.deduction_amount,
-                        deduction_period: lifecycle.total_installment,
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
                     })
-                    : lifecycle.request_type === 1 && directEmployeeNo.trim()
-                        ? await api.post<MutationResponse>("/cdas/deductions/direct-register", {
-                            employee_no: directEmployeeNo.trim(),
-                            deduction_amount: lifecycle.deduction_amount,
-                            deduction_period: lifecycle.total_installment,
-                            authorization_confirmed: borrowerConsentConfirmed,
-                            confirmed: lifecycle.confirmed,
-                        })
                     : selectedLoanId && linkedState && [3, 4, 6, 10].includes(lifecycle.request_type)
                         ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/lifecycle`, {
                             request_type: lifecycle.request_type,
@@ -374,9 +381,15 @@ export default function CdasOperationsPage() {
         }
     }
 
-    const selectedApplication = approvedCdasApplications.find(
-        (application) => application.loan_id === selectedLoanId,
-    ) ?? null;
+    const affordability = Number(employeeContext?.affordability || 0);
+    const matchedLoan = employeeContext?.matched_loan ?? null;
+    const employeeName = [employeeContext?.employee?.Name, employeeContext?.employee?.Surname].filter(Boolean).join(" ") || "—";
+    const calculatedMonths = lifecycle.deduction_amount > 0 && lifecycle.principal_amount > 0
+        ? Math.ceil(lifecycle.principal_amount / lifecycle.deduction_amount)
+        : 0;
+    const amountExceedsAffordability = affordability > 0 && lifecycle.deduction_amount > affordability;
+
+
 
     if (!canManage) {
         return (
@@ -430,89 +443,84 @@ export default function CdasOperationsPage() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Choose employee or approved LoanHub loan</CardTitle>
+                    <CardTitle>Employee and LoanHub loan</CardTitle>
                     <CardDescription>
-                        Add a deduction directly with an employee number, or select an approved CDAS-enabled LoanHub loan to populate the employee and loan details automatically.
+                        LoanHub verifies the employee with CDAS, loads live affordability, and automatically finds the employee&apos;s eligible LoanHub loan. No loan means no deduction registration.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-5">
-                    <div className="grid gap-4 lg:grid-cols-2">
+                <CardContent className="space-y-4">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
                         <div className="space-y-2">
                             <Label htmlFor="cdas-direct-employee">Employee number</Label>
                             <Input
                                 id="cdas-direct-employee"
                                 value={directEmployeeNo}
                                 onChange={(event) => {
-                                    const value = event.target.value;
-                                    setDirectEmployeeNo(value);
-                                    if (value.trim()) {
-                                        setSelectedLoanId("");
-                                        setRegistrationDraft(null);
-                                        setLifecycle((current) => ({ ...current, employee_no: value.trim(), principal_amount: 0, effective_month: "", reference_no: "" }));
-                                    }
+                                    setDirectEmployeeNo(event.target.value);
+                                    setEmployeeContext(null);
+                                    setSelectedLoanId("");
+                                    setRegistrationDraft(null);
+                                    setLifecycle((current) => ({
+                                        ...current,
+                                        employee_no: event.target.value.trim(),
+                                        deduction_amount: 0,
+                                        total_installment: 0,
+                                        principal_amount: 0,
+                                        effective_month: "",
+                                        reference_no: "",
+                                        confirmed: false,
+                                    }));
                                 }}
+                                onBlur={() => void resolveEmployeeRegistration(directEmployeeNo)}
                                 placeholder="e.g. 0019634"
                                 disabled={Boolean(loading)}
                             />
-                            <p className="text-xs text-muted-foreground">
-                                {requestedEmployeeNo
-                                    ? "Loaded from the employee already open in the CDAS workspace."
-                                    : "Use this when you want to add a deduction directly for a CDAS employee."}
-                            </p>
                         </div>
-
-                        <div className="space-y-2">
-                            <Label htmlFor="cdas-registration-loan">Approved CDAS-enabled loan (optional)</Label>
-                            <div className="flex gap-2">
-                                <select
-                                    id="cdas-registration-loan"
-                                    value={selectedLoanId}
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={Boolean(loading) || !directEmployeeNo.trim()}
+                                onClick={() => void resolveEmployeeRegistration(directEmployeeNo)}
+                            >
+                                {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                Verify & Find Loan
+                            </Button>
+                            {!isRegisterMode && selectedLoanId ? (
+                                <Button
+                                    type="button"
+                                    variant="outline"
                                     disabled={Boolean(loading)}
-                                    onChange={(event) => {
-                                        const loanId = event.target.value;
-                                        setSelectedLoanId(loanId);
-                                        setRegistrationDraft(null);
-                                        setLinkedState(null);
-                                        if (loanId) setDirectEmployeeNo("");
-                                    }}
-                                    className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                                    onClick={() => void loadLinkedState()}
                                 >
-                                    <option value="">Select a loan</option>
-                                    {approvedCdasApplications.map((application) => (
-                                        <option key={application.id} value={application.loan_id || ""}>
-                                            {application.loan_reference || application.application_reference} · {application.borrower_name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadApprovedCdasLoans()}>
-                                    {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                    Load
+                                    Load linked state
                                 </Button>
-                            </div>
+                            ) : null}
                         </div>
                     </div>
 
-                    {selectedLoanId ? (
-                        <div className="flex flex-wrap gap-2">
-                            <Button type="button" disabled={Boolean(loading)} onClick={() => void prepareRegistration()}>
-                                Prepare selected loan
-                            </Button>
-                            <Button type="button" variant="outline" disabled={Boolean(loading)} onClick={() => void loadLinkedState()}>
-                                Load linked state
-                            </Button>
+                    {employeeContext ? (
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <div className="rounded-xl border bg-muted/20 p-4">
+                                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Employee</p>
+                                <p className="mt-1 font-black">{employeeName}</p>
+                                <p className="text-xs text-muted-foreground">{employeeContext.employee.EmployeeNo}</p>
+                            </div>
+                            <div className="rounded-xl border bg-muted/20 p-4">
+                                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">CDAS affordability</p>
+                                <p className="mt-1 text-xl font-black">M {affordability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                <p className="text-xs text-muted-foreground">Maximum monthly deduction</p>
+                            </div>
+                            <div className="rounded-xl border bg-muted/20 p-4">
+                                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Matched LoanHub loan</p>
+                                <p className="mt-1 font-black">{matchedLoan?.loan_reference || "No eligible loan"}</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {matchedLoan
+                                        ? `Principal M ${Number(matchedLoan.principal_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        : "Deduction registration is blocked"}
+                                </p>
+                            </div>
                         </div>
-                    ) : null}
-
-                    {registrationDraft ? (
-                        <Alert>
-                            <CheckCircle2 className="h-4 w-4" />
-                            <AlertTitle>{registrationDraft.ready ? "Registration prepared" : "Loan is not ready"}</AlertTitle>
-                            <AlertDescription>
-                                {registrationDraft.ready
-                                    ? `Loan ${registrationDraft.loan_reference} has been copied into the deduction form below. No CDAS request has been sent.`
-                                    : registrationDraft.reasons.join(" ")}
-                            </AlertDescription>
-                        </Alert>
                     ) : null}
                     {linkedState ? (
                         <Alert>
@@ -549,26 +557,32 @@ export default function CdasOperationsPage() {
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Borrower</dt>
-                                            <dd className="font-bold">{selectedApplication?.borrower_name || (directEmployeeNo.trim() ? "Direct CDAS employee" : "—")}</dd>
+                                            <dd className="font-bold">{employeeName}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Loan reference</dt>
-                                            <dd className="break-all font-bold">{registrationDraft?.loan_reference || selectedApplication?.loan_reference || (directEmployeeNo.trim() ? "Auto-generated on registration" : "—")}</dd>
+                                            <dd className="break-all font-bold">{matchedLoan?.loan_reference || "No eligible loan"}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
                                             <dt className="text-muted-foreground">Principal</dt>
                                             <dd className="font-bold">
                                                 {lifecycle.principal_amount > 0
                                                     ? `M ${lifecycle.principal_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                                    : directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0
-                                                        ? `M ${(lifecycle.deduction_amount * lifecycle.total_installment).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                                        : "Auto-generated"}
+                                                    : "No matched loan"}
+                                            </dd>
+                                        </div>
+                                        <div className="grid grid-cols-[120px_1fr] gap-3">
+                                            <dt className="text-muted-foreground">Affordability</dt>
+                                            <dd className="font-bold">
+                                                {employeeContext ? `M ${affordability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Verify employee"}
                                             </dd>
                                         </div>
                                         <div className="mt-5 rounded-xl border bg-card p-3">
                                             <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Registration status</p>
                                             <p className="mt-1 font-black">
-                                                {registrationDraft?.ready || directEmployeeNo.trim() ? "Ready for deduction capture" : "Enter an employee number or prepare an approved loan"}
+                                                {registrationDraft?.ready && matchedLoan
+                                                    ? "Ready for deduction capture"
+                                                    : "Blocked until an eligible LoanHub loan is found"}
                                             </p>
                                         </div>
                                     </dl>
@@ -600,41 +614,50 @@ export default function CdasOperationsPage() {
                                                     <Input
                                                         type="number"
                                                         min={0.01}
+                                                        max={affordability > 0 ? affordability : undefined}
                                                         step="0.01"
                                                         value={lifecycle.deduction_amount}
-                                                        onChange={(event) => setLifecycle((value) => ({
-                                                            ...value,
-                                                            deduction_amount: Number(event.target.value),
-                                                        }))}
-                                                        disabled={!registrationDraft?.ready && !directEmployeeNo.trim()}
+                                                        onChange={(event) => {
+                                                            const amount = Number(event.target.value);
+                                                            const months = amount > 0 && lifecycle.principal_amount > 0
+                                                                ? Math.ceil(lifecycle.principal_amount / amount)
+                                                                : 0;
+                                                            setLifecycle((value) => ({
+                                                                ...value,
+                                                                deduction_amount: amount,
+                                                                total_installment: months,
+                                                            }));
+                                                        }}
+                                                        disabled={!registrationDraft?.ready || !matchedLoan}
                                                         placeholder="Enter amount"
                                                     />
+                                                    <p className={`text-xs ${amountExceedsAffordability ? "font-bold text-destructive" : "text-muted-foreground"}`}>
+                                                        {employeeContext
+                                                            ? amountExceedsAffordability
+                                                                ? `Amount exceeds affordability of M ${affordability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+                                                                : `Maximum: M ${affordability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                            : "Verify the employee first."}
+                                                    </p>
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <Label>No. of Months *</Label>
+                                                    <Label>No. of Months</Label>
                                                     <Input
                                                         type="number"
-                                                        min={1}
-                                                        max={600}
-                                                        value={lifecycle.total_installment}
-                                                        onChange={(event) => setLifecycle((value) => ({
-                                                            ...value,
-                                                            total_installment: Number(event.target.value),
-                                                        }))}
-                                                        disabled={!registrationDraft?.ready && !directEmployeeNo.trim()}
-                                                        placeholder="Enter months"
+                                                        value={calculatedMonths || ""}
+                                                        readOnly
+                                                        className="bg-muted/30"
+                                                        placeholder="Calculated from loan amount"
                                                     />
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Auto-calculated as loan principal ÷ monthly deduction, rounded up.
+                                                    </p>
                                                 </div>
 
                                                 <div className="space-y-2">
                                                     <Label>Principal Amt.</Label>
                                                     <Input
-                                                        value={lifecycle.principal_amount > 0
-                                                            ? lifecycle.principal_amount.toFixed(2)
-                                                            : directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0
-                                                                ? (lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)
-                                                                : ""}
+                                                        value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -644,7 +667,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Effective Month</Label>
                                                     <Input
-                                                        value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}
+                                                        value={lifecycle.effective_month || ""}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -654,7 +677,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Expiry Month</Label>
                                                     <Input
-                                                        value={generatedExpiryMonth(lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : ""), lifecycle.total_installment)}
+                                                        value={generatedExpiryMonth(lifecycle.effective_month, calculatedMonths)}
                                                         readOnly
                                                         className="bg-muted/30"
                                                     />
@@ -663,7 +686,7 @@ export default function CdasOperationsPage() {
                                                 <div className="space-y-2">
                                                     <Label>Policy / Loan Ref No</Label>
                                                     <Input
-                                                        value={lifecycle.reference_no || (directEmployeeNo.trim() ? "Auto-generated on registration" : "")}
+                                                        value={lifecycle.reference_no || ""}
                                                         readOnly
                                                         className="bg-muted/30"
                                                         placeholder="Auto-generated"
@@ -672,7 +695,7 @@ export default function CdasOperationsPage() {
                                             </div>
                                         </div>
 
-                                        {registrationDraft?.ready || directEmployeeNo.trim() ? (
+                                        {registrationDraft?.ready && matchedLoan ? (
                                             <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
                                                 <input
                                                     type="checkbox"
@@ -715,9 +738,11 @@ export default function CdasOperationsPage() {
                                                 variant="destructive"
                                                 disabled={
                                                     Boolean(loading)
-                                                    || (!registrationDraft?.ready && !directEmployeeNo.trim())
+                                                    || !registrationDraft?.ready
+                                                    || !matchedLoan
                                                     || lifecycle.deduction_amount <= 0
-                                                    || lifecycle.total_installment <= 0
+                                                    || calculatedMonths <= 0
+                                                    || amountExceedsAffordability
                                                     || !borrowerConsentConfirmed
                                                     || !lifecycle.confirmed
                                                 }
