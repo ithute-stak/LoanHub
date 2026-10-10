@@ -1102,43 +1102,77 @@ fn portfolio_risk_summary(req: &PortfolioRiskRequest) -> Result<PortfolioRiskRes
             Ok::<Decimal, String>(acc)
         }
     })?);
-    let buckets = delinquency_buckets(&req.rows)?;
+    let rust_buckets = delinquency_buckets(&req.rows)?;
 
-    let native_cpp_used = cpp_portfolio_risk_core(&req.rows)
-        .map(|cpp| {
-            cpp_portfolio_core_matches(
-                &cpp,
-                exposure,
-                active.len(),
-                &par_amounts,
-                top_up_exposure,
-                cdas_exposure,
-                &buckets,
-            )
-        })
-        .unwrap_or(false);
+    let cpp_core = cpp_portfolio_risk_core(&req.rows).filter(|cpp| {
+        cpp_portfolio_core_matches(
+            cpp,
+            exposure,
+            active.len(),
+            &par_amounts,
+            top_up_exposure,
+            cdas_exposure,
+            &rust_buckets,
+        )
+    });
+    let native_cpp_used = cpp_core.is_some();
+
+    let selected_exposure = cpp_core
+        .as_ref()
+        .map(|cpp| cpp.active_exposure)
+        .unwrap_or(exposure);
+    let selected_active_loans = cpp_core
+        .as_ref()
+        .map(|cpp| cpp.active_loans)
+        .unwrap_or(active.len());
+    let selected_par = cpp_core
+        .as_ref()
+        .map(|cpp| cpp.par_amounts)
+        .unwrap_or(par_amounts);
+    let selected_top_up_exposure = cpp_core
+        .as_ref()
+        .map(|cpp| cpp.top_up_exposure)
+        .unwrap_or(top_up_exposure);
+    let selected_cdas_exposure = cpp_core
+        .as_ref()
+        .map(|cpp| cpp.cdas_exposure)
+        .unwrap_or(cdas_exposure);
+
+    let selected_buckets = if let Some(cpp) = cpp_core.as_ref() {
+        ["current", "1-7", "8-30", "31-60", "61-90", "90+"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, bucket)| DelinquencyBucketSummary {
+                bucket: bucket.to_string(),
+                loan_count: cpp.bucket_counts[index],
+                exposure: cpp.bucket_exposures[index].to_string(),
+            })
+            .collect()
+    } else {
+        rust_buckets
+    };
 
     Ok(PortfolioRiskResponse {
-        active_exposure: exposure.to_string(),
-        active_loans: active.len(),
-        par_1_amount: par1.to_string(),
-        par_1: percent(par1, exposure).to_string(),
-        par_7_amount: par7.to_string(),
-        par_7: percent(par7, exposure).to_string(),
-        par_30_amount: par30.to_string(),
-        par_30: percent(par30, exposure).to_string(),
-        par_60_amount: par60.to_string(),
-        par_60: percent(par60, exposure).to_string(),
-        par_90_amount: par90.to_string(),
-        par_90: percent(par90, exposure).to_string(),
-        branch: concentration(&req.rows, |row| row.branch_label.as_ref(), exposure)?,
-        product: concentration(&req.rows, |row| row.product_label.as_ref(), exposure)?,
-        employer: concentration(&req.rows, |row| row.employer_label.as_ref(), exposure)?,
-        delinquency_buckets: buckets,
+        active_exposure: selected_exposure.to_string(),
+        active_loans: selected_active_loans,
+        par_1_amount: selected_par[0].to_string(),
+        par_1: percent(selected_par[0], selected_exposure).to_string(),
+        par_7_amount: selected_par[1].to_string(),
+        par_7: percent(selected_par[1], selected_exposure).to_string(),
+        par_30_amount: selected_par[2].to_string(),
+        par_30: percent(selected_par[2], selected_exposure).to_string(),
+        par_60_amount: selected_par[3].to_string(),
+        par_60: percent(selected_par[3], selected_exposure).to_string(),
+        par_90_amount: selected_par[4].to_string(),
+        par_90: percent(selected_par[4], selected_exposure).to_string(),
+        branch: concentration(&req.rows, |row| row.branch_label.as_ref(), selected_exposure)?,
+        product: concentration(&req.rows, |row| row.product_label.as_ref(), selected_exposure)?,
+        employer: concentration(&req.rows, |row| row.employer_label.as_ref(), selected_exposure)?,
+        delinquency_buckets: selected_buckets,
         vintages: vintage_summaries(&req.rows)?,
         top_up_performance: top_up_performance(&req.rows)?,
-        top_up_exposure: top_up_exposure.to_string(),
-        cdas_exposure: cdas_exposure.to_string(),
+        top_up_exposure: selected_top_up_exposure.to_string(),
+        cdas_exposure: selected_cdas_exposure.to_string(),
         authoritative: false,
         native_cpp_used,
     })
