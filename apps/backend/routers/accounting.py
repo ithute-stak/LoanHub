@@ -866,6 +866,7 @@ def financial_books(
 @router.get("/financial-books/latest")
 def latest_prepared_financial_books(
     company_id: UUID | None = None,
+    branch_id: UUID | None = None,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
@@ -875,18 +876,20 @@ def latest_prepared_financial_books(
     if not selected_company_id:
         raise HTTPException(status_code=422, detail="Select a company for financial books")
 
-    row = (
-        db.query(CompanyOperatingRecord)
-        .filter(
-            CompanyOperatingRecord.company_id == selected_company_id,
-            CompanyOperatingRecord.module == "accounting",
-            CompanyOperatingRecord.record_type == "financial_books_daily_snapshot",
-            CompanyOperatingRecord.branch_id.is_(None),
-            CompanyOperatingRecord.is_archived.is_(False),
-        )
-        .order_by(CompanyOperatingRecord.reference.desc())
-        .first()
+    selected_branch_id = resolve_branch_scope(
+        db, context, selected_company_id, branch_id
     )
+    query = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == selected_company_id,
+        CompanyOperatingRecord.module == "accounting",
+        CompanyOperatingRecord.record_type == "financial_books_daily_snapshot",
+        CompanyOperatingRecord.is_archived.is_(False),
+    )
+    if selected_branch_id is None:
+        query = query.filter(CompanyOperatingRecord.branch_id.is_(None))
+    else:
+        query = query.filter(CompanyOperatingRecord.branch_id == selected_branch_id)
+    row = query.order_by(CompanyOperatingRecord.reference.desc()).first()
     if row is None:
         return {"available": False, "books": None}
 
@@ -899,6 +902,8 @@ def latest_prepared_financial_books(
         "schedule": payload.get("schedule") or "03:30",
         "from_date": payload.get("from_date"),
         "to_date": payload.get("to_date"),
+        "branch_id": payload.get("branch_id"),
+        "scope_name": payload.get("scope_name"),
         "books": payload.get("pack"),
     }
 
