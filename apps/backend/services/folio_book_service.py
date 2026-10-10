@@ -16,7 +16,7 @@ from database.models.client_loan_company import ClientCompanyLoan
 from database.models.user import User
 
 
-_FOLIO_PATTERN = re.compile(r"^[A-Z0-9]{2,8}-[A-Z0-9]{2,8}-\d{5,}$")
+_FOLIO_PATTERN = re.compile(r"^[A-Za-z0-9]{2,8}-[A-Za-z0-9/]{2,8}-\d{5,}$")
 _MAX_REPORTED_GAPS_PER_BOOK = 100
 
 
