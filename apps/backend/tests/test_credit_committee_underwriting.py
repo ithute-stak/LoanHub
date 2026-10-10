@@ -227,8 +227,8 @@ def test_post_approval_disbursement_integrity_guard_blocks_material_drift_and_is
     assert '"disbursement_integrity_verified"' in committee
     assert "actor_user_id=actor_user_id" in committee
 
-    assert "assert_loan_disbursement_conditions(db, loan, actor_user_id=actor_user_id)" in loan_service
-    assert "assert_disbursement_governance_ready(db, loan, actor_user_id=initiated_by_user_id)" in loan_service
+    assert "owner_override_verified=owner_override_verified" in loan_service
+    assert "assert_disbursement_governance_ready(" in loan_service
 
     assert '@router.get("/{loan_id}/disbursement-integrity")' in loans_router
     assert "This preview is read-only" in loans_router
@@ -239,4 +239,42 @@ def test_post_approval_disbursement_integrity_guard_blocks_material_drift_and_is
     assert "Post-approval integrity verified" in loans_page
     assert "Disbursement blocked by integrity guard" in loans_page
     assert "removed_new_loan_collection_credit" not in loans_page
-    assert "disabled={Boolean(disbursementIntegrity && !disbursementIntegrity.passed)}" in loans_page
+    assert "ownerOverrideEligible" in loans_page
+    assert "ownerOverrideReady" in loans_page
+    assert "Controlled Owner Override" in loans_page
+    assert "owner_override_confirmed: ownerOverrideReady" in loans_page
+
+
+def test_company_owner_cash_override_is_strictly_scoped_and_audited():
+    root = Path(__file__).resolve().parents[2]
+    committee = (root / "backend" / "services" / "credit_committee_service.py").read_text(encoding="utf-8")
+    loan_service = (root / "backend" / "services" / "loan_service.py").read_text(encoding="utf-8")
+    loans_router = (root / "backend" / "routers" / "loans.py").read_text(encoding="utf-8")
+    cash_schema = (root / "backend" / "database" / "schemas" / "cash.py").read_text(encoding="utf-8")
+    audit_integrity = (root / "backend" / "core" / "audit_integrity.py").read_text(encoding="utf-8")
+    loans_page = (root / "frontend" / "app" / "(dashboard)" / "company" / "loans" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "owner_override_verified: bool = False" in committee
+    assert "Owner override may bypass only Credit Committee clearance/condition blockers" in committee
+    assert '"Credit Committee clearance is missing for this loan"' in committee
+    assert '"Credit Committee pre-contract/pre-disbursement conditions remain open"' in committee
+
+    assert "payment_method == PaymentMethod.CASH" in loan_service
+    assert '"owner_committee_override": owner_override_verified' in loan_service
+
+    assert "context.role != UserRole.COMPANY_OWNER" in loans_router
+    assert "payload.payment_method != PaymentMethod.CASH" in loans_router
+    assert "Enable MFA on the company-owner account before using the disbursement override" in loans_router
+    assert "verify_password(" in loans_router
+    assert "verify_second_factor(" in loans_router
+    assert 'action="loan.disbursement_owner_committee_override"' in loans_router
+    assert 'severity="critical"' in loans_router
+
+    assert "owner_override_confirmed: bool = False" in cash_schema
+    assert "owner_override_reason" in cash_schema
+    assert "owner_reauth_otp" in cash_schema
+    assert "owner_reauth_recovery_code" in cash_schema
+
+    assert "Sealed audit events are immutable" in audit_integrity
+    assert "Controlled Owner Override" in loans_page
+    assert "MFA must already be enabled on the owner account" in loans_page

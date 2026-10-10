@@ -542,12 +542,18 @@ def assert_disbursement_governance_ready(
     loan: ClientCompanyLoan,
     *,
     actor_user_id: UUID | None = None,
+    owner_override_verified: bool = False,
 ) -> None:
     """Enforce governance and payroll-collection readiness before any payout."""
 
     from services.credit_committee_service import assert_loan_disbursement_conditions
 
-    assert_loan_disbursement_conditions(db, loan, actor_user_id=actor_user_id)
+    assert_loan_disbursement_conditions(
+        db,
+        loan,
+        actor_user_id=actor_user_id,
+        owner_override_verified=owner_override_verified,
+    )
 
     if not bool(getattr(loan, "cdas_collection_enabled", False)):
         return
@@ -607,6 +613,8 @@ def disburse_cash_loan(
     proof_notes: str | None = None,
     notes: str | None = None,
     idempotency_key: str | None = None,
+    owner_override_verified: bool = False,
+    owner_override_reason: str | None = None,
 ) -> tuple[PaymentTransaction, CashTransaction | None]:
     # Serialize every payout attempt for this loan before reading mutable state.
     loan = (
@@ -621,7 +629,15 @@ def disburse_cash_loan(
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
     _require_signed_contract_before_disbursement(db, loan)
-    assert_disbursement_governance_ready(db, loan, actor_user_id=initiated_by_user_id)
+    owner_override_verified = bool(
+        owner_override_verified and payment_method == PaymentMethod.CASH
+    )
+    assert_disbursement_governance_ready(
+        db,
+        loan,
+        actor_user_id=initiated_by_user_id,
+        owner_override_verified=owner_override_verified,
+    )
 
     key = _payment_idempotency_key(f"loan-disbursement:{loan.id}:{payment_method.value}", idempotency_key)
     existing = _existing_payment(db, key)
@@ -681,7 +697,12 @@ def disburse_cash_loan(
         proof_notes=(proof_notes or notes or "").strip() or None,
         verified_by_user_id=initiated_by_user_id,
         verified_at=now,
-        provider_payload={"method": payment_method.value, "notes": notes},
+        provider_payload={
+            "method": payment_method.value,
+            "notes": notes,
+            "owner_committee_override": owner_override_verified,
+            "owner_override_reason": owner_override_reason if owner_override_verified else None,
+        },
         completed_at=now,
     )
     db.add(payment)

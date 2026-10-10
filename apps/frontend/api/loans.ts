@@ -136,6 +136,11 @@ export type PaymentEvidencePayload = {
   proof_notes?: string | null;
   notes?: string | null;
   idempotency_key?: string;
+  owner_override_confirmed?: boolean;
+  owner_override_reason?: string | null;
+  owner_reauth_password?: string | null;
+  owner_reauth_otp?: string | null;
+  owner_reauth_recovery_code?: string | null;
 };
 
 export type DisbursementIntegrityPreview = {
@@ -173,6 +178,8 @@ export type DisbursementIntegrityPreview = {
   };
   drift: string[];
   reason?: string;
+  owner_override_available?: boolean;
+  owner_override_policy?: string | null;
   policy_note: string;
 };
 

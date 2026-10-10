@@ -1186,7 +1186,30 @@ def assert_loan_disbursement_conditions(
     loan: ClientCompanyLoan,
     *,
     actor_user_id: UUID | None = None,
+    owner_override_verified: bool = False,
 ) -> dict[str, Any] | None:
+    if owner_override_verified:
+        preview = preview_loan_disbursement_integrity(db, loan)
+        allowed_drift = {
+            "Credit Committee clearance is missing for this loan",
+            "Credit Committee pre-contract/pre-disbursement conditions remain open",
+        }
+        drift = set(preview.get("drift") or [])
+        if preview.get("passed") or not drift or not drift.issubset(allowed_drift):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Owner override may bypass only Credit Committee clearance/condition blockers; "
+                    "all other disbursement integrity controls must pass."
+                ),
+            )
+        return {
+            "passed": True,
+            "committee_clearance": False,
+            "owner_override_verified": True,
+            "overridden_drift": sorted(drift),
+            "reason": "Company owner explicitly overrode Credit Committee clearance for a cash disbursement.",
+        }
     if not loan.direct_application_id:
         return None
     application = db.get(DirectLoanApplication, loan.direct_application_id)
