@@ -95,5 +95,7 @@ def test_folio_book_api_and_frontend_surface_are_registered():
     assert '@router.get("/export.csv")' in folio_router
     assert '@router.get("/export.pdf")' in report_router
     assert "Loan Folio Book" in frontend
-    assert "BFS-LMPS-00001" in frontend
+    assert "BFS-Force-00001" in frontend
+    assert "BFS-CIVIL-00001" in frontend
+    assert "BFS-S/E-00001" in frontend
     assert "/company/folio-book" in loans_layout
