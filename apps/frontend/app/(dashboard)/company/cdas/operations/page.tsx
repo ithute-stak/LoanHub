@@ -484,15 +484,27 @@ export default function CdasOperationsPage() {
                                 disabled={Boolean(loading)}
                             />
                         </div>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            disabled={Boolean(loading) || !directEmployeeNo.trim()}
-                            onClick={() => void resolveEmployeeRegistration(directEmployeeNo)}
-                        >
-                            {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            Verify & Find Loan
-                        </Button>
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={Boolean(loading) || !directEmployeeNo.trim()}
+                                onClick={() => void resolveEmployeeRegistration(directEmployeeNo)}
+                            >
+                                {loading === "prepare" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                Verify & Find Loan
+                            </Button>
+                            {!isRegisterMode && selectedLoanId ? (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={Boolean(loading)}
+                                    onClick={() => void loadLinkedState()}
+                                >
+                                    Load linked state
+                                </Button>
+                            ) : null}
+                        </div>
                     </div>
 
                     {employeeContext ? (
@@ -517,6 +529,16 @@ export default function CdasOperationsPage() {
                                 </p>
                             </div>
                         </div>
+                    ) : null}
+                    {linkedState ? (
+                        <Alert>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <AlertTitle>Linked CDAS state loaded</AlertTitle>
+                            <AlertDescription>
+                                DeductionID {linkedState.deduction_id ?? "pending"} · {linkedState.lifecycle_status}
+                                {linkedState.requires_reconciliation ? " · reconciliation required before another lifecycle change" : ""}
+                            </AlertDescription>
+                        </Alert>
                     ) : null}
                 </CardContent>
             </Card>
