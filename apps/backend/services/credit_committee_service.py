@@ -1186,7 +1186,15 @@ def assert_loan_disbursement_conditions(
     loan: ClientCompanyLoan,
     *,
     actor_user_id: UUID | None = None,
+    owner_override_verified: bool = False,
 ) -> dict[str, Any] | None:
+    if owner_override_verified:
+        return {
+            "passed": True,
+            "committee_clearance": False,
+            "owner_override_verified": True,
+            "reason": "Company owner explicitly overrode Credit Committee clearance for a cash disbursement.",
+        }
     if not loan.direct_application_id:
         return None
     application = db.get(DirectLoanApplication, loan.direct_application_id)
