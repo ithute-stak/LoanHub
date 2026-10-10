@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -388,14 +388,6 @@ export default function CdasOperationsPage() {
         ? Math.ceil(lifecycle.principal_amount / lifecycle.deduction_amount)
         : 0;
     const amountExceedsAffordability = affordability > 0 && lifecycle.deduction_amount > affordability;
-
-    useEffect(() => {
-        if (isRegisterMode && requestedEmployeeNo) {
-            void resolveEmployeeRegistration(requestedEmployeeNo);
-        }
-        // Resolve once from the employee carried by the CDAS workspace.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isRegisterMode, requestedEmployeeNo]);
 
 
 
