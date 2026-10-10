@@ -169,10 +169,6 @@ export default function CompanyLoansPage() {
     const [disbursementIntegrity, setDisbursementIntegrity] = useState<DisbursementIntegrityPreview | null>(null);
     const [integrityLoading, setIntegrityLoading] = useState(false);
     const [evidence, setEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
-    const [ownerOverrideConfirmed, setOwnerOverrideConfirmed] = useState(false);
-    const [ownerOverrideReason, setOwnerOverrideReason] = useState("");
-    const [ownerReauthPassword, setOwnerReauthPassword] = useState("");
-    const [ownerSecondFactor, setOwnerSecondFactor] = useState("");
 
     const [documentLoan, setDocumentLoan] = useState<Loan | null>(null);
     const [paymentSlips, setPaymentSlips] = useState<LoanPaymentSlip[]>([]);
@@ -283,12 +279,6 @@ export default function CompanyLoansPage() {
         && evidence.payment_method === "cash"
         && disbursementIntegrity?.owner_override_available
         && !disbursementIntegrity?.passed
-    );
-    const ownerOverrideReady = Boolean(
-        ownerOverrideEligible
-        && ownerOverrideConfirmed
-        && ownerOverrideReason.trim().length >= 12
-        && ownerSecondFactor.trim().length >= 6
     );
 
     const contractsRequired = useMemo(
@@ -489,10 +479,6 @@ export default function CompanyLoansPage() {
             const integrity = await getDisbursementIntegrityPreview(loan.id);
             setSelectedLoan(loan);
             setEvidence(EMPTY_PAYMENT_EVIDENCE);
-            setOwnerOverrideConfirmed(false);
-            setOwnerOverrideReason("");
-            setOwnerReauthPassword("");
-            setOwnerSecondFactor("");
             setDisbursementIntegrity(integrity);
             setDisburseOpen(true);
             if (!integrity.passed) {
@@ -523,15 +509,10 @@ export default function CompanyLoansPage() {
             setDisburseOpen(false);
             return;
         }
-        if (disbursementIntegrity && !disbursementIntegrity.passed && !ownerOverrideReady) {
-            toast.warning(
-                ownerOverrideEligible ? "Complete the controlled owner override" : "Disbursement integrity guard is not green",
-                {
-                    description: ownerOverrideEligible
-                        ? "Confirm the override, document the reason and enter your MFA verification before payout."
-                        : (disbursementIntegrity.drift[0] ?? "Resolve the blocking controls before payout."),
-                },
-            );
+        if (disbursementIntegrity && !disbursementIntegrity.passed && !ownerOverrideEligible) {
+            toast.warning("Disbursement integrity guard is not green", {
+                description: disbursementIntegrity.drift[0] ?? "Resolve the blocking controls before payout.",
+            });
             return;
         }
         setDisbursing(true);
@@ -547,15 +528,6 @@ export default function CompanyLoansPage() {
                 proof_notes: evidence.proof_notes.trim() || null,
                 notes: evidence.proof_notes.trim() || null,
                 idempotency_key: createIdempotencyKey(`disbursement-${evidence.payment_method}-${selectedLoan.id}`),
-                owner_override_confirmed: ownerOverrideReady,
-                owner_override_reason: ownerOverrideReady ? ownerOverrideReason.trim() : null,
-                owner_reauth_password: ownerOverrideReady ? ownerReauthPassword : null,
-                owner_reauth_otp: ownerOverrideReady && /^\d{6}$/.test(ownerSecondFactor.trim())
-                    ? ownerSecondFactor.trim()
-                    : null,
-                owner_reauth_recovery_code: ownerOverrideReady && !/^\d{6}$/.test(ownerSecondFactor.trim())
-                    ? ownerSecondFactor.trim()
-                    : null,
             });
             const methodLabel = methods.find((item) => item.value === result.payment_method)?.label ?? titleCase(result.payment_method);
             toast.success("Loan disbursement completed", {
@@ -1595,51 +1567,10 @@ export default function CompanyLoansPage() {
                         </AlertDescription>
                     </Alert> : null}
                     <PaymentMethodFields methods={methods} value={evidence} onChange={setEvidence} showGatewayRailPicker={false}/>
-                    {ownerOverrideEligible ? <div className="space-y-4 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
-                        <div>
-                            <p className="font-black text-amber-800 dark:text-amber-300">Controlled Owner Override</p>
-                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                This bypass applies only to the Credit Committee clearance/condition blocker for this cash payout.
-                                Signed-contract, CDAS, treasury, accounting and all other payout controls remain enforced.
-                            </p>
-                        </div>
-                        <label className="flex items-start gap-3 text-sm">
-                            <input
-                                type="checkbox"
-                                className="mt-1 h-4 w-4"
-                                checked={ownerOverrideConfirmed}
-                                onChange={(event) => setOwnerOverrideConfirmed(event.target.checked)}
-                            />
-                            <span>I am the company owner and explicitly authorize this Credit Committee override for this cash disbursement.</span>
-                        </label>
-                        <Field label="Override reason">
-                            <Textarea
-                                value={ownerOverrideReason}
-                                onChange={(event) => setOwnerOverrideReason(event.target.value)}
-                                placeholder="Document the exceptional business reason for proceeding without committee clearance"
-                                maxLength={1000}
-                            />
-                        </Field>
-                        <Field label="Account password">
-                            <Input
-                                type="password"
-                                autoComplete="current-password"
-                                value={ownerReauthPassword}
-                                onChange={(event) => setOwnerReauthPassword(event.target.value)}
-                                placeholder="Required for direct LoanHub authentication"
-                            />
-                        </Field>
-                        <Field label="Authenticator or recovery code">
-                            <Input
-                                type="password"
-                                autoComplete="one-time-code"
-                                value={ownerSecondFactor}
-                                onChange={(event) => setOwnerSecondFactor(event.target.value.trim())}
-                                placeholder="6-digit authenticator code or recovery code"
-                            />
-                        </Field>
-                        <p className="text-xs leading-5 text-muted-foreground">
-                            MFA must already be enabled on the owner account. The override reason and verification evidence are written to LoanHub&apos;s immutable audit chain.
+                    {ownerOverrideEligible ? <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+                        <p className="text-sm font-black text-emerald-700 dark:text-emerald-300">Company owner detected</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Credit Committee clearance will be bypassed automatically for this cash payout. All other disbursement controls remain enforced and the action is audited.
                         </p>
                     </div> : null}</div>}<DialogFooter
                     className="mx-0 mb-0"><Button variant="outline" onClick={() => setDisburseOpen(false)}
@@ -1648,7 +1579,7 @@ export default function CompanyLoansPage() {
                     disabled={Boolean(
                         disbursementIntegrity
                         && !disbursementIntegrity.passed
-                        && !ownerOverrideReady
+                        && !ownerOverrideEligible
                     )}
                     onClick={() => void disburse()}><CheckCircle2 className="h-4 w-4"/>Confirm
                     disbursement</LoadingButton></DialogFooter></div>

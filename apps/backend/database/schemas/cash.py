@@ -113,11 +113,6 @@ class CashDisbursementCreate(BaseModel):
     proof_notes: str | None = Field(default=None, max_length=2000)
     notes: str | None = Field(default=None, max_length=1000)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=160)
-    owner_override_confirmed: bool = False
-    owner_override_reason: str | None = Field(default=None, min_length=12, max_length=1000)
-    owner_reauth_password: str | None = Field(default=None, min_length=1, max_length=200)
-    owner_reauth_otp: str | None = Field(default=None, min_length=6, max_length=6, pattern=r"^\d{6}$")
-    owner_reauth_recovery_code: str | None = Field(default=None, min_length=6, max_length=80)
 
 
 class CashRepaymentPreviewCreate(BaseModel):

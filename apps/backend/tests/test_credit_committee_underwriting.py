@@ -240,9 +240,9 @@ def test_post_approval_disbursement_integrity_guard_blocks_material_drift_and_is
     assert "Disbursement blocked by integrity guard" in loans_page
     assert "removed_new_loan_collection_credit" not in loans_page
     assert "ownerOverrideEligible" in loans_page
-    assert "ownerOverrideReady" in loans_page
-    assert "Controlled Owner Override" in loans_page
-    assert "owner_override_confirmed: ownerOverrideReady" in loans_page
+    assert "Company owner detected" in loans_page
+    assert "ownerOverrideReady" not in loans_page
+    assert "owner_override_confirmed" not in loans_page
 
 
 def test_company_owner_cash_override_is_strictly_scoped_and_audited():
@@ -262,19 +262,17 @@ def test_company_owner_cash_override_is_strictly_scoped_and_audited():
     assert "payment_method == PaymentMethod.CASH" in loan_service
     assert '"owner_committee_override": owner_override_verified' in loan_service
 
-    assert "context.role != UserRole.COMPANY_OWNER" in loans_router
-    assert "payload.payment_method != PaymentMethod.CASH" in loans_router
-    assert "Enable MFA on the company-owner account before using the disbursement override" in loans_router
-    assert "verify_password(" in loans_router
-    assert "verify_second_factor(" in loans_router
+    assert "context.role == UserRole.COMPANY_OWNER and payload.payment_method == PaymentMethod.CASH" in loans_router
+    assert '"automatic_role_detection": True' in loans_router
     assert 'action="loan.disbursement_owner_committee_override"' in loans_router
     assert 'severity="critical"' in loans_router
+    assert "verify_password(" not in loans_router
+    assert "verify_second_factor(" not in loans_router
 
-    assert "owner_override_confirmed: bool = False" in cash_schema
-    assert "owner_override_reason" in cash_schema
-    assert "owner_reauth_otp" in cash_schema
-    assert "owner_reauth_recovery_code" in cash_schema
+    assert "owner_override_confirmed" not in cash_schema
+    assert "owner_reauth_otp" not in cash_schema
+    assert "owner_reauth_recovery_code" not in cash_schema
 
     assert "Sealed audit events are immutable" in audit_integrity
-    assert "Controlled Owner Override" in loans_page
-    assert "MFA must already be enabled on the owner account" in loans_page
+    assert "Company owner detected" in loans_page
+    assert "Credit Committee clearance will be bypassed automatically" in loans_page
