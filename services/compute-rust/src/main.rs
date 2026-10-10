@@ -1875,6 +1875,33 @@ fn calculate(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
     }
 }
 
+fn cpp_reconciliation_variance(
+    expected_cents: i64,
+    actual_cents: i64,
+) -> Option<(String, i64)> {
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let output = Command::new(path)
+        .arg("reconciliation-variance")
+        .arg(expected_cents.to_string())
+        .arg(actual_cents.to_string())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let fields: Vec<&str> = stdout.trim().split('|').collect();
+    if fields.len() != 2 {
+        return None;
+    }
+    let status = match fields[0] {
+        "matched" | "shortage" | "excess" => fields[0].to_string(),
+        _ => return None,
+    };
+    let variance = fields[1].parse::<i64>().ok()?;
+    Some((status, variance))
+}
+
 fn json_response(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
     Response::from_string(body)
@@ -1995,12 +2022,32 @@ fn main() {
                 }
             }
             if let (Some(expected), Some(actual)) = (expected, actual) {
-                let variance = actual.saturating_sub(expected);
-                let status = if variance == 0 { "matched" } else if variance < 0 { "shortage" } else { "excess" };
+                let rust_variance = actual.saturating_sub(expected);
+                let rust_status = if rust_variance == 0 {
+                    "matched"
+                } else if rust_variance < 0 {
+                    "shortage"
+                } else {
+                    "excess"
+                };
+                let cpp_candidate = cpp_reconciliation_variance(expected, actual);
+                let cpp_matches = cpp_candidate
+                    .as_ref()
+                    .map(|(status, variance)| {
+                        status == rust_status && *variance == rust_variance
+                    })
+                    .unwrap_or(false);
+                let (status, variance, native_cpp_used) = if cpp_matches {
+                    let (status, variance) = cpp_candidate.unwrap();
+                    (status, variance, true)
+                } else {
+                    (rust_status.to_string(), rust_variance, false)
+                };
                 let body = serde_json::json!({
                     "status": status,
                     "variance_cents": variance,
-                    "authoritative": false
+                    "authoritative": false,
+                    "native_cpp_used": native_cpp_used
                 }).to_string();
                 let _ = request.respond(json_response(200, body));
             } else {
