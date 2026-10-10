@@ -81,6 +81,19 @@ def test_rust_variance_classification_validates_worker_response(monkeypatch) -> 
     }
 
 
+def test_cpp_predictive_risk_is_full_output_parity_gated() -> None:
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert '"predictive-risk-batch"' in native
+    assert "struct PredictiveRiskResult" in native
+    assert "cpp_predictive_signal_batch(&req.rows)" in rust
+    assert "predictive_output_from_cpp(row, cpp)" in rust
+    assert "reconstructed == rust_results" in rust
+    assert "results: cpp_results.unwrap_or(rust_results)" in rust
+    assert "native_cpp_used" in rust
+
+
 def test_cpp_reconciliation_variance_is_parity_gated_behind_rust() -> None:
     native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
     rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
@@ -282,6 +295,9 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "daily-accrual-preview" in native
     assert "daily_period_factor_ratio" in native
     assert "daily_segment_interest_cents" in native
+    assert "predictive-risk-signal" in native
+    assert "predictive-risk-batch" in native
+    assert "predictive_risk_result" in native
     assert "reconciliation-variance" in native
     assert "reconciliation_variance" in native
     assert "saturating_sub_i64" in native
@@ -300,6 +316,8 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert '"compound-interest-preview"' in rust
     assert '"daily-accrual-preview"' in rust
     assert "cpp_daily_preview(" in rust
+    assert "cpp_predictive_signal_batch(" in rust
+    assert "predictive_output_from_cpp(" in rust
     assert "cpp_reconciliation_variance(" in rust
     assert "cpp_portfolio_risk_core(" in rust
     assert "cpp_portfolio_core_matches(" in rust
