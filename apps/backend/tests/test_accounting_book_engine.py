@@ -450,6 +450,29 @@ def test_finance_operations_workspace_exposes_financial_books_period_close_and_o
     assert "Create period" in frontend
 
 
+def test_financial_books_are_prepared_daily_at_0330_and_loaded_as_snapshots():
+    scheduler = (ROOT / "backend" / "services" / "financial_books_scheduler.py").read_text(encoding="utf-8")
+    main = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert 'MASERU_TZ = ZoneInfo("Africa/Maseru")' in scheduler
+    assert "DAILY_PREPARE_TIME = time(hour=3, minute=30)" in scheduler
+    assert '"schedule": "03:30"' in scheduler
+    assert "CompanyBranch.is_active.is_(True)" in scheduler
+    assert "include_ledger_detail=False" in scheduler
+    assert "pg_try_advisory_lock" in scheduler
+    assert "start_financial_books_scheduler()" in main
+    assert "stop_financial_books_scheduler()" in main
+
+    assert '@router.get("/financial-books/latest")' in router
+    assert 'record_type == "financial_books_daily_snapshot"' in router
+    assert "getLatestPreparedFinancialBooks" in frontend_api
+    assert "void loadLatestPreparedBooks();" in frontend
+    assert "Latest automatic snapshot:" in frontend
+
+
 def test_opening_balance_schema_requires_balanced_double_entry():
     schema = (ROOT / "backend" / "database" / "schemas" / "accounting.py").read_text(encoding="utf-8")
     assert "class OpeningBalanceMigrationCreate" in schema
