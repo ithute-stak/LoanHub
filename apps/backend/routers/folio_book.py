@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.access_control import (
@@ -140,15 +141,16 @@ def get_folio_book(
     )
 
 
-@router.get("/lookup/{folio_number}")
+@router.get("/lookup/{folio_number:path}")
 def folio_lookup(
     folio_number: str,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
     require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    normalized = folio_number.strip()
     loan = _base_query(db, context).filter(
-        ClientCompanyLoan.folio_number == folio_number.strip().upper()
+        func.upper(ClientCompanyLoan.folio_number) == normalized.upper()
     ).first()
     if not loan:
         raise HTTPException(status_code=404, detail="Folio number was not found in the active company scope")

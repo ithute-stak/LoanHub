@@ -1,13 +1,16 @@
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
-from services.folio_book_service import _sequence_books
-from services.loan_folio import company_folio_code, employer_folio_code
+from services.folio_book_service import _FOLIO_PATTERN, _sequence_books
+from services.loan_folio import bfs_paydate_folio_group, company_folio_code, employer_folio_code, loan_pay_day
 
 
 ROOT = Path(__file__).resolve().parents[3]
 MODEL = ROOT / "apps" / "backend" / "database" / "models" / "client_loan_company.py"
 SCHEMA = ROOT / "apps" / "backend" / "database" / "schemas" / "loan.py"
 MIGRATION = ROOT / "apps" / "backend" / "alembic" / "versions" / "f0l10a5e0001_add_loan_folio_sequence.py"
+BFS_PAYDATE_MIGRATION = ROOT / "apps" / "backend" / "alembic" / "versions" / "h5j9l1n3p567_bfs_paydate_folio_groups.py"
 FRONTEND_TYPE = ROOT / "apps" / "frontend" / "types" / "loan.ts"
 FOLIO_SERVICE = ROOT / "apps" / "backend" / "services" / "folio_book_service.py"
 FOLIO_ROUTER = ROOT / "apps" / "backend" / "routers" / "folio_book.py"
@@ -25,6 +28,49 @@ def test_batlokoa_and_ldf_folio_codes_match_sequence_book_format():
     assert employer_folio_code(group_name="Lesotho Defence Force") == "LDF"
     assert employer_folio_code(group_code="LDF", group_name="Lesotho Defence Force") == "LDF"
 
+
+
+
+def test_bfs_paydate_groups_match_required_boundaries():
+    assert bfs_paydate_folio_group(14) is None
+    assert bfs_paydate_folio_group(15) == "Force"
+    assert bfs_paydate_folio_group(22) == "Force"
+    assert bfs_paydate_folio_group(23) == "CIVIL"
+    assert bfs_paydate_folio_group(26) == "CIVIL"
+    assert bfs_paydate_folio_group(27) == "S/E"
+    assert bfs_paydate_folio_group(31) == "S/E"
+    assert bfs_paydate_folio_group(None) is None
+    assert _FOLIO_PATTERN.fullmatch("BFS-Force-00001")
+    assert _FOLIO_PATTERN.fullmatch("BFS-CIVIL-00001")
+    assert _FOLIO_PATTERN.fullmatch("BFS-S/E-00001")
+
+
+def test_bfs_pay_day_resolves_preferred_due_date_and_schedule_fallbacks():
+    assert loan_pay_day(SimpleNamespace(preferred_payment_day=21, first_payment_due=None, calculation_breakdown={})) == 21
+    assert loan_pay_day(SimpleNamespace(preferred_payment_day=None, first_payment_due=date(2026, 11, 25), calculation_breakdown={})) == 25
+    assert loan_pay_day(SimpleNamespace(
+        preferred_payment_day=None,
+        first_payment_due=None,
+        calculation_breakdown={"schedule_rows": [{"due_date": "2026-12-30"}]},
+    )) == 30
+    assert loan_pay_day(SimpleNamespace(
+        preferred_payment_day=None,
+        first_payment_due=None,
+        calculation_breakdown={"due_dates": ["2026-12-18"]},
+    )) == 18
+
+
+def test_bfs_paydate_migration_reclassifies_existing_folios_and_keeps_one_sequence_per_group():
+    migration = BFS_PAYDATE_MIGRATION.read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "g4i8k0m2n456"' in migration
+    assert "pay_day BETWEEN 15 AND 22 THEN 'Force'" in migration
+    assert "pay_day BETWEEN 23 AND 26 THEN 'CIVIL'" in migration
+    assert "pay_day BETWEEN 27 AND 31 THEN 'S/E'" in migration
+    assert "ROW_NUMBER() OVER" in migration
+    assert "PARTITION BY company_id, new_group" in migration
+    assert "ORDER BY created_at, id" in migration
+    assert "folio_number = l.folio_company_code || '-' || n.new_group" in migration
+    assert "uq_client_loan_folio_sequence" in migration
 
 def test_other_companies_and_employers_get_deterministic_codes():
     assert company_folio_code("Lelefa Debt Collectors (Pty) Ltd") == "LDC"
@@ -50,6 +96,7 @@ def test_allocator_is_concurrency_safe_and_formats_five_digit_sequence():
     assert "MAX(folio_sequence)" in source
     assert ':05d' in source
     assert 'if getattr(target, "folio_number", None):' in source
+    assert 'bfs_paydate_folio_group(loan_pay_day(target))' in source
 
 
 def test_loan_api_and_frontend_expose_folio_and_migration_backfills_existing_loans():
@@ -102,6 +149,8 @@ def test_folio_book_has_integrity_controls_search_and_csv_export():
     assert '"borrower_identity"' in service
     assert '@router.get("")' in router
     assert '@router.get("/export.csv")' in router
+    assert '@router.get("/lookup/{folio_number:path}")' in router
+    assert "func.upper(ClientCompanyLoan.folio_number)" in router
     assert "LoanHub-Folio-Book.csv" in router
 
 

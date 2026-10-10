@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -75,12 +76,71 @@ def employer_folio_code(
     return _safe_code("".join(word[0] for word in words), fallback="GEN", max_length=8)
 
 
-def assign_loan_folio(_mapper: Any, connection: Any, target: Any) -> None:
-    """Assign one immutable, company/work-group scoped folio before a loan is inserted.
+def _date_day(value: Any) -> int | None:
+    if isinstance(value, datetime):
+        return value.day
+    if isinstance(value, date):
+        return value.day
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            return date.fromisoformat(candidate[:10]).day
+        except ValueError:
+            return None
+    return None
 
-    A PostgreSQL transaction advisory lock serializes allocation inside each
-    company/work-group sequence book, so concurrent loan creation cannot issue the
-    same number. Existing folios are never rewritten.
+
+def loan_pay_day(target: Any) -> int | None:
+    """Resolve the contractual pay day available before loan insertion."""
+    preferred = getattr(target, "preferred_payment_day", None)
+    try:
+        preferred_day = int(preferred) if preferred is not None else None
+    except (TypeError, ValueError):
+        preferred_day = None
+    if preferred_day is not None and 1 <= preferred_day <= 31:
+        return preferred_day
+
+    first_due_day = _date_day(getattr(target, "first_payment_due", None))
+    if first_due_day is not None:
+        return first_due_day
+
+    breakdown = getattr(target, "calculation_breakdown", None)
+    if not isinstance(breakdown, dict):
+        return None
+    schedule_rows = breakdown.get("schedule_rows")
+    if isinstance(schedule_rows, list) and schedule_rows:
+        first_row = schedule_rows[0]
+        if isinstance(first_row, dict):
+            schedule_day = _date_day(first_row.get("due_date"))
+            if schedule_day is not None:
+                return schedule_day
+    due_dates = breakdown.get("due_dates")
+    if isinstance(due_dates, list) and due_dates:
+        return _date_day(due_dates[0])
+    return None
+
+
+def bfs_paydate_folio_group(pay_day: int | None) -> str | None:
+    """Map BFS contractual pay dates to the operational folio books."""
+    if pay_day is None:
+        return None
+    if 15 <= pay_day <= 22:
+        return "Force"
+    if 23 <= pay_day <= 26:
+        return "CIVIL"
+    if 27 <= pay_day <= 31:
+        return "S/E"
+    return None
+
+
+def assign_loan_folio(_mapper: Any, connection: Any, target: Any) -> None:
+    """Assign one immutable company/group folio before a loan is inserted.
+
+    BFS uses contractual pay-date books (Force, CIVIL and S/E). Other companies
+    retain the employer/work-group sequence. A PostgreSQL transaction advisory
+    lock serializes allocation inside each company/group sequence book.
     """
     if getattr(target, "folio_number", None):
         return
@@ -102,11 +162,15 @@ def assign_loan_folio(_mapper: Any, connection: Any, target: Any) -> None:
     ).mappings().one()
 
     company_code = company_folio_code(company_name)
-    group_code = employer_folio_code(
-        group_code=employer.get("group_code"),
-        group_name=employer.get("group_name"),
-        employer_name=employer.get("employer_name"),
-    )
+    group_code = None
+    if company_code == "BFS":
+        group_code = bfs_paydate_folio_group(loan_pay_day(target))
+    if group_code is None:
+        group_code = employer_folio_code(
+            group_code=employer.get("group_code"),
+            group_name=employer.get("group_name"),
+            employer_name=employer.get("employer_name"),
+        )
 
     lock_key = f"loan-folio:{target.company_id}:{group_code}"
     connection.execute(
