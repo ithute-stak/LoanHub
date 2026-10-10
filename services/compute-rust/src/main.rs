@@ -122,6 +122,63 @@ fn cpp_fixed_preview(
     })
 }
 
+fn cpp_daily_preview(
+    principal: Decimal,
+    rate_percent: Decimal,
+    months: usize,
+    fee: Decimal,
+    interest_start_date: &str,
+    due_dates: &[String],
+) -> Option<CppLoanPreview> {
+    if months == 0 || months > 120 || due_dates.len() != months {
+        return None;
+    }
+    let scaled_rate = rate_percent * Decimal::from(1000_i64);
+    if !scaled_rate.fract().is_zero() {
+        return None;
+    }
+    let path = env::var("LOANHUB_CPP_KERNEL_PATH").ok()?;
+    let principal_cents = (money(principal) * Decimal::from(100_i64)).to_i64()?;
+    let fee_cents = (money(fee) * Decimal::from(100_i64)).to_i64()?;
+    let rate_milli_percent = scaled_rate.to_i64()?;
+    let output = Command::new(path)
+        .arg("daily-accrual-preview")
+        .arg(principal_cents.to_string())
+        .arg(rate_milli_percent.to_string())
+        .arg(months.to_string())
+        .arg(fee_cents.to_string())
+        .arg(interest_start_date)
+        .arg(due_dates.join(","))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let fields: Vec<&str> = stdout.trim().split('|').collect();
+    if fields.len() != 4 {
+        return None;
+    }
+    let monthly_cents = fields[0].parse::<i64>().ok()?;
+    let interest_cents = fields[1].parse::<i64>().ok()?;
+    let total_cents = fields[2].parse::<i64>().ok()?;
+    let schedule_cents = fields[3]
+        .split(',')
+        .map(|value| value.parse::<i64>())
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if schedule_cents.len() != months {
+        return None;
+    }
+    Some(CppLoanPreview {
+        monthly_installment: cents_decimal(monthly_cents),
+        total_interest: cents_decimal(interest_cents),
+        total_repayable: cents_decimal(total_cents),
+        schedule_amounts: schedule_cents.into_iter().map(cents_decimal).collect(),
+    })
+}
+
 fn preview_matches(
     candidate: &CppLoanPreview,
     monthly_installment: Decimal,
@@ -473,15 +530,36 @@ fn daily_accrual_reducing(req: &LoanPreviewRequest) -> Result<LoanPreviewRespons
 
     let total_interest = money(total_interest);
     let total = money(schedule.iter().copied().sum::<Decimal>());
-    Ok(LoanPreviewResponse {
-        method: req.method.clone(),
-        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
-        total_interest: total_interest.to_string(),
-        total_repayable: total.to_string(),
-        schedule_amounts: schedule.into_iter().map(|value| value.to_string()).collect(),
-        authoritative: false,
-        native_cpp_used: false,
-    })
+    let monthly = schedule.first().copied().unwrap_or(Decimal::ZERO);
+
+    if let Some(cpp) = cpp_daily_preview(
+        principal,
+        rate_percent,
+        req.term_months,
+        fee,
+        start_raw,
+        &req.due_dates,
+    ) {
+        if preview_matches(&cpp, monthly, total_interest, total, &schedule) {
+            return Ok(response_from_values(
+                req,
+                cpp.monthly_installment,
+                cpp.total_interest,
+                cpp.total_repayable,
+                cpp.schedule_amounts,
+                true,
+            ));
+        }
+    }
+
+    Ok(response_from_values(
+        req,
+        monthly,
+        total_interest,
+        total,
+        schedule,
+        false,
+    ))
 }
 
 fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {

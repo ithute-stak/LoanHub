@@ -121,6 +121,7 @@ jobs:
           test "$(/tmp/loanhub-native-build/loanhub_native micro-loan-preview 100000 20000 3 0)" = "46400|39200|139200|46400,46400,46400"
           test "$(/tmp/loanhub-native-build/loanhub_native reducing-balance-preview 100000 36000 3 0)" = "35353|6059|106059|35353,35353,35353"
           test "$(/tmp/loanhub-native-build/loanhub_native compound-interest-preview 100000 36000 3 0)" = "36333|9273|109273|36333,36423,36517"
+          test "$(/tmp/loanhub-native-build/loanhub_native daily-accrual-preview 100000 36000 3 0 2024-04-24 2024-05-24,2024-06-24,2024-07-24)" = "35335|6006|106006|35335,35335,35336"
 
       - name: Run project validation
         run: |
