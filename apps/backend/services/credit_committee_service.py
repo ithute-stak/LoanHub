@@ -1128,26 +1128,12 @@ def _post_approval_deal_integrity(
     return checks
 
 
-def preview_loan_disbursement_integrity(
-    db: Session,
-    loan: ClientCompanyLoan,
-    *,
-    owner_cash_bypass: bool = False,
-) -> dict[str, Any]:
+def preview_loan_disbursement_integrity(db: Session, loan: ClientCompanyLoan) -> dict[str, Any]:
     if not loan.direct_application_id:
         return {
             "applicable": False,
             "passed": True,
             "reason": "Loan is not linked to a direct application governed by Credit Committee.",
-            "drift": [],
-        }
-    if owner_cash_bypass:
-        return {
-            "applicable": True,
-            "passed": True,
-            "committee_clearance": False,
-            "owner_committee_bypass": True,
-            "reason": "Company owner cash disbursement may proceed without Credit Committee clearance.",
             "drift": [],
         }
     application = db.get(DirectLoanApplication, loan.direct_application_id)
@@ -1200,15 +1186,7 @@ def assert_loan_disbursement_conditions(
     loan: ClientCompanyLoan,
     *,
     actor_user_id: UUID | None = None,
-    owner_cash_bypass: bool = False,
 ) -> dict[str, Any] | None:
-    if owner_cash_bypass:
-        return {
-            "passed": True,
-            "committee_clearance": False,
-            "owner_committee_bypass": True,
-            "reason": "Company owner cash disbursement bypassed Credit Committee clearance.",
-        }
     if not loan.direct_application_id:
         return None
     application = db.get(DirectLoanApplication, loan.direct_application_id)
