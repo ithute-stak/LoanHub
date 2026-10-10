@@ -308,15 +308,35 @@ fn reducing_balance(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, Str
 
     let total_interest = money(total_interest);
     let total = money(schedule.iter().copied().sum::<Decimal>());
-    Ok(LoanPreviewResponse {
-        method: req.method.clone(),
-        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
-        total_interest: total_interest.to_string(),
-        total_repayable: total.to_string(),
-        schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
-        authoritative: false,
-        native_cpp_used: false,
-    })
+    let monthly = schedule.first().copied().unwrap_or(Decimal::ZERO);
+
+    if let Some(cpp) = cpp_fixed_preview(
+        "reducing-balance-preview",
+        principal,
+        rate_percent,
+        req.term_months,
+        fee,
+    ) {
+        if preview_matches(&cpp, monthly, total_interest, total, &schedule) {
+            return Ok(response_from_values(
+                req,
+                cpp.monthly_installment,
+                cpp.total_interest,
+                cpp.total_repayable,
+                cpp.schedule_amounts,
+                true,
+            ));
+        }
+    }
+
+    Ok(response_from_values(
+        req,
+        monthly,
+        total_interest,
+        total,
+        schedule,
+        false,
+    ))
 }
 
 fn parse_date(value: &str) -> Result<NaiveDate, String> {
@@ -498,16 +518,35 @@ fn compound(req: &LoanPreviewRequest) -> Result<LoanPreviewResponse, String> {
         .map(|i| money(principal_parts[i] + rounded_interest[i] + fee_parts[i]))
         .collect();
     let total = money(schedule.iter().copied().sum::<Decimal>());
+    let monthly = schedule.first().copied().unwrap_or(Decimal::ZERO);
 
-    Ok(LoanPreviewResponse {
-        method: req.method.clone(),
-        monthly_installment: schedule.first().copied().unwrap_or(Decimal::ZERO).to_string(),
-        total_interest: exact_total_interest.to_string(),
-        total_repayable: total.to_string(),
-        schedule_amounts: schedule.into_iter().map(|v| v.to_string()).collect(),
-        authoritative: false,
-        native_cpp_used: false,
-    })
+    if let Some(cpp) = cpp_fixed_preview(
+        "compound-interest-preview",
+        principal,
+        rate_percent,
+        req.term_months,
+        fee,
+    ) {
+        if preview_matches(&cpp, monthly, exact_total_interest, total, &schedule) {
+            return Ok(response_from_values(
+                req,
+                cpp.monthly_installment,
+                cpp.total_interest,
+                cpp.total_repayable,
+                cpp.schedule_amounts,
+                true,
+            ));
+        }
+    }
+
+    Ok(response_from_values(
+        req,
+        monthly,
+        exact_total_interest,
+        total,
+        schedule,
+        false,
+    ))
 }
 
 

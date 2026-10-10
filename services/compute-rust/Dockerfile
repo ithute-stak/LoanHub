@@ -1,5 +1,5 @@
 FROM alpine:3.20 AS cpp-build
-RUN apk add --no-cache build-base cmake
+RUN apk add --no-cache build-base cmake boost-dev
 WORKDIR /src/native-cpp
 COPY native-cpp/CMakeLists.txt ./
 COPY native-cpp/src ./src
