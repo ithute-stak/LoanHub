@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
-import { approveFinancialPlan, approveTreasuryCommitment, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createTreasuryCommitment, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getAccountingAuditCompliancePack, getFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, getTreasuryCashForecast, getTreasuryStressTest, listAccountingAccounts, listFinancialPlans, listTreasuryCommitments, prepareMonthEndReversalDrafts, previewYearEndClosing, type AccountingAuditCompliancePack, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack, type TreasuryCashForecast, type TreasuryCommitment, type TreasuryStressTest } from "@/api/accounting";
+import { approveFinancialPlan, approveTreasuryCommitment, cancelYearEndClosingDraft, createFinancialPlan, createMonthEndAdjustmentDraft, createOpeningBalanceMigration, createRollingForecast, createTreasuryCommitment, createYearEndClosingDraft, depreciateAssetsForPeriod, exportFinancialBooks, getAccountingAuditCompliancePack, getFinancialBooks, getLatestPreparedFinancialBooks, getFinancialPlanVariance, getMonthEndControlPack, getTreasuryCashForecast, getTreasuryStressTest, listAccountingAccounts, listFinancialPlans, listTreasuryCommitments, prepareMonthEndReversalDrafts, previewYearEndClosing, type AccountingAuditCompliancePack, type FinancialPlan, type FinancialPlanVariance, type MonthEndControlPack, type TreasuryCashForecast, type TreasuryCommitment, type TreasuryStressTest } from "@/api/accounting";
 import { governanceControlsApi, type ControlRecord } from "@/api/governanceControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ export function FinancialBooksWorkspace() {
   const [toDate, setToDate] = useState(isoToday());
   const [branchId, setBranchId] = useState(currentBranch?.id ?? "all");
   const [books, setBooks] = useState<FinancialBooksPack | null>(null);
+  const [preparedSnapshot, setPreparedSnapshot] = useState<{ preparedAt?: string | null; scopeName?: string | null } | null>(null);
   const [periods, setPeriods] = useState<ControlRecord[]>([]);
   const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null);
   const [monthEndPack, setMonthEndPack] = useState<MonthEndControlPack | null>(null);
@@ -120,15 +121,32 @@ export function FinancialBooksWorkspace() {
         branchId: effectiveBranchId,
         fromDate,
         toDate,
-        includeLedgerDetail: true,
+        includeLedgerDetail: false,
       });
       setBooks(result);
+      setPreparedSnapshot(null);
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not prepare the financial books"));
     } finally {
       setLoading(false);
     }
   }, [companyId, effectiveBranchId, fromDate, toDate]);
+
+  const loadLatestPreparedBooks = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const result = await getLatestPreparedFinancialBooks(companyId, effectiveBranchId);
+      if (result.available && result.books) {
+        setBooks(result.books);
+        setPreparedSnapshot({
+          preparedAt: result.prepared_at,
+          scopeName: result.scope_name,
+        });
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not load the latest prepared financial books"));
+    }
+  }, [companyId, effectiveBranchId]);
 
   const loadControls = useCallback(async () => {
     if (!companyId) return;
@@ -158,11 +176,11 @@ export function FinancialBooksWorkspace() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadBooks();
       void loadControls();
+      void loadLatestPreparedBooks();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadBooks, loadControls]);
+  }, [loadControls, loadLatestPreparedBooks]);
 
   const openingTotals = useMemo(
     () => openingLines.reduce(
@@ -643,7 +661,13 @@ export function FinancialBooksWorkspace() {
 
         <TabsContent value="books" className="space-y-5">
           <Card className="loanhub-panel">
-            <CardHeader><CardTitle>Reporting period</CardTitle><CardDescription>Choose the scope used to prepare the complete accounting book pack.</CardDescription></CardHeader>
+            <CardHeader>
+              <CardTitle>Reporting period</CardTitle>
+              <CardDescription>
+                Choose the scope used to prepare the complete accounting book pack.
+                {preparedSnapshot?.preparedAt ? ` Latest automatic snapshot: ${new Date(preparedSnapshot.preparedAt).toLocaleString()} (${preparedSnapshot.scopeName || "selected scope"}).` : ""}
+              </CardDescription>
+            </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
               <Field label="From"><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></Field>
               <Field label="To"><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></Field>

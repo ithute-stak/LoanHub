@@ -405,6 +405,20 @@ def test_financial_books_pack_can_include_full_general_ledger_detail():
     assert '"running_balance": running' in router
 
 
+def test_interactive_financial_books_use_batched_ledger_summaries():
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "def _ledger_book_summary_data(" in router
+    assert "opening_q.group_by(JournalLine.account_id).all()" in router
+    assert "period_q.group_by(JournalLine.account_id).all()" in router
+    assert "general_ledger = _ledger_book_summary_data(" in router
+    assert "includeLedgerDetail: false" in frontend
+    effect_block = frontend.split("useEffect(() => {", 2)[2].split("}, [loadControls]);", 1)[0]
+    assert "void loadControls();" in effect_block
+    assert "void loadBooks();" not in effect_block
+
+
 def test_ratio_engine_has_no_router_statement_dependency():
     service = (ROOT / "backend" / "services" / "accounting_service.py").read_text(encoding="utf-8")
     ratio_block = service.split("def financial_ratio_analysis(", 1)[1].split("ACCOUNTING_ETHICS_PRINCIPLES", 1)[0]
@@ -434,6 +448,29 @@ def test_finance_operations_workspace_exposes_financial_books_period_close_and_o
     assert "Opening balance migration" in frontend
     assert "Create opening-balance draft" in frontend
     assert "Create period" in frontend
+
+
+def test_financial_books_are_prepared_daily_at_0330_and_loaded_as_snapshots():
+    scheduler = (ROOT / "backend" / "services" / "financial_books_scheduler.py").read_text(encoding="utf-8")
+    main = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
+    router = (ROOT / "backend" / "routers" / "accounting.py").read_text(encoding="utf-8")
+    frontend_api = (ROOT / "frontend" / "api" / "accounting.ts").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "components" / "accounting" / "financial-books-workspace.tsx").read_text(encoding="utf-8")
+
+    assert 'MASERU_TZ = ZoneInfo("Africa/Maseru")' in scheduler
+    assert "DAILY_PREPARE_TIME = time(hour=3, minute=30)" in scheduler
+    assert '"schedule": "03:30"' in scheduler
+    assert "CompanyBranch.is_active.is_(True)" in scheduler
+    assert "include_ledger_detail=False" in scheduler
+    assert "pg_try_advisory_lock" in scheduler
+    assert "start_financial_books_scheduler()" in main
+    assert "stop_financial_books_scheduler()" in main
+
+    assert '@router.get("/financial-books/latest")' in router
+    assert 'record_type == "financial_books_daily_snapshot"' in router
+    assert "getLatestPreparedFinancialBooks" in frontend_api
+    assert "void loadLatestPreparedBooks();" in frontend
+    assert "Latest automatic snapshot:" in frontend
 
 
 def test_opening_balance_schema_requires_balanced_double_entry():
