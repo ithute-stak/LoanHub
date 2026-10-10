@@ -44,7 +44,120 @@ def upgrade() -> None:
                     EXTRACT(DAY FROM l.first_payment_due)::integer,
                     CASE
                         WHEN (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')
-                             ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
+                             ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}                        THEN EXTRACT(
+                            DAY FROM (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')::date
+                        )::integer
+                        ELSE NULL
+                    END
+                ) AS pay_day,
+                l.created_at
+            FROM client_company_loan AS l
+            WHERE l.folio_company_code = 'BFS'
+        ),
+        classified AS (
+            SELECT
+                id,
+                company_id,
+                created_at,
+                CASE
+                    WHEN pay_day BETWEEN 15 AND 22 THEN 'Force'
+                    WHEN pay_day BETWEEN 23 AND 26 THEN 'CIVIL'
+                    WHEN pay_day BETWEEN 27 AND 31 THEN 'S/E'
+                    ELSE NULL
+                END AS new_group
+            FROM source
+        ),
+        numbered AS (
+            SELECT
+                id,
+                new_group,
+                ROW_NUMBER() OVER (
+                    PARTITION BY company_id, new_group
+                    ORDER BY created_at, id
+                )::integer AS new_sequence
+            FROM classified
+            WHERE new_group IS NOT NULL
+        )
+        UPDATE client_company_loan AS l
+        SET
+            folio_group_code = n.new_group,
+            folio_sequence = n.new_sequence,
+            folio_number = l.folio_company_code || '-' || n.new_group || '-' || LPAD(n.new_sequence::text, 5, '0')
+        FROM numbered AS n
+        WHERE l.id = n.id
+        """
+    )
+
+    op.create_unique_constraint(
+        "uq_client_loan_folio_sequence",
+        "client_company_loan",
+        ["company_id", "folio_group_code", "folio_sequence"],
+    )
+
+
+def downgrade() -> None:
+    # This is a business-data reclassification. The former employer-derived
+    # folio identity is not retained after the approved renumbering, so a
+    # downgrade intentionally leaves the new folio identities in place.
+    pass
+
+                        THEN EXTRACT(
+                            DAY FROM (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')::date
+                        )::integer
+                        ELSE NULL
+                    END
+                ) AS pay_day,
+                l.created_at
+            FROM client_company_loan AS l
+            WHERE l.folio_company_code = 'BFS'
+        ),
+        classified AS (
+            SELECT
+                id,
+                company_id,
+                created_at,
+                CASE
+                    WHEN pay_day BETWEEN 15 AND 22 THEN 'Force'
+                    WHEN pay_day BETWEEN 23 AND 26 THEN 'CIVIL'
+                    WHEN pay_day BETWEEN 27 AND 31 THEN 'S/E'
+                    ELSE NULL
+                END AS new_group
+            FROM source
+        ),
+        numbered AS (
+            SELECT
+                id,
+                new_group,
+                ROW_NUMBER() OVER (
+                    PARTITION BY company_id, new_group
+                    ORDER BY created_at, id
+                )::integer AS new_sequence
+            FROM classified
+            WHERE new_group IS NOT NULL
+        )
+        UPDATE client_company_loan AS l
+        SET
+            folio_group_code = n.new_group,
+            folio_sequence = n.new_sequence,
+            folio_number = l.folio_company_code || '-' || n.new_group || '-' || LPAD(n.new_sequence::text, 5, '0')
+        FROM numbered AS n
+        WHERE l.id = n.id
+        """
+    )
+
+    op.create_unique_constraint(
+        "uq_client_loan_folio_sequence",
+        "client_company_loan",
+        ["company_id", "folio_group_code", "folio_sequence"],
+    )
+
+
+def downgrade() -> None:
+    # This is a business-data reclassification. The former employer-derived
+    # folio identity is not retained after the approved renumbering, so a
+    # downgrade intentionally leaves the new folio identities in place.
+    pass
+
                         THEN EXTRACT(
                             DAY FROM (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')::date
                         )::integer
