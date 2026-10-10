@@ -101,7 +101,7 @@ export default function FolioBookPage() {
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Loan Folio Book</h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-              Every loan keeps one immutable operational folio. Each work group has its own append-only sequence, so BFS-LMPS-00001 and BFS-LDF-00001 can coexist without mixing their books. Existing gaps are reported for audit but are never recycled or used to renumber historical loans.
+              Every loan keeps one operational folio. For BFS, folios are grouped by contractual pay day: 15–22 = Force, 23–26 = CIVIL, and 27–month end = S/E. Each group has its own sequence, for example BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Existing gaps are reported for audit and are never recycled after the pay-date migration.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -120,7 +120,7 @@ export default function FolioBookPage() {
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Metric label="Loans in folio book" value={String(summary?.total_loans ?? 0)} hint={`${payload?.total ?? 0} matching current filters`} />
-        <Metric label="Sequence books" value={String(summary?.sequence_book_count ?? 0)} hint="One independent sequence per work group" />
+        <Metric label="Sequence books" value={String(summary?.sequence_book_count ?? 0)} hint="Independent sequence per folio group" />
         <Metric label="Sequence gaps" value={String(summary?.gap_count ?? 0)} hint="Reported only; gaps are never reused" />
         <Metric label="Integrity exceptions" value={String(integrityCount)} hint="Missing, duplicate or mismatched identifiers" />
         <Metric label="Integrity state" value={summary?.integrity_ok ? "CLEAR" : "ATTENTION"} hint={summary?.integrity_ok ? "No critical folio identity errors detected" : "Review the exception rows below"} />
@@ -139,7 +139,7 @@ export default function FolioBookPage() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Folio integrity requires attention</AlertTitle>
           <AlertDescription>
-            LoanHub found a folio identity exception. Historical folios are not automatically renumbered; investigate and repair the underlying record deliberately so the audit trail remains intact.
+            LoanHub found a folio identity exception. After the approved BFS pay-date migration, folios are append-only; investigate any later exception deliberately so the audit trail remains intact.
           </AlertDescription>
         </Alert>
       )}
