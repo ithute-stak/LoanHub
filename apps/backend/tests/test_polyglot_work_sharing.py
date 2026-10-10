@@ -266,12 +266,17 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "simple-interest" in native
     assert "simple-flat-preview" in native
     assert "micro-loan-preview" in native
+    assert "reducing-balance-preview" in native
+    assert "compound-interest-preview" in native
     assert "round_ratio_half_up" in native
+    assert "round_big_ratio_half_up" in native
     assert "split_cents" in native
     assert "LOANHUB_CPP_KERNEL_PATH" in rust
     assert "cpp_fixed_preview(" in rust
     assert '"simple-flat-preview"' in rust
     assert '"micro-loan-preview"' in rust
+    assert '"reducing-balance-preview"' in rust
+    assert '"compound-interest-preview"' in rust
     assert "native_cpp_used" in rust
     assert "COPY --from=cpp-build" in dockerfile
     assert "loanhub-native" in dockerfile
@@ -946,7 +951,10 @@ def test_polyglot_language_roles_are_not_decorative() -> None:
     assert "simple-interest" in native
     assert "simple-flat-preview" in native
     assert "micro-loan-preview" in native
+    assert "reducing-balance-preview" in native
+    assert "compound-interest-preview" in native
     assert "round_ratio_half_up" in native
+    assert "round_big_ratio_half_up" in native
     assert "cpp_fixed_preview(" in rust
 
 
