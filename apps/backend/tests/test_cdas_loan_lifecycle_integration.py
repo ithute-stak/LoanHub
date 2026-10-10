@@ -75,8 +75,8 @@ def test_cdas_workspace_can_manually_link_verification_to_application() -> None:
 def test_cdas_operations_prepare_registration_from_approved_loanhub_loan() -> None:
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
-    assert "Load approved loans" in page
-    assert "Prepare registration" in page
+    assert "Approved CDAS-enabled loan (optional)" in page
+    assert "Prepare selected loan" in page
     assert "professionalApi.listDirect()" in page
     assert "application.cdas_collection_enabled" in page
     assert "/cdas/loans/${selectedLoanId}/registration-draft" in page
@@ -105,7 +105,7 @@ def test_registration_ui_uses_linked_loan_endpoint_and_requires_borrower_consent
 
     assert "/cdas/loans/${selectedLoanId}/register" in page
     assert "borrower_consent: borrowerConsentConfirmed" in page
-    assert "I confirm the borrower authorised payroll deduction for this loan." in page
+    assert "I confirm this employee authorised the payroll deduction." in page
     assert "LoanHub records this confirmation before the CDAS registration is sent." in page
 
 
@@ -208,10 +208,47 @@ def test_register_mode_keeps_only_amount_and_months_editable_in_cdas_style_form(
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
-    assert 'value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}' in page
-    assert 'value={lifecycle.effective_month || ""}' in page
-    assert 'value={generatedExpiryMonth(lifecycle.effective_month, lifecycle.total_installment)}' in page
-    assert 'value={lifecycle.reference_no || ""}' in page
+    assert "directEmployeeNo.trim() && lifecycle.deduction_amount > 0 && lifecycle.total_installment > 0" in page
+    assert "(lifecycle.deduction_amount * lifecycle.total_installment).toFixed(2)" in page
+    assert 'value={lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : "")}' in page
+    assert 'value={generatedExpiryMonth(lifecycle.effective_month || (directEmployeeNo.trim() ? nextEffectiveMonth() : ""), lifecycle.total_installment)}' in page
+    assert 'value={lifecycle.reference_no || (directEmployeeNo.trim() ? "Auto-generated on registration" : "")}' in page
     assert 'deduction_amount: Number(event.target.value)' in page
     assert 'total_installment: Number(event.target.value)' in page
     assert "Ready for deduction capture" in page
+
+
+def test_direct_employee_registration_uses_loaded_employee_and_server_generated_fields() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert '@router.post("/deductions/direct-register")' in router
+    assert "class CdasDirectEmployeeRegistrationRequest" in router
+    assert "authorization_confirmed" in router
+    assert "client.get_employee_details(employee_no)" in router
+    assert "get_company_item_code(db, context.company_id)" in router
+    assert "principal_amount = (payload.deduction_amount * payload.deduction_period)" in router
+    assert "first_of_next_month" in router
+    assert 'reference_no = f"LH-CDAS-' in router
+    assert 'request_type=1' in router
+    assert 'deduction_id=0' in router
+    assert 'loan_policy=1' in router
+    assert 'operation_type="deduction.lifecycle.1"' in router
+
+    assert 'const requestedEmployeeNo = (searchParams.get("employee") || "").trim();' in page
+    assert 'const [directEmployeeNo, setDirectEmployeeNo] = useState(requestedEmployeeNo);' in page
+    assert 'id="cdas-direct-employee"' in page
+    assert 'placeholder="e.g. 0019634"' in page
+    assert '"/cdas/deductions/direct-register"' in page
+    assert "employee_no: directEmployeeNo.trim()" in page
+    assert "authorization_confirmed: borrowerConsentConfirmed" in page
+    assert "Enter an employee number or prepare an approved loan" in page
+
+
+def test_direct_registration_still_supports_approved_loan_mode() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+
+    assert "Approved CDAS-enabled loan (optional)" in page
+    assert "Prepare selected loan" in page
+    assert "/cdas/loans/${selectedLoanId}/register" in page
+    assert "directEmployeeNo.trim()" in page

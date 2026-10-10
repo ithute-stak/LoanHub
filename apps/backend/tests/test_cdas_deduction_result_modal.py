@@ -162,3 +162,13 @@ def test_cdas_table_avoids_dash_only_columns() -> None:
     assert '{showEffective ? <th' in source
     assert '{showExpiry ? <th' in source
     assert 'Not returned' in source
+
+
+def test_cdas_modal_can_start_add_deduction_for_loaded_employee() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert "Add Deduction" in source
+    assert "PlusCircle" in source
+    assert '/company/cdas/operations?action=register&employee=' in source
+    assert "encodeURIComponent(employee?.EmployeeNo || normalizedEmployeeNo)" in source
+    assert "canManage && normalizedEmployeeNo" in source
