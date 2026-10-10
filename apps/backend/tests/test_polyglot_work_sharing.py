@@ -81,6 +81,17 @@ def test_rust_variance_classification_validates_worker_response(monkeypatch) -> 
     }
 
 
+def test_cpp_reconciliation_variance_is_parity_gated_behind_rust() -> None:
+    native = (REPO / "services/native-cpp/src/main.cpp").read_text(encoding="utf-8")
+    rust = (REPO / "services/compute-rust/src/main.rs").read_text(encoding="utf-8")
+
+    assert '"reconciliation-variance"' in native
+    assert "saturating_sub_i64" in native
+    assert "cpp_reconciliation_variance(expected, actual)" in rust
+    assert "status == rust_status && *variance == rust_variance" in rust
+    assert '"native_cpp_used": native_cpp_used' in rust
+
+
 def test_reconciliation_uses_go_and_rust_with_python_safety() -> None:
     service = (ROOT / "services/reconciliation_service.py").read_text(encoding="utf-8")
 
@@ -271,6 +282,9 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert "daily-accrual-preview" in native
     assert "daily_period_factor_ratio" in native
     assert "daily_segment_interest_cents" in native
+    assert "reconciliation-variance" in native
+    assert "reconciliation_variance" in native
+    assert "saturating_sub_i64" in native
     assert "portfolio-risk-core" in native
     assert "portfolio_risk_core" in native
     assert "portfolio-risk-groups" in native
@@ -286,6 +300,7 @@ def test_cpp_kernel_is_bundled_behind_rust_compute() -> None:
     assert '"compound-interest-preview"' in rust
     assert '"daily-accrual-preview"' in rust
     assert "cpp_daily_preview(" in rust
+    assert "cpp_reconciliation_variance(" in rust
     assert "cpp_portfolio_risk_core(" in rust
     assert "cpp_portfolio_core_matches(" in rust
     assert "cpp_portfolio_risk_groups(" in rust
