@@ -57,6 +57,10 @@ from services.cdas_roster_intelligence_scheduler import (
     start_cdas_roster_intelligence_scheduler,
     stop_cdas_roster_intelligence_scheduler,
 )
+from services.financial_books_scheduler import (
+    start_financial_books_scheduler,
+    stop_financial_books_scheduler,
+)
 
 
 def _seed_central_work_groups() -> None:
@@ -82,6 +86,7 @@ async def lifespan(_: FastAPI):
     cdas_billing_started = False
     cdas_autopilot_started = False
     cdas_roster_started = False
+    financial_books_started = False
     _seed_central_work_groups()
     await manager.start()
     try:
@@ -98,6 +103,8 @@ async def lifespan(_: FastAPI):
             cdas_autopilot_started = True
             await start_cdas_roster_intelligence_scheduler(3600)
             cdas_roster_started = True
+            await start_financial_books_scheduler()
+            financial_books_started = True
             if settings.TREASURY_AUTO_SUBMIT_ENABLED:
                 await start_treasury_scheduler(settings.TREASURY_AUTO_SUBMIT_INTERVAL_SECONDS)
                 treasury_started = True
@@ -113,6 +120,8 @@ async def lifespan(_: FastAPI):
             await stop_cdas_autopilot_scheduler()
         if cdas_roster_started:
             await stop_cdas_roster_intelligence_scheduler()
+        if financial_books_started:
+            await stop_financial_books_scheduler()
         if cdas_billing_started:
             await stop_cdas_billing_scheduler()
         if webhook_started:
