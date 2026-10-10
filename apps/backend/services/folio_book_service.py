@@ -135,9 +135,13 @@ def _sequence_books(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], i
         sample = group_rows[0]
         company_code = str(sample.get("folio_company_code") or "GEN")
         next_sequence = max_sequence + 1
+        bfs_paydate_group = company_code == "BFS" and group_code in {"Force", "CIVIL", "S/E"}
         books.append({
             "group_code": group_code,
-            "group_name": next((row.get("employer_group_name") for row in group_rows if row.get("employer_group_name")), None),
+            "group_name": f"{group_code} pay-date group" if bfs_paydate_group else next(
+                (row.get("employer_group_name") for row in group_rows if row.get("employer_group_name")),
+                None,
+            ),
             "company_code": company_code,
             "loan_count": len(group_rows),
             "first_sequence": sequences[0] if sequences else None,
@@ -162,8 +166,8 @@ def build_folio_book(
     """Return a read-only, append-only view of the company's loan folio books.
 
     Sequence integrity and the next number are calculated across the whole company, not
-    per branch. This is essential because a work group's sequence is company-wide. A
-    branch-scoped user still receives only rows from the active branch, but the next folio
+    per branch. BFS pay-date books and other companies' work-group books are company-wide.
+    A branch-scoped user still receives only rows from the active branch, but the next folio
     can never collide with a higher sequence that happened to be issued at another branch.
 
     Existing folios are never renumbered and sequence gaps are never recycled. A gap is
