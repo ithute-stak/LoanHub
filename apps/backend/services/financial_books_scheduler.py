@@ -123,7 +123,7 @@ def _seconds_until_next_run(now: datetime | None = None) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
-async def _run_cycle_with_lock(*, business_date: date | None = None) -> None:
+def _run_cycle_sync(*, business_date: date | None = None) -> int:
     db = SessionLocal()
     acquired = False
     try:
@@ -135,17 +135,17 @@ async def _run_cycle_with_lock(*, business_date: date | None = None) -> None:
                 ).scalar()
             )
             if not acquired:
-                return
+                return 0
         else:
             acquired = True
 
-        prepared = await asyncio.to_thread(
-            prepare_daily_financial_books,
+        prepared = prepare_daily_financial_books(
             db,
             business_date=business_date,
         )
         if prepared:
             logger.info("Prepared %s daily Financial Books snapshot(s)", prepared)
+        return prepared
     finally:
         if acquired and db.get_bind().dialect.name == "postgresql":
             try:
@@ -156,6 +156,13 @@ async def _run_cycle_with_lock(*, business_date: date | None = None) -> None:
             except Exception:
                 db.rollback()
         db.close()
+
+
+async def _run_cycle_with_lock(*, business_date: date | None = None) -> None:
+    await asyncio.to_thread(
+        _run_cycle_sync,
+        business_date=business_date,
+    )
 
 
 async def _scheduler_loop() -> None:
