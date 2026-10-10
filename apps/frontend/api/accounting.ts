@@ -95,6 +95,8 @@ export async function getLatestPreparedFinancialBooks(companyId?: string, branch
   schedule?: string;
   from_date?: string | null;
   to_date?: string | null;
+  branch_id?: string | null;
+  scope_name?: string | null;
   books: FinancialBooksPack | null;
 }> {
   return (await api.get("/accounting/financial-books/latest", {
