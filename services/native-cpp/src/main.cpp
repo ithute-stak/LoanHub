@@ -1,6 +1,7 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -806,12 +807,253 @@ void portfolio_risk_core() {
     std::cout << "\n";
 }
 
+
+struct ConcentrationAggregate {
+    std::int64_t loan_count = 0;
+    std::int64_t exposure_cents = 0;
+    std::int64_t par30_cents = 0;
+    std::int64_t fpd_eligible = 0;
+    std::int64_t fpd_count = 0;
+};
+
+struct VintageAggregate {
+    std::int64_t loan_count = 0;
+    std::int64_t originated_cents = 0;
+    std::int64_t outstanding_cents = 0;
+    std::int64_t par30_cents = 0;
+    std::int64_t fpd_eligible = 0;
+    std::int64_t fpd_count = 0;
+    std::int64_t write_off_count = 0;
+    std::int64_t top_up_count = 0;
+};
+
+struct TopUpAggregate {
+    std::int64_t loan_count = 0;
+    std::int64_t active_exposure_cents = 0;
+    std::int64_t par30_cents = 0;
+    std::int64_t fpd_eligible = 0;
+    std::int64_t fpd_count = 0;
+    std::int64_t write_off_count = 0;
+};
+
+void add_concentration_row(
+    std::map<std::int64_t, ConcentrationAggregate>& groups,
+    std::int64_t label_id,
+    std::int64_t balance_cents,
+    std::int64_t days_past_due,
+    bool first_payment_due,
+    bool first_payment_default
+) {
+    auto& group = groups[label_id];
+    group.loan_count = checked_add_i64(group.loan_count, 1, "group loan count exceeds int64");
+    group.exposure_cents = checked_add_i64(
+        group.exposure_cents, balance_cents, "group exposure exceeds int64"
+    );
+    if (days_past_due >= 30) {
+        group.par30_cents = checked_add_i64(
+            group.par30_cents, balance_cents, "group par30 exceeds int64"
+        );
+    }
+    if (first_payment_due) {
+        group.fpd_eligible = checked_add_i64(
+            group.fpd_eligible, 1, "group fpd eligible exceeds int64"
+        );
+        if (first_payment_default) {
+            group.fpd_count = checked_add_i64(
+                group.fpd_count, 1, "group fpd count exceeds int64"
+            );
+        }
+    }
+}
+
+void portfolio_risk_groups() {
+    std::map<std::int64_t, ConcentrationAggregate> branches;
+    std::map<std::int64_t, ConcentrationAggregate> products;
+    std::map<std::int64_t, ConcentrationAggregate> employers;
+    std::map<std::string, VintageAggregate> vintages;
+    std::array<TopUpAggregate, 2> topups{};
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        std::vector<std::string> fields;
+        std::size_t start = 0;
+        while (start <= line.size()) {
+            const std::size_t separator = line.find('|', start);
+            fields.push_back(line.substr(
+                start,
+                separator == std::string::npos ? std::string::npos : separator - start
+            ));
+            if (separator == std::string::npos) {
+                break;
+            }
+            start = separator + 1;
+        }
+        if (fields.size() != 13) {
+            throw std::invalid_argument("invalid portfolio group row");
+        }
+
+        const std::int64_t balance_cents = std::stoll(fields[0]);
+        const std::int64_t principal_cents = std::stoll(fields[1]);
+        const std::int64_t days_past_due = std::stoll(fields[2]);
+        const bool active = fields[3] == "1";
+        const bool is_written_off = fields[4] == "1";
+        const bool is_top_up = fields[5] == "1";
+        const bool first_payment_due = fields[6] == "1";
+        const bool first_payment_default = fields[7] == "1";
+        const std::int64_t branch_id = std::stoll(fields[8]);
+        const std::int64_t product_id = std::stoll(fields[9]);
+        const std::int64_t employer_id = std::stoll(fields[10]);
+        const bool has_vintage = fields[11] == "1";
+        const std::string vintage = fields[12];
+
+        if (balance_cents < 0 || principal_cents < 0) {
+            throw std::invalid_argument("negative portfolio amount");
+        }
+
+        if (active) {
+            add_concentration_row(
+                branches, branch_id, balance_cents, days_past_due,
+                first_payment_due, first_payment_default
+            );
+            add_concentration_row(
+                products, product_id, balance_cents, days_past_due,
+                first_payment_due, first_payment_default
+            );
+            add_concentration_row(
+                employers, employer_id, balance_cents, days_past_due,
+                first_payment_due, first_payment_default
+            );
+        }
+
+        if (has_vintage) {
+            auto& item = vintages[vintage];
+            item.loan_count = checked_add_i64(item.loan_count, 1, "vintage count exceeds int64");
+            item.originated_cents = checked_add_i64(
+                item.originated_cents, principal_cents, "vintage originated exceeds int64"
+            );
+            if (!is_written_off) {
+                item.outstanding_cents = checked_add_i64(
+                    item.outstanding_cents, balance_cents, "vintage outstanding exceeds int64"
+                );
+                if (days_past_due >= 30) {
+                    item.par30_cents = checked_add_i64(
+                        item.par30_cents, balance_cents, "vintage par30 exceeds int64"
+                    );
+                }
+            }
+            if (first_payment_due) {
+                item.fpd_eligible = checked_add_i64(
+                    item.fpd_eligible, 1, "vintage fpd eligible exceeds int64"
+                );
+                if (first_payment_default) {
+                    item.fpd_count = checked_add_i64(
+                        item.fpd_count, 1, "vintage fpd count exceeds int64"
+                    );
+                }
+            }
+            if (is_written_off) {
+                item.write_off_count = checked_add_i64(
+                    item.write_off_count, 1, "vintage write-off count exceeds int64"
+                );
+            }
+            if (is_top_up) {
+                item.top_up_count = checked_add_i64(
+                    item.top_up_count, 1, "vintage top-up count exceeds int64"
+                );
+            }
+        }
+
+        auto& topup = topups[is_top_up ? 1 : 0];
+        topup.loan_count = checked_add_i64(
+            topup.loan_count, 1, "top-up group count exceeds int64"
+        );
+        if (active) {
+            topup.active_exposure_cents = checked_add_i64(
+                topup.active_exposure_cents,
+                balance_cents,
+                "top-up active exposure exceeds int64"
+            );
+            if (days_past_due >= 30) {
+                topup.par30_cents = checked_add_i64(
+                    topup.par30_cents, balance_cents, "top-up par30 exceeds int64"
+                );
+            }
+        }
+        if (first_payment_due) {
+            topup.fpd_eligible = checked_add_i64(
+                topup.fpd_eligible, 1, "top-up fpd eligible exceeds int64"
+            );
+            if (first_payment_default) {
+                topup.fpd_count = checked_add_i64(
+                    topup.fpd_count, 1, "top-up fpd count exceeds int64"
+                );
+            }
+        }
+        if (is_written_off) {
+            topup.write_off_count = checked_add_i64(
+                topup.write_off_count, 1, "top-up write-off count exceeds int64"
+            );
+        }
+    }
+
+    const auto emit_concentration = [](
+        const char dimension,
+        const std::map<std::int64_t, ConcentrationAggregate>& groups
+    ) {
+        for (const auto& [label_id, item] : groups) {
+            std::cout
+                << "C|" << dimension << "|" << label_id
+                << "|" << item.loan_count
+                << "|" << item.exposure_cents
+                << "|" << item.par30_cents
+                << "|" << item.fpd_eligible
+                << "|" << item.fpd_count << "\n";
+        }
+    };
+    emit_concentration('B', branches);
+    emit_concentration('P', products);
+    emit_concentration('E', employers);
+
+    for (const auto& [month, item] : vintages) {
+        std::cout
+            << "V|" << month
+            << "|" << item.loan_count
+            << "|" << item.originated_cents
+            << "|" << item.outstanding_cents
+            << "|" << item.par30_cents
+            << "|" << item.fpd_eligible
+            << "|" << item.fpd_count
+            << "|" << item.write_off_count
+            << "|" << item.top_up_count << "\n";
+    }
+
+    for (std::size_t index = 0; index < topups.size(); ++index) {
+        const auto& item = topups[index];
+        std::cout
+            << "T|" << index
+            << "|" << item.loan_count
+            << "|" << item.active_exposure_cents
+            << "|" << item.par30_cents
+            << "|" << item.fpd_eligible
+            << "|" << item.fpd_count
+            << "|" << item.write_off_count << "\n";
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "portfolio-risk-core") {
             portfolio_risk_core();
+            return 0;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "portfolio-risk-groups") {
+            portfolio_risk_groups();
             return 0;
         }
 
@@ -886,6 +1128,7 @@ int main(int argc, char** argv) {
 
         std::cerr
             << "usage: loanhub_native portfolio-risk-core < stdin_rows\n"
+            << "   or: loanhub_native portfolio-risk-groups < stdin_rows\n"
             << "   or: loanhub_native simple-interest <principal_cents> <rate_milli_percent> <months>\n"
             << "   or: loanhub_native simple-flat-preview <principal_cents> <rate_milli_percent> <months> <fee_cents>\n"
             << "   or: loanhub_native micro-loan-preview <principal_cents> <rate_milli_percent> <months> <fee_cents>\n"
