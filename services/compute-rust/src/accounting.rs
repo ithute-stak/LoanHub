@@ -1,6 +1,6 @@
 //! Advisory C++ accounting computation. Rust recomputes and accepts exact parity only.
 //! No journal posting or database mutations occur here.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use super::cpp_execute;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,11 +41,14 @@ pub fn validate_journal(rows: &[JournalLine]) -> Result<(), &'static str> {
     if rows.len() < 2 { return Err("journal requires two or more lines"); }
     let mut debit = 0_i128;
     let mut credit = 0_i128;
+    let mut accounts = BTreeSet::new();
     for row in rows {
         validate_line(row)?;
+        accounts.insert(row.account_id);
         debit += i128::from(row.debit_cents);
         credit += i128::from(row.credit_cents);
     }
+    if accounts.len() < 2 { return Err("journal requires distinct accounts"); }
     checked(debit)?;
     checked(credit)?;
     if debit != credit { return Err("unbalanced journal"); }
@@ -136,6 +139,10 @@ mod tests {
     #[test]
     fn rejects_invalid_and_overflow() {
         assert!(validate_journal(&[]).is_err());
+        assert!(validate_journal(&[
+            JournalLine { account_id: 10, debit_cents: 100, credit_cents: 0 },
+            JournalLine { account_id: 10, debit_cents: 0, credit_cents: 100 },
+        ]).is_err());
         assert!(validate_journal(&[
             JournalLine { account_id: 10, debit_cents: 100, credit_cents: 0 },
             JournalLine { account_id: 20, debit_cents: 0, credit_cents: 99 },
