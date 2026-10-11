@@ -50,7 +50,7 @@ def test_query_executes_with_tenant_posting_period_and_branch_isolation(monkeypa
             conn.execute(text(
                 "INSERT INTO journal_entries (id,scope_key,status,entry_date,branch_id) "
                 "VALUES (:id,:scope,:status,:posted,:branch)"
-            ), {"id": eid, "scope": scope, "status": status, "posted": posted, "branch": branch})
+            ), {"id": UUID(eid).hex, "scope": scope, "status": status, "posted": posted, "branch": UUID(branch).hex})
             for idx, (account_id, debit, credit) in enumerate(
                 [(a1, Decimal(cents) / 100, 0), (a2, 0, Decimal(cents) / 100)]
             ):
@@ -58,7 +58,7 @@ def test_query_executes_with_tenant_posting_period_and_branch_isolation(monkeypa
                     "INSERT INTO journal_lines (id,journal_entry_id,account_id,debit,credit) "
                     "VALUES (:line,:entry,:account,:debit,:credit)"
                 ), {
-                    "line": ident * 2 + idx, "entry": eid, "account": account_id,
+                    "line": ident * 2 + idx, "entry": UUID(eid).hex, "account": UUID(account_id).hex,
                     "debit": debit, "credit": credit,
                 })
 
