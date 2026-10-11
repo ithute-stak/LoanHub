@@ -135,6 +135,10 @@ mod tests {
         assert_eq!(tb.accounts[1].net_debit_cents, -300);
         let advisory = advisory_trial_balance(&rows).unwrap();
         assert_eq!(advisory.result, tb);
+        if std::env::var_os("LOANHUB_CPP_LIBRARY_PATH").is_some() {
+            assert!(advisory.native_cpp_used, "C++ accounting parity must match Rust");
+            assert!(advisory_validate_journal(&rows).unwrap(), "C++ journal validation must match Rust");
+        }
     }
     #[test]
     fn rejects_invalid_and_overflow() {
