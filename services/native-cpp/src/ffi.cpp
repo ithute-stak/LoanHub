@@ -114,16 +114,16 @@ extern "C" int loanhub_native_execute(
             }
             if (command == "accounting-journal-validate") {
                 accounting::validate_journal(lines);
-                std::cout << "balanced\\n";
+                std::cout << "balanced\n";
             } else {
                 const auto balance = accounting::calculate_trial_balance(lines);
                 std::cout << balance.debit_cents << "|"
-                          << balance.credit_cents << "\\n";
+                          << balance.credit_cents << "\n";
                 for (const auto& account : balance.accounts) {
                     std::cout << account.account_id << "|"
                               << account.debit_cents << "|"
                               << account.credit_cents << "|"
-                              << account.net_debit_cents << "\\n";
+                              << account.net_debit_cents << "\n";
                 }
             }
         } else if (command == "reconciliation-variance") {
