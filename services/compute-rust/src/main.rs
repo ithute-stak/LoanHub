@@ -1,3 +1,4 @@
+mod accounting;
 use chrono::{Datelike, Duration, NaiveDate};
 use rust_decimal::prelude::*;
 use rust_decimal::RoundingStrategy;
