@@ -44,3 +44,32 @@ def test_requires_postgres():
     db.get_bind.return_value.dialect.name = "sqlite"
     with pytest.raises(ValueError):
         accounting_rls_readiness(db)
+
+
+def test_predicate_without_tenant_context_is_flagged():
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    names = ("accounting_accounts", "journal_entries", "journal_lines")
+    db.execute.side_effect = [
+        [{"name": name, "enabled": True, "forced": False} for name in names],
+        [{"tablename": name, "cmd": "ALL", "qual": "account_id > 0",
+          "with_check": "account_id > 0"} for name in names],
+    ]
+    report = accounting_rls_readiness(db)
+    assert not report["ready"]
+    assert all(f"{name}:tenant_context_not_detected" in report["findings"] for name in names)
+
+
+def test_tenant_context_predicate_recognized():
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    names = ("accounting_accounts", "journal_entries", "journal_lines")
+    clause = ("current_setting('loanhub.actor_scope', true) = 'tenant' AND "
+              "company_id::text = current_setting('loanhub.company_id', true)")
+    db.execute.side_effect = [
+        [{"name": name, "enabled": True, "forced": False} for name in names],
+        [{"tablename": name, "cmd": "ALL", "qual": clause,
+          "with_check": clause} for name in names],
+    ]
+    report = accounting_rls_readiness(db)
+    assert not any("tenant_context_not_detected" in x for x in report["findings"])
