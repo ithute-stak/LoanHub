@@ -1,4 +1,5 @@
 #include "native.hpp"
+#include "accounting.hpp"
 using namespace loanhub_native;
 
 extern "C" int loanhub_native_execute(
@@ -95,6 +96,36 @@ extern "C" int loanhub_native_execute(
             portfolio_risk_groups();
         } else if (command == "predictive-risk-batch") {
             predictive_risk_batch();
+        } else if (command == "accounting-journal-validate"
+                   || command == "accounting-trial-balance") {
+            std::vector<accounting::JournalLine> lines;
+            std::string row;
+            while (std::getline(input_stream, row)) {
+                if (row.empty()) continue;
+                const auto fields = split_payload(row);
+                if (fields.size() != 3) {
+                    throw std::invalid_argument("invalid accounting row");
+                }
+                lines.push_back(accounting::JournalLine{
+                    std::stoll(fields[0]),
+                    std::stoll(fields[1]),
+                    std::stoll(fields[2])
+                });
+            }
+            if (command == "accounting-journal-validate") {
+                accounting::validate_journal(lines);
+                std::cout << "balanced\n";
+            } else {
+                const auto balance = accounting::calculate_trial_balance(lines);
+                std::cout << balance.debit_cents << "|"
+                          << balance.credit_cents << "\n";
+                for (const auto& account : balance.accounts) {
+                    std::cout << account.account_id << "|"
+                              << account.debit_cents << "|"
+                              << account.credit_cents << "|"
+                              << account.net_debit_cents << "\n";
+                }
+            }
         } else if (command == "reconciliation-variance") {
             const auto fields = split_payload(payload);
             if (fields.size() != 2) {
