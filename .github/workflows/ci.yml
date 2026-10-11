@@ -117,6 +117,7 @@ jobs:
           cmake -S services/native-cpp -B /tmp/loanhub-native-build
           cmake --build /tmp/loanhub-native-build --config Release
           ctest --test-dir /tmp/loanhub-native-build --output-on-failure
+          LOANHUB_CPP_LIBRARY_PATH=/tmp/loanhub-native-build/libloanhub_native.so cargo test --manifest-path services/compute-rust/Cargo.toml
           test -f /tmp/loanhub-native-build/libloanhub_native.so
           nm -D /tmp/loanhub-native-build/libloanhub_native.so | grep -Fq loanhub_native_execute
           python -c 'import ctypes; lib=ctypes.CDLL("/tmp/loanhub-native-build/libloanhub_native.so"); fn=lib.loanhub_native_execute; fn.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.POINTER(ctypes.c_char),ctypes.c_size_t]; fn.restype=ctypes.c_int; buf=ctypes.create_string_buffer(65536); n=fn(b"simple-flat-preview",b"100000|36000|3|0",buf,len(buf)); assert n > 0 and buf.value.decode()=="36333|9000|109000|36333,36333,36334\n"'
