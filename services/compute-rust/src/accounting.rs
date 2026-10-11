@@ -141,6 +141,10 @@ mod tests {
         assert!(validate_journal(&[]).is_err());
         assert!(validate_journal(&[
             JournalLine { account_id: 10, debit_cents: 100, credit_cents: 0 },
+            JournalLine { account_id: 10, debit_cents: 0, credit_cents: 100 },
+        ]).is_err());
+        assert!(validate_journal(&[
+            JournalLine { account_id: 10, debit_cents: 100, credit_cents: 0 },
             JournalLine { account_id: 20, debit_cents: 0, credit_cents: 99 },
         ]).is_err());
         assert!(trial_balance(&[
