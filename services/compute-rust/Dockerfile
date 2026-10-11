@@ -3,6 +3,7 @@ RUN apk add --no-cache build-base cmake boost-dev
 WORKDIR /src/native-cpp
 COPY native-cpp/CMakeLists.txt ./
 COPY native-cpp/src ./src
+COPY native-cpp/include ./include
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release
 
