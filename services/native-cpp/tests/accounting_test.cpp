@@ -21,6 +21,7 @@ int main() {
     assert(throws([] { validate_journal({{101, 100, 100}, {201, 0, 100}}); }));
     assert(throws([] { validate_journal({{101, 0, 0}, {201, 0, 1}}); }));
     assert(throws([] { validate_journal({{101, 1, 0}}); }));
+    assert(throws([] { validate_journal({{101, 100, 0}, {101, 0, 100}}); }));
     assert(throws([] {
         const auto max = std::numeric_limits<std::int64_t>::max();
         calculate_trial_balance({{101, max, 0}, {101, max, 0}});
