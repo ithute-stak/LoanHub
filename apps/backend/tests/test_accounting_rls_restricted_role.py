@@ -20,10 +20,11 @@ def test_accounting_rls_restricted_role_denies_cross_tenant_reads():
     with engine.connect() as connection:
         tx = connection.begin()
         try:
-            available = connection.execute(text(
-                "SELECT 1 FROM pg_roles WHERE rolname = 'loanhub_app'"
-            )).scalar()
-            assert available, "restricted loanhub_app role is required"
+            # Role exists only for this transaction; rollback removes it.
+            connection.execute(text(
+                "CREATE ROLE loanhub_accounting_rls_probe "
+                "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            ))
             connection.execute(text("""
                 CREATE TEMP TABLE accounting_rls_probe (
                     id integer PRIMARY KEY, company_id uuid NOT NULL, amount integer NOT NULL
@@ -49,10 +50,10 @@ def test_accounting_rls_restricted_role_denies_cross_tenant_reads():
                 )
             """))
             connection.execute(text(
-                "GRANT SELECT ON accounting_rls_probe TO loanhub_app"
+                "GRANT SELECT ON accounting_rls_probe TO loanhub_accounting_rls_probe"
             ))
-            connection.execute(text("SET LOCAL ROLE loanhub_app"))
-            assert connection.execute(text("SELECT current_user")).scalar() == "loanhub_app"
+            connection.execute(text("SET LOCAL ROLE loanhub_accounting_rls_probe"))
+            assert connection.execute(text("SELECT current_user")).scalar() == "loanhub_accounting_rls_probe"
             # Fail closed without valid tenant context, even without a WHERE clause.
             assert connection.execute(text(
                 "SELECT count(*) FROM accounting_rls_probe"
