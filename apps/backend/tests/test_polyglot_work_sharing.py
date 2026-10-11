@@ -362,7 +362,8 @@ def test_cpp_shared_library_boundary_replaces_runtime_process_spawning() -> None
     assert "target_link_libraries(loanhub_native_shared PRIVATE loanhub_native_core)" in cmake
     assert 'OUTPUT_NAME "loanhub_native"' in cmake
     assert 'extern "C" int loanhub_native_execute(' in native
-    assert "int main(int argc, char** argv)" in native\n    assert (REPO / "services/native-cpp/src/ffi.cpp").is_file()
+    assert "int main(int argc, char** argv)" in native
+    assert (REPO / "services/native-cpp/src/ffi.cpp").is_file()
     assert "use libloading::Library;" in rust
     assert "OnceLock<Option<CppNativeLibrary>>" in rust
     assert "LOANHUB_CPP_LIBRARY_PATH" in rust
