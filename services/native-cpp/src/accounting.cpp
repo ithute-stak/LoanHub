@@ -1,6 +1,7 @@
 #include "accounting.hpp"
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 namespace loanhub_native::accounting {
 namespace {
@@ -22,11 +23,14 @@ void validate_line(const JournalLine& line) {
 void validate_journal(const std::vector<JournalLine>& lines) {
     if (lines.size() < 2) throw std::invalid_argument("journal requires two or more lines");
     __int128 debits = 0, credits = 0;
+    std::set<std::int64_t> account_ids;
     for (const auto& line : lines) {
+        account_ids.insert(line.account_id);
         validate_line(line);
         debits += line.debit_cents;
         credits += line.credit_cents;
     }
+    if (account_ids.size() < 2) throw std::invalid_argument("journal requires distinct accounts");
     checked(debits);
     checked(credits);
     if (debits != credits) throw std::invalid_argument("unbalanced journal");
