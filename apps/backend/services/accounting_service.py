@@ -5338,6 +5338,7 @@ def accounting_error_diagnostics(
     from_date: date,
     to_date: date,
     branch_id=None,
+    include_native_parity: bool = False,
 ) -> dict:
     """Chapters 23-27: detect control failures, including errors a trial balance can miss.
 
@@ -5490,6 +5491,11 @@ def accounting_error_diagnostics(
             "control_account_difference",
             "bank_or_external_reconciliation_difference",
         ],
+        "native_accounting_parity": (
+            _read_only_native_parity_diagnostic(
+                db, scope=key, from_date=from_date, to_date=to_date, branch_id=branch_id
+            ) if include_native_parity else None
+        ),
         "note": (
             "A zero trial-balance difference does not prove that postings are correct; "
             "errors of principle, commission, original entry and compensating errors can still balance."
@@ -6192,3 +6198,15 @@ def bank_settlement_chain(
         "unmatched_settlement_ids": unmatched,
         "items": items,
     }
+
+
+def _read_only_native_parity_diagnostic(db, *, scope, from_date, to_date, branch_id):
+    """Optional advisory report: never fail the authoritative accounting report."""
+    try:
+        from services.accounting_scoped_parity import scoped_trial_balance_parity
+        return scoped_trial_balance_parity(
+            db, scope_key=scope, from_date=from_date, to_date=to_date,
+            branch_id=branch_id,
+        )
+    except (ValueError, OverflowError, RuntimeError, TypeError):
+        return {"authoritative": False, "native_cpp_matched": False, "error": "parity_unavailable"}
