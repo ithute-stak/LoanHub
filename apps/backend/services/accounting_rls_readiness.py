@@ -40,6 +40,11 @@ def accounting_rls_readiness(db) -> dict:
         # ALL policies can cover every command; this is coverage, not a proof
         # that predicates/role grants isolate tenants correctly.
         missing = [] if "ALL" in commands else sorted(set(REQUIRED_COMMANDS) - commands)
+        for policy in associated:
+            predicate = (policy.get("qual") or "").strip().lower()
+            check = (policy.get("with_check") or "").strip().lower()
+            if predicate in ("true", "(true)") or check in ("true", "(true)"):
+                findings.append(f"{name}:unrestricted_policy_predicate")
         if not row:
             findings.append(f"{name}:table_missing")
         if not enabled:
