@@ -40,6 +40,17 @@ def accounting_rls_readiness(db) -> dict:
         # ALL policies can cover every command; this is coverage, not a proof
         # that predicates/role grants isolate tenants correctly.
         missing = [] if "ALL" in commands else sorted(set(REQUIRED_COMMANDS) - commands)
+        # Policies may look restrictive but fail to check the current tenant.
+        # This is an advisory heuristic, not a proof of security.
+        predicates = " ".join(
+            str(p.get("qual") or "") + " " + str(p.get("with_check") or "")
+            for p in associated
+        ).lower()
+        if associated and (
+            "loanhub.company_id" not in predicates
+            or "loanhub.actor_scope" not in predicates
+        ):
+            findings.append(f"{name}:tenant_context_not_detected")
         if not row:
             findings.append(f"{name}:table_missing")
         if not enabled:
