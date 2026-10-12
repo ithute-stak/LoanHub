@@ -143,9 +143,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         final listing = await _request('/legacy-bank-deductions/');
         if (listing.statusCode != 200) throw Exception('Import saved, but refresh failed.');
         rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Imported ${result['saved']} legacy deductions.')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Imported ${result['saved']} legacy deductions.')),
+          );
+        }
       }
     } catch (e) {
       error = e.toString();
@@ -164,11 +166,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final directory = await getTemporaryDirectory();
       final archive = File('${directory.path}/loanhub-legacy-bank-submissions.zip');
       await archive.writeAsBytes(response.bodyBytes, flush: true);
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(archive.path, mimeType: 'application/zip')],
+      await Share.shareXFiles(
+        [XFile(archive.path, mimeType: 'application/zip')],
         subject: 'LoanHub legacy bank deductions',
         text: 'Confidential bank submission. Share only with an authorised recipient.',
-      ));
+      );
     } catch (e) {
       error = e.toString();
     }
@@ -335,7 +337,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           const SizedBox(height: 8),
           Card(clipBehavior: Clip.antiAlias, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xffe3edf4)),
-            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true), const DataColumn(label: Text('ACTIONS'))],
+            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true), DataColumn(label: Text('ACTIONS'))],
             rows: visibleRows.map((row) => DataRow(cells: [
               DataCell(Text('${row['work_group']}')),
               DataCell(Text('${row['client_name']}')),
