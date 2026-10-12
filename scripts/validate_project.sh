@@ -25,6 +25,7 @@ cd "$ROOT_DIR/apps/backend"
   tests/test_loan_portfolio_folio_frontend.py \
   tests/test_bank_submission_export.py \
   tests/test_financial_books_reconciliation.py \
+  tests/test_financial_books_period_movements.py \
   tests/test_employer_payroll_management.py \
   tests/test_credit_committee_underwriting.py \
   tests/test_credit_committee_source_safety.py \
