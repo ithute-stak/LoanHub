@@ -35,6 +35,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   final password = TextEditingController();
   final otp = TextEditingController();
   final companyId = TextEditingController();
+  List<Map<String, dynamic>> memberships = [];
+  Map<String, String> companyNames = {};
   final name = TextEditingController();
   final account = TextEditingController();
   final branch = TextEditingController();
@@ -57,8 +59,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Future<void> _restore() async {
     token.text = await secure.read(key: 'token') ?? '';
     companyId.text = await secure.read(key: 'company') ?? '';
-    if (token.text.isNotEmpty && companyId.text.isNotEmpty) {
-      await _connect();
+    if (token.text.isNotEmpty) {
+      await _resolveCompany();
     }
   }
 
@@ -79,8 +81,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       setState(() => error = 'A secure HTTPS LoanHub API URL is required.');
       return;
     }
-    if (phone.text.trim().isEmpty || password.text.isEmpty || companyId.text.trim().isEmpty) {
-      setState(() => error = 'Enter your phone, password and company ID.');
+    if (phone.text.trim().isEmpty || password.text.isEmpty) {
+      setState(() => error = 'Enter your phone and password.');
       return;
     }
     setState(() { loading = true; error = null; });
@@ -103,7 +105,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       if (token.text.isEmpty) throw Exception('LoanHub did not return a session.');
       password.clear();
       otp.clear();
-      await _connect();
+      await _resolveCompany();
     } catch (e) {
       error = e.toString();
     } finally {
@@ -117,8 +119,52 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     password.clear();
     groups = [];
     rows = [];
+    memberships = [];
+    companyNames = {};
+    companyId.clear();
+    await secure.delete(key: 'company');
     selectedGroup = null;
     if (mounted) setState(() { configured = false; error = null; });
+  }
+
+  Future<void> _resolveCompany() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/me'),
+        headers: {'Authorization': 'Bearer ${token.text.trim()}'},
+      );
+      if (response.statusCode != 200) {
+        await _signOut();
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      final profile = jsonDecode(response.body) as Map<String, dynamic>;
+      memberships = ((profile['memberships'] as List?) ?? [])
+          .whereType<Map<String, dynamic>>()
+          .where((item) => item['is_active'] == true)
+          .toList();
+      if (memberships.isEmpty) {
+        throw Exception('Your account has no active LoanHub company membership.');
+      }
+      final saved = companyId.text.trim();
+      final primary = memberships.firstWhere(
+        (m) => m['is_primary'] == true,
+        orElse: () => memberships.first,
+      );
+      final chosen = memberships.any((m) => m['company_id'].toString() == saved)
+          ? saved : primary['company_id'].toString();
+      companyId.text = chosen;
+      final companyResponse = await http.get(
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/companies/?limit=500'),
+        headers: {'Authorization': 'Bearer ${token.text.trim()}'},
+      );
+      if (companyResponse.statusCode == 200) {
+        final companies = (jsonDecode(companyResponse.body) as List).cast<Map<String, dynamic>>();
+        companyNames = {for (final item in companies) item['id'].toString(): item['name'].toString()};
+      }
+      await _connect();
+    } catch (e) {
+      if (mounted) setState(() { configured = false; error = e.toString(); });
+    }
   }
 
   Future<void> _connect() async {
@@ -388,12 +434,29 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           const SizedBox(height: 12),
           TextField(controller: otp, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Authenticator code (if enabled)', border: OutlineInputBorder())),
           const SizedBox(height: 12),
-          field('Company ID', companyId),
-          const SizedBox(height: 12),
+
           FilledButton.icon(onPressed: loading ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in to LoanHub')),
           const SizedBox(height: 8),
           const Text('LoanHub credentials are sent only to the configured HTTPS server. Passwords are not saved on the device.'),
         ]))),
+        if (configured && memberships.length > 1) Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: DropdownButtonFormField<String>(
+            initialValue: companyId.text,
+            decoration: const InputDecoration(labelText: 'Active company'),
+            items: memberships.map((m) => DropdownMenuItem(
+              value: m['company_id'].toString(),
+              child: Text(m['is_primary'] == true
+                  ? '★ ${companyNames[m['company_id'].toString()] ?? 'Primary company'}'
+                  : companyNames[m['company_id'].toString()] ?? 'My company'),
+            )).toList(),
+            onChanged: (value) async {
+              if (value == null) return;
+              companyId.text = value;
+              await _connect();
+            },
+          ),
+        ),
         if (configured) LayoutBuilder(builder: (context, constraints) => Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('Add legacy record', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)), const SizedBox(height: 16),
           DropdownButtonFormField<String>(initialValue: selectedGroup, decoration: const InputDecoration(labelText: 'Work group (loaded from LoanHub API)'), items: groups.map((g) => DropdownMenuItem(value: g['id'].toString(), child: Text('${g['name']} (${g['code']})'))).toList(), onChanged: (v) => setState(() => selectedGroup = v)),
