@@ -45,6 +45,17 @@ def accounting_rls_readiness(db) -> dict:
             check = (policy.get("with_check") or "").strip().lower()
             if predicate in ("true", "(true)") or check in ("true", "(true)"):
                 findings.append(f"{name}:unrestricted_policy_predicate")
+        # Policies may look restrictive but fail to check the current tenant.
+        # This is an advisory heuristic, not a proof of security.
+        predicates = " ".join(
+            str(p.get("qual") or "") + " " + str(p.get("with_check") or "")
+            for p in associated
+        ).lower()
+        if associated and (
+            "loanhub.company_id" not in predicates
+            or "loanhub.actor_scope" not in predicates
+        ):
+            findings.append(f"{name}:tenant_context_not_detected")
         if not row:
             findings.append(f"{name}:table_missing")
         if not enabled:
