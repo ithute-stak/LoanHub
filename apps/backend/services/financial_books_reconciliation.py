@@ -45,7 +45,8 @@ def reconcile_books_pack(pack: dict) -> dict:
             continue
         # Debit and credit in the trial balance are net balances. Compare
         # against ledger closing balances using the account's normal side.
-        signed = _amount(ledger_row["closing_balance"])
+        signed = (_amount(ledger_row["closing_balance"])
+                  - _amount(ledger_row.get("opening_balance", "0")))
         if ledger_row.get("normal_balance") == "credit":
             signed = -signed
         expected = max(signed, Decimal("0.00"))
