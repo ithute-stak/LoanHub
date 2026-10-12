@@ -138,6 +138,44 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (mounted) setState(() => loading = false);
   }
 
+  Future<void> _restoreRecord() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final response = await _request('/legacy-bank-deductions/deleted');
+      if (response.statusCode == 403) {
+        throw Exception('Only company management can restore records.');
+      }
+      if (response.statusCode != 200) throw Exception('Could not load removed records.');
+      final deleted = (jsonDecode(response.body) as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Restore a deleted record'),
+          content: SizedBox(width: 480, child: deleted.isEmpty
+            ? const Text('No deleted records available.')
+            : ListView(shrinkWrap: true, children: deleted.map((row) => ListTile(
+                title: Text(row['client_name'].toString()),
+                subtitle: Text('Account ••••${row['account_last4']} · M ${row['amount']}'),
+                trailing: const Icon(Icons.restore),
+                onTap: () => Navigator.pop(ctx, row['id'].toString()),
+              )).toList())),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+        ),
+      );
+      if (selected == null) return;
+      final result = await _request('/legacy-bank-deductions/$selected/restore', body: {});
+      if (result.statusCode != 200) throw Exception('Unable to restore record.');
+      final refreshed = await _request('/legacy-bank-deductions/');
+      if (refreshed.statusCode != 200) throw Exception('Restored but table refresh failed.');
+      rows = (jsonDecode(refreshed.body) as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   Future<void> _importCsv() async {
     final item = await FilePicker.pickFile(
       type: FileType.custom,
@@ -371,7 +409,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (loading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (error != null) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(error!, style: const TextStyle(color: Colors.red))),
         if (configured) ...[
-          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), OutlinedButton.icon(onPressed: loading ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
+          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), OutlinedButton.icon(onPressed: loading ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')), const SizedBox(width: 8), OutlinedButton.icon(onPressed: loading ? null : _restoreRecord, icon: const Icon(Icons.restore), label: const Text('Restore')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
           const SizedBox(height: 8),
           Wrap(spacing: 12, runSpacing: 12, children: [
             SizedBox(width: 320, child: TextField(
