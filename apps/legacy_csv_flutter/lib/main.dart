@@ -166,11 +166,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final directory = await getTemporaryDirectory();
       final archive = File('${directory.path}/loanhub-legacy-bank-submissions.zip');
       await archive.writeAsBytes(response.bodyBytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(archive.path, mimeType: 'application/zip')],
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(archive.path, mimeType: 'application/zip')],
         subject: 'LoanHub legacy bank deductions',
         text: 'Confidential bank submission. Share only with an authorised recipient.',
-      );
+      ));
     } catch (e) {
       error = e.toString();
     }
