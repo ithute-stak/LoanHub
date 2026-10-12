@@ -290,3 +290,5 @@ from database.models.maturity_recovery import (
 )
 # Maps recovery coordination columns onto the pre-existing CollectionCase model.
 from database.models import maturity_model_extensions as _maturity_model_extensions  # noqa: F401,E402
+
+from database.models.legacy_bank_deduction import LegacyBankDeduction
