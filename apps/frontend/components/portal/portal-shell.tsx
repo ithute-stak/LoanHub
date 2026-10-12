@@ -127,7 +127,7 @@ const companyNavigation: NavItem[] = [
             { label: "Clients", href: "/company/clients", icon: ContactRound, roles: LENDING_ROLES },
             { label: "Marketplace", href: "/company/marketplace", icon: Store, roles: DIRECT_APPLICATION_ROLES },
             { label: "Legacy cash-out register", href: "/company/legacy-cashout-register", icon: BookOpenCheck, roles: LENDING_ROLES },
-            { label: "Legacy bank CSV register", href: "/company/legacy-bank-deductions", icon: Landmark, roles: TREASURY_ROLES },
+            { label: "Legacy bank CSV register", href: "/company/legacy-bank-deductions", icon: Landmark, roles: ["company_owner", "company_admin", "finance_officer", "treasury_officer"] },
             { label: "Credit origination", href: "/company/origination", icon: ShieldCheck, roles: DIRECT_APPLICATION_ROLES },
             { label: "Loans & contracts", href: "/company/loans", icon: HandCoins },
             { label: "Lending operations", href: "/company/lending-operations", icon: BriefcaseBusiness, roles: LENDING_OPERATIONS_ROLES },
