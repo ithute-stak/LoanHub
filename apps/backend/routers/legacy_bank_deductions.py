@@ -201,6 +201,46 @@ def delete_legacy(
     db.commit()
 
 
+@router.get("/deleted")
+def list_deleted_legacy(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    rows = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_not(None),
+    ).order_by(LegacyBankDeduction.deleted_at.desc()).limit(100).all()
+    return [{
+        "id": str(row.id), "client_name": row.client_name,
+        "account_last4": row.account_last4,
+        "amount": str(row.amount),
+        "deleted_at": row.deleted_at.isoformat(),
+    } for row in rows]
+
+
+@router.post("/{record_id}/restore")
+def restore_deleted_legacy(
+    record_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    record = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.id == record_id,
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_not(None),
+    ).first()
+    if record is None:
+        raise HTTPException(404, "Deleted legacy record not found")
+    record.deleted_at = None
+    record.deleted_by_user_id = None
+    db.commit()
+    return {"id": str(record.id), "restored": True}
+
+
 @router.post("/import-csv")
 async def import_legacy_csv(
     file: UploadFile = File(...),
