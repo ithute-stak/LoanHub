@@ -62,6 +62,7 @@ from database.schemas.accounting import (
     SuspenseCorrectionCreate,
     VatTransactionCreate,
 )
+from services.financial_books_reconciliation import reconcile_books_pack
 from database.session import get_db
 from services.accounting_service import (
     accounting_business_date,
@@ -740,6 +741,7 @@ def financial_books_pack_data(
     )
 
     return {
+        "reconciliation": reconcile_books_pack({"trial_balance": trial, "general_ledger": general_ledger}),
         "book_pack": "LoanHub Financial Books",
         "accounting_basis": "Frank Wood-aligned double-entry financial accounting",
         "company_id": str(company_id) if company_id else None,

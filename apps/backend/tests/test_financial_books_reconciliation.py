@@ -51,3 +51,23 @@ def test_missing_reports_are_not_marked_reconciled():
     assert reconcile_books_pack({}) == {
         "reconciled": False, "findings": ["missing_trial_balance_or_ledger"]
     }
+
+
+def test_opening_balance_not_compared_to_period_turnover():
+    pack = example_pack()
+    pack["general_ledger"][0]["opening_balance"] = "900.00"
+    pack["general_ledger"][0]["closing_balance"] = "1000.00"
+    pack["general_ledger"][1]["opening_balance"] = "900.00"
+    pack["general_ledger"][1]["closing_balance"] = "1000.00"
+    assert reconcile_books_pack(pack)["reconciled"] is True
+
+
+def test_gross_debits_and_credits_on_same_account_compare_net_movement():
+    pack = example_pack()
+    pack["trial_balance"]["lines"][0]["debit"] = "150.00"
+    pack["trial_balance"]["lines"][0]["credit"] = "50.00"
+    pack["trial_balance"]["lines"][1]["debit"] = "50.00"
+    pack["trial_balance"]["lines"][1]["credit"] = "150.00"
+    pack["trial_balance"]["total_debit"] = "200.00"
+    pack["trial_balance"]["total_credit"] = "200.00"
+    assert reconcile_books_pack(pack)["reconciled"] is True
