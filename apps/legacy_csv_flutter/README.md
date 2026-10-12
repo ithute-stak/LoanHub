@@ -56,3 +56,14 @@ editor; otherwise leading zeros may disappear. Work groups must already
 exist in LoanHub's active employer-group API. The server checks all rows,
 rejects duplicates and invalid entries, and refuses to save a file if
 any row is invalid. Nothing is posted to financial ledgers.
+
+## Sign-in and recovery
+
+Sign in using the existing LoanHub phone number, password, and optional MFA
+one-time code. Choose your company UUID for tenant routing. The app stores
+only the returned bearer token with secure storage; passwords are not
+persisted. Sign out clears local credentials. Refresh-token rotation and
+company selection by name are still planned.
+
+Company managers may open **Restore** to recover previously soft-deleted
+legacy records. Other finance roles cannot list or restore deleted records.
