@@ -65,7 +65,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<http.Response> _request(String path, {Map<String, dynamic>? body}) {
-    final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}$path');
+    final uri = Uri.parse('$_apiBase$path');
     final headers = <String, String>{
       'Authorization': 'Bearer ${token.text.trim()}',
       'X-Company-ID': companyId.text.trim(),
@@ -76,8 +76,17 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         : http.post(uri, headers: headers, body: jsonEncode(body));
   }
 
+  String get _apiBase {
+    final raw = apiUrl.text.trim();
+    final uri = Uri.tryParse(raw);
+    if (uri != null && uri.scheme == 'https' && uri.host == 'loanhub.co.ls') {
+      return 'https://api.loanhub.co.ls/api/v1';
+    }
+    return raw.replaceAll(RegExp(r'/+$'), '');
+  }
+
   Future<void> _signIn() async {
-    if (!Uri.tryParse(apiUrl.text.trim()).toString().startsWith('https://')) {
+    if (Uri.tryParse(_apiBase)?.scheme != 'https') {
       setState(() => error = 'A secure HTTPS LoanHub API URL is required.');
       return;
     }
@@ -93,11 +102,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final factor = otp.text.trim();
       final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
       final response = await http.post(
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
+        Uri.parse('$_apiBase/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': normalizedPhone,
-          'password': password.text.trim(),
+          'password': password.text,
           if (factor.isNotEmpty && isOtp) 'otp': factor,
           if (factor.isNotEmpty && !isOtp) 'recovery_code': factor,
           'device_name': 'LoanHub Legacy CSV Flutter',
@@ -141,7 +150,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Future<void> _resolveCompany() async {
     try {
       final response = await http.get(
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/me'),
+        Uri.parse('$_apiBase/auth/me'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
       );
       if (response.statusCode != 200) {
@@ -165,7 +174,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           ? saved : primary['company_id'].toString();
       companyId.text = chosen;
       final companyResponse = await http.get(
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/companies/?limit=500'),
+        Uri.parse('$_apiBase/companies/?limit=500'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
       );
       if (companyResponse.statusCode == 200) {
@@ -248,7 +257,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview'),
+        Uri.parse('$_apiBase/legacy-bank-deductions/import-csv?preview=$preview'),
       );
       request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
       request.headers['X-Company-ID'] = companyId.text.trim();
@@ -394,7 +403,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         return;
       }
       setState(() { loading = true; error = null; });
-      final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/${row['id']}');
+      final uri = Uri.parse('$_apiBase/legacy-bank-deductions/${row['id']}');
       final headers = {
         'Authorization': 'Bearer ${token.text.trim()}',
         'X-Company-ID': companyId.text.trim(),
