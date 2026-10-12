@@ -65,7 +65,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<http.Response> _request(String path, {Map<String, dynamic>? body}) {
-    final uri = Uri.parse('${_apiBase}$path');
+    final uri = Uri.parse('$_apiBase$path');
     final headers = <String, String>{
       'Authorization': 'Bearer ${token.text.trim()}',
       'X-Company-ID': companyId.text.trim(),
@@ -102,7 +102,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final factor = otp.text.trim();
       final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
       final response = await http.post(
-        Uri.parse('${_apiBase}/auth/login'),
+        Uri.parse('$_apiBase/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': normalizedPhone,
@@ -150,7 +150,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Future<void> _resolveCompany() async {
     try {
       final response = await http.get(
-        Uri.parse('${_apiBase}/auth/me'),
+        Uri.parse('$_apiBase/auth/me'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
       );
       if (response.statusCode != 200) {
@@ -174,7 +174,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           ? saved : primary['company_id'].toString();
       companyId.text = chosen;
       final companyResponse = await http.get(
-        Uri.parse('${_apiBase}/companies/?limit=500'),
+        Uri.parse('$_apiBase/companies/?limit=500'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
       );
       if (companyResponse.statusCode == 200) {
@@ -257,7 +257,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('${_apiBase}/legacy-bank-deductions/import-csv?preview=$preview'),
+        Uri.parse('$_apiBase/legacy-bank-deductions/import-csv?preview=$preview'),
       );
       request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
       request.headers['X-Company-ID'] = companyId.text.trim();
@@ -403,7 +403,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         return;
       }
       setState(() { loading = true; error = null; });
-      final uri = Uri.parse('${_apiBase}/legacy-bank-deductions/${row['id']}');
+      final uri = Uri.parse('$_apiBase/legacy-bank-deductions/${row['id']}');
       final headers = {
         'Authorization': 'Bearer ${token.text.trim()}',
         'X-Company-ID': companyId.text.trim(),
