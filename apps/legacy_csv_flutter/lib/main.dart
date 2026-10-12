@@ -138,6 +138,77 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     return matchesSearch && matchesGroup;
   }).toList();
 
+  Future<void> _modifyRecord(Map<String, dynamic> row, {required bool remove}) async {
+    final currentName = TextEditingController(text: row['client_name']?.toString() ?? '');
+    final currentBranch = TextEditingController(text: row['branch_code']?.toString() ?? '');
+    final currentAmount = TextEditingController(text: row['amount']?.toString() ?? '');
+    var selected = row['work_group_id']?.toString();
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+          title: Text(remove ? 'Remove legacy record?' : 'Edit legacy record'),
+          content: remove
+            ? Text('Remove the entry for ${row['client_name']}? It will no longer be included in future CSV exports. This action cannot be undone.')
+            : SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selected,
+                  decoration: const InputDecoration(labelText: 'Work group'),
+                  items: groups.map((g) => DropdownMenuItem(value: g['id'].toString(), child: Text(g['name'].toString()))).toList(),
+                  onChanged: (v) => refresh(() => selected = v),
+                ),
+                const SizedBox(height: 12),
+                TextField(controller: currentName, decoration: const InputDecoration(labelText: 'Client name')),
+                const SizedBox(height: 12),
+                TextField(controller: currentBranch, keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(labelText: 'Branch code')),
+                const SizedBox(height: 12),
+                TextField(controller: currentAmount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Deduction amount (LSL)')),
+                const SizedBox(height: 8),
+                const Text('Bank account number cannot be changed here. Remove and re-enter the record to change account details.'),
+              ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(remove ? 'Remove' : 'Save changes')),
+          ],
+        )),
+      );
+      if (confirmed != true) return;
+      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentBranch.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
+        setState(() => error = 'Complete all edit fields.');
+        return;
+      }
+      setState(() { loading = true; error = null; });
+      final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/${row['id']}');
+      final headers = {
+        'Authorization': 'Bearer ${token.text.trim()}',
+        'X-Company-ID': companyId.text.trim(),
+        'Content-Type': 'application/json',
+      };
+      final response = remove
+          ? await http.delete(uri, headers: headers)
+          : await http.patch(uri, headers: headers, body: jsonEncode({
+              'work_group_id': selected,
+              'client_name': currentName.text.trim(),
+              'branch_code': currentBranch.text.trim(),
+              'amount': currentAmount.text.trim(),
+            }));
+      if (response.statusCode != (remove ? 204 : 200)) {
+        throw Exception('Could not update record: ${response.statusCode}');
+      }
+      final listing = await _request('/legacy-bank-deductions/');
+      if (listing.statusCode != 200) throw Exception('Update saved, but refresh failed');
+      rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      currentName.dispose(); currentBranch.dispose(); currentAmount.dispose();
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   Widget field(String label, TextEditingController controller, {bool numeric = false, bool money = false}) =>
     TextField(controller: controller, keyboardType: numeric ? const TextInputType.numberWithOptions(decimal: false) : money ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       inputFormatters: numeric ? [FilteringTextInputFormatter.digitsOnly] : money ? [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))] : null,
@@ -197,13 +268,19 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           const SizedBox(height: 8),
           Card(clipBehavior: Clip.antiAlias, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xffe3edf4)),
-            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true)],
+            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true), const DataColumn(label: Text('ACTIONS'))],
             rows: visibleRows.map((row) => DataRow(cells: [
               DataCell(Text('${row['work_group']}')),
               DataCell(Text('${row['client_name']}')),
               DataCell(Text('${row['masked_account']}')),
               DataCell(Text('${row['branch_code']}')),
               DataCell(Text('${row['amount']}')),
+              DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(tooltip: 'Edit record', icon: const Icon(Icons.edit_outlined),
+                    onPressed: loading ? null : () => _modifyRecord(row, remove: false)),
+                IconButton(tooltip: 'Remove record', icon: const Icon(Icons.delete_outline),
+                    onPressed: loading ? null : () => _modifyRecord(row, remove: true)),
+              ])),
             ])).toList(),
           ))),
           const SizedBox(height: 6), const Text('Account numbers are masked in the table. Full numbers stay encrypted on the server for authorised CSV generation.'),
