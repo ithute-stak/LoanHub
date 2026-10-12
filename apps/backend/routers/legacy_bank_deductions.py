@@ -134,3 +134,61 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
             "X-Excluded-Rows": str(sum(summary["excluded"].values())),
         },
     )
+
+
+class LegacyUpdate(BaseModel):
+    work_group_id: UUID
+    client_name: str = Field(min_length=1, max_length=120)
+    branch_code: str = Field(min_length=1, max_length=6)
+    amount: Decimal = Field(gt=0, decimal_places=2, max_digits=15)
+
+    @field_validator("branch_code")
+    @classmethod
+    def valid_branch(cls, value: str) -> str:
+        if not re.fullmatch(r"[0-9]+", value):
+            raise ValueError("Branch code must contain digits only")
+        return value
+
+
+@router.patch("/{record_id}")
+def update_legacy(
+    record_id: UUID, payload: LegacyUpdate,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _authorized(context)
+    record = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.id == record_id,
+        LegacyBankDeduction.company_id == context.company_id,
+    ).first()
+    if record is None:
+        raise HTTPException(404, "Legacy record not found")
+    group = db.query(EmployerGroup).filter(
+        EmployerGroup.id == payload.work_group_id,
+        EmployerGroup.is_active.is_(True),
+    ).first()
+    if group is None:
+        raise HTTPException(422, "Select an active work group")
+    record.work_group_id = group.id
+    record.client_name = payload.client_name.strip()
+    record.branch_code = payload.branch_code.zfill(6)
+    record.amount = payload.amount
+    db.commit()
+    return {"id": str(record.id), "saved": True}
+
+
+@router.delete("/{record_id}", status_code=204)
+def delete_legacy(
+    record_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _authorized(context)
+    record = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.id == record_id,
+        LegacyBankDeduction.company_id == context.company_id,
+    ).first()
+    if record is None:
+        raise HTTPException(404, "Legacy record not found")
+    db.delete(record)
+    db.commit()
