@@ -96,7 +96,8 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
     rows = (
         db.query(LegacyBankDeduction, EmployerGroup)
         .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
-        .filter(LegacyBankDeduction.company_id == context.company_id)
+        .filter(LegacyBankDeduction.company_id == context.company_id,
+                LegacyBankDeduction.deleted_at.is_(None))
         .order_by(LegacyBankDeduction.created_at.asc(), LegacyBankDeduction.id.asc())
         .all()
     )
@@ -190,6 +191,7 @@ def delete_legacy(
     record = db.query(LegacyBankDeduction).filter(
         LegacyBankDeduction.id == record_id,
         LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
     ).first()
     if record is None:
         raise HTTPException(404, "Legacy record not found")
