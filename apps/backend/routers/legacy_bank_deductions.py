@@ -37,6 +37,19 @@ class LegacyCreate(BaseModel):
         return value
 
 
+def _group_kind(group: EmployerGroup) -> str | None:
+    code = str(group.code or "").upper().replace("/", "").replace("-", "").replace(" ", "")
+    name = str(group.name or "").upper().replace("/", "").replace("-", "").replace(" ", "")
+    for value in (code, name):
+        if value in {"CIVIL", "CIV"}:
+            return "CIVIL"
+        if value in {"FORCE", "LDF"}:
+            return "FORCE"
+        if value in {"SE", "SELFEMPLOYED"}:
+            return "S/E"
+    return None
+
+
 def _authorized(context: TenantContext) -> None:
     require_tenant_roles(context, FINANCE_ROLES | COMPANY_MANAGEMENT_ROLES)
     if context.company_id is None:
@@ -47,6 +60,7 @@ def _authorized(context: TenantContext) -> None:
 def work_groups(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
     _authorized(context)
     rows = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).order_by(EmployerGroup.name).all()
+    rows = [g for g in rows if _group_kind(g) is not None]
     return [{"id": str(row.id), "code": row.code, "name": row.name} for row in rows]
 
 
@@ -75,8 +89,8 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
     group = db.query(EmployerGroup).filter(
         EmployerGroup.id == payload.work_group_id, EmployerGroup.is_active.is_(True)
     ).first()
-    if group is None:
-        raise HTTPException(422, "Select an active work group")
+    if group is None or _group_kind(group) is None:
+        raise HTTPException(422, "Select CIVIL, FORCE or S/E work group")
     record = LegacyBankDeduction(
         company_id=context.company_id, work_group_id=group.id,
         client_name=payload.client_name.strip(),
@@ -178,8 +192,8 @@ def update_legacy(
         EmployerGroup.id == payload.work_group_id,
         EmployerGroup.is_active.is_(True),
     ).first()
-    if group is None:
-        raise HTTPException(422, "Select an active work group")
+    if group is None or _group_kind(group) is None:
+        raise HTTPException(422, "Select CIVIL, FORCE or S/E work group")
     record.work_group_id = group.id
     record.client_name = payload.client_name.strip()
     record.branch_code = payload.branch_code.zfill(6)
@@ -251,6 +265,7 @@ def restore_deleted_legacy(
 async def import_legacy_csv(
     file: UploadFile = File(...),
     preview: bool = True,
+    work_group_id: UUID | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -262,12 +277,17 @@ async def import_legacy_csv(
     if len(content) > 2_000_000:
         raise HTTPException(413, "CSV exceeds 2 MB")
     groups = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).all()
+    selected = next((g for g in groups if g.id == work_group_id), None) if work_group_id else None
+    if work_group_id and (selected is None or _group_kind(selected) is None):
+        raise HTTPException(422, "Select CIVIL, FORCE or S/E work group")
     known = {}
     for group in groups:
+        if _group_kind(group) is None:
+            continue
         known[group.name.strip().casefold()] = str(group.id)
         known[group.code.strip().casefold()] = str(group.id)
     try:
-        valid, issues = parse_legacy_csv(content, known_groups=known)
+        valid, issues = parse_legacy_csv(content, known_groups=known, selected_group=selected.name if selected else None)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
