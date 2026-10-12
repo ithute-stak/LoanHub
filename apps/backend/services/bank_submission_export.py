@@ -28,6 +28,18 @@ def _bank(value: object) -> str:
     return name.upper()
 
 
+
+def _bank_from_account(account: str) -> str:
+    """Company-specified Lesotho account prefix routing, not bank verification."""
+    if account.startswith(("62", "63", "6")):
+        return "FNB"
+    if account.startswith("90"):
+        return "STD"
+    if account.startswith("10"):
+        return "LPS"
+    return "NB"
+
+
 def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
     raw = str(value or "").strip()
     if not re.fullmatch(r"[0-9]+", raw):
@@ -68,13 +80,13 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str) -> tuple
         if not group:
             omitted["unknown_work_group"] += 1
             continue
-        bank = _bank(record.get("bank"))
         account = _digits(record.get("account"), min_length=6, max_length=20)
         branch = _digits(record.get("branch"), min_length=1, max_length=6)
         name = _client_name(record.get("name"))
-        if not bank or not account or not branch or not name:
+        if not account or not branch or not name:
             omitted["missing_or_invalid_bank_details"] += 1
             continue
+        bank = _bank_from_account(account)
         # A remaining balance smaller than a standard installment must not
         # result in an over-collection instruction.
         amount = min(balance, installment).quantize(Decimal("0.01"))
