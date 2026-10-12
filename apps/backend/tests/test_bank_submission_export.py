@@ -39,8 +39,8 @@ def test_bank_submission_grouped_csv_schema_and_amount():
             ["Mosipatsi", "62080011400058", "060667", "1000.00", "Batlokoa"],
             ["Thato M", "6308000869313", "060667", "500.00", "Batlokoa"],
         ]
-        assert _read(output, "STANDARD-LESOTHO-BANK-s-e.csv")[0][3] == "250.00"
-        assert _read(output, "STANDARD-LESOTHO-BANK-force.csv")[0][1] == "0001234567"
+        assert _read(output, "LPS-s-e.csv")[0][3] == "250.00"
+        assert _read(output, "STD-force.csv")[0][1] == "9001234567"
     assert stats["rows"] == 4
     assert stats["files"] == 3
 
