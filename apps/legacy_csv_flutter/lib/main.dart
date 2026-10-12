@@ -29,7 +29,7 @@ class LegacyCapturePage extends StatefulWidget {
 
 class _LegacyCapturePageState extends State<LegacyCapturePage> {
   static const secure = FlutterSecureStorage();
-  final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://loanhub.co.ls/api/v1'));
+  final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://api.loanhub.co.ls/api/v1'));
   final token = TextEditingController();
   final phone = TextEditingController();
   final password = TextEditingController();
@@ -87,18 +87,29 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
     setState(() { loading = true; error = null; });
     try {
+      final normalizedPhone = phone.text.trim()
+          .replaceAll(RegExp(r'\s+'), '')
+          .replaceFirst(RegExp(r'^\+?266'), '');
+      final factor = otp.text.trim();
+      final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
       final response = await http.post(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'phone': phone.text.trim(),
-          'password': password.text,
-          if (otp.text.trim().isNotEmpty) 'otp': otp.text.trim(),
+          'phone': normalizedPhone,
+          'password': password.text.trim(),
+          if (factor.isNotEmpty && isOtp) 'otp': factor,
+          if (factor.isNotEmpty && !isOtp) 'recovery_code': factor,
           'device_name': 'LoanHub Legacy CSV Flutter',
         }),
       );
       if (response.statusCode != 200) {
-        throw Exception('Sign-in failed. Check credentials or MFA code.');
+        String detail = 'Sign-in rejected';
+        try {
+          final payload = jsonDecode(response.body);
+          if (payload is Map && payload['detail'] != null) detail = payload['detail'].toString();
+        } catch (_) {}
+        throw Exception('Sign-in failed (HTTP ${response.statusCode}): $detail');
       }
       final result = jsonDecode(response.body) as Map<String, dynamic>;
       token.text = result['access_token']?.toString() ?? '';
