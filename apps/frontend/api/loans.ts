@@ -357,3 +357,10 @@ export async function openLoanPaymentSlipPdf(
     companyId,
   );
 }
+
+export async function downloadBankSubmissionsZip(): Promise<Blob> {
+  const response = await api.get<Blob>("/loans/bank-submissions.zip", {
+    responseType: "blob",
+  });
+  return response.data;
+}
