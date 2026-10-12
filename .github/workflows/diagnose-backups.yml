@@ -1,0 +1,87 @@
+name: Diagnose LoanHub backup artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-backups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          case "$user" in *@*) user="${user%%@*}" ;; esac
+          case "$host" in *@*) host="${host##*@}" ;; esac
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/loanhub_recovery"
+          chmod 600 "$HOME/.ssh/loanhub_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\nSSH_AGENT_PID=%s\n' "$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/askpass.sh
+            SSH_ASKPASS=/tmp/askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+            rm -f /tmp/askpass.sh
+          else
+            ssh-add "$HOME/.ssh/loanhub_recovery" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$host" >> "$HOME/.ssh/known_hosts"
+          printf 'TARGET=%s@%s\n' "$user" "$host" >> "$GITHUB_ENV"
+
+      - name: Inspect only backup metadata
+        run: |
+          set -euo pipefail
+          ssh "$TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo 'Potential database backup artifacts (path, bytes, UTC timestamp):'
+          find /home/administrator /opt /srv -maxdepth 7 -type f \
+            \( -iname '*.dump' -o -iname '*.backup' -o -iname '*.sql' -o -iname '*.sql.gz' -o -iname '*postgres*.tar*' -o -iname '*loanhub*.tar*' \) \
+            -printf '%p|%s|%TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
+            | sort || true
+          REMOTE
+
+      - name: Validate newest PostgreSQL archive without restoring it
+        run: |
+          set -euo pipefail
+          ssh "$TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          latest=''
+          for backup_dir in /opt/loanhub/backups /opt/loanhub.legacy-test/backups /srv/loanhub/backups; do
+            [ -d "$backup_dir" ] || continue
+            candidate="$(find "$backup_dir" -maxdepth 1 -type f \( -name '*.dump' -o -name '*.backup' \) -printf '%T@|%p\n' | sort -nr | head -n1 | cut -d'|' -f2-)"
+            if [ -n "$candidate" ]; then
+              latest="$candidate"
+              break
+            fi
+          done
+          test -n "$latest" || { echo 'No PostgreSQL archive found in known LoanHub backup locations.' >&2; exit 1; }
+          bytes="$(stat -c '%s' "$latest")"
+          echo "Validating newest archive: $latest ($bytes bytes)"
+          parent="$(dirname "$latest")"
+          name="$(basename "$latest")"
+          docker run --rm \
+            -v "$parent:/backups:ro" \
+            postgres:16-alpine \
+            pg_restore --list "/backups/$name" >/tmp/loanhub-pgrestore-list.txt
+          objects="$(grep -Ec '^[0-9]+;' /tmp/loanhub-pgrestore-list.txt || true)"
+          rm -f /tmp/loanhub-pgrestore-list.txt
+          test "$objects" -gt 0 || { echo 'Archive contains no restorable objects.' >&2; exit 1; }
+          echo "PostgreSQL archive is readable and contains $objects restorable objects."
+          REMOTE
