@@ -36,7 +36,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   final otp = TextEditingController();
   final companyId = TextEditingController();
   List<Map<String, dynamic>> memberships = [];
-  String? companyLabel;
+  Map<String, String> companyNames = {};
   final name = TextEditingController();
   final account = TextEditingController();
   final branch = TextEditingController();
@@ -120,7 +120,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     groups = [];
     rows = [];
     memberships = [];
-    companyLabel = null;
+    companyNames = {};
     companyId.clear();
     await secure.delete(key: 'company');
     selectedGroup = null;
@@ -153,7 +153,14 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final chosen = memberships.any((m) => m['company_id'].toString() == saved)
           ? saved : primary['company_id'].toString();
       companyId.text = chosen;
-      companyLabel = memberships.length == 1 ? 'My company' : 'Selected company';
+      final companyResponse = await http.get(
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/companies/?limit=500'),
+        headers: {'Authorization': 'Bearer ${token.text.trim()}'},
+      );
+      if (companyResponse.statusCode == 200) {
+        final companies = (jsonDecode(companyResponse.body) as List).cast<Map<String, dynamic>>();
+        companyNames = {for (final item in companies) item['id'].toString(): item['name'].toString()};
+      }
       await _connect();
     } catch (e) {
       if (mounted) setState(() { configured = false; error = e.toString(); });
@@ -440,8 +447,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
             items: memberships.map((m) => DropdownMenuItem(
               value: m['company_id'].toString(),
               child: Text(m['is_primary'] == true
-                  ? 'Primary company · ${m['company_id'].toString().substring(0, 8)}'
-                  : 'Company · ${m['company_id'].toString().substring(0, 8)}'),
+                  ? '★ ${companyNames[m['company_id'].toString()] ?? 'Primary company'}'
+                  : companyNames[m['company_id'].toString()] ?? 'My company'),
             )).toList(),
             onChanged: (value) async {
               if (value == null) return;
