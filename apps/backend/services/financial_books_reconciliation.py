@@ -49,8 +49,9 @@ def reconcile_books_pack(pack: dict) -> dict:
                   - _amount(ledger_row.get("opening_balance", "0")))
         if ledger_row.get("normal_balance") == "credit":
             signed = -signed
-        expected = max(signed, Decimal("0.00"))
-        expected_credit = max(-signed, Decimal("0.00"))
-        if _amount(row["debit"]) != expected or _amount(row["credit"]) != expected_credit:
+        # Trial rows contain gross debits and credits; one account can have
+        # legitimate activity on both sides. Reconcile the net movement.
+        trial_net = _amount(row["debit"]) - _amount(row["credit"])
+        if trial_net != signed:
             findings.append(f"account_closing_balance_mismatch:{account}")
     return {"reconciled": not findings, "findings": findings}
