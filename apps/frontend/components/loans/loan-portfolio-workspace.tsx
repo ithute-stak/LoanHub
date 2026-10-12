@@ -5,6 +5,7 @@ import {useSearchParams} from "next/navigation";
 import {useEffect, useMemo, useState, type ReactNode} from "react";
 import {
     Banknote,
+    Download,
     BookOpenCheck,
     ChevronLeft,
     ChevronRight,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 
 import {branchApi} from "@/api/branch";
+import {downloadBankSubmissionsZip} from "@/api/loans";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
@@ -369,6 +371,7 @@ export function LoanPortfolioWorkspace({
     const folioFromUrl = searchParams.get("folio")?.trim() ?? "";
     const [search, setSearch] = useState(folioFromUrl);
     const [expanded, setExpanded] = useState(false);
+    const [exportingBankZip, setExportingBankZip] = useState(false);
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
     const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
     const [page, setPage] = useState(1);
@@ -622,6 +625,26 @@ export function LoanPortfolioWorkspace({
         setPage(1);
     }
 
+    async function downloadBankZip() {
+        setExportingBankZip(true);
+        try {
+            const blob = await downloadBankSubmissionsZip();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "bank-submissions.zip";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error("Bank submission export failed", error);
+            window.alert("Could not generate bank ZIP. Ensure clients have outstanding loans and complete bank details.");
+        } finally {
+            setExportingBankZip(false);
+        }
+    }
+
     // Legacy search contract: placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
     const searchControl = <SuggestionSearch
         value={search}
@@ -664,6 +687,9 @@ export function LoanPortfolioWorkspace({
                     </div>
                     <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
                         {searchControl}
+                        <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingBankZip} onClick={() => void downloadBankZip()}>
+                            <Download className="size-4"/>{exportingBankZip ? "Generating..." : "Bank CSV ZIP"}
+                        </Button>
                         <Button variant="outline" className="shrink-0 rounded-xl" asChild>
                             <Link href="/company/folio-book"><BookOpenCheck className="size-4"/>Folio book</Link>
                         </Button>
