@@ -720,6 +720,83 @@ def list_loans(
     return query.order_by(ClientCompanyLoan.created_at.desc()).offset(skip).limit(limit).all()
 
 
+@router.get("/bank-submissions.zip")
+def download_bank_submissions(
+    x_company_id: str | None = Header(default=None, alias="X-Company-ID"),
+    x_active_role: str | None = Header(default=None, alias="X-Active-Role"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Confidential bank collection instructions for active outstanding loans."""
+    from database.models.enums import LoanStatus
+    from database.models.origination import BorrowerBankAccount
+    from database.models.person import Person
+    from services.bank_submission_export import build_bank_submission_zip
+    from services.credential_service import decrypt_credential
+
+    context = resolve_tenant_context(db, current_user, x_company_id, x_active_role)
+    require_tenant_roles(context, FINANCE_ROLES | COMPANY_MANAGEMENT_ROLES)
+    if context.company_id is None:
+        raise HTTPException(status_code=403, detail="A lending company must be selected")
+    rows = (
+        db.query(ClientCompanyLoan, Person, BorrowerBankAccount)
+        .join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
+        .join(Person, Person.user_id == Borrower.user_id)
+        .join(
+            BorrowerBankAccount,
+            (BorrowerBankAccount.borrower_id == Borrower.id)
+            & (BorrowerBankAccount.company_id == context.company_id),
+        )
+        .filter(
+            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.balance > 0,
+            ClientCompanyLoan.status.in_((LoanStatus.active, LoanStatus.defaulted)),
+        )
+        .all()
+    )
+    # One bank mandate per borrower; prefer salary-designated bank details.
+    chosen = {}
+    for loan, person, bank in rows:
+        if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
+            if loan.branch_id != context.branch_id:
+                continue
+        previous = chosen.get(loan.id)
+        if previous is None or (
+            bool(bank.salary_account), bool(bank.verified_at)
+        ) > (
+            bool(previous[2].salary_account), bool(previous[2].verified_at)
+        ):
+            chosen[loan.id] = (loan, person, bank)
+    records = []
+    for loan, person, bank in chosen.values():
+        records.append({
+            "name": " ".join(filter(None, (person.first_name, person.last_name))),
+            "bank": bank.bank_name,
+            "account": decrypt_credential(bank.account_number_encrypted),
+            "branch": bank.branch_code,
+            "group": loan.folio_group_code,
+            "installment": loan.installment_amount,
+            "balance": loan.balance,
+        })
+    payload, summary = build_bank_submission_zip(
+        records, lender_name=context.company.name,
+    )
+    if not summary["rows"]:
+        raise HTTPException(
+            status_code=422,
+            detail="No eligible loans have complete bank accounts, branch codes and work groups",
+        )
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="bank-submissions.zip"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/{loan_id}", response_model=LoanRead)
 def get_loan(
     loan_id: UUID,
