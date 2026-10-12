@@ -89,18 +89,17 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _importCsv() async {
-    final picked = await FilePicker.platform.pickFiles(
+    final item = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['csv'],
-      withData: true,
     );
-    if (picked == null || picked.files.isEmpty) return;
-    final item = picked.files.single;
-    final bytes = item.bytes;
-    if (bytes == null || bytes.length > 2000000) {
+    if (item == null) return;
+    final size = item.lengthSync() ?? await item.length();
+    if (size == null || size > 2000000) {
       setState(() => error = 'CSV must be no larger than 2 MB.');
       return;
     }
+    final bytes = await item.readAsBytes();
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
