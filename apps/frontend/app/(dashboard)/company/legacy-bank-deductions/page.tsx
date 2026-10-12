@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +39,7 @@ export default function LegacyBankDeductionsPage() {
   const visible=useMemo(()=>records.filter(r=>(!groupFilter||r.work_group_id===groupFilter)&&
     [r.client_name,r.work_group,r.masked_account,r.branch_code].some(x=>x.toLowerCase().includes(filter.toLowerCase()))),[records,filter,groupFilter]);
   async function save() {
-    if(!form.work_group_id||!form.client_name.trim()||!form.branch_code.trim()||!form.amount.trim()||(!editing&&!form.account_number.trim())){setStatus("Complete all required fields.");return;}
+    if(!form.work_group_id||!form.client_name.trim()||!form.amount.trim()||(!editing&&!form.account_number.trim())){setStatus("Complete all required fields.");return;}
     setBusy(true);setStatus("");
     try {
       const payload=editing?{work_group_id:form.work_group_id,client_name:form.client_name,branch_code:form.branch_code,amount:form.amount}:form;
@@ -59,7 +60,18 @@ export default function LegacyBankDeductionsPage() {
       const url=URL.createObjectURL(response.data);
       const link=document.createElement("a");link.href=url;link.download="loanhub-legacy-bank-submissions.zip";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
       setStatus("Bank ZIP generated. Handle this confidential file securely.");
-    }catch(e){setStatus(explain(e));}finally{setBusy(false);}
+    }catch(e){
+      if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
+        try {
+          const result = JSON.parse(await e.response.data.text()) as {detail?: string | {message?: string; excluded?: Record<string,number>}};
+          const detail = result.detail;
+          if (typeof detail === "object" && detail) {
+            const counts = Object.entries(detail.excluded ?? {}).map(([key,value]) => key.replaceAll("_"," ") + ": " + value).join(", ");
+            setStatus((detail.message ?? "Export failed") + (counts ? ". " + counts : ""));
+          } else setStatus(typeof detail === "string" ? detail : "Bank ZIP export was rejected.");
+        } catch {setStatus("Unable to export ZIP. Please check server response and try again.");}
+      } else setStatus(explain(e));
+    }finally{setBusy(false);}
   }
   async function importCsv(commit:boolean){
     if(!csv||!bulkGroup){setStatus("Select CIVIL, FORCE or S/E before importing.");return;}
@@ -82,7 +94,7 @@ export default function LegacyBankDeductionsPage() {
     <label className="text-sm">Work group<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.work_group_id} onChange={e=>setForm({...form,work_group_id:e.target.value})}><option value="">Choose work group</option>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
     <label className="text-sm">Client name<Input className="mt-1" maxLength={120} value={form.client_name} onChange={e=>setForm({...form,client_name:e.target.value})}/></label>
     <label className="text-sm">Bank account{editing?" (unchanged)":""}<Input className="mt-1" inputMode="numeric" maxLength={20} disabled={!!editing} placeholder={editing?"Protected account":"Full account number"} value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value.replace(/\D/g,"")})}/></label>
-    <label className="text-sm">Branch code<Input className="mt-1" inputMode="numeric" maxLength={6} value={form.branch_code} onChange={e=>setForm({...form,branch_code:e.target.value.replace(/\D/g,"")})}/></label>
+    <label className="text-sm">Branch code (auto-filled from bank rules)<Input className="mt-1" inputMode="numeric" maxLength={6} value={form.branch_code} onChange={e=>setForm({...form,branch_code:e.target.value.replace(/\D/g,"")})}/></label>
     <label className="text-sm">Deduction (LSL)<Input className="mt-1" inputMode="decimal" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
   </div>;
   return <main className="mx-auto w-full space-y-5 px-3 py-5 lg:px-6">
