@@ -26,8 +26,14 @@ Enter client name, account number (digits), branch code (up to six digits),
 and deduction amount (LSL). The API saves full account numbers encrypted,
 pads branch codes to six digits, and returns a masked CSV-like register.
 
-The backend migration must be applied before use. Export of historical rows
-into the bank CSV ZIP is a **separate follow-up**: the existing export currently
-reads outstanding live loans, not this manual historical register.
+The backend migration must be applied before use. The **Export bank CSV ZIP** button requests an archive generated on the backend
+from this manual historical register only. FNB has a single file combining all
+three work groups; STD, LPS and NB are separated by work group. This export
+is separate from live outstanding-loan exports. Invalid work-group or account
+records are excluded by the exporter, so review saved data carefully.
+
+On Android and iOS the ZIP is shared using the operating system share sheet.
+The initial Flutter app is **mobile-first**; web download handling and full
+Flutter build testing remain outstanding.
 
 Never commit authentication tokens or real bank data to Git.
