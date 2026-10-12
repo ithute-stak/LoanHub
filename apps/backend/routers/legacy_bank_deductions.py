@@ -126,6 +126,12 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
         })
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name)
+    if summary["excluded"]:
+        raise HTTPException(422, detail={
+            "message": "Export blocked: correct invalid or unsupported legacy records first",
+            "exportable_rows": summary["rows"],
+            "excluded": summary["excluded"],
+        })
     if not summary["rows"]:
         raise HTTPException(422, detail="No valid legacy records available for bank export")
     return StreamingResponse(
