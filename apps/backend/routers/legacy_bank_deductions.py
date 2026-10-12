@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 from decimal import Decimal
@@ -54,7 +55,8 @@ def list_legacy(context: TenantContext = Depends(get_tenant_context), db: Sessio
     rows = (
         db.query(LegacyBankDeduction, EmployerGroup)
         .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
-        .filter(LegacyBankDeduction.company_id == context.company_id)
+        .filter(LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None))
         .order_by(LegacyBankDeduction.created_at.desc())
         .limit(1000).all()
     )
@@ -94,7 +96,8 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
     rows = (
         db.query(LegacyBankDeduction, EmployerGroup)
         .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
-        .filter(LegacyBankDeduction.company_id == context.company_id)
+        .filter(LegacyBankDeduction.company_id == context.company_id,
+                LegacyBankDeduction.deleted_at.is_(None))
         .order_by(LegacyBankDeduction.created_at.asc(), LegacyBankDeduction.id.asc())
         .all()
     )
@@ -160,6 +163,7 @@ def update_legacy(
     record = db.query(LegacyBankDeduction).filter(
         LegacyBankDeduction.id == record_id,
         LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
     ).first()
     if record is None:
         raise HTTPException(404, "Legacy record not found")
@@ -187,8 +191,10 @@ def delete_legacy(
     record = db.query(LegacyBankDeduction).filter(
         LegacyBankDeduction.id == record_id,
         LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
     ).first()
     if record is None:
         raise HTTPException(404, "Legacy record not found")
-    db.delete(record)
+    record.deleted_at = datetime.now(timezone.utc)
+    record.deleted_by_user_id = context.user.id
     db.commit()
