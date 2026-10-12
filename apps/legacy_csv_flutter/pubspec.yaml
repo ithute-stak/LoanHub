@@ -8,6 +8,8 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
   flutter_secure_storage: ^9.2.4
 dev_dependencies:
   flutter_test:
