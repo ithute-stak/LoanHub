@@ -442,7 +442,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (configured && memberships.length > 1) Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: DropdownButtonFormField<String>(
-            value: companyId.text,
+            initialValue: companyId.text,
             decoration: const InputDecoration(labelText: 'Active company'),
             items: memberships.map((m) => DropdownMenuItem(
               value: m['company_id'].toString(),
