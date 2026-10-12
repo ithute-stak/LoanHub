@@ -39,7 +39,7 @@ def _client_name(name: object) -> str:
     # Strictly fewer than 11 characters; never allow spreadsheet formula text.
     value = re.sub(r"\s+", " ", str(name or "").strip())
     value = re.sub(r"[^\w .'-]", "", value, flags=re.UNICODE)
-    return value[:10]
+    return value[:10].strip()
 
 
 def build_bank_submission_zip(records: list[dict], *, lender_name: str) -> tuple[bytes, dict]:
