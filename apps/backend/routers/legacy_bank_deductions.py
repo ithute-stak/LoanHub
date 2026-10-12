@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ from database.models.legacy_bank_deduction import LegacyBankDeduction
 from database.session import get_db
 from services.credential_service import encrypt_credential, decrypt_credential
 from services.bank_submission_export import build_bank_submission_zip
+from services.legacy_bank_import import parse_legacy_csv
 
 router = APIRouter(prefix="/legacy-bank-deductions", tags=["Legacy Bank Deductions"])
 
@@ -198,3 +199,68 @@ def delete_legacy(
     record.deleted_at = datetime.now(timezone.utc)
     record.deleted_by_user_id = context.user.id
     db.commit()
+
+
+@router.post("/import-csv")
+async def import_legacy_csv(
+    file: UploadFile = File(...),
+    preview: bool = True,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Preview validation before a single atomic import; never post financial journals."""
+    _authorized(context)
+    if file.filename and not file.filename.lower().endswith(".csv"):
+        raise HTTPException(422, "Select a CSV file")
+    content = await file.read(2_000_001)
+    if len(content) > 2_000_000:
+        raise HTTPException(413, "CSV exceeds 2 MB")
+    groups = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).all()
+    known = {}
+    for group in groups:
+        known[group.name.strip().casefold()] = str(group.id)
+        known[group.code.strip().casefold()] = str(group.id)
+    try:
+        valid, issues = parse_legacy_csv(content, known_groups=known)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    # Avoid importing the same bank instruction twice, including duplicates within
+    # one file. Decryption occurs only inside this restricted backend endpoint.
+    existing = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).all()
+    fingerprints = {
+        (str(row.work_group_id), decrypt_credential(row.account_number_encrypted),
+         row.client_name.strip().casefold(), str(row.amount.quantize(Decimal("0.01"))))
+        for row in existing
+    }
+    new_rows = []
+    for row in valid:
+        signature = (str(row["group_id"]), row["account"], row["name"].casefold(), str(row["amount"].quantize(Decimal("0.01"))))
+        if signature in fingerprints:
+            issues.append({"row": row["row"], "reason": "Duplicate deduction"})
+        else:
+            fingerprints.add(signature)
+            new_rows.append(row)
+    summary = {"valid": len(new_rows), "rejected": len(issues), "issues": issues[:200],
+               "issues_truncated": len(issues) > 200}
+    if preview:
+        return {**summary, "saved": 0, "preview": True}
+    if issues:
+        raise HTTPException(422, detail={
+            **summary, "message": "Resolve all CSV issues before importing",
+        })
+    if not new_rows:
+        raise HTTPException(422, "No new valid deductions to import")
+    for row in new_rows:
+        db.add(LegacyBankDeduction(
+            company_id=context.company_id, work_group_id=UUID(row["group_id"]),
+            client_name=row["name"],
+            account_number_encrypted=encrypt_credential(row["account"]),
+            account_last4=row["account"][-4:],
+            branch_code=row["branch"], amount=row["amount"],
+        ))
+    db.commit()
+    return {**summary, "saved": len(new_rows), "preview": False}

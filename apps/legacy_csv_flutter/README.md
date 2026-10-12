@@ -37,3 +37,22 @@ The initial Flutter app is **mobile-first**; web download handling and full
 Flutter build testing remain outstanding.
 
 Never commit authentication tokens or real bank data to Git.
+
+## Bulk CSV import
+
+Select **Import CSV**, review the validation summary, then confirm saving.
+CSV must be UTF-8, at most 2 MB and 5,000 rows. The first header row
+is optional. The columns must be in exactly this order:
+
+```csv
+Work group,Client name,Account number,Branch code,Amount
+Force,Example Client,6200123456,000123,450.00
+Civil,Another Client,9001234567,070,600.00
+S/E,Third Client,1001234567,000010,250.00
+```
+
+Import the account number and branch code as **text** in any spreadsheet
+editor; otherwise leading zeros may disappear. Work groups must already
+exist in LoanHub's active employer-group API. The server checks all rows,
+rejects duplicates and invalid entries, and refuses to save a file if
+any row is invalid. Nothing is posted to financial ledgers.

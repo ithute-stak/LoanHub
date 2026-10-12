@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -85,6 +86,73 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       configured = true;
     } catch (e) { error = e.toString(); }
     if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _importCsv() async {
+    final item = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+    if (item == null) return;
+    final size = item.lengthSync() ?? await item.length();
+    if (size == null || size > 2000000) {
+      setState(() => error = 'CSV must be no larger than 2 MB.');
+      return;
+    }
+    final bytes = await item.readAsBytes();
+    Future<Map<String, dynamic>> submit(bool preview) async {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview'),
+      );
+      request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
+      request.headers['X-Company-ID'] = companyId.text.trim();
+      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: item.name));
+      final response = await http.Response.fromStream(await request.send());
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 400) {
+        throw Exception('CSV validation failed: ${response.body}');
+      }
+      return (decoded as Map).cast<String, dynamic>();
+    }
+    setState(() { loading = true; error = null; });
+    try {
+      final preview = await submit(true);
+      if (!mounted) return;
+      final issues = (preview['issues'] as List? ?? []);
+      final summary = 'Ready: ${preview['valid']}  •  Rejected: ${preview['rejected']}';
+      final details = issues.take(8).map((issue) => 'Row ${issue['row']}: ${issue['reason']}').join('\n');
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Review CSV import'),
+          content: SingleChildScrollView(child: Text('$summary\n\n${details.isEmpty ? "All rows passed validation." : details}')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: (preview['rejected'] as num) > 0 || (preview['valid'] as num) == 0
+                ? null : () => Navigator.pop(ctx, true),
+              child: const Text('Import valid rows'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        final result = await submit(false);
+        final listing = await _request('/legacy-bank-deductions/');
+        if (listing.statusCode != 200) throw Exception('Import saved, but refresh failed.');
+        rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Imported ${result['saved']} legacy deductions.')),
+          );
+        }
+      }
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Future<void> _exportZip() async {
@@ -246,7 +314,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (loading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (error != null) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(error!, style: const TextStyle(color: Colors.red))),
         if (configured) ...[
-          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
+          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), OutlinedButton.icon(onPressed: loading ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
           const SizedBox(height: 8),
           Wrap(spacing: 12, runSpacing: 12, children: [
             SizedBox(width: 320, child: TextField(
@@ -268,7 +336,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           const SizedBox(height: 8),
           Card(clipBehavior: Clip.antiAlias, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xffe3edf4)),
-            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true), const DataColumn(label: Text('ACTIONS'))],
+            columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true), DataColumn(label: Text('ACTIONS'))],
             rows: visibleRows.map((row) => DataRow(cells: [
               DataCell(Text('${row['work_group']}')),
               DataCell(Text('${row['client_name']}')),
