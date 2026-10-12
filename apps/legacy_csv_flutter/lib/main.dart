@@ -200,7 +200,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       await secure.write(key: 'company', value: companyId.text.trim());
       configured = true;
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
-      unawaited(_connectRealtime());
+      if (realtimeSocket == null) unawaited(_connectRealtime());
     } catch (e) { error = e.toString(); }
     if (mounted) setState(() => loading = false);
   }
