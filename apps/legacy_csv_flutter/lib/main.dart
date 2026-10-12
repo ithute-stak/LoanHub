@@ -35,6 +35,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   final account = TextEditingController();
   final branch = TextEditingController();
   final amount = TextEditingController();
+  final search = TextEditingController();
+  String groupFilter = 'all';
   List<Map<String, dynamic>> groups = [];
   List<Map<String, dynamic>> rows = [];
   String? selectedGroup;
@@ -129,6 +131,13 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (mounted) setState(() => loading = false);
   }
 
+  List<Map<String, dynamic>> get visibleRows => rows.where((row) {
+    final query = search.text.trim().toLowerCase();
+    final matchesSearch = query.isEmpty || ['client_name', 'masked_account', 'branch_code', 'work_group'].any((key) => (row[key] ?? '').toString().toLowerCase().contains(query));
+    final matchesGroup = groupFilter == 'all' || row['work_group_id']?.toString() == groupFilter;
+    return matchesSearch && matchesGroup;
+  }).toList();
+
   Widget field(String label, TextEditingController controller, {bool numeric = false, bool money = false}) =>
     TextField(controller: controller, keyboardType: numeric ? const TextInputType.numberWithOptions(decimal: false) : money ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       inputFormatters: numeric ? [FilteringTextInputFormatter.digitsOnly] : money ? [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))] : null,
@@ -168,10 +177,28 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (configured) ...[
           const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
           const SizedBox(height: 8),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            SizedBox(width: 320, child: TextField(
+              controller: search,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search saved records'),
+            )),
+            SizedBox(width: 260, child: DropdownButtonFormField<String>(
+              initialValue: 'all',
+              decoration: const InputDecoration(labelText: 'Filter work group'),
+              items: [
+                const DropdownMenuItem(value: 'all', child: Text('All work groups')),
+                ...groups.map((g) => DropdownMenuItem(value: g['id'].toString(), child: Text(g['name'].toString()))),
+              ],
+              onChanged: (value) => setState(() => groupFilter = value ?? 'all'),
+            )),
+            Chip(label: Text('${visibleRows.length} shown')),
+          ]),
+          const SizedBox(height: 8),
           Card(clipBehavior: Clip.antiAlias, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xffe3edf4)),
             columns: const [DataColumn(label: Text('WORK GROUP')), DataColumn(label: Text('A · CLIENT NAME')), DataColumn(label: Text('B · ACCOUNT')), DataColumn(label: Text('C · BRANCH')), DataColumn(label: Text('D · AMOUNT (LSL)'), numeric: true)],
-            rows: rows.map((row) => DataRow(cells: [
+            rows: visibleRows.map((row) => DataRow(cells: [
               DataCell(Text('${row['work_group']}')),
               DataCell(Text('${row['client_name']}')),
               DataCell(Text('${row['masked_account']}')),
@@ -187,7 +214,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   @override
   void dispose() {
-    for (final c in [apiUrl, token, companyId, name, account, branch, amount]) { c.dispose(); }
+    for (final c in [apiUrl, token, companyId, name, account, branch, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }
