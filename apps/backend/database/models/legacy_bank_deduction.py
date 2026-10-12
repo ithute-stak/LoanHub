@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Numeric, String
+from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from database.base import Base
 
@@ -13,3 +13,5 @@ class LegacyBankDeduction(Base):
     account_last4 = Column(String(4), nullable=False)
     branch_code = Column(String(6), nullable=False)
     amount = Column(Numeric(15, 2), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by_user_id = Column(UUID(as_uuid=True), nullable=True)
