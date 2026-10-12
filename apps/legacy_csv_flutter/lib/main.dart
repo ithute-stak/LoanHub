@@ -87,15 +87,19 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
     setState(() { loading = true; error = null; });
     try {
-      final normalizedPhone = phone.text.trim().replaceAll(RegExp(r'\\s+'), '').replaceFirst(RegExp(r'^\\+?266'), '');
+      final normalizedPhone = phone.text.trim()
+          .replaceAll(RegExp(r'\s+'), '')
+          .replaceFirst(RegExp(r'^\+?266'), '');
       final factor = otp.text.trim();
+      final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
       final response = await http.post(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': normalizedPhone,
           'password': password.text.trim(),
-          if (factor.isNotEmpty && RegExp(r'^\\d{6}
+          if (factor.isNotEmpty && isOtp) 'otp': factor,
+          if (factor.isNotEmpty && !isOtp) 'recovery_code': factor,
           'device_name': 'LoanHub Legacy CSV Flutter',
         }),
       );
