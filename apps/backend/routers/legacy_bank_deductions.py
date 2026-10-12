@@ -233,12 +233,12 @@ async def import_legacy_csv(
     ).all()
     fingerprints = {
         (str(row.work_group_id), decrypt_credential(row.account_number_encrypted),
-         row.client_name.strip().casefold(), str(row.amount))
+         row.client_name.strip().casefold(), str(row.amount.quantize(Decimal("0.01"))))
         for row in existing
     }
     new_rows = []
     for row in valid:
-        signature = (str(row["group_id"]), row["account"], row["name"].casefold(), str(row["amount"]))
+        signature = (str(row["group_id"]), row["account"], row["name"].casefold(), str(row["amount"].quantize(Decimal("0.01"))))
         if signature in fingerprints:
             issues.append({"row": row["row"], "reason": "Duplicate deduction"})
         else:
