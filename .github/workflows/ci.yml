@@ -151,7 +151,7 @@ jobs:
         run: |
           python -m pytest -q tests/test_database_tenant_context.py tests/test_database_rls_pilot.py tests/test_database_management_contract.py
           python scripts/verify_rls_pilot.py
-          LOANHUB_ACCOUNTING_TEST_POSTGRES_URL='postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db' python -m pytest -q tests/test_accounting_postgres_parity.py tests/test_accounting_rls_restricted_role.py tests/test_accounting_rls_readiness_postgres.py tests/test_accounting_journal_lock_postgres.py tests/test_accounting_journal_unique_postgres.py
+          LOANHUB_ACCOUNTING_TEST_POSTGRES_URL='postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db' python -m pytest -q tests/test_accounting_postgres_parity.py tests/test_accounting_rls_restricted_role.py tests/test_accounting_rls_readiness_postgres.py tests/test_accounting_journal_lock_postgres.py tests/test_accounting_journal_unique_postgres.py tests/test_financial_books_summary_postgres.py
 
       - name: Validate system-owner recovery helper
         run: |
