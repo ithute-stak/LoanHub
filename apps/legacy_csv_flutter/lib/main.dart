@@ -31,6 +31,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   static const secure = FlutterSecureStorage();
   final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://loanhub.co.ls/api/v1'));
   final token = TextEditingController();
+  final phone = TextEditingController();
+  final password = TextEditingController();
+  final otp = TextEditingController();
   final companyId = TextEditingController();
   final name = TextEditingController();
   final account = TextEditingController();
@@ -69,6 +72,53 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     return body == null
         ? http.get(uri, headers: headers)
         : http.post(uri, headers: headers, body: jsonEncode(body));
+  }
+
+  Future<void> _signIn() async {
+    if (!Uri.tryParse(apiUrl.text.trim()).toString().startsWith('https://')) {
+      setState(() => error = 'A secure HTTPS LoanHub API URL is required.');
+      return;
+    }
+    if (phone.text.trim().isEmpty || password.text.isEmpty || companyId.text.trim().isEmpty) {
+      setState(() => error = 'Enter your phone, password and company ID.');
+      return;
+    }
+    setState(() { loading = true; error = null; });
+    try {
+      final response = await http.post(
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone': phone.text.trim(),
+          'password': password.text,
+          if (otp.text.trim().isNotEmpty) 'otp': otp.text.trim(),
+          'device_name': 'LoanHub Legacy CSV Flutter',
+        }),
+      );
+      if (response.statusCode != 200) {
+        throw Exception('Sign-in failed. Check credentials or MFA code.');
+      }
+      final result = jsonDecode(response.body) as Map<String, dynamic>;
+      token.text = result['access_token']?.toString() ?? '';
+      if (token.text.isEmpty) throw Exception('LoanHub did not return a session.');
+      password.clear();
+      otp.clear();
+      await _connect();
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _signOut() async {
+    await secure.delete(key: 'token');
+    token.clear();
+    password.clear();
+    groups = [];
+    rows = [];
+    selectedGroup = null;
+    if (mounted) setState(() { configured = false; error = null; });
   }
 
   Future<void> _connect() async {
@@ -285,7 +335,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('LoanHub  /  Legacy CSV Capture'), backgroundColor: Colors.white, actions: [if (configured) IconButton(tooltip: 'Refresh records', onPressed: loading ? null : _connect, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(title: const Text('LoanHub  /  Legacy CSV Capture'), backgroundColor: Colors.white, actions: [if (configured) IconButton(tooltip: 'Refresh records', onPressed: loading ? null : _connect, icon: const Icon(Icons.refresh)), if (configured) IconButton(tooltip: 'Sign out', onPressed: loading ? null : _signOut, icon: const Icon(Icons.logout))]),
       body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1250), child: ListView(padding: const EdgeInsets.all(24), children: [
         Text('Legacy bank deduction register', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
@@ -294,10 +344,17 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (!configured) Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('Connect to your LoanHub company', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12), field('LoanHub API URL', apiUrl), const SizedBox(height: 12),
-          TextField(controller: token, obscureText: true, decoration: const InputDecoration(labelText: 'Existing LoanHub access token', border: OutlineInputBorder())),
-          const SizedBox(height: 12), field('Company ID', companyId), const SizedBox(height: 12),
-          FilledButton.icon(onPressed: loading ? null : _connect, icon: const Icon(Icons.lock_open), label: const Text('Connect securely')),
-          const SizedBox(height: 8), const Text('Initial integration uses an existing authenticated token. Do not share tokens or include them in exported files.'),
+          TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'LoanHub phone number', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: password, obscureText: true, enableSuggestions: false, autocorrect: false, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: otp, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Authenticator code (if enabled)', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          field('Company ID', companyId),
+          const SizedBox(height: 12),
+          FilledButton.icon(onPressed: loading ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in to LoanHub')),
+          const SizedBox(height: 8),
+          const Text('LoanHub credentials are sent only to the configured HTTPS server. Passwords are not saved on the device.'),
         ]))),
         if (configured) LayoutBuilder(builder: (context, constraints) => Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('Add legacy record', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)), const SizedBox(height: 16),
@@ -359,7 +416,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   @override
   void dispose() {
-    for (final c in [apiUrl, token, companyId, name, account, branch, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, branch, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }
