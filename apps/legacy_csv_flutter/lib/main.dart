@@ -543,7 +543,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                   onPressed: loading ? null : () => _modifyRecord(row, remove: true)),
               ])),
             ]))),
-        ))]);
+        )]);
       }
       return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
         columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
