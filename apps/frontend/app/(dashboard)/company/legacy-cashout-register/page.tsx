@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 export default function LegacyCashoutRegisterPage() {
   return (
     <div className="w-full space-y-3 px-2 sm:px-3 lg:px-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button asChild variant="outline" className="rounded-xl"><Link href="/company/legacy-bank-deductions">Open legacy bank CSV register</Link></Button>
         <Button asChild className="rounded-xl">
           <Link href="/company/folio-book">
             <BookOpenCheck className="h-4 w-4" />
