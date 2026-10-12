@@ -44,3 +44,18 @@ def test_requires_postgres():
     db.get_bind.return_value.dialect.name = "sqlite"
     with pytest.raises(ValueError):
         accounting_rls_readiness(db)
+
+
+
+def test_trivially_permissive_policy_is_not_reported_ready():
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    names = ("accounting_accounts", "journal_entries", "journal_lines")
+    db.execute.side_effect = [
+        [{"name": name, "enabled": True, "forced": False} for name in names],
+        [{"tablename": name, "cmd": "ALL", "qual": "true", "with_check": "true"} for name in names],
+    ]
+    result = accounting_rls_readiness(db)
+    assert result["ready"] is False
+    assert all(f"{name}:unrestricted_policy_predicate" in result["findings"] for name in names)
+    db.commit.assert_not_called()
