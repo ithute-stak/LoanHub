@@ -529,7 +529,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     const SizedBox(height: 8),
     LayoutBuilder(builder: (ctx, constraints) {
       if (constraints.maxWidth < 620) {
-        return Column(children: visibleRows.map((row) => Card(
+        return Column(children: [...visibleRows.map((row) => Card(
           child: Padding(padding: const EdgeInsets.all(12), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(row['client_name'].toString(), style: Theme.of(context).textTheme.titleMedium),
@@ -543,7 +543,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                   onPressed: loading ? null : () => _modifyRecord(row, remove: true)),
               ])),
             ]))),
-        )).toList());
+        ))]);
       }
       return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
         columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
