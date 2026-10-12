@@ -19,7 +19,7 @@ class LoanHubLegacyApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'LoanHub • Legacy CSV',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff155e75)), scaffoldBackgroundColor: const Color(0xfff4f7fb), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
+    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff155aa4)), scaffoldBackgroundColor: const Color(0xfff4f7fb), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
     home: const LegacyCapturePage(),
   );
 }
@@ -245,6 +245,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _importCsv() async {
+    if (selectedGroup == null) { setState(() => error = 'Select CIVIL, FORCE or S/E before importing.'); return; }
     final item = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -259,7 +260,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview'),
+        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview&work_group_id=${Uri.encodeQueryComponent(selectedGroup!)}'),
       );
       request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
       request.headers['X-Company-ID'] = companyId.text.trim();
@@ -567,7 +568,13 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     const Text('Bulk CSV import with validation preview. Confirm the work group and bank details before submitting instructions.'),
     const SizedBox(height: 16),
     Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      OutlinedButton.icon(onPressed: loading ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
+      DropdownButtonFormField<String>(isExpanded: true, initialValue: selectedGroup,
+        decoration: const InputDecoration(labelText: 'Work group for imported rows'),
+        items: groups.map((g) => DropdownMenuItem<String>(value: g['id'].toString(),
+          child: Text(g['name'].toString(), overflow: TextOverflow.ellipsis))).toList(),
+        onChanged: (v) => setState(() => selectedGroup = v)),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
       const SizedBox(height: 12),
       FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip,
         icon: const Icon(Icons.archive_outlined), label: const Text('Export bank ZIP')),
