@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -82,6 +85,27 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (mounted) setState(() => loading = false);
   }
 
+  Future<void> _exportZip() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final response = await _request('/legacy-bank-deductions/export.zip');
+      if (response.statusCode != 200) {
+        throw Exception('Export unavailable. Check records and permissions.');
+      }
+      final directory = await getTemporaryDirectory();
+      final archive = File('${directory.path}/loanhub-legacy-bank-submissions.zip');
+      await archive.writeAsBytes(response.bodyBytes, flush: true);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(archive.path, mimeType: 'application/zip')],
+        subject: 'LoanHub legacy bank deductions',
+        text: 'Confidential bank submission. Share only with an authorised recipient.',
+      ));
+    } catch (e) {
+      error = e.toString();
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
   Future<void> _save() async {
     if (selectedGroup == null || name.text.trim().isEmpty || account.text.trim().isEmpty || branch.text.trim().isEmpty || amount.text.trim().isEmpty) {
       setState(() => error = 'Complete all fields before saving.');
@@ -142,7 +166,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (loading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (error != null) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(error!, style: const TextStyle(color: Colors.red))),
         if (configured) ...[
-          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records'))]),
+          const SizedBox(height: 20), Row(children: [const Expanded(child: Text('Saved legacy records', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Chip(label: Text('${rows.length} records')), const SizedBox(width: 8), FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip, icon: const Icon(Icons.archive_outlined), label: const Text('Export bank CSV ZIP'))]),
           const SizedBox(height: 8),
           Card(clipBehavior: Clip.antiAlias, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xffe3edf4)),

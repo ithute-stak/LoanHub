@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from io import BytesIO
+from fastapi.responses import StreamingResponse
 from decimal import Decimal
 from uuid import UUID
 
@@ -12,7 +14,8 @@ from core.access_control import FINANCE_ROLES, COMPANY_MANAGEMENT_ROLES, TenantC
 from database.models.employer_group import EmployerGroup
 from database.models.legacy_bank_deduction import LegacyBankDeduction
 from database.session import get_db
-from services.credential_service import encrypt_credential
+from services.credential_service import encrypt_credential, decrypt_credential
+from services.bank_submission_export import build_bank_submission_zip
 
 router = APIRouter(prefix="/legacy-bank-deductions", tags=["Legacy Bank Deductions"])
 
@@ -82,3 +85,52 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
     db.commit()
     db.refresh(record)
     return {"id": str(record.id), "saved": True}
+
+
+@router.get("/export.zip")
+def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    """Export explicitly captured historical rows, never current live loans."""
+    _authorized(context)
+    rows = (
+        db.query(LegacyBankDeduction, EmployerGroup)
+        .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
+        .filter(LegacyBankDeduction.company_id == context.company_id)
+        .order_by(LegacyBankDeduction.created_at.asc(), LegacyBankDeduction.id.asc())
+        .all()
+    )
+    data = []
+    for entry, group in rows:
+        number = decrypt_credential(entry.account_number_encrypted)
+        # The institution-specific prefixes are supplied by the lender.
+        bank = ("FNB" if number.startswith("6") else
+                "STD" if number.startswith("90") else
+                "LPS" if number.startswith("10") else "NB")
+        normalized = str(group.code or "").upper().replace(" ", "").replace("-", "").replace("/", "")
+        name = str(group.name or "").upper()
+        if normalized in {"FORCE", "LDF"} or "FORCE" in name:
+            work_group = "FORCE"
+        elif normalized in {"CIVIL", "CIV"} or "CIVIL" in name:
+            work_group = "CIVIL"
+        elif normalized in {"SE", "SELFEMPLOYED"} or "S/E" in name or "SELF EMPLOYED" in name:
+            work_group = "S/E"
+        else:
+            work_group = str(group.code)
+        data.append({
+            "name": entry.client_name, "bank": bank,
+            "account": number, "branch": entry.branch_code,
+            "group": work_group, "installment": entry.amount, "balance": entry.amount,
+        })
+    # The legacy dataset must never be silently confused with current loan exports.
+    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name)
+    if not summary["rows"]:
+        raise HTTPException(422, detail="No valid legacy records available for bank export")
+    return StreamingResponse(
+        BytesIO(payload), media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="legacy-bank-submissions.zip"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+            "X-Exported-Rows": str(summary["rows"]),
+            "X-Excluded-Rows": str(sum(summary["excluded"].values())),
+        },
+    )
