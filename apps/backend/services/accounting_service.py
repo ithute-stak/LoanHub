@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
@@ -279,6 +279,20 @@ def account_by_code(db: Session, key: str, code: str) -> AccountingAccount:
     return row
 
 
+def _lock_journal_scope(db: Session, key: str) -> None:
+    """Serialize journal reference and number allocation per scope on PostgreSQL.
+
+    Transaction-scoped: the database releases the lock on commit/rollback.
+    SQLite/non-PostgreSQL paths retain existing behavior and must not be
+    treated as concurrency-safe for financial posting.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 20261012))"),
+            {"scope": f"loanhub:journal:{key}"},
+        )
+
+
 def next_entry_number(db: Session, key: str) -> str:
     # Sequence generation remains deterministic inside the database transaction.
     period = date.today().strftime("%Y%m")
@@ -418,6 +432,9 @@ def create_entry(
     ).all()
     if len(accounts) != len(account_ids):
         raise HTTPException(status_code=422, detail="One or more journal accounts are outside the selected ledger")
+
+    # Take the scope lock before the idempotency lookup and number allocation.
+    _lock_journal_scope(db, key)
 
     if reference_type and reference_id:
         existing = _journal_for_reference(db, key, reference_type, str(reference_id))
