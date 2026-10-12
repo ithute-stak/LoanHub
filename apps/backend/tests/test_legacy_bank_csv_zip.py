@@ -25,3 +25,18 @@ def test_manual_legacy_records_split_by_prefix_and_group():
         std = list(csv.reader(StringIO(zip_file.read("STD-force.csv").decode())))
         assert std[0][2] == "000123"
     assert stats["rows"] == 5
+
+
+
+def test_unsupported_work_group_is_reported_in_export_summary():
+    rows = [
+        dict(name="Valid Client", account="6200000001", branch="60667", bank="FNB",
+             group="FORCE", installment="100.00", balance="100.00"),
+        dict(name="Blocked Client", account="9000000001", branch="123", bank="STD",
+             group="UNSUPPORTED", installment="50.00", balance="50.00"),
+    ]
+    _, summary = build_bank_submission_zip(rows, lender_name="Batlokoa Financial Services")
+    assert summary["rows"] == 1
+    assert summary["excluded"] == {"unknown_work_group": 1}
+    # The legacy export API must return 422 if excluded is nonempty, even if
+    # some exportable rows are present: silent omissions are unsafe.
