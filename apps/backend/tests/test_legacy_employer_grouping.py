@@ -65,3 +65,16 @@ def test_spreadsheet_import_preserves_employer():
     assert not issues
     assert parsed[0]["account"] == "9080000000001"
     assert parsed[0]["employer"] == "Motheo"
+
+
+def test_optional_review_status_does_not_override_selected_work_group():
+    data = (
+        "Client name,Account number,Amount,Employer,Review status\n"
+        "Mamothusi Mohapi,9080004214532,2500,NUL,Confirm branch code before bank export\n"
+        "Tumelo Ntlhanngoe,62887474197,1856,,Confirm branch code before bank export\n"
+    ).encode()
+    records, issues = parse_legacy_csv(data, known_groups={"civil": "group-civil"}, selected_group="CIVIL")
+    assert len(records) == 1
+    assert records[0]["group_id"] == "group-civil"
+    assert records[0]["employer"] == "NUL"
+    assert issues == [{"row": 3, "reason": "Employer is required (1-120 characters)"}]
