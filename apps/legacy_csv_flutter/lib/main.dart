@@ -376,9 +376,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       });
       if (result.statusCode != 200) throw Exception('Bulk deletion failed: ${result.body}');
       await _connect();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$count legacy deductions removed. Current loans are unchanged.')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$count legacy deductions removed. Current loans are unchanged.')),
+        );
+      }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
