@@ -1392,6 +1392,7 @@ def get_company_client_profile(
             CompanyClientProfileLoanRead(
                 id=loan.id,
                 loan_reference=loan.loan_reference,
+                folio_number=loan.folio_number,
                 status=_enum_value(loan.status),
                 risk_level=_enum_value(loan.risk_level),
                 principal_amount=Decimal(loan.principal_amount or 0),
