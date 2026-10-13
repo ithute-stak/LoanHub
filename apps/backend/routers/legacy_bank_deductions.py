@@ -339,3 +339,89 @@ async def import_legacy_csv(
         ))
     db.commit()
     return {**summary, "saved": len(new_rows), "preview": False}
+
+
+@router.get("/combined-export.zip")
+def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    """Export historical deductions and outstanding system loans in one validated ZIP."""
+    from database.models.borrower import Borrower
+    from database.models.client_loan_company import ClientCompanyLoan
+    from database.models.enums import LoanStatus
+    from database.models.origination import BorrowerBankAccount
+
+    _authorized(context)
+    legacy_rows = (
+        db.query(LegacyBankDeduction, EmployerGroup)
+        .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
+        .filter(LegacyBankDeduction.company_id == context.company_id,
+                LegacyBankDeduction.deleted_at.is_(None))
+        .order_by(LegacyBankDeduction.created_at, LegacyBankDeduction.id).all()
+    )
+    records = []
+    legacy_keys = set()
+    for entry, group in legacy_rows:
+        account = decrypt_credential(entry.account_number_encrypted)
+        routing = resolve_legacy_bank(account)
+        kind = _group_kind(group)
+        records.append({
+            "name": entry.client_name, "bank": routing[0] if routing else "",
+            "account": account, "branch": entry.branch_code or (routing[1] if routing else ""),
+            "group": kind or "", "installment": entry.amount, "balance": entry.amount,
+        })
+        legacy_keys.add((account, kind))
+
+    loans = (
+        db.query(ClientCompanyLoan, Person, BorrowerBankAccount)
+        .join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
+        .join(Person, Person.user_id == Borrower.user_id)
+        .join(BorrowerBankAccount,
+              (BorrowerBankAccount.borrower_id == Borrower.id)
+              & (BorrowerBankAccount.company_id == context.company_id))
+        .filter(ClientCompanyLoan.company_id == context.company_id,
+                ClientCompanyLoan.balance > 0,
+                ClientCompanyLoan.status.in_((LoanStatus.active, LoanStatus.defaulted)))
+        .all()
+    )
+    chosen = {}
+    for loan, person, bank in loans:
+        if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES and loan.branch_id != context.branch_id:
+            continue
+        previous = chosen.get(loan.id)
+        if previous is None or (
+            bool(bank.salary_account), bool(bank.verified_at)
+        ) > (
+            bool(previous[2].salary_account), bool(previous[2].verified_at)
+        ):
+            chosen[loan.id] = (loan, person, bank)
+    overlap = []
+    for loan, person, bank in chosen.values():
+        account = decrypt_credential(bank.account_number_encrypted)
+        group = str(loan.folio_group_code or "").upper().replace("/", "").replace("-", "").replace(" ", "")
+        kind = "S/E" if group in {"SE", "SELFEMPLOYED"} else "FORCE" if group in {"FORCE", "LDF"} else "CIVIL" if group in {"CIVIL", "CIV"} else ""
+        if (account, kind) in legacy_keys:
+            overlap.append({"loan_id": str(loan.id), "account_last4": account[-4:], "work_group": kind})
+            continue
+        records.append({
+            "name": " ".join(filter(None, (person.first_name, person.last_name))),
+            "bank": bank.bank_name, "account": account, "branch": bank.branch_code,
+            "group": loan.folio_group_code, "installment": loan.installment_amount,
+            "balance": loan.balance,
+        })
+    if overlap:
+        raise HTTPException(422, detail={
+            "message": "Combined export blocked: existing loans overlap legacy mandates. Reconcile before exporting.",
+            "overlap_count": len(overlap), "overlaps": overlap[:25],
+        })
+    payload, summary = build_bank_submission_zip(records, lender_name=context.company.name)
+    if summary["excluded"]:
+        raise HTTPException(422, detail={
+            "message": "Combined bank export blocked: correct incomplete bank instructions first",
+            "excluded": summary["excluded"], "exportable_rows": summary["rows"],
+        })
+    if not summary["rows"]:
+        raise HTTPException(422, "No eligible legacy deductions or outstanding loans to export")
+    return StreamingResponse(BytesIO(payload), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="loanhub-combined-bank-submissions.zip"',
+        "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+        "X-Exported-Rows": str(summary["rows"]),
+    })
