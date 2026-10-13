@@ -444,16 +444,19 @@ async def import_legacy_csv(
         })
     if not new_rows:
         raise HTTPException(422, "No new valid deductions to import")
+    canonical_import_employers = set()
     for row in new_rows:
+        canonical_employer = _canonical_employer(db, context.company_id, row["employer"])
+        canonical_import_employers.add(canonical_employer)
         db.add(LegacyBankDeduction(
             company_id=context.company_id, work_group_id=UUID(row["group_id"]),
             created_by=str(context.user.id), client_name=row["name"],
-            employer=_canonical_employer(db, context.company_id, row["employer"]),
+            employer=canonical_employer,
             account_number_encrypted=encrypt_credential(row["account"]),
             account_last4=row["account"][-4:],
             branch_code=row["branch"] or ((resolve_legacy_bank(row["account"]) or ("", ""))[1]), amount=row["amount"],
         ))
-    _record_employers(db, context.company_id, {row.employer for row in db.new if isinstance(row, LegacyBankDeduction)})
+    _record_employers(db, context.company_id, canonical_import_employers)
     db.commit()
     return {**summary, "saved": len(new_rows), "preview": False}
 
