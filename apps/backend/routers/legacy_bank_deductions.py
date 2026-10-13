@@ -23,6 +23,7 @@ from services.credential_service import encrypt_credential, decrypt_credential
 from services.bank_submission_export import build_bank_submission_zip
 from services.legacy_bank_routing import resolve_legacy_bank
 from services.legacy_bank_import import parse_legacy_csv, parse_legacy_spreadsheet
+from services.legacy_employer_names import canonical_employer_name, employer_key
 
 router = APIRouter(prefix="/legacy-bank-deductions", tags=["Legacy Bank Deductions"])
 
@@ -64,7 +65,7 @@ def _authorized(context: TenantContext) -> None:
 
 def _canonical_employer(db: Session, company_id: UUID, name: str) -> str:
     """Use the same employer spelling for all case/space variants."""
-    cleaned = " ".join(name.strip().split())
+    cleaned = canonical_employer_name(name)
     match = db.query(LegacyEmployer.name).filter(
         LegacyEmployer.company_id == company_id,
         LegacyEmployer.normalized_name == cleaned.casefold(),
@@ -77,8 +78,8 @@ def _canonical_employer(db: Session, company_id: UUID, name: str) -> str:
         LegacyBankDeduction.employer.is_not(None),
     ).all()
     for (existing,) in previous:
-        if existing and " ".join(existing.split()).casefold() == cleaned.casefold():
-            return " ".join(existing.split())
+        if existing and employer_key(existing) == employer_key(cleaned):
+            return cleaned
     return cleaned
 
 
@@ -86,9 +87,9 @@ def _record_employers(db: Session, company_id: UUID, names: set[str]) -> None:
     """Company-scoped and idempotent; conflict-safe for concurrent imports."""
     canonical = {}
     for raw in names:
-        value = " ".join(raw.strip().split())
+        value = canonical_employer_name(raw)
         if value and len(value) <= 120:
-            canonical.setdefault(value.casefold(), value)
+            canonical.setdefault(employer_key(value), value)
     if canonical:
         rows = [{"company_id": company_id, "name": name, "normalized_name": normalized}
                 for normalized, name in canonical.items()]
@@ -107,9 +108,9 @@ def list_employers(context: TenantContext = Depends(get_tenant_context), db: Ses
     # Collapse case/whitespace variants, using directory names first as canonical.
     canonical = {}
     for (name,) in directory:
-        cleaned = " ".join((name or "").split())
+        cleaned = canonical_employer_name(name)
         if cleaned:
-            canonical.setdefault(cleaned.casefold(), cleaned)
+            canonical.setdefault(employer_key(cleaned), cleaned)
     for (name,) in previous:
         cleaned = " ".join((name or "").split())
         if cleaned:
