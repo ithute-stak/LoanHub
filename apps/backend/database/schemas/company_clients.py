@@ -427,6 +427,7 @@ class CompanyClientProfileStatsRead(BaseModel):
 class CompanyClientProfileLoanRead(BaseModel):
     id: UUID
     loan_reference: str
+    folio_number: str
     status: str
     risk_level: str
     principal_amount: Decimal
