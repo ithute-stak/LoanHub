@@ -263,6 +263,12 @@ export default function CompanyClientsPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
   const [selectedClient, setSelectedClient] = useState<CompanyClient | null>(null);
   const [profileClient, setProfileClient] = useState<CompanyClient | null>(null);
+  useEffect(() => {
+    const requestedId = new URLSearchParams(window.location.search).get("client");
+    if (!requestedId || loading) return;
+    const matching = clients.find(client => client.id === requestedId || client.borrower_id === requestedId);
+    if (matching) setProfileClient(matching);
+  }, [clients, loading]);
   const [clientForm, setClientForm] = useState<AssistedCompanyClientCreate>(emptyClient);
   const [loanForm, setLoanForm] = useState<InternalClientLoanRequestCreate>(emptyLoan);
   const [calculation, setCalculation] = useState<MicroLoanCalculation | null>(null);
