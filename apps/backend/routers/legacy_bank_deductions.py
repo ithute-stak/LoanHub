@@ -78,7 +78,13 @@ def list_legacy(context: TenantContext = Depends(get_tenant_context), db: Sessio
         .order_by(LegacyBankDeduction.created_at.desc())
         .limit(1000).all()
     )
-    creator_ids = {row.created_by for row, _ in rows if row.created_by}
+    creator_ids = set()
+    for row, _ in rows:
+        if row.created_by:
+            try:
+                creator_ids.add(UUID(str(row.created_by)))
+            except ValueError:
+                pass
     creators = db.query(User.id, User.email, User.phone, Person.first_name, Person.last_name).outerjoin(Person, Person.user_id == User.id).filter(User.id.in_(creator_ids)).all() if creator_ids else []
     creator_names = {str(user_id): (" ".join(filter(None, (first_name, last_name))).strip() or email or phone or "Unknown user") for user_id, email, phone, first_name, last_name in creators}
     return [{
