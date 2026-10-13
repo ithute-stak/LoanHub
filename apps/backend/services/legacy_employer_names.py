@@ -11,7 +11,8 @@ def canonical_employer_name(name: str) -> str:
         "lcscentral": "LCS Central",
         "lesothocorrectionalservicecentral": "LCS Central",
         "lcshq": "LCS Headquarters",
-        "lcsh eadquarters".replace(" ", ""): "LCS Headquarters",
+        "lcsheadquarters": "LCS Headquarters",
+        "lcslesothocorrectionalservicehq": "LCS Headquarters",
         "lesothocorrectionalservicehq": "LCS Headquarters",
         "lesothocorrectionalserviceheadquarters": "LCS Headquarters",
     }
