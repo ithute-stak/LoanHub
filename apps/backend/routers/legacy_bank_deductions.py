@@ -222,6 +222,43 @@ def update_legacy(
     return {"id": str(record.id), "saved": True}
 
 
+class BulkDeleteConfirm(BaseModel):
+    confirmation: str
+    expected_count: int = Field(ge=1)
+
+
+@router.get("/bulk-delete/preview")
+def preview_bulk_delete(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    count = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).count()
+    return {"count": count, "company_id": str(context.company_id), "recoverable": True}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_legacy(payload: BulkDeleteConfirm, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    """Soft-delete this company's historical deduction register only; never touch live loans."""
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    if payload.confirmation != "DELETE LEGACY RECORDS":
+        raise HTTPException(422, "Type DELETE LEGACY RECORDS to confirm")
+    rows = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).with_for_update().all()
+    if len(rows) != payload.expected_count:
+        raise HTTPException(409, "The register changed. Refresh the preview and confirm again.")
+    now = datetime.now(timezone.utc)
+    for record in rows:
+        record.deleted_at = now
+        record.deleted_by_user_id = context.user.id
+    db.commit()
+    return {"deleted": len(rows), "recoverable": True}
+
+
 @router.delete("/{record_id}", status_code=204)
 def delete_legacy(
     record_id: UUID,
