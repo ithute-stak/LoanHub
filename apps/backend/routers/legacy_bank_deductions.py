@@ -384,7 +384,7 @@ def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context
         legacy_keys.add((account, kind))
 
     loans = (
-        db.query(ClientCompanyLoan, Person, BorrowerBankAccount)
+        db.query(ClientCompanyLoan, Person, BorrowerBankAccount, Borrower)
         .join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
         .join(Person, Person.user_id == Borrower.user_id)
         .join(BorrowerBankAccount,
@@ -396,7 +396,7 @@ def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context
         .all()
     )
     chosen = {}
-    for loan, person, bank in loans:
+    for loan, person, bank, borrower in loans:
         if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES and loan.branch_id != context.branch_id:
             continue
         previous = chosen.get(loan.id)
@@ -405,9 +405,9 @@ def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context
         ) > (
             bool(previous[2].salary_account), bool(previous[2].verified_at)
         ):
-            chosen[loan.id] = (loan, person, bank)
+            chosen[loan.id] = (loan, person, bank, borrower)
     overlap = []
-    for loan, person, bank in chosen.values():
+    for loan, person, bank, borrower in chosen.values():
         account = decrypt_credential(bank.account_number_encrypted)
         group = str(loan.folio_group_code or "").upper().replace("/", "").replace("-", "").replace(" ", "")
         kind = "S/E" if group in {"SE", "SELFEMPLOYED"} else "FORCE" if group in {"FORCE", "LDF"} else "CIVIL" if group in {"CIVIL", "CIV"} else ""
@@ -417,6 +417,7 @@ def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context
         records.append({
             "name": " ".join(filter(None, (person.first_name, person.last_name))),
             "bank": bank.bank_name, "account": account, "branch": bank.branch_code,
+            "employer": borrower.employer_name,
             "group": loan.folio_group_code, "installment": loan.installment_amount,
             "balance": loan.balance,
         })
