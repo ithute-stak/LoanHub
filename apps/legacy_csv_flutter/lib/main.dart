@@ -41,6 +41,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   List<Map<String, dynamic>> memberships = [];
   Map<String, String> companyNames = {};
   final name = TextEditingController();
+  final employer = TextEditingController();
   final account = TextEditingController();
   final amount = TextEditingController();
   final search = TextEditingController();
@@ -247,12 +248,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (selectedGroup == null) { setState(() => error = 'Select CIVIL, FORCE or S/E before importing.'); return; }
     final item = await FilePicker.pickFile(
       type: FileType.custom,
-      allowedExtensions: ['csv'],
+      allowedExtensions: ['csv', 'xlsx'],
     );
     if (item == null) return;
     final size = item.lengthSync() ?? await item.length();
     if (size == null || size > 2000000) {
-      setState(() => error = 'CSV must be no larger than 2 MB.');
+      setState(() => error = 'CSV/XLSX file must be no larger than 2 MB.');
       return;
     }
     final bytes = await item.readAsBytes();
@@ -335,7 +336,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _save() async {
-    if (selectedGroup == null || name.text.trim().isEmpty || account.text.trim().isEmpty || amount.text.trim().isEmpty) {
+    if (selectedGroup == null || name.text.trim().isEmpty || employer.text.trim().isEmpty || account.text.trim().isEmpty || amount.text.trim().isEmpty) {
       setState(() => error = 'Complete all fields before saving.');
       return;
     }
@@ -344,11 +345,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final response = await _request('/legacy-bank-deductions/', body: {
         'work_group_id': selectedGroup,
         'client_name': name.text.trim(),
+        'employer': employer.text.trim(),
         'account_number': account.text.trim(),
         'amount': amount.text.trim(),
       });
       if (response.statusCode != 201) throw Exception('Could not save record: ${response.body}');
-      name.clear(); account.clear(); amount.clear();
+      name.clear(); employer.clear(); account.clear(); amount.clear();
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
@@ -365,6 +367,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   Future<void> _modifyRecord(Map<String, dynamic> row, {required bool remove}) async {
     final currentName = TextEditingController(text: row['client_name']?.toString() ?? '');
+    final currentEmployer = TextEditingController(text: row['employer']?.toString() ?? '');
     final currentAmount = TextEditingController(text: row['amount']?.toString() ?? '');
     var selected = row['work_group_id']?.toString();
     try {
@@ -384,6 +387,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                 const SizedBox(height: 12),
                 TextField(controller: currentName, decoration: const InputDecoration(labelText: 'Client name')),
                 const SizedBox(height: 12),
+                TextField(controller: currentEmployer, decoration: const InputDecoration(labelText: 'Employer')),
+                const SizedBox(height: 12),
                 TextField(controller: currentAmount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(labelText: 'Deduction amount (LSL)')),
                 const SizedBox(height: 8),
@@ -396,7 +401,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )),
       );
       if (confirmed != true) return;
-      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
+      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentEmployer.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
         setState(() => error = 'Complete all edit fields.');
         return;
       }
@@ -412,6 +417,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           : await http.patch(uri, headers: headers, body: jsonEncode({
               'work_group_id': selected,
               'client_name': currentName.text.trim(),
+              'employer': currentEmployer.text.trim(),
               'amount': currentAmount.text.trim(),
             }));
       if (response.statusCode != (remove ? 204 : 200)) {
@@ -423,7 +429,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     } catch (e) {
       error = e.toString();
     } finally {
-      currentName.dispose(); currentAmount.dispose();
+      currentName.dispose(); currentEmployer.dispose(); currentAmount.dispose();
       if (mounted) setState(() => loading = false);
     }
   }
@@ -497,6 +503,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )).toList(),
         onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12), field('Client name', name),
+      const SizedBox(height: 12), field('Employer', employer),
       const SizedBox(height: 12), field('Account number', account, numeric: true),
       const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
       const SizedBox(height: 8),
@@ -526,7 +533,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
             crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(row['client_name'].toString(), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 5),
-              Text('${row['work_group']} · ${row['masked_account']}'),
+              Text('${row['work_group']} · ${row['employer'] ?? 'Unassigned'} · ${row['masked_account']}'),
               Text('Branch: ${row['branch_code']}    M ${row['amount']}'),
               Align(alignment: Alignment.centerRight, child: Wrap(spacing: 4, children: [
                 IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined),
@@ -539,11 +546,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       }
       return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
         columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
-          DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
+          DataColumn(label: Text('Employer')), DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
           DataColumn(label: Text('Amount')), DataColumn(label: Text('Edit'))],
         rows: visibleRows.map((row) => DataRow(cells: [
           DataCell(Text(row['work_group'].toString())),
           DataCell(Text(row['client_name'].toString())),
+          DataCell(Text((row['employer'] ?? 'Unassigned').toString())),
           DataCell(Text(row['masked_account'].toString())),
           DataCell(Text(row['branch_code'].toString())),
           DataCell(Text(row['amount'].toString())),
@@ -556,7 +564,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Widget _tools() => ListView(padding: const EdgeInsets.all(16), children: [
     Text('Import & export', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
-    const Text('Bulk CSV import with validation preview. Confirm the work group and bank details before submitting instructions.'),
+    const Text('Bulk CSV/XLSX import: Client name, Account number, Amount, Employer. Choose a work group once.'),
     const SizedBox(height: 16),
     Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       DropdownButtonFormField<String>(isExpanded: true, initialValue: selectedGroup,
@@ -638,7 +646,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     shuttingDown = true;
     realtimeRetry?.cancel();
     unawaited(realtimeSocket?.close() ?? Future<void>.value());
-    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, employer, account, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }
