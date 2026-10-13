@@ -314,15 +314,15 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
   }
 
-  Future<void> _exportZip() async {
+  Future<void> _exportZip({bool combined = false}) async {
     setState(() { loading = true; error = null; });
     try {
-      final response = await _request('/legacy-bank-deductions/export.zip');
+      final response = await _request(combined ? '/legacy-bank-deductions/combined-export.zip' : '/legacy-bank-deductions/export.zip');
       if (response.statusCode != 200) {
         throw Exception('Export unavailable. Check records and permissions.');
       }
       final directory = await getTemporaryDirectory();
-      final archive = File('${directory.path}/loanhub-legacy-bank-submissions.zip');
+      final archive = File('${directory.path}/loanhub-${combined ? 'combined' : 'legacy'}-bank-submissions.zip');
       await archive.writeAsBytes(response.bodyBytes, flush: true);
       await SharePlus.instance.share(ShareParams(
         files: [XFile(archive.path, mimeType: 'application/zip')],
@@ -333,6 +333,57 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       error = e.toString();
     }
     if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _deleteAllLegacy() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final preview = await _request('/legacy-bank-deductions/bulk-delete/preview');
+      if (preview.statusCode == 403) throw Exception('Only company management can delete all legacy records.');
+      if (preview.statusCode != 200) throw Exception('Unable to check deletion permissions.');
+      final count = (jsonDecode(preview.body) as Map<String, dynamic>)['count'] as int;
+      if (count == 0) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No active legacy records to delete.')));
+        return;
+      }
+      if (!mounted) return;
+      final confirmation = TextEditingController();
+      bool confirmed = false;
+      try {
+        confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+            title: const Text('Delete ALL legacy deductions?'),
+            content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('This will remove $count historical deductions for this company from the active register and bank exports. Current loans and payments are not affected. Deleted records remain recoverable.'),
+              const SizedBox(height: 14),
+              TextField(controller: confirmation, onChanged: (_) => refresh(() {}),
+                decoration: const InputDecoration(labelText: 'Type DELETE LEGACY RECORDS')),
+            ])),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: confirmation.text == 'DELETE LEGACY RECORDS'
+                ? () => Navigator.pop(ctx, true) : null, child: const Text('Remove all legacy records')),
+            ],
+          )),
+        ) ?? false;
+      } finally {
+        confirmation.dispose();
+      }
+      if (!confirmed) return;
+      final result = await _request('/legacy-bank-deductions/bulk-delete', body: {
+        'confirmation': 'DELETE LEGACY RECORDS', 'expected_count': count,
+      });
+      if (result.statusCode != 200) throw Exception('Bulk deletion failed: ${result.body}');
+      await _connect();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$count legacy deductions removed. Current loans are unchanged.')),
+      );
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Future<void> _save() async {
@@ -573,13 +624,19 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           child: Text(g['name'].toString(), overflow: TextOverflow.ellipsis))).toList(),
         onChanged: (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12),
-      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
+      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV / Excel')),
       const SizedBox(height: 12),
       FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip,
         icon: const Icon(Icons.archive_outlined), label: const Text('Export bank ZIP')),
       const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : () => _exportZip(combined: true),
+        icon: const Icon(Icons.merge_type), label: const Text('Export legacy + current loans')),
+      const SizedBox(height: 12),
       OutlinedButton.icon(onPressed: loading ? null : _restoreRecord,
         icon: const Icon(Icons.restore), label: const Text('Restore deleted record')),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : _deleteAllLegacy,
+        icon: const Icon(Icons.delete_sweep_outlined), label: const Text('Delete all legacy records')),
     ]))),
     const SizedBox(height: 12),
     const Text('Use only authorised recipients when sharing bank submission ZIP files.'),
