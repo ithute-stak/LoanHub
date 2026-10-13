@@ -84,10 +84,23 @@ def list_employers(context: TenantContext = Depends(get_tenant_context), db: Ses
         LegacyBankDeduction.company_id == context.company_id,
         LegacyBankDeduction.employer.is_not(None)).distinct().all()
     existing_groups = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).all()
-    names = {name.strip() for (name,) in directory + previous if name and name.strip()}
-    # Legacy employer groups are shared with borrowers; do not treat CIVIL/FORCE/S/E as employers.
-    names.update(group.name.strip() for group in existing_groups if _group_kind(group) is None and group.name.strip())
-    return sorted(names, key=str.casefold)
+    # Collapse case/whitespace variants, using directory names first as canonical.
+    canonical = {}
+    for (name,) in directory:
+        cleaned = " ".join((name or "").split())
+        if cleaned:
+            canonical.setdefault(cleaned.casefold(), cleaned)
+    for (name,) in previous:
+        cleaned = " ".join((name or "").split())
+        if cleaned:
+            canonical.setdefault(cleaned.casefold(), cleaned)
+    # EmployerGroup is a legacy source of employer suggestions; omit work-group labels.
+    for group in existing_groups:
+        if _group_kind(group) is None:
+            cleaned = " ".join((group.name or "").split())
+            if cleaned:
+                canonical.setdefault(cleaned.casefold(), cleaned)
+    return sorted(canonical.values(), key=str.casefold)
 
 
 @router.get("/work-groups")
