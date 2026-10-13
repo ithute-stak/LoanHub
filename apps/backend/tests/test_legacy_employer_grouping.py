@@ -20,7 +20,7 @@ def test_motheo_non_fnb_separate_but_fnb_civil_merged():
     data = [
         row("Standard Bank", "9080000000001", "Motheo"),
         row("Standard Bank", "9080000000002", "Education"),
-        row("Standard Bank", "9080000000003", "Motheo"),
+        row("Nedbank", "1100000000003", "Motheo"),
         row("FNB", "63000000001", "Motheo"),
         row("FNB", "63000000002", "Road Fund"),
         row("FNB", "63000000003", "Motheo", group="FORCE"),
