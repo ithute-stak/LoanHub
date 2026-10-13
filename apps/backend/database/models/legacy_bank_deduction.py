@@ -9,6 +9,7 @@ class LegacyBankDeduction(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id"), nullable=False, index=True)
     work_group_id = Column(UUID(as_uuid=True), ForeignKey("employer_groups.id"), nullable=False)
     client_name = Column(String(120), nullable=False)
+    employer = Column(String(120), nullable=True, index=True)
     account_number_encrypted = Column(String(500), nullable=False)
     account_last4 = Column(String(4), nullable=False)
     branch_code = Column(String(6), nullable=False)

@@ -14,11 +14,13 @@ from sqlalchemy.orm import Session
 from core.access_control import FINANCE_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.employer_group import EmployerGroup
 from database.models.legacy_bank_deduction import LegacyBankDeduction
+from database.models.user import User
+from database.models.person import Person
 from database.session import get_db
 from services.credential_service import encrypt_credential, decrypt_credential
 from services.bank_submission_export import build_bank_submission_zip
 from services.legacy_bank_routing import resolve_legacy_bank
-from services.legacy_bank_import import parse_legacy_csv
+from services.legacy_bank_import import parse_legacy_csv, parse_legacy_spreadsheet
 
 router = APIRouter(prefix="/legacy-bank-deductions", tags=["Legacy Bank Deductions"])
 
@@ -26,6 +28,7 @@ router = APIRouter(prefix="/legacy-bank-deductions", tags=["Legacy Bank Deductio
 class LegacyCreate(BaseModel):
     work_group_id: UUID
     client_name: str = Field(min_length=1, max_length=120)
+    employer: str = Field(min_length=1, max_length=120)
     account_number: str = Field(min_length=6, max_length=20)
     branch_code: str = Field(default="", max_length=6)
     amount: Decimal = Field(gt=0, decimal_places=2, max_digits=15)
@@ -76,11 +79,21 @@ def list_legacy(context: TenantContext = Depends(get_tenant_context), db: Sessio
         .order_by(LegacyBankDeduction.created_at.desc())
         .limit(1000).all()
     )
+    creator_ids = set()
+    for row, _ in rows:
+        if row.created_by:
+            try:
+                creator_ids.add(UUID(str(row.created_by)))
+            except ValueError:
+                pass
+    creators = db.query(User.id, User.email, User.phone, Person.first_name, Person.last_name).outerjoin(Person, Person.user_id == User.id).filter(User.id.in_(creator_ids)).all() if creator_ids else []
+    creator_names = {str(user_id): (" ".join(filter(None, (first_name, last_name))).strip() or email or phone or "Unknown user") for user_id, email, phone, first_name, last_name in creators}
     return [{
         "id": str(row.id), "work_group_id": str(group.id), "work_group": group.name,
-        "client_name": row.client_name, "account_last4": row.account_last4,
+        "client_name": row.client_name, "employer": row.employer or "", "account_last4": row.account_last4,
         "masked_account": "****" + row.account_last4, "branch_code": row.branch_code or (resolve_legacy_bank(decrypt_credential(row.account_number_encrypted)) or ("", ""))[1],
         "amount": str(row.amount), "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_by_name": creator_names.get(str(row.created_by), "Not recorded"),
     } for row, group in rows]
 
 
@@ -95,7 +108,8 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
     routing = resolve_legacy_bank(payload.account_number)
     record = LegacyBankDeduction(
         company_id=context.company_id, work_group_id=group.id,
-        client_name=payload.client_name.strip(),
+        created_by=str(context.user.id), client_name=payload.client_name.strip(),
+        employer=payload.employer.strip(),
         account_number_encrypted=encrypt_credential(payload.account_number),
         account_last4=payload.account_number[-4:],
         branch_code=payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else ""), amount=payload.amount,
@@ -139,9 +153,10 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
             "name": entry.client_name, "bank": bank,
             "account": number, "branch": branch,
             "group": work_group, "installment": entry.amount, "balance": entry.amount,
+            "employer": entry.employer,
         })
     # The legacy dataset must never be silently confused with current loan exports.
-    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name)
+    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
     if summary["excluded"]:
         raise HTTPException(422, detail={
             "message": "Export blocked: correct invalid or unsupported legacy records first",
@@ -165,6 +180,7 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
 class LegacyUpdate(BaseModel):
     work_group_id: UUID
     client_name: str = Field(min_length=1, max_length=120)
+    employer: str = Field(min_length=1, max_length=120)
     branch_code: str = Field(default="", max_length=6)
     amount: Decimal = Field(gt=0, decimal_places=2, max_digits=15)
 
@@ -198,11 +214,49 @@ def update_legacy(
         raise HTTPException(422, "Select CIVIL, FORCE or S/E work group")
     record.work_group_id = group.id
     record.client_name = payload.client_name.strip()
+    record.employer = payload.employer.strip()
     routing = resolve_legacy_bank(decrypt_credential(record.account_number_encrypted))
     record.branch_code = payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else "")
     record.amount = payload.amount
     db.commit()
     return {"id": str(record.id), "saved": True}
+
+
+class BulkDeleteConfirm(BaseModel):
+    confirmation: str
+    expected_count: int = Field(ge=1)
+
+
+@router.get("/bulk-delete/preview")
+def preview_bulk_delete(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    count = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).count()
+    return {"count": count, "company_id": str(context.company_id), "recoverable": True}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_legacy(payload: BulkDeleteConfirm, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    """Soft-delete this company's historical deduction register only; never touch live loans."""
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    if payload.confirmation != "DELETE LEGACY RECORDS":
+        raise HTTPException(422, "Type DELETE LEGACY RECORDS to confirm")
+    rows = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).with_for_update().all()
+    if len(rows) != payload.expected_count:
+        raise HTTPException(409, "The register changed. Refresh the preview and confirm again.")
+    now = datetime.now(timezone.utc)
+    for record in rows:
+        record.deleted_at = now
+        record.deleted_by_user_id = context.user.id
+    db.commit()
+    return {"deleted": len(rows), "recoverable": True}
 
 
 @router.delete("/{record_id}", status_code=204)
@@ -274,8 +328,9 @@ async def import_legacy_csv(
 ):
     """Preview validation before a single atomic import; never post financial journals."""
     _authorized(context)
-    if file.filename and not file.filename.lower().endswith(".csv"):
-        raise HTTPException(422, "Select a CSV file")
+    extension = (file.filename or "").lower()
+    if not extension.endswith((".csv", ".xlsx")):
+        raise HTTPException(422, "Select a CSV or XLSX file")
     content = await file.read(2_000_001)
     if len(content) > 2_000_000:
         raise HTTPException(413, "CSV exceeds 2 MB")
@@ -290,7 +345,8 @@ async def import_legacy_csv(
         known[group.name.strip().casefold()] = str(group.id)
         known[group.code.strip().casefold()] = str(group.id)
     try:
-        valid, issues = parse_legacy_csv(content, known_groups=known, selected_group=selected.name if selected else None)
+        parser = parse_legacy_spreadsheet if extension.endswith(".xlsx") else parse_legacy_csv
+        valid, issues = parser(content, known_groups=known, selected_group=selected.name if selected else None)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
@@ -302,12 +358,12 @@ async def import_legacy_csv(
     ).all()
     fingerprints = {
         (str(row.work_group_id), decrypt_credential(row.account_number_encrypted),
-         row.client_name.strip().casefold(), str(row.amount.quantize(Decimal("0.01"))))
+         row.client_name.strip().casefold(), (row.employer or "").strip().casefold(), str(row.amount.quantize(Decimal("0.01"))))
         for row in existing
     }
     new_rows = []
     for row in valid:
-        signature = (str(row["group_id"]), row["account"], row["name"].casefold(), str(row["amount"].quantize(Decimal("0.01"))))
+        signature = (str(row["group_id"]), row["account"], row["name"].casefold(), row["employer"].casefold(), str(row["amount"].quantize(Decimal("0.01"))))
         if signature in fingerprints:
             issues.append({"row": row["row"], "reason": "Duplicate deduction"})
         else:
@@ -326,10 +382,97 @@ async def import_legacy_csv(
     for row in new_rows:
         db.add(LegacyBankDeduction(
             company_id=context.company_id, work_group_id=UUID(row["group_id"]),
-            client_name=row["name"],
+            created_by=str(context.user.id), client_name=row["name"], employer=row["employer"],
             account_number_encrypted=encrypt_credential(row["account"]),
             account_last4=row["account"][-4:],
             branch_code=row["branch"] or ((resolve_legacy_bank(row["account"]) or ("", ""))[1]), amount=row["amount"],
         ))
     db.commit()
     return {**summary, "saved": len(new_rows), "preview": False}
+
+
+@router.get("/combined-export.zip")
+def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    """Export historical deductions and outstanding system loans in one validated ZIP."""
+    from database.models.borrower import Borrower
+    from database.models.client_loan_company import ClientCompanyLoan
+    from database.models.enums import LoanStatus
+    from database.models.origination import BorrowerBankAccount
+
+    _authorized(context)
+    legacy_rows = (
+        db.query(LegacyBankDeduction, EmployerGroup)
+        .join(EmployerGroup, LegacyBankDeduction.work_group_id == EmployerGroup.id)
+        .filter(LegacyBankDeduction.company_id == context.company_id,
+                LegacyBankDeduction.deleted_at.is_(None))
+        .order_by(LegacyBankDeduction.created_at, LegacyBankDeduction.id).all()
+    )
+    records = []
+    legacy_keys = set()
+    for entry, group in legacy_rows:
+        account = decrypt_credential(entry.account_number_encrypted)
+        routing = resolve_legacy_bank(account)
+        kind = _group_kind(group)
+        records.append({
+            "name": entry.client_name, "bank": routing[0] if routing else "",
+            "account": account, "branch": entry.branch_code or (routing[1] if routing else ""),
+            "employer": entry.employer, "group": kind or "", "installment": entry.amount, "balance": entry.amount,
+        })
+        legacy_keys.add((account, kind))
+
+    loans = (
+        db.query(ClientCompanyLoan, Person, BorrowerBankAccount, Borrower)
+        .join(Borrower, Borrower.id == ClientCompanyLoan.borrower_id)
+        .join(Person, Person.user_id == Borrower.user_id)
+        .join(BorrowerBankAccount,
+              (BorrowerBankAccount.borrower_id == Borrower.id)
+              & (BorrowerBankAccount.company_id == context.company_id))
+        .filter(ClientCompanyLoan.company_id == context.company_id,
+                ClientCompanyLoan.balance > 0,
+                ClientCompanyLoan.status.in_((LoanStatus.active, LoanStatus.defaulted)))
+        .all()
+    )
+    chosen = {}
+    for loan, person, bank, borrower in loans:
+        if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES and loan.branch_id != context.branch_id:
+            continue
+        previous = chosen.get(loan.id)
+        if previous is None or (
+            bool(bank.salary_account), bool(bank.verified_at)
+        ) > (
+            bool(previous[2].salary_account), bool(previous[2].verified_at)
+        ):
+            chosen[loan.id] = (loan, person, bank, borrower)
+    overlap = []
+    for loan, person, bank, borrower in chosen.values():
+        account = decrypt_credential(bank.account_number_encrypted)
+        group = str(loan.folio_group_code or "").upper().replace("/", "").replace("-", "").replace(" ", "")
+        kind = "S/E" if group in {"SE", "SELFEMPLOYED"} else "FORCE" if group in {"FORCE", "LDF"} else "CIVIL" if group in {"CIVIL", "CIV"} else ""
+        if (account, kind) in legacy_keys:
+            overlap.append({"loan_id": str(loan.id), "account_last4": account[-4:], "work_group": kind})
+            continue
+        records.append({
+            "name": " ".join(filter(None, (person.first_name, person.last_name))),
+            "bank": bank.bank_name, "account": account, "branch": bank.branch_code,
+            "employer": borrower.employer_name,
+            "group": loan.folio_group_code, "installment": loan.installment_amount,
+            "balance": loan.balance,
+        })
+    if overlap:
+        raise HTTPException(422, detail={
+            "message": "Combined export blocked: existing loans overlap legacy mandates. Reconcile before exporting.",
+            "overlap_count": len(overlap), "overlaps": overlap[:25],
+        })
+    payload, summary = build_bank_submission_zip(records, lender_name=context.company.name, employer_grouping=True)
+    if summary["excluded"]:
+        raise HTTPException(422, detail={
+            "message": "Combined bank export blocked: correct incomplete bank instructions first",
+            "excluded": summary["excluded"], "exportable_rows": summary["rows"],
+        })
+    if not summary["rows"]:
+        raise HTTPException(422, "No eligible legacy deductions or outstanding loans to export")
+    return StreamingResponse(BytesIO(payload), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="loanhub-combined-bank-submissions.zip"',
+        "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+        "X-Exported-Rows": str(summary["rows"]),
+    })

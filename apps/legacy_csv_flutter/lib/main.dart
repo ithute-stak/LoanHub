@@ -41,6 +41,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   List<Map<String, dynamic>> memberships = [];
   Map<String, String> companyNames = {};
   final name = TextEditingController();
+  final employer = TextEditingController();
   final account = TextEditingController();
   final amount = TextEditingController();
   final search = TextEditingController();
@@ -247,12 +248,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (selectedGroup == null) { setState(() => error = 'Select CIVIL, FORCE or S/E before importing.'); return; }
     final item = await FilePicker.pickFile(
       type: FileType.custom,
-      allowedExtensions: ['csv'],
+      allowedExtensions: ['csv', 'xlsx'],
     );
     if (item == null) return;
     final size = item.lengthSync() ?? await item.length();
     if (size == null || size > 2000000) {
-      setState(() => error = 'CSV must be no larger than 2 MB.');
+      setState(() => error = 'CSV/XLSX file must be no larger than 2 MB.');
       return;
     }
     final bytes = await item.readAsBytes();
@@ -313,15 +314,15 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
   }
 
-  Future<void> _exportZip() async {
+  Future<void> _exportZip({bool combined = false}) async {
     setState(() { loading = true; error = null; });
     try {
-      final response = await _request('/legacy-bank-deductions/export.zip');
+      final response = await _request(combined ? '/legacy-bank-deductions/combined-export.zip' : '/legacy-bank-deductions/export.zip');
       if (response.statusCode != 200) {
         throw Exception('Export unavailable. Check records and permissions.');
       }
       final directory = await getTemporaryDirectory();
-      final archive = File('${directory.path}/loanhub-legacy-bank-submissions.zip');
+      final archive = File('${directory.path}/loanhub-${combined ? 'combined' : 'legacy'}-bank-submissions.zip');
       await archive.writeAsBytes(response.bodyBytes, flush: true);
       await SharePlus.instance.share(ShareParams(
         files: [XFile(archive.path, mimeType: 'application/zip')],
@@ -334,8 +335,61 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     if (mounted) setState(() => loading = false);
   }
 
+  Future<void> _deleteAllLegacy() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final preview = await _request('/legacy-bank-deductions/bulk-delete/preview');
+      if (preview.statusCode == 403) throw Exception('Only company management can delete all legacy records.');
+      if (preview.statusCode != 200) throw Exception('Unable to check deletion permissions.');
+      final count = (jsonDecode(preview.body) as Map<String, dynamic>)['count'] as int;
+      if (count == 0) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No active legacy records to delete.')));
+        return;
+      }
+      if (!mounted) return;
+      final confirmation = TextEditingController();
+      bool confirmed = false;
+      try {
+        confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+            title: const Text('Delete ALL legacy deductions?'),
+            content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('This will remove $count historical deductions for this company from the active register and bank exports. Current loans and payments are not affected. Deleted records remain recoverable.'),
+              const SizedBox(height: 14),
+              TextField(controller: confirmation, onChanged: (_) => refresh(() {}),
+                decoration: const InputDecoration(labelText: 'Type DELETE LEGACY RECORDS')),
+            ])),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: confirmation.text == 'DELETE LEGACY RECORDS'
+                ? () => Navigator.pop(ctx, true) : null, child: const Text('Remove all legacy records')),
+            ],
+          )),
+        ) ?? false;
+      } finally {
+        confirmation.dispose();
+      }
+      if (!confirmed) return;
+      final result = await _request('/legacy-bank-deductions/bulk-delete', body: {
+        'confirmation': 'DELETE LEGACY RECORDS', 'expected_count': count,
+      });
+      if (result.statusCode != 200) throw Exception('Bulk deletion failed: ${result.body}');
+      await _connect();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$count legacy deductions removed. Current loans are unchanged.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   Future<void> _save() async {
-    if (selectedGroup == null || name.text.trim().isEmpty || account.text.trim().isEmpty || amount.text.trim().isEmpty) {
+    if (selectedGroup == null || name.text.trim().isEmpty || employer.text.trim().isEmpty || account.text.trim().isEmpty || amount.text.trim().isEmpty) {
       setState(() => error = 'Complete all fields before saving.');
       return;
     }
@@ -344,11 +398,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final response = await _request('/legacy-bank-deductions/', body: {
         'work_group_id': selectedGroup,
         'client_name': name.text.trim(),
+        'employer': employer.text.trim(),
         'account_number': account.text.trim(),
         'amount': amount.text.trim(),
       });
       if (response.statusCode != 201) throw Exception('Could not save record: ${response.body}');
-      name.clear(); account.clear(); amount.clear();
+      name.clear(); employer.clear(); account.clear(); amount.clear();
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
@@ -358,13 +413,14 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   List<Map<String, dynamic>> get visibleRows => rows.where((row) {
     final query = search.text.trim().toLowerCase();
-    final matchesSearch = query.isEmpty || ['client_name', 'masked_account', 'branch_code', 'work_group'].any((key) => (row[key] ?? '').toString().toLowerCase().contains(query));
+    final matchesSearch = query.isEmpty || ['client_name', 'employer', 'masked_account', 'branch_code', 'work_group'].any((key) => (row[key] ?? '').toString().toLowerCase().contains(query));
     final matchesGroup = groupFilter == 'all' || row['work_group_id']?.toString() == groupFilter;
     return matchesSearch && matchesGroup;
   }).toList();
 
   Future<void> _modifyRecord(Map<String, dynamic> row, {required bool remove}) async {
     final currentName = TextEditingController(text: row['client_name']?.toString() ?? '');
+    final currentEmployer = TextEditingController(text: row['employer']?.toString() ?? '');
     final currentAmount = TextEditingController(text: row['amount']?.toString() ?? '');
     var selected = row['work_group_id']?.toString();
     try {
@@ -384,6 +440,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                 const SizedBox(height: 12),
                 TextField(controller: currentName, decoration: const InputDecoration(labelText: 'Client name')),
                 const SizedBox(height: 12),
+                TextField(controller: currentEmployer, decoration: const InputDecoration(labelText: 'Employer')),
+                const SizedBox(height: 12),
                 TextField(controller: currentAmount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(labelText: 'Deduction amount (LSL)')),
                 const SizedBox(height: 8),
@@ -396,7 +454,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )),
       );
       if (confirmed != true) return;
-      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
+      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentEmployer.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
         setState(() => error = 'Complete all edit fields.');
         return;
       }
@@ -412,6 +470,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           : await http.patch(uri, headers: headers, body: jsonEncode({
               'work_group_id': selected,
               'client_name': currentName.text.trim(),
+              'employer': currentEmployer.text.trim(),
               'amount': currentAmount.text.trim(),
             }));
       if (response.statusCode != (remove ? 204 : 200)) {
@@ -423,7 +482,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     } catch (e) {
       error = e.toString();
     } finally {
-      currentName.dispose(); currentAmount.dispose();
+      currentName.dispose(); currentEmployer.dispose(); currentAmount.dispose();
       if (mounted) setState(() => loading = false);
     }
   }
@@ -497,6 +556,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )).toList(),
         onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12), field('Client name', name),
+      const SizedBox(height: 12), field('Employer', employer),
       const SizedBox(height: 12), field('Account number', account, numeric: true),
       const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
       const SizedBox(height: 8),
@@ -509,7 +569,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     Text('Saved deductions', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
     const SizedBox(height: 12),
     TextField(controller: search, onChanged: (_) => setState(() {}),
-      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search clients')),
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search client, employer, account')),
     const SizedBox(height: 12),
     DropdownButtonFormField<String>(isExpanded: true, initialValue: 'all',
       decoration: const InputDecoration(labelText: 'Work group'),
@@ -526,7 +586,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
             crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(row['client_name'].toString(), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 5),
-              Text('${row['work_group']} · ${row['masked_account']}'),
+              Text('${row['work_group']} · ${row['employer'] ?? 'Unassigned'} · ${row['masked_account']}'),
               Text('Branch: ${row['branch_code']}    M ${row['amount']}'),
               Align(alignment: Alignment.centerRight, child: Wrap(spacing: 4, children: [
                 IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined),
@@ -539,11 +599,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       }
       return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
         columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
-          DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
+          DataColumn(label: Text('Employer')), DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
           DataColumn(label: Text('Amount')), DataColumn(label: Text('Edit'))],
         rows: visibleRows.map((row) => DataRow(cells: [
           DataCell(Text(row['work_group'].toString())),
           DataCell(Text(row['client_name'].toString())),
+          DataCell(Text((row['employer'] ?? 'Unassigned').toString())),
           DataCell(Text(row['masked_account'].toString())),
           DataCell(Text(row['branch_code'].toString())),
           DataCell(Text(row['amount'].toString())),
@@ -556,7 +617,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Widget _tools() => ListView(padding: const EdgeInsets.all(16), children: [
     Text('Import & export', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
-    const Text('Bulk CSV import with validation preview. Confirm the work group and bank details before submitting instructions.'),
+    const Text('Bulk CSV/XLSX import: Client name, Account number, Amount, Employer. Choose a work group once.'),
     const SizedBox(height: 16),
     Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       DropdownButtonFormField<String>(isExpanded: true, initialValue: selectedGroup,
@@ -565,13 +626,19 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           child: Text(g['name'].toString(), overflow: TextOverflow.ellipsis))).toList(),
         onChanged: (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12),
-      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
+      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV / Excel')),
       const SizedBox(height: 12),
       FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip,
         icon: const Icon(Icons.archive_outlined), label: const Text('Export bank ZIP')),
       const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : () => _exportZip(combined: true),
+        icon: const Icon(Icons.merge_type), label: const Text('Export legacy + current loans')),
+      const SizedBox(height: 12),
       OutlinedButton.icon(onPressed: loading ? null : _restoreRecord,
         icon: const Icon(Icons.restore), label: const Text('Restore deleted record')),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : _deleteAllLegacy,
+        icon: const Icon(Icons.delete_sweep_outlined), label: const Text('Delete all legacy records')),
     ]))),
     const SizedBox(height: 12),
     const Text('Use only authorised recipients when sharing bank submission ZIP files.'),
@@ -638,7 +705,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     shuttingDown = true;
     realtimeRetry?.cancel();
     unawaited(realtimeSocket?.close() ?? Future<void>.value());
-    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, employer, account, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }

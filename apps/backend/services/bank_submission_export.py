@@ -42,7 +42,7 @@ def _client_name(name: object) -> str:
     return value[:10].strip()
 
 
-def build_bank_submission_zip(records: list[dict], *, lender_name: str) -> tuple[bytes, dict]:
+def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer_grouping: bool = False) -> tuple[bytes, dict]:
     """Return ZIP and non-PII outcome counts, never log or return account numbers.
 
     Bank A/B/C/D/E output is deliberately headerless, matching the bank
@@ -81,9 +81,20 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str) -> tuple
         if amount <= 0:
             omitted["not_collectible"] += 1
             continue
-        filename = "FNB-all-groups.csv" if bank == "FNB" else (
-            f"{re.sub(r'[^A-Z0-9]+', '-', bank).strip('-')[:40]}-{group}.csv"
-        )
+        if employer_grouping:
+            employer = re.sub(r"\\s+", " ", str(record.get("employer") or "").strip())
+            if not employer or len(employer) > 120:
+                omitted["missing_employer"] += 1
+                continue
+            employer_slug = re.sub(r"[^A-Z0-9]+", "-", employer.upper()).strip("-")[:50]
+            if not employer_slug:
+                omitted["missing_employer"] += 1
+                continue
+            filename = f"FNB-{group}.csv" if bank == "FNB" else f"{group}-{employer_slug}.csv"
+        else:
+            filename = "FNB-all-groups.csv" if bank == "FNB" else (
+                f"{re.sub(r'[^A-Z0-9]+', '-', bank).strip('-')[:40]}-{group}.csv"
+            )
         grouped[filename].append((name, account, branch.zfill(6), f"{amount:.2f}", company))
     out = BytesIO()
     with ZipFile(out, "w", compression=ZIP_DEFLATED) as archive:
