@@ -191,7 +191,7 @@ export default function OriginationDashboardPage() {
                 ) : applications.map((application) => (
                   <TableRow key={application.id}>
                     <TableCell><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-black">{application.application_reference}</p>{application.application_type === "top_up" ? <Badge variant="outline">Top-up</Badge> : null}</div><p className="text-xs text-muted-foreground">{formatMoney(application.requested_amount)} · {application.term_count} months</p>{application.application_type === "top_up" ? <p className="text-xs text-muted-foreground">Cash to borrower {formatMoney(application.top_up_cash_to_borrower ?? application.top_up_cash_requested ?? 0)}</p> : null}</TableCell>
-                    <TableCell><p className="font-bold">{application.borrower_name}</p><p className="text-xs text-muted-foreground">Created {formatDate(application.created_at)}</p></TableCell>
+                    <TableCell><Link href={`/company/clients?client=${encodeURIComponent(application.borrower_id)}`} className="font-bold text-primary hover:underline">{application.borrower_name}</Link><p className="text-xs text-muted-foreground">Created {formatDate(application.created_at)}</p></TableCell>
                     <TableCell><StatusBadge value={application.kyc_status ?? "not started"} /></TableCell>
                     <TableCell><StatusBadge value={application.affordability_decision ?? "pending"} /></TableCell>
                     <TableCell><StatusBadge value={application.status} /></TableCell>
