@@ -477,7 +477,337 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       keyboardType: numeric ? TextInputType.number : money
         ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       inputFormatters: numeric ? [FilteringTextInputFormatter.digitsOnly] :
-        money ? [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2})] : null,
+        money ? [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}
+      decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white),
+      maxLength: numeric ? 20 : null);
+
+  Widget _capture() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('New deduction', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text('Account details stay encrypted in LoanHub. Branch code is automatically resolved from configured bank rules.'),
+    const SizedBox(height: 14),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      DropdownButtonFormField<String>(
+        isExpanded: true,
+        initialValue: selectedGroup,
+        decoration: const InputDecoration(labelText: 'Work group'),
+        items: groups.map((g) => DropdownMenuItem<String>(
+          value: g['id'].toString(),
+          child: Text(g['name'].toString(), maxLines: 1, overflow: TextOverflow.ellipsis),
+        )).toList(),
+        onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
+      const SizedBox(height: 12), field('Client name', name),
+      const SizedBox(height: 12), field('Account number', account, numeric: true),
+      const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
+      const SizedBox(height: 8),
+      FilledButton.icon(onPressed: loading ? null : _save,
+        icon: const Icon(Icons.add_circle_outline), label: const Text('Save deduction')),
+    ]))),
+  ]);
+
+  Widget _records() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Saved deductions', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 12),
+    TextField(controller: search, onChanged: (_) => setState(() {}),
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search clients')),
+    const SizedBox(height: 12),
+    DropdownButtonFormField<String>(isExpanded: true, initialValue: 'all',
+      decoration: const InputDecoration(labelText: 'Work group'),
+      items: [const DropdownMenuItem(value: 'all', child: Text('All groups')),
+        ...groups.map((g) => DropdownMenuItem(value: g['id'].toString(), child: Text(g['name'].toString())))],
+      onChanged: (v) => setState(() => groupFilter = v ?? 'all')),
+    const SizedBox(height: 12),
+    Text('${visibleRows.length} of ${rows.length} records', style: Theme.of(context).textTheme.labelLarge),
+    const SizedBox(height: 8),
+    LayoutBuilder(builder: (ctx, constraints) {
+      if (constraints.maxWidth < 620) {
+        return Column(children: [...visibleRows.map((row) => Card(
+          child: Padding(padding: const EdgeInsets.all(12), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(row['client_name'].toString(), style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 5),
+              Text('${row['work_group']} · ${row['masked_account']}'),
+              Text('Branch: ${row['branch_code']}    M ${row['amount']}'),
+              Align(alignment: Alignment.centerRight, child: Wrap(spacing: 4, children: [
+                IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined),
+                  onPressed: loading ? null : () => _modifyRecord(row, remove: false)),
+                IconButton(tooltip: 'Remove', icon: const Icon(Icons.delete_outline),
+                  onPressed: loading ? null : () => _modifyRecord(row, remove: true)),
+              ])),
+            ]))),
+        )]);
+      }
+      return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
+        columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
+          DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
+          DataColumn(label: Text('Amount')), DataColumn(label: Text('Edit'))],
+        rows: visibleRows.map((row) => DataRow(cells: [
+          DataCell(Text(row['work_group'].toString())),
+          DataCell(Text(row['client_name'].toString())),
+          DataCell(Text(row['masked_account'].toString())),
+          DataCell(Text(row['branch_code'].toString())),
+          DataCell(Text(row['amount'].toString())),
+          DataCell(IconButton(icon: const Icon(Icons.edit), onPressed: () => _modifyRecord(row, remove: false))),
+        ])).toList(),
+      ));
+    }),
+  ]);
+
+  Widget _tools() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Import & export', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text('Bulk CSV import with validation preview. Confirm the work group and bank details before submitting instructions.'),
+    const SizedBox(height: 16),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      DropdownButtonFormField<String>(isExpanded: true, initialValue: selectedGroup,
+        decoration: const InputDecoration(labelText: 'Work group for imported rows'),
+        items: groups.map((g) => DropdownMenuItem<String>(value: g['id'].toString(),
+          child: Text(g['name'].toString(), overflow: TextOverflow.ellipsis))).toList(),
+        onChanged: (v) => setState(() => selectedGroup = v)),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
+      const SizedBox(height: 12),
+      FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip,
+        icon: const Icon(Icons.archive_outlined), label: const Text('Export bank ZIP')),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : _restoreRecord,
+        icon: const Icon(Icons.restore), label: const Text('Restore deleted record')),
+    ]))),
+    const SizedBox(height: 12),
+    const Text('Use only authorised recipients when sharing bank submission ZIP files.'),
+  ]);
+
+  Widget _login() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Sign in to LoanHub', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+    const SizedBox(height: 8),
+    const Text('Sign in with the same phone number and password used on the LoanHub website.'),
+    const SizedBox(height: 14),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      field('LoanHub API URL', apiUrl), const SizedBox(height: 12),
+      field('Phone number', phone), const SizedBox(height: 12),
+      TextField(controller: password, obscureText: true, enableSuggestions: false,
+        decoration: const InputDecoration(labelText: 'Password')), const SizedBox(height: 12),
+      TextField(controller: otp, decoration: const InputDecoration(labelText: 'Authenticator / recovery code (optional)')),
+      const SizedBox(height: 16),
+      FilledButton.icon(onPressed: loading ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in')),
+    ]))),
+  ]);
+
+  @override
+  Widget build(BuildContext context) => BlocBuilder<LegacyBloc, LegacyState>(
+    builder: (context, state) {
+      final tab = state.tab.clamp(0, 2);
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('LoanHub', overflow: TextOverflow.ellipsis),
+          actions: [if (configured) IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh),
+            onPressed: loading ? null : _connect),
+            if (configured) IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: _signOut)],
+        ),
+        body: Column(children: [
+          if (loading) const LinearProgressIndicator(minHeight: 3),
+          if (error != null) Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          if (configured && memberships.length > 1)
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: DropdownButtonFormField<String>(
+                isExpanded: true, initialValue: companyId.text,
+                decoration: const InputDecoration(labelText: 'Company'),
+                items: memberships.map((m) => DropdownMenuItem<String>(
+                  value: m['company_id'].toString(),
+                  child: Text(companyNames[m['company_id'].toString()] ?? 'My company',
+                    maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
+                onChanged: (v) async { if (v != null) { companyId.text = v; await _connect(); } })),
+          Expanded(child: !configured ? _login() : IndexedStack(index: tab, children: [
+            _capture(), _records(), _tools(),
+          ])),
+        ]),
+        bottomNavigationBar: configured ? NavigationBar(selectedIndex: tab,
+          onDestinationSelected: (index) => context.read<LegacyBloc>().add(LegacyTabSelected(index)),
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.add_circle_outline), label: 'Capture'),
+            NavigationDestination(icon: Icon(Icons.table_rows_outlined), label: 'Records'),
+            NavigationDestination(icon: Icon(Icons.file_download_outlined), label: 'Files'),
+          ]) : null,
+      );
+    },
+  );
+
+  @override
+  void dispose() {
+    shuttingDown = true;
+    realtimeRetry?.cancel();
+    unawaited(realtimeSocket?.close() ?? Future<void>.value());
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, amount, search]) { c.dispose(); }
+    super.dispose();
+  }
+}
+))] : null,
+      decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white),
+      maxLength: numeric ? 20 : null);
+
+  Widget _capture() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('New deduction', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text('Account details stay encrypted in LoanHub. Branch code is automatically resolved from configured bank rules.'),
+    const SizedBox(height: 14),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      DropdownButtonFormField<String>(
+        isExpanded: true,
+        initialValue: selectedGroup,
+        decoration: const InputDecoration(labelText: 'Work group'),
+        items: groups.map((g) => DropdownMenuItem<String>(
+          value: g['id'].toString(),
+          child: Text(g['name'].toString(), maxLines: 1, overflow: TextOverflow.ellipsis),
+        )).toList(),
+        onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
+      const SizedBox(height: 12), field('Client name', name),
+      const SizedBox(height: 12), field('Account number', account, numeric: true),
+      const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
+      const SizedBox(height: 8),
+      FilledButton.icon(onPressed: loading ? null : _save,
+        icon: const Icon(Icons.add_circle_outline), label: const Text('Save deduction')),
+    ]))),
+  ]);
+
+  Widget _records() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Saved deductions', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 12),
+    TextField(controller: search, onChanged: (_) => setState(() {}),
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search clients')),
+    const SizedBox(height: 12),
+    DropdownButtonFormField<String>(isExpanded: true, initialValue: 'all',
+      decoration: const InputDecoration(labelText: 'Work group'),
+      items: [const DropdownMenuItem(value: 'all', child: Text('All groups')),
+        ...groups.map((g) => DropdownMenuItem(value: g['id'].toString(), child: Text(g['name'].toString())))],
+      onChanged: (v) => setState(() => groupFilter = v ?? 'all')),
+    const SizedBox(height: 12),
+    Text('${visibleRows.length} of ${rows.length} records', style: Theme.of(context).textTheme.labelLarge),
+    const SizedBox(height: 8),
+    LayoutBuilder(builder: (ctx, constraints) {
+      if (constraints.maxWidth < 620) {
+        return Column(children: [...visibleRows.map((row) => Card(
+          child: Padding(padding: const EdgeInsets.all(12), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(row['client_name'].toString(), style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 5),
+              Text('${row['work_group']} · ${row['masked_account']}'),
+              Text('Branch: ${row['branch_code']}    M ${row['amount']}'),
+              Align(alignment: Alignment.centerRight, child: Wrap(spacing: 4, children: [
+                IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined),
+                  onPressed: loading ? null : () => _modifyRecord(row, remove: false)),
+                IconButton(tooltip: 'Remove', icon: const Icon(Icons.delete_outline),
+                  onPressed: loading ? null : () => _modifyRecord(row, remove: true)),
+              ])),
+            ]))),
+        )]);
+      }
+      return SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
+        columns: const [DataColumn(label: Text('Group')), DataColumn(label: Text('Client')),
+          DataColumn(label: Text('Account')), DataColumn(label: Text('Branch')),
+          DataColumn(label: Text('Amount')), DataColumn(label: Text('Edit'))],
+        rows: visibleRows.map((row) => DataRow(cells: [
+          DataCell(Text(row['work_group'].toString())),
+          DataCell(Text(row['client_name'].toString())),
+          DataCell(Text(row['masked_account'].toString())),
+          DataCell(Text(row['branch_code'].toString())),
+          DataCell(Text(row['amount'].toString())),
+          DataCell(IconButton(icon: const Icon(Icons.edit), onPressed: () => _modifyRecord(row, remove: false))),
+        ])).toList(),
+      ));
+    }),
+  ]);
+
+  Widget _tools() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Import & export', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text('Bulk CSV import with validation preview. Confirm the work group and bank details before submitting instructions.'),
+    const SizedBox(height: 16),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      DropdownButtonFormField<String>(isExpanded: true, initialValue: selectedGroup,
+        decoration: const InputDecoration(labelText: 'Work group for imported rows'),
+        items: groups.map((g) => DropdownMenuItem<String>(value: g['id'].toString(),
+          child: Text(g['name'].toString(), overflow: TextOverflow.ellipsis))).toList(),
+        onChanged: (v) => setState(() => selectedGroup = v)),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading || selectedGroup == null ? null : _importCsv, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
+      const SizedBox(height: 12),
+      FilledButton.icon(onPressed: loading || rows.isEmpty ? null : _exportZip,
+        icon: const Icon(Icons.archive_outlined), label: const Text('Export bank ZIP')),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(onPressed: loading ? null : _restoreRecord,
+        icon: const Icon(Icons.restore), label: const Text('Restore deleted record')),
+    ]))),
+    const SizedBox(height: 12),
+    const Text('Use only authorised recipients when sharing bank submission ZIP files.'),
+  ]);
+
+  Widget _login() => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('Sign in to LoanHub', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+    const SizedBox(height: 8),
+    const Text('Sign in with the same phone number and password used on the LoanHub website.'),
+    const SizedBox(height: 14),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      field('LoanHub API URL', apiUrl), const SizedBox(height: 12),
+      field('Phone number', phone), const SizedBox(height: 12),
+      TextField(controller: password, obscureText: true, enableSuggestions: false,
+        decoration: const InputDecoration(labelText: 'Password')), const SizedBox(height: 12),
+      TextField(controller: otp, decoration: const InputDecoration(labelText: 'Authenticator / recovery code (optional)')),
+      const SizedBox(height: 16),
+      FilledButton.icon(onPressed: loading ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in')),
+    ]))),
+  ]);
+
+  @override
+  Widget build(BuildContext context) => BlocBuilder<LegacyBloc, LegacyState>(
+    builder: (context, state) {
+      final tab = state.tab.clamp(0, 2);
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('LoanHub', overflow: TextOverflow.ellipsis),
+          actions: [if (configured) IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh),
+            onPressed: loading ? null : _connect),
+            if (configured) IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: _signOut)],
+        ),
+        body: Column(children: [
+          if (loading) const LinearProgressIndicator(minHeight: 3),
+          if (error != null) Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          if (configured && memberships.length > 1)
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: DropdownButtonFormField<String>(
+                isExpanded: true, initialValue: companyId.text,
+                decoration: const InputDecoration(labelText: 'Company'),
+                items: memberships.map((m) => DropdownMenuItem<String>(
+                  value: m['company_id'].toString(),
+                  child: Text(companyNames[m['company_id'].toString()] ?? 'My company',
+                    maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
+                onChanged: (v) async { if (v != null) { companyId.text = v; await _connect(); } })),
+          Expanded(child: !configured ? _login() : IndexedStack(index: tab, children: [
+            _capture(), _records(), _tools(),
+          ])),
+        ]),
+        bottomNavigationBar: configured ? NavigationBar(selectedIndex: tab,
+          onDestinationSelected: (index) => context.read<LegacyBloc>().add(LegacyTabSelected(index)),
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.add_circle_outline), label: 'Capture'),
+            NavigationDestination(icon: Icon(Icons.table_rows_outlined), label: 'Records'),
+            NavigationDestination(icon: Icon(Icons.file_download_outlined), label: 'Files'),
+          ]) : null,
+      );
+    },
+  );
+
+  @override
+  void dispose() {
+    shuttingDown = true;
+    realtimeRetry?.cancel();
+    unawaited(realtimeSocket?.close() ?? Future<void>.value());
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, amount, search]) { c.dispose(); }
+    super.dispose();
+  }
+}
+))] : null,
       decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white),
       maxLength: numeric ? 20 : null);
 
