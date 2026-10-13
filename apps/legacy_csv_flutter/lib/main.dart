@@ -42,7 +42,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   Map<String, String> companyNames = {};
   final name = TextEditingController();
   final account = TextEditingController();
-  final branch = TextEditingController();
   final amount = TextEditingController();
   final search = TextEditingController();
   String groupFilter = 'all';
@@ -346,11 +345,10 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         'work_group_id': selectedGroup,
         'client_name': name.text.trim(),
         'account_number': account.text.trim(),
-        'branch_code': branch.text.trim(),
         'amount': amount.text.trim(),
       });
       if (response.statusCode != 201) throw Exception('Could not save record: ${response.body}');
-      name.clear(); account.clear(); branch.clear(); amount.clear();
+      name.clear(); account.clear(); amount.clear();
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
@@ -367,7 +365,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   Future<void> _modifyRecord(Map<String, dynamic> row, {required bool remove}) async {
     final currentName = TextEditingController(text: row['client_name']?.toString() ?? '');
-    final currentBranch = TextEditingController(text: row['branch_code']?.toString() ?? '');
     final currentAmount = TextEditingController(text: row['amount']?.toString() ?? '');
     var selected = row['work_group_id']?.toString();
     try {
@@ -387,10 +384,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                 const SizedBox(height: 12),
                 TextField(controller: currentName, decoration: const InputDecoration(labelText: 'Client name')),
                 const SizedBox(height: 12),
-                TextField(controller: currentBranch, keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(labelText: 'Branch code')),
-                const SizedBox(height: 12),
                 TextField(controller: currentAmount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(labelText: 'Deduction amount (LSL)')),
                 const SizedBox(height: 8),
@@ -403,7 +396,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )),
       );
       if (confirmed != true) return;
-      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentBranch.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
+      if (!remove && (selected == null || currentName.text.trim().isEmpty || currentAmount.text.trim().isEmpty)) {
         setState(() => error = 'Complete all edit fields.');
         return;
       }
@@ -419,7 +412,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           : await http.patch(uri, headers: headers, body: jsonEncode({
               'work_group_id': selected,
               'client_name': currentName.text.trim(),
-              'branch_code': currentBranch.text.trim(),
               'amount': currentAmount.text.trim(),
             }));
       if (response.statusCode != (remove ? 204 : 200)) {
@@ -431,7 +423,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     } catch (e) {
       error = e.toString();
     } finally {
-      currentName.dispose(); currentBranch.dispose(); currentAmount.dispose();
+      currentName.dispose(); currentAmount.dispose();
       if (mounted) setState(() => loading = false);
     }
   }
@@ -487,7 +479,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       inputFormatters: numeric ? [FilteringTextInputFormatter.digitsOnly] :
         money ? [FilteringTextInputFormatter.allow(RegExp(r'^\\d*\\.?\\d{0,2}'))] : null,
       decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white),
-      maxLength: numeric ? (label == 'Branch code (optional)' ? 6 : 20) : null);
+      maxLength: numeric ? 20 : null);
 
   Widget _capture() => ListView(padding: const EdgeInsets.all(16), children: [
     Text('New deduction', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
@@ -506,7 +498,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12), field('Client name', name),
       const SizedBox(height: 12), field('Account number', account, numeric: true),
-      const SizedBox(height: 12), field('Branch code (optional)', branch, numeric: true),
       const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
       const SizedBox(height: 8),
       FilledButton.icon(onPressed: loading ? null : _save,
@@ -647,7 +638,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     shuttingDown = true;
     realtimeRetry?.cancel();
     unawaited(realtimeSocket?.close() ?? Future<void>.value());
-    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, branch, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, phone, password, otp, companyId, name, account, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }
