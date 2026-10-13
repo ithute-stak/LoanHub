@@ -1053,7 +1053,7 @@ function RecoveryTable({
             return (
               <tr key={item.id} className="align-middle transition hover:bg-muted/30">
                 <td className="px-4 py-3">
-                  <p className="max-w-[220px] truncate font-bold" title={item.borrower_name}>{item.borrower_name}</p>
+                  <Link href={`/company/clients?client=${encodeURIComponent(item.borrower_id)}`} onClick={event => event.stopPropagation()} className="block max-w-[220px] truncate font-bold text-primary hover:underline" title={item.borrower_name}>{item.borrower_name}</Link>
                   <p className="mt-0.5 max-w-[220px] truncate text-[11px] text-muted-foreground">{branch?.name ?? "Unassigned branch"}</p>
                   <div className="mt-1 flex gap-1"><Badge variant={item.priority === "urgent" ? "destructive" : "outline"} className="rounded-full text-[9px]">{titleCase(item.priority)}</Badge>{item.promise_status ? <Badge variant="outline" className="rounded-full text-[9px]">Promise {titleCase(item.promise_status)}</Badge> : null}</div>
                 </td>
