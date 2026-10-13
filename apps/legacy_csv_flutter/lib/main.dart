@@ -477,7 +477,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       keyboardType: numeric ? TextInputType.number : money
         ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       inputFormatters: numeric ? [FilteringTextInputFormatter.digitsOnly] :
-        money ? [FilteringTextInputFormatter.allow(RegExp(r'^\\d*\\.?\\d{0,2}'))] : null,
+        money ? [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))] : null,
       decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white),
       maxLength: numeric ? 20 : null);
 
