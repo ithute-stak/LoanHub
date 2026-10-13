@@ -113,6 +113,19 @@ export default function LegacyBankDeductionsPage() {
       else{setPreview(response.data);setStatus("Preview ready. Review rejected rows before confirming.");}
     }catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
+  async function deleteAllLegacy() {
+    setBusy(true);setStatus("");
+    try {
+      const preview = await api.get<{count:number;recoverable:boolean}>("/legacy-bank-deductions/bulk-delete/preview");
+      if (!preview.data.count) {setStatus("There are no active legacy records to remove.");return;}
+      const typed = window.prompt("This will remove all "+preview.data.count+" active LEGACY bank deductions for this company from capture lists and exports. Existing loans are NOT deleted. Records remain recoverable. Type DELETE LEGACY RECORDS to continue:");
+      if (typed !== "DELETE LEGACY RECORDS") {setStatus("Bulk removal cancelled.");return;}
+      const response = await api.post<{deleted:number}>("/legacy-bank-deductions/bulk-delete",{
+        confirmation:"DELETE LEGACY RECORDS",expected_count:preview.data.count
+      });
+      await refresh();setStatus(response.data.deleted+" legacy records removed from the active register. Existing system loans are unchanged.");
+    } catch(e) {setStatus(explain(e));} finally {setBusy(false);}
+  }
   async function loadRemoved(){
     setBusy(true);try{const r=await api.get<Removed[]>("/legacy-bank-deductions/deleted");setRemoved(r.data);setShowRemoved(true);}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
@@ -129,7 +142,7 @@ export default function LegacyBankDeductionsPage() {
     <label className="text-sm">Deduction (LSL)<Input className="mt-1" inputMode="decimal" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
   </div>;
   return <main className="mx-auto w-full space-y-5 px-3 py-5 lg:px-6">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">Legacy bank deductions</h1><p className="text-sm text-muted-foreground">Capture historical deductions, validate CSV imports and create bank submission ZIPs.</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button disabled={busy||records.length===0} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button disabled={busy} onClick={()=>void exportZip(true)}>Export legacy + current loans</Button></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">Legacy bank deductions</h1><p className="text-sm text-muted-foreground">Capture historical deductions, validate CSV imports and create bank submission ZIPs.</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button variant="destructive" disabled={busy||records.length===0} onClick={()=>void deleteAllLegacy()}>Delete all legacy records</Button><Button disabled={busy||records.length===0} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button disabled={busy} onClick={()=>void exportZip(true)}>Export legacy + current loans</Button></div></div>
     {status&&<div role="status" className="rounded-lg border px-3 py-2 text-sm">{status}</div>}
     <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">{editing?"Edit deduction":"Capture deduction"}</h2>{fields}<div className="flex gap-2"><Button disabled={busy} onClick={()=>void save()}>{editing?"Save changes":"Save deduction"}</Button>{editing&&<Button variant="outline" onClick={()=>{setEditing(null);setForm({...empty});}}>Cancel</Button>}</div></section>
     <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">Bulk CSV import</h2><p className="text-sm text-muted-foreground">Choose a work group once, then upload CSV/XLSX columns: Client name, Account number, Amount, Employer. Select the work group once; branch codes are resolved by LoanHub.</p><div className="flex flex-wrap items-center gap-2"><select aria-label="Bulk import work group" className="rounded-md border bg-background px-3 py-2" value={bulkGroup} onChange={e=>{setBulkGroup(e.target.value);setPreview(null);}}><option value="">Choose CIVIL, FORCE or S/E</option>{groups.map(g=><option key={g.id} value={g.id}>{g.code} — {g.name}</option>)}</select><Input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="max-w-sm" onChange={e=>{setCsv(e.target.files?.[0]??null);setPreview(null);}}/><Button variant="outline" disabled={!csv||!bulkGroup||busy} onClick={()=>void importCsv(false)}>Preview validation</Button></div>{preview&&<div className="space-y-2 text-sm"><p>{preview.valid} ready, {preview.rejected} rejected</p>{preview.issues.slice(0,20).map(i=><p key={i.row} className="text-destructive">Row {i.row}: {i.reason}</p>)}<Button disabled={busy||preview.rejected>0||preview.valid===0} onClick={()=>void importCsv(true)}>Confirm import</Button></div>}</section>
