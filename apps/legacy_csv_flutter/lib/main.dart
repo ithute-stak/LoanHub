@@ -565,7 +565,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
         isExpanded: true,
-        value: addingEmployer || !employerOptions.contains(employer.text) ? '__new__' : employer.text,
+        key: ValueKey('employer-${addingEmployer ? '__new__' : employer.text}'),
+        initialValue: addingEmployer || !employerOptions.contains(employer.text) ? '__new__' : employer.text,
         decoration: const InputDecoration(labelText: 'Employer'),
         items: [
           const DropdownMenuItem<String>(value: '__new__', child: Text('+ Add new employer')),
