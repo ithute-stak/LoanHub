@@ -7,9 +7,9 @@ GROUPS = {"force": "group-a", "civil": "group-b", "s/e": "group-c"}
 
 
 def test_header_rows_and_leading_zeroes_are_preserved():
-    data = ("Work group,Client name,Account number,Branch code,Amount\n"
-            "Force,Thato,00123456789,010,125.50\n"
-            "Civil,Mpho,9012345678,000123,250.00\n").encode()
+    data = ("Work group,Client name,Account number,Branch code,Amount,Employer\n"
+            "Force,Thato,00123456789,010,125.50,Motheo\n"
+            "Civil,Mpho,9012345678,000123,250.00,Education\n").encode()
     records, issues = parse_legacy_csv(data, known_groups=GROUPS)
     assert issues == []
     assert len(records) == 2
@@ -20,10 +20,10 @@ def test_header_rows_and_leading_zeroes_are_preserved():
 
 
 def test_invalid_amount_account_and_unknown_group_report_row_numbers():
-    data = ("Force,Alice,1234567890,123,NaN\n"
-            "S/E,Bob,00001111,123,80.00\n"
-            "Unknown,Charlie,1234567,123,100\n"
-            "Civil,David,=SUM(1),123,100\n").encode()
+    data = ("Force,Alice,1234567890,123,NaN,Motheo\n"
+            "S/E,Bob,00001111,123,80.00,Motheo\n"
+            "Unknown,Charlie,1234567,123,100,Motheo\n"
+            "Civil,David,=SUM(1),123,100,Motheo\n").encode()
     records, issues = parse_legacy_csv(data, known_groups=GROUPS)
     assert len(records) == 1
     assert records[0]["name"] == "Bob"
@@ -40,4 +40,4 @@ def test_limit_and_invalid_encoding_fail_closed():
     with pytest.raises(ValueError, match="2 MB"):
         parse_legacy_csv(b"a" * 2_000_001, known_groups=GROUPS)
     with pytest.raises(ValueError, match="5000 rows"):
-        parse_legacy_csv(("Force,A,123456,123,1\n" * 5001).encode(), known_groups=GROUPS)
+        parse_legacy_csv(("Force,A,123456,123,1,Motheo\n" * 5001).encode(), known_groups=GROUPS)
