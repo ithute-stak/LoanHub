@@ -563,24 +563,61 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12), field('Client name', name),
       const SizedBox(height: 12),
-      DropdownButtonFormField<String>(
-        isExpanded: true,
-        key: ValueKey('employer-${addingEmployer ? '__new__' : employer.text}'),
-        initialValue: addingEmployer || !employerOptions.contains(employer.text) ? '__new__' : employer.text,
-        decoration: const InputDecoration(labelText: 'Employer'),
-        items: [
-          const DropdownMenuItem<String>(value: '__new__', child: Text('+ Add new employer')),
-          ...employerOptions.map((entry) => DropdownMenuItem<String>(value: entry, child: Text(entry, overflow: TextOverflow.ellipsis))),
-        ],
-        onChanged: loading ? null : (value) => setState(() {
-          addingEmployer = value == '__new__';
-          employer.text = addingEmployer ? '' : (value ?? '');
+      Autocomplete<String>(
+        initialValue: TextEditingValue(text: employer.text),
+        optionsBuilder: (value) {
+          final query = value.text.trim().toLowerCase();
+          if (query.isEmpty) return employerOptions;
+          final matches = employerOptions.where((entry) => entry.toLowerCase().contains(query)).toList();
+          if (!employerOptions.any((entry) => entry.trim().toLowerCase() == query)) {
+            matches.add('＋ Add new employer: ${value.text.trim()}');
+          }
+          return matches;
+        },
+        displayStringForOption: (entry) => entry.startsWith('＋ Add new employer: ')
+            ? entry.substring('＋ Add new employer: '.length) : entry,
+        onSelected: (entry) => setState(() {
+          employer.text = entry.startsWith('＋ Add new employer: ')
+              ? entry.substring('＋ Add new employer: '.length) : entry;
+          addingEmployer = false;
         }),
+        fieldViewBuilder: (ctx, controller, focusNode, onFieldSubmitted) {
+          return TextField(
+            controller: controller,
+            focusNode: focusNode,
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+              labelText: 'Employer',
+              hintText: 'Search or type a new employer',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: const Icon(Icons.business_outlined),
+            ),
+            onChanged: (value) {
+              employer.text = value;
+              addingEmployer = !employerOptions.any((entry) => entry.toLowerCase() == value.trim().toLowerCase());
+            },
+          );
+        },
+        optionsViewBuilder: (ctx, onSelected, options) => Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(12),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                children: options.map((entry) => ListTile(
+                  dense: true,
+                  title: Text(entry),
+                  onTap: () => onSelected(entry),
+                )).toList(),
+              ),
+            ),
+          ),
+        ),
       ),
-      if (addingEmployer || !employerOptions.contains(employer.text)) ...[
-        const SizedBox(height: 12),
-        field('New employer name', employer),
-      ],
       const SizedBox(height: 12), field('Account number', account, numeric: true),
       const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
       const SizedBox(height: 8),

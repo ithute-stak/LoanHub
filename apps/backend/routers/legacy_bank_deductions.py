@@ -62,6 +62,26 @@ def _authorized(context: TenantContext) -> None:
         raise HTTPException(403, "A company must be selected")
 
 
+def _canonical_employer(db: Session, company_id: UUID, name: str) -> str:
+    """Use the same employer spelling for all case/space variants."""
+    cleaned = " ".join(name.strip().split())
+    match = db.query(LegacyEmployer.name).filter(
+        LegacyEmployer.company_id == company_id,
+        LegacyEmployer.normalized_name == cleaned.casefold(),
+    ).first()
+    if match:
+        return match[0]
+    # Older records may predate the directory table.
+    previous = db.query(LegacyBankDeduction.employer).filter(
+        LegacyBankDeduction.company_id == company_id,
+        LegacyBankDeduction.employer.is_not(None),
+    ).all()
+    for (existing,) in previous:
+        if existing and " ".join(existing.split()).casefold() == cleaned.casefold():
+            return " ".join(existing.split())
+    return cleaned
+
+
 def _record_employers(db: Session, company_id: UUID, names: set[str]) -> None:
     """Company-scoped and idempotent; conflict-safe for concurrent imports."""
     canonical = {}
@@ -84,10 +104,23 @@ def list_employers(context: TenantContext = Depends(get_tenant_context), db: Ses
         LegacyBankDeduction.company_id == context.company_id,
         LegacyBankDeduction.employer.is_not(None)).distinct().all()
     existing_groups = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).all()
-    names = {name.strip() for (name,) in directory + previous if name and name.strip()}
-    # Legacy employer groups are shared with borrowers; do not treat CIVIL/FORCE/S/E as employers.
-    names.update(group.name.strip() for group in existing_groups if _group_kind(group) is None and group.name.strip())
-    return sorted(names, key=str.casefold)
+    # Collapse case/whitespace variants, using directory names first as canonical.
+    canonical = {}
+    for (name,) in directory:
+        cleaned = " ".join((name or "").split())
+        if cleaned:
+            canonical.setdefault(cleaned.casefold(), cleaned)
+    for (name,) in previous:
+        cleaned = " ".join((name or "").split())
+        if cleaned:
+            canonical.setdefault(cleaned.casefold(), cleaned)
+    # EmployerGroup is a legacy source of employer suggestions; omit work-group labels.
+    for group in existing_groups:
+        if _group_kind(group) is None:
+            cleaned = " ".join((group.name or "").split())
+            if cleaned:
+                canonical.setdefault(cleaned.casefold(), cleaned)
+    return sorted(canonical.values(), key=str.casefold)
 
 
 @router.get("/work-groups")
@@ -139,13 +172,13 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
     record = LegacyBankDeduction(
         company_id=context.company_id, work_group_id=group.id,
         created_by=str(context.user.id), client_name=payload.client_name.strip(),
-        employer=payload.employer.strip(),
+        employer=_canonical_employer(db, context.company_id, payload.employer),
         account_number_encrypted=encrypt_credential(payload.account_number),
         account_last4=payload.account_number[-4:],
         branch_code=payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else ""), amount=payload.amount,
     )
     db.add(record)
-    _record_employers(db, context.company_id, {payload.employer})
+    _record_employers(db, context.company_id, {record.employer})
     db.commit()
     db.refresh(record)
     return {"id": str(record.id), "saved": True}
@@ -245,7 +278,7 @@ def update_legacy(
         raise HTTPException(422, "Select CIVIL, FORCE or S/E work group")
     record.work_group_id = group.id
     record.client_name = payload.client_name.strip()
-    record.employer = payload.employer.strip()
+    record.employer = _canonical_employer(db, context.company_id, payload.employer)
     _record_employers(db, context.company_id, {payload.employer})
     routing = resolve_legacy_bank(decrypt_credential(record.account_number_encrypted))
     record.branch_code = payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else "")
@@ -411,15 +444,19 @@ async def import_legacy_csv(
         })
     if not new_rows:
         raise HTTPException(422, "No new valid deductions to import")
+    canonical_import_employers = set()
     for row in new_rows:
+        canonical_employer = _canonical_employer(db, context.company_id, row["employer"])
+        canonical_import_employers.add(canonical_employer)
         db.add(LegacyBankDeduction(
             company_id=context.company_id, work_group_id=UUID(row["group_id"]),
-            created_by=str(context.user.id), client_name=row["name"], employer=row["employer"],
+            created_by=str(context.user.id), client_name=row["name"],
+            employer=canonical_employer,
             account_number_encrypted=encrypt_credential(row["account"]),
             account_last4=row["account"][-4:],
             branch_code=row["branch"] or ((resolve_legacy_bank(row["account"]) or ("", ""))[1]), amount=row["amount"],
         ))
-    _record_employers(db, context.company_id, {row["employer"] for row in new_rows})
+    _record_employers(db, context.company_id, canonical_import_employers)
     db.commit()
     return {**summary, "saved": len(new_rows), "preview": False}
 
