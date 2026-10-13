@@ -365,6 +365,21 @@ export function CompanyClientProfileDialog({
                       <StatCard icon={Clock3} label="Overdue position" value={String(profile.payment_rating.overdue_installments)} note={`${profile.stats.defaulted_loans} defaulted loan${profile.stats.defaulted_loans === 1 ? "" : "s"}`} />
                     </div>
 
+                    <Card className="rounded-2xl shadow-none">
+                      <CardHeader><CardTitle className="text-base">Active loan folios</CardTitle></CardHeader>
+                      <CardContent className="flex flex-wrap gap-2">
+                        {profile.loans.filter(loan => ["active","approved","defaulted"].includes(loan.status.toLowerCase())).map(loan => (
+                          <Link key={loan.id} href={`/company/loans?loan=${encodeURIComponent(loan.id)}`}
+                            onClick={() => onOpenChange(false)}
+                            className="inline-flex min-h-9 items-center rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 font-mono text-sm font-semibold text-primary hover:bg-primary/10"
+                            title={`Open loan ${loan.folio_number}`}>
+                            {loan.folio_number || loan.loan_reference}
+                          </Link>
+                        ))}
+                        {!profile.loans.some(loan => ["active","approved","defaulted"].includes(loan.status.toLowerCase())) &&
+                          <span className="text-sm text-muted-foreground">No currently active or approved loan folios.</span>}
+                      </CardContent>
+                    </Card>
                     <CompanyClientProfileEditorCards
                       profile={profile}
                       onUpdated={setProfile}
@@ -436,7 +451,8 @@ export function CompanyClientProfileDialog({
                             <tbody className="divide-y">
                               {profile.loans.map((loan) => (
                                 <tr key={loan.id}>
-                                  <td className="px-4 py-3"><p className="font-mono font-bold">{loan.loan_reference}</p><p className="text-xs text-muted-foreground">{titleCase(loan.repayment_type)} · {loan.repayment_period} periods</p></td>
+                                  <td className="px-4 py-3"><Link href={`/company/loans?loan=${encodeURIComponent(loan.id)}`} onClick={() => onOpenChange(false)}
+                                    className="font-mono font-bold text-primary hover:underline">{loan.folio_number || loan.loan_reference}</Link><p className="text-xs text-muted-foreground">{titleCase(loan.repayment_type)} · {loan.repayment_period} periods</p></td>
                                   <td className="px-4 py-3"><div className="flex flex-wrap gap-1"><Badge variant={loan.is_overdue ? "destructive" : "outline"}>{titleCase(loan.status)}</Badge><Badge variant="secondary">{titleCase(loan.risk_level)} risk</Badge></div>{loan.overdue_installment_count > 0 ? <p className="mt-1 text-xs text-destructive">{loan.overdue_installment_count} overdue</p> : null}</td>
                                   <td className="px-4 py-3 font-semibold">{formatMoney(loan.principal_amount)}</td>
                                   <td className="px-4 py-3 font-semibold">{formatMoney(loan.amount_paid)}</td>

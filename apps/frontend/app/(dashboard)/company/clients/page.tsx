@@ -263,6 +263,12 @@ export default function CompanyClientsPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
   const [selectedClient, setSelectedClient] = useState<CompanyClient | null>(null);
   const [profileClient, setProfileClient] = useState<CompanyClient | null>(null);
+  useEffect(() => {
+    const requestedId = new URLSearchParams(window.location.search).get("client");
+    if (!requestedId || loading) return;
+    const matching = clients.find(client => client.id === requestedId || client.borrower_id === requestedId);
+    if (matching) setProfileClient(matching);
+  }, [clients, loading]);
   const [clientForm, setClientForm] = useState<AssistedCompanyClientCreate>(emptyClient);
   const [loanForm, setLoanForm] = useState<InternalClientLoanRequestCreate>(emptyLoan);
   const [calculation, setCalculation] = useState<MicroLoanCalculation | null>(null);
@@ -1092,7 +1098,7 @@ export default function CompanyClientsPage() {
                   <TableRow><TableCell colSpan={7} className="h-40 text-center text-muted-foreground">No company clients match the current filters.</TableCell></TableRow>
                 ) : paginatedClients.map((client) => (
                   <TableRow key={client.id}>
-                    <TableCell><p className="font-black">{client.full_name}</p><p className="text-xs text-muted-foreground">{client.account_reference} · {client.phone}</p></TableCell>
+                    <TableCell><button type="button" onClick={() => setProfileClient(client)} className="text-left font-black text-primary hover:underline">{client.full_name}</button><p className="text-xs text-muted-foreground">{client.account_reference} · {client.phone}</p></TableCell>
                     <TableCell><p className="font-semibold">{titleCase(client.employment_status)}</p><p className="text-xs text-muted-foreground">{client.employer_name || "No employer recorded"}</p></TableCell>
                     <TableCell><p className="font-black">{client.loan_count} loan{client.loan_count === 1 ? "" : "s"}</p><p className="text-xs text-muted-foreground">{formatMoney(client.outstanding_balance)} outstanding</p></TableCell>
                     <TableCell>

@@ -223,6 +223,7 @@ export type CompanyClientProfileStats = {
 export type CompanyClientProfileLoan = {
     id: string;
     loan_reference: string;
+    folio_number: string;
     status: string;
     risk_level: string;
     principal_amount: number;

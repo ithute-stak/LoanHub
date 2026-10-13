@@ -1027,7 +1027,7 @@ function LoanTable({
                                 </div>
                                 <p className="mt-1 max-w-[220px] truncate font-mono text-[10px] text-muted-foreground" title={loan.loan_reference}>Loan {loan.loan_reference} · Seq {loan.folio_sequence}</p>
                                 {compact ? <>
-                                    <p className="mt-1 max-w-[240px] truncate text-xs font-semibold">{client?.full_name ?? "Borrower"}</p>
+                                    {client ? <Link href={`/company/clients?client=${encodeURIComponent(client.id)}`} className="mt-1 block max-w-[240px] truncate text-xs font-semibold text-primary hover:underline" onClick={event => event.stopPropagation()}>{client.full_name}</Link> : <p className="mt-1 text-xs">Borrower</p>}
                                     <p className="mt-0.5 max-w-[240px] truncate text-[10px] text-muted-foreground">{titleCase(loan.origination_channel)} · {interestMethodLabel(loan.calculation_method)}</p>
                                 </> : <p className="mt-0.5 max-w-[210px] truncate text-[9px] text-muted-foreground" title={loan.id}>{loan.id}</p>}
                             </div>
@@ -1042,7 +1042,7 @@ function LoanTable({
 
                         {!compact ? <TableCell>
                             <div className="min-w-0">
-                                <p className="max-w-[160px] truncate text-xs font-bold" title={client?.full_name}>{client?.full_name ?? "Borrower"}</p>
+                                {client ? <Link href={`/company/clients?client=${encodeURIComponent(client.id)}`} onClick={event => event.stopPropagation()} className="block max-w-[160px] truncate text-xs font-bold text-primary hover:underline" title={client.full_name}>{client.full_name}</Link> : <p className="text-xs">Borrower</p>}
                                 <p className="mt-1 truncate text-[10px] text-muted-foreground">{client?.phone ?? "No phone"}</p>
                                 <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-muted-foreground" title={client?.employer_name ?? undefined}>{titleCase(client?.employment_status ?? "unrecorded")}{client?.employer_name ? ` · ${client.employer_name}` : ""}</p>
                             </div>

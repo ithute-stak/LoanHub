@@ -224,6 +224,17 @@ export default function CompanyLoansPage() {
     }, [canDisburse, canManageContracts]);
 
     useEffect(() => {
+        const requestedId = new URLSearchParams(window.location.search).get("loan");
+        if (!requestedId || loading) return;
+        const matching = loans.find(loan => loan.id === requestedId);
+        if (matching) {
+            setTab("portfolio");
+            setSelectedLoan(matching);
+            setScheduleOpen(true);
+        }
+    }, [loading, loans]);
+
+    useEffect(() => {
         const timer = window.setTimeout(() => void load(), 0);
         const requestedTab = new URLSearchParams(window.location.search).get("tab");
         if (requestedTab === "contracts" && canManageContracts) {
