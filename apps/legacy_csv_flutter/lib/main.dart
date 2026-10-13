@@ -411,7 +411,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   List<Map<String, dynamic>> get visibleRows => rows.where((row) {
     final query = search.text.trim().toLowerCase();
-    final matchesSearch = query.isEmpty || ['client_name', 'masked_account', 'branch_code', 'work_group'].any((key) => (row[key] ?? '').toString().toLowerCase().contains(query));
+    final matchesSearch = query.isEmpty || ['client_name', 'employer', 'masked_account', 'branch_code', 'work_group'].any((key) => (row[key] ?? '').toString().toLowerCase().contains(query));
     final matchesGroup = groupFilter == 'all' || row['work_group_id']?.toString() == groupFilter;
     return matchesSearch && matchesGroup;
   }).toList();
@@ -567,7 +567,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     Text('Saved deductions', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
     const SizedBox(height: 12),
     TextField(controller: search, onChanged: (_) => setState(() {}),
-      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search clients')),
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search client, employer, account')),
     const SizedBox(height: 12),
     DropdownButtonFormField<String>(isExpanded: true, initialValue: 'all',
       decoration: const InputDecoration(labelText: 'Work group'),
