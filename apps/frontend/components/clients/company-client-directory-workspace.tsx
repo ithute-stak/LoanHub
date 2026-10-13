@@ -903,7 +903,7 @@ export function CompanyClientDirectoryWorkspace({
                         return (
                           <TableRow key={client.id} className="hover:bg-muted/30">
                             <TableCell className="pl-4 align-top">
-                              <p className="font-black leading-tight">{client.full_name}</p>
+                              <button type="button" className="text-left font-black leading-tight text-primary hover:underline" onClick={() => onViewProfile(client)}>{client.full_name}</button>
                               <p className="mt-1 text-xs text-muted-foreground">{client.account_reference} · {client.phone}</p>
                               <p className="mt-0.5 text-[10px] text-muted-foreground">{client.national_id || client.passport_number || "No identity number"}</p>
                               <p className="mt-0.5 text-[10px] text-muted-foreground">{branch?.name ?? "Unassigned branch"} · {client.district || "No district"}</p>
