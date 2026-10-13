@@ -24,6 +24,8 @@ def parse_legacy_csv(data: bytes, *, known_groups: dict[str, str], selected_grou
             raise ValueError("CSV exceeds 5000 rows")
         if not cells or not any(x.strip() for x in cells):
             continue
+        if index == 1 and [x.strip().lower() for x in cells[:6]] == ["work group", "client name", "account number", "branch code", "amount", "employer"]:
+            continue
         if index == 1 and [x.strip().lower() for x in cells[:5]] == [
             "work group", "client name", "account number", "branch code", "amount"
         ]:
