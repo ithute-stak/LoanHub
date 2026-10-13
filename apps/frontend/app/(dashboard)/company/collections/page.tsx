@@ -682,7 +682,7 @@ export default function CollectionsPage() {
                 <div key={item.activity_id} className="rounded-2xl border bg-background p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <Link href={`/company/clients?client=${encodeURIComponent(item.borrower_id)}`} onClick={event => event.stopPropagation()} className="block truncate font-bold text-primary hover:underline">{item.borrower_name ?? "Borrower"}</Link>
+                      <p className="truncate font-bold">{item.borrower_name ?? "Borrower"}</p>
                       <p className="truncate font-mono text-xs text-primary">{item.loan_reference}</p>
                     </div>
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Gavel className="h-4 w-4" /></div>
