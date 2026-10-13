@@ -29,14 +29,14 @@ def test_motheo_non_fnb_separate_but_fnb_civil_merged():
     assert summary["rows"] == 6
     with ZipFile(BytesIO(payload)) as archive:
         assert set(archive.namelist()) == {
-            "STANDARD-BANK-civil-MOTHEO.csv",
-            "STANDARD-BANK-civil-EDUCATION.csv",
+            "civil-MOTHEO.csv",
+            "civil-EDUCATION.csv",
             "FNB-civil.csv",
             "FNB-force.csv",
         }
         fnb = list(csv.reader(StringIO(archive.read("FNB-civil.csv").decode())))
         assert len(fnb) == 2
-        motheo = list(csv.reader(StringIO(archive.read("STANDARD-BANK-civil-MOTHEO.csv").decode())))
+        motheo = list(csv.reader(StringIO(archive.read("civil-MOTHEO.csv").decode())))
         assert len(motheo) == 2
 
 
