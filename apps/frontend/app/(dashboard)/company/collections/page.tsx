@@ -682,7 +682,7 @@ export default function CollectionsPage() {
                 <div key={item.activity_id} className="rounded-2xl border bg-background p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate font-bold">{item.borrower_name ?? "Borrower"}</p>
+                      <Link href={`/company/clients?client=${encodeURIComponent(item.borrower_id)}`} onClick={event => event.stopPropagation()} className="block truncate font-bold text-primary hover:underline">{item.borrower_name ?? "Borrower"}</Link>
                       <p className="truncate font-mono text-xs text-primary">{item.loan_reference}</p>
                     </div>
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Gavel className="h-4 w-4" /></div>
@@ -1053,7 +1053,7 @@ function RecoveryTable({
             return (
               <tr key={item.id} className="align-middle transition hover:bg-muted/30">
                 <td className="px-4 py-3">
-                  <p className="max-w-[220px] truncate font-bold" title={item.borrower_name}>{item.borrower_name}</p>
+                  <Link href={`/company/clients?client=${encodeURIComponent(item.borrower_id)}`} onClick={event => event.stopPropagation()} className="block max-w-[220px] truncate font-bold text-primary hover:underline" title={item.borrower_name}>{item.borrower_name}</Link>
                   <p className="mt-0.5 max-w-[220px] truncate text-[11px] text-muted-foreground">{branch?.name ?? "Unassigned branch"}</p>
                   <div className="mt-1 flex gap-1"><Badge variant={item.priority === "urgent" ? "destructive" : "outline"} className="rounded-full text-[9px]">{titleCase(item.priority)}</Badge>{item.promise_status ? <Badge variant="outline" className="rounded-full text-[9px]">Promise {titleCase(item.promise_status)}</Badge> : null}</div>
                 </td>
