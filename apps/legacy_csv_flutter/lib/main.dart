@@ -47,6 +47,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   final search = TextEditingController();
   String groupFilter = 'all';
   List<Map<String, dynamic>> groups = [];
+  List<String> employerOptions = [];
+  bool addingEmployer = false;
   List<Map<String, dynamic>> rows = [];
   String? selectedGroup;
   String? error;
@@ -192,9 +194,13 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final answers = await Future.wait([
         _request('/legacy-bank-deductions/work-groups'),
         _request('/legacy-bank-deductions/'),
+        _request('/legacy-bank-deductions/employers'),
       ]);
       if (answers.any((r) => r.statusCode >= 400)) throw Exception('Connection or permission denied. Check your company and sign-in.');
       groups = (jsonDecode(answers[0].body) as List).cast<Map<String, dynamic>>();
+      if (answers[2].statusCode == 200) {
+        employerOptions = (jsonDecode(answers[2].body) as List).map((entry) => entry.toString()).toList();
+      }
       rows = (jsonDecode(answers[1].body) as List).cast<Map<String, dynamic>>();
       await secure.write(key: 'token', value: token.text.trim());
       await secure.write(key: 'company', value: companyId.text.trim());
@@ -556,7 +562,25 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         )).toList(),
         onChanged: loading ? null : (v) => setState(() => selectedGroup = v)),
       const SizedBox(height: 12), field('Client name', name),
-      const SizedBox(height: 12), field('Employer', employer),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<String>(
+        isExpanded: true,
+        key: ValueKey('employer-${addingEmployer ? '__new__' : employer.text}'),
+        initialValue: addingEmployer || !employerOptions.contains(employer.text) ? '__new__' : employer.text,
+        decoration: const InputDecoration(labelText: 'Employer'),
+        items: [
+          const DropdownMenuItem<String>(value: '__new__', child: Text('+ Add new employer')),
+          ...employerOptions.map((entry) => DropdownMenuItem<String>(value: entry, child: Text(entry, overflow: TextOverflow.ellipsis))),
+        ],
+        onChanged: loading ? null : (value) => setState(() {
+          addingEmployer = value == '__new__';
+          employer.text = addingEmployer ? '' : (value ?? '');
+        }),
+      ),
+      if (addingEmployer || !employerOptions.contains(employer.text)) ...[
+        const SizedBox(height: 12),
+        field('New employer name', employer),
+      ],
       const SizedBox(height: 12), field('Account number', account, numeric: true),
       const SizedBox(height: 12), field('Amount (LSL)', amount, money: true),
       const SizedBox(height: 8),

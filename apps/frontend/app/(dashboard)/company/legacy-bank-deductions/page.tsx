@@ -19,6 +19,8 @@ function explain(error: unknown) {
 }
 export default function LegacyBankDeductionsPage() {
   const [groups,setGroups] = useState<Group[]>([]);
+  const [employerOptions,setEmployerOptions] = useState<string[]>([]);
+  const [addingEmployer,setAddingEmployer] = useState(false);
   const [records,setRecords] = useState<Entry[]>([]);
   const [form,setForm] = useState({...empty});
   const [editing,setEditing] = useState<string | null>(null);
@@ -40,8 +42,8 @@ export default function LegacyBankDeductionsPage() {
   const [removed,setRemoved] = useState<Removed[]>([]);
   const [showRemoved,setShowRemoved] = useState(false);
   const refresh = useCallback(async () => {
-    const [a,b] = await Promise.all([api.get<Group[]>("/legacy-bank-deductions/work-groups"),api.get<Entry[]>("/legacy-bank-deductions/")]);
-    setGroups(a.data);setRecords(b.data);
+    const [a,b,c] = await Promise.all([api.get<Group[]>("/legacy-bank-deductions/work-groups"),api.get<Entry[]>("/legacy-bank-deductions/"),api.get<string[]>("/legacy-bank-deductions/employers")]);
+    setGroups(a.data);setRecords(b.data);setEmployerOptions(c.data);
   },[]);
   useEffect(()=>{void refresh().catch(e=>setStatus(explain(e)));},[refresh]);
   const creators = useMemo(() => [...new Set(records.map(r => r.created_by_name).filter((v): v is string => !!v))].sort(), [records]);
@@ -75,10 +77,10 @@ export default function LegacyBankDeductionsPage() {
       const payload=editing?{work_group_id:form.work_group_id,client_name:form.client_name,employer:form.employer,branch_code:form.branch_code,amount:form.amount}:form;
       if(editing) await api.patch("/legacy-bank-deductions/"+editing,payload);
       else await api.post("/legacy-bank-deductions/",payload);
-      setForm({...empty});setEditing(null);await refresh();setStatus("Record saved.");
+      setForm({...empty});setAddingEmployer(false);setEditing(null);await refresh();setStatus("Record saved.");
     } catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
-  function startEdit(r:Entry){setEditing(r.id);setForm({work_group_id:r.work_group_id,client_name:r.client_name,employer:r.employer,account_number:"",branch_code:r.branch_code,amount:r.amount});window.scrollTo({top:0,behavior:"smooth"});}
+  function startEdit(r:Entry){setAddingEmployer(false);setEditing(r.id);setForm({work_group_id:r.work_group_id,client_name:r.client_name,employer:r.employer,account_number:"",branch_code:r.branch_code,amount:r.amount});window.scrollTo({top:0,behavior:"smooth"});}
   async function remove(r:Entry) {
     if(!window.confirm("Remove "+r.client_name+" from future bank exports? Managers can restore it."))return;
     setBusy(true);try{await api.delete("/legacy-bank-deductions/"+r.id);await refresh();setStatus("Record removed; recoverable by management.");}catch(e){setStatus(explain(e));}finally{setBusy(false);}
@@ -135,7 +137,16 @@ export default function LegacyBankDeductionsPage() {
   }
   const fields = <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
     <label className="text-sm">Work group<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.work_group_id} onChange={e=>setForm({...form,work_group_id:e.target.value})}><option value="">Choose work group</option>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
-    <label className="text-sm">Employer<Input className="mt-1" maxLength={120} placeholder="e.g. Motheo" value={form.employer} onChange={e=>setForm({...form,employer:e.target.value})}/></label>
+    <label className="text-sm">Employer
+      <select className="mt-1 w-full rounded-md border bg-background p-2" aria-label="Employer" value={addingEmployer?"__new__":(employerOptions.includes(form.employer)?form.employer:"__new__")} onChange={e=>{
+        if(e.target.value==="__new__"){setAddingEmployer(true);setForm({...form,employer:""});}
+        else {setAddingEmployer(false);setForm({...form,employer:e.target.value});}
+      }}>
+        <option value="__new__">+ Add new employer</option>
+        {employerOptions.map(e=><option key={e} value={e}>{e}</option>)}
+      </select>
+      {(addingEmployer || !employerOptions.includes(form.employer))&&<Input className="mt-2" maxLength={120} placeholder="Enter new employer name" value={form.employer} onChange={e=>setForm({...form,employer:e.target.value})}/>}
+    </label>
     <label className="text-sm">Client name<Input className="mt-1" maxLength={120} value={form.client_name} onChange={e=>setForm({...form,client_name:e.target.value})}/></label>
     <label className="text-sm">Bank account{editing?" (unchanged)":""}<Input className="mt-1" inputMode="numeric" maxLength={20} disabled={!!editing} placeholder={editing?"Protected account":"Full account number"} value={form.account_number} onChange={e=>setForm({...form,account_number:e.target.value.replace(/\D/g,"")})}/></label>
     <label className="text-sm">Branch code (auto-filled from bank rules)<Input className="mt-1" inputMode="numeric" maxLength={6} value={form.branch_code} onChange={e=>setForm({...form,branch_code:e.target.value.replace(/\D/g,"")})}/></label>
