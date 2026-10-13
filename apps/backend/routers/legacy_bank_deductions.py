@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from core.access_control import FINANCE_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.employer_group import EmployerGroup
 from database.models.legacy_bank_deduction import LegacyBankDeduction
+from database.models.user import User
+from database.models.person import Person
 from database.session import get_db
 from services.credential_service import encrypt_credential, decrypt_credential
 from services.bank_submission_export import build_bank_submission_zip
@@ -76,11 +78,15 @@ def list_legacy(context: TenantContext = Depends(get_tenant_context), db: Sessio
         .order_by(LegacyBankDeduction.created_at.desc())
         .limit(1000).all()
     )
+    creator_ids = {row.created_by for row, _ in rows if row.created_by}
+    creators = db.query(User.id, User.email, User.phone, Person.first_name, Person.last_name).outerjoin(Person, Person.user_id == User.id).filter(User.id.in_(creator_ids)).all() if creator_ids else []
+    creator_names = {str(user_id): (" ".join(filter(None, (first_name, last_name))).strip() or email or phone or "Unknown user") for user_id, email, phone, first_name, last_name in creators}
     return [{
         "id": str(row.id), "work_group_id": str(group.id), "work_group": group.name,
         "client_name": row.client_name, "account_last4": row.account_last4,
         "masked_account": "****" + row.account_last4, "branch_code": row.branch_code or (resolve_legacy_bank(decrypt_credential(row.account_number_encrypted)) or ("", ""))[1],
         "amount": str(row.amount), "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_by_name": creator_names.get(str(row.created_by), "Not recorded"),
     } for row, group in rows]
 
 
@@ -95,7 +101,7 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
     routing = resolve_legacy_bank(payload.account_number)
     record = LegacyBankDeduction(
         company_id=context.company_id, work_group_id=group.id,
-        client_name=payload.client_name.strip(),
+        created_by=str(context.user.id), client_name=payload.client_name.strip(),
         account_number_encrypted=encrypt_credential(payload.account_number),
         account_last4=payload.account_number[-4:],
         branch_code=payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else ""), amount=payload.amount,
@@ -326,7 +332,7 @@ async def import_legacy_csv(
     for row in new_rows:
         db.add(LegacyBankDeduction(
             company_id=context.company_id, work_group_id=UUID(row["group_id"]),
-            client_name=row["name"],
+            created_by=str(context.user.id), client_name=row["name"],
             account_number_encrypted=encrypt_credential(row["account"]),
             account_last4=row["account"][-4:],
             branch_code=row["branch"] or ((resolve_legacy_bank(row["account"]) or ("", ""))[1]), amount=row["amount"],
