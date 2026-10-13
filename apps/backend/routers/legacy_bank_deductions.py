@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from core.access_control import FINANCE_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.employer_group import EmployerGroup
 from database.models.legacy_bank_deduction import LegacyBankDeduction
+from database.models.legacy_employer import LegacyEmployer
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from database.models.user import User
 from database.models.person import Person
 from database.session import get_db
@@ -58,6 +60,34 @@ def _authorized(context: TenantContext) -> None:
     require_tenant_roles(context, FINANCE_ROLES | COMPANY_MANAGEMENT_ROLES)
     if context.company_id is None:
         raise HTTPException(403, "A company must be selected")
+
+
+def _record_employers(db: Session, company_id: UUID, names: set[str]) -> None:
+    """Company-scoped and idempotent; conflict-safe for concurrent imports."""
+    canonical = {}
+    for raw in names:
+        value = " ".join(raw.strip().split())
+        if value and len(value) <= 120:
+            canonical.setdefault(value.casefold(), value)
+    if canonical:
+        rows = [{"company_id": company_id, "name": name, "normalized_name": normalized}
+                for normalized, name in canonical.items()]
+        db.execute(pg_insert(LegacyEmployer).values(rows).on_conflict_do_nothing(
+            constraint="uq_legacy_employers_company_normalized"))
+
+
+@router.get("/employers")
+def list_employers(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    directory = db.query(LegacyEmployer.name).filter(LegacyEmployer.company_id == context.company_id).all()
+    previous = db.query(LegacyBankDeduction.employer).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.employer.is_not(None)).distinct().all()
+    existing_groups = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True)).all()
+    names = {name.strip() for (name,) in directory + previous if name and name.strip()}
+    # Legacy employer groups are shared with borrowers; do not treat CIVIL/FORCE/S/E as employers.
+    names.update(group.name.strip() for group in existing_groups if _group_kind(group) is None and group.name.strip())
+    return sorted(names, key=str.casefold)
 
 
 @router.get("/work-groups")
@@ -115,6 +145,7 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
         branch_code=payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else ""), amount=payload.amount,
     )
     db.add(record)
+    _record_employers(db, context.company_id, {payload.employer})
     db.commit()
     db.refresh(record)
     return {"id": str(record.id), "saved": True}
@@ -215,6 +246,7 @@ def update_legacy(
     record.work_group_id = group.id
     record.client_name = payload.client_name.strip()
     record.employer = payload.employer.strip()
+    _record_employers(db, context.company_id, {payload.employer})
     routing = resolve_legacy_bank(decrypt_credential(record.account_number_encrypted))
     record.branch_code = payload.branch_code.zfill(6) if payload.branch_code else (routing[1] if routing else "")
     record.amount = payload.amount
@@ -387,6 +419,7 @@ async def import_legacy_csv(
             account_last4=row["account"][-4:],
             branch_code=row["branch"] or ((resolve_legacy_bank(row["account"]) or ("", ""))[1]), amount=row["amount"],
         ))
+    _record_employers(db, context.company_id, {row["employer"] for row in new_rows})
     db.commit()
     return {**summary, "saved": len(new_rows), "preview": False}
 
