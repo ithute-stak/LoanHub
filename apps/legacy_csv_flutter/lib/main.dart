@@ -568,11 +568,17 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         optionsBuilder: (value) {
           final query = value.text.trim().toLowerCase();
           if (query.isEmpty) return employerOptions;
-          return employerOptions.where((entry) => entry.toLowerCase().contains(query));
+          final matches = employerOptions.where((entry) => entry.toLowerCase().contains(query)).toList();
+          if (!employerOptions.any((entry) => entry.trim().toLowerCase() == query)) {
+            matches.add('＋ Add new employer: ${value.text.trim()}');
+          }
+          return matches;
         },
-        displayStringForOption: (entry) => entry,
+        displayStringForOption: (entry) => entry.startsWith('＋ Add new employer: ')
+            ? entry.substring('＋ Add new employer: '.length) : entry,
         onSelected: (entry) => setState(() {
-          employer.text = entry;
+          employer.text = entry.startsWith('＋ Add new employer: ')
+              ? entry.substring('＋ Add new employer: '.length) : entry;
           addingEmployer = false;
         }),
         fieldViewBuilder: (ctx, controller, focusNode, onFieldSubmitted) {
