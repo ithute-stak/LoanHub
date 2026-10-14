@@ -274,7 +274,7 @@ def test_blocked_registration_keeps_discovered_loan_and_amount_owing_visible() -
     assert "setSelectedLoanId(resolved.matched_loan.loan_id)" in page
     assert "if (!resolved.can_register)" in page
     assert "employeeContext?.reason ||" in page
-    assert "Number(matchedLoan.amount_owing).toLocaleString" in page
+    assert "safeAmountOwing(matchedLoan).toLocaleString" in page
     assert 'No linked loan' in page
     assert "registrationDraft?.ready && matchedLoan" in page
 
