@@ -304,6 +304,10 @@ export default function CdasOperationsPage() {
     }
 
     async function submitLifecycle(event: FormEvent<HTMLFormElement>) {
+        if (lifecycle.request_type === 1 && (!registrationScheduleValid || !registrationDraft?.ready)) {
+            setError("Choose a monthly deduction within CDAS affordability that repays the amount owing exactly in no more than 600 months.");
+            return;
+        }
         event.preventDefault();
         if (!canManage || loading || !lifecycle.confirmed) return;
         setLoading("lifecycle");
@@ -395,6 +399,11 @@ export default function CdasOperationsPage() {
     const amountExceedsAffordability = lifecycle.deduction_amount > affordability || affordability <= 0;
     const exceedsPeriodLimit = calculatedMonths > 600;
     const finalPayment = calculatedMonths > 0 ? Math.round((lifecycle.principal_amount - (calculatedMonths - 1) * lifecycle.deduction_amount) * 100) / 100 : 0;
+    const balanceCents = Math.round(lifecycle.principal_amount * 100);
+    const paymentCents = Math.round(lifecycle.deduction_amount * 100);
+    const exactlySettled = calculatedMonths > 0 && paymentCents * calculatedMonths === balanceCents;
+    const registrationScheduleValid = !amountExceedsAffordability && !exceedsPeriodLimit
+        && exactlySettled && lifecycle.deduction_amount > 0 && calculatedMonths < 999;
 
 
 
@@ -664,7 +673,8 @@ export default function CdasOperationsPage() {
                                                     />
                                                     <p className="text-xs text-muted-foreground">
                                                         Calculated as amount owing ÷ monthly deduction, rounded up (maximum 600 months).
-                                                        {calculatedMonths > 0 ? ` Final instalment would be M ${finalPayment.toFixed(2)}; equal instalments may not settle the balance exactly.` : ""}
+                                                        {calculatedMonths > 0 ? ` Equal instalments total M ${(calculatedMonths * lifecycle.deduction_amount).toFixed(2)}; the exact final balance would be M ${finalPayment.toFixed(2)}.` : ""}
+                                                        {calculatedMonths > 0 && !exactlySettled ? " This equal-payment schedule does not settle the debt exactly; choose an amount that divides the outstanding balance into whole cents." : ""}
                                                         {exceedsPeriodLimit ? " Too many months for CDAS; increase the deduction within verified affordability." : ""}
                                                     </p>
                                                 </div>
