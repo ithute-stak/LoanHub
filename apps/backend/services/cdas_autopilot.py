@@ -183,21 +183,11 @@ def decide_cdas_autopilot(
             reason="The mandate ceiling leaves no safe room to increase the deduction.",
         )
 
-    proposed_terms = _ceil_installments(balance, proposed)
-    if proposed_terms > 600:
-        return CdasAutopilotDecision(
-            action="none",
-            effective_balance=balance,
-            current_deduction=deduction,
-            proposed_deduction=deduction,
-            available_affordability=headroom,
-            current_remaining_installments=current_terms,
-            proposed_remaining_installments=proposed_terms,
-            final_installment_amount=current_final,
-            execute_automatically=False,
-            reason="Proposed payroll schedule exceeds the CDAS maximum of 600 months.",
-        )
-    if proposed_terms >= current_terms:
+    # CDAS limits a single deduction schedule to 600 periods; a partial
+    # schedule may still benefit from greater available payroll headroom.
+    proposed_terms_full = _ceil_installments(balance, proposed)
+    proposed_terms = min(600, max(1, int(balance // proposed)))
+    if proposed_terms_full >= current_terms and current_terms <= 600:
         return CdasAutopilotDecision(
             action="none",
             effective_balance=balance,
@@ -211,7 +201,7 @@ def decide_cdas_autopilot(
             reason="The available affordability would not reduce the remaining payroll periods.",
         )
 
-    final_amount = money(balance - (proposed * max(proposed_terms - 1, 0)))
+    final_amount = min(proposed, money(balance - (proposed * max(proposed_terms - 1, 0))))
     if final_amount <= 0:
         final_amount = min(balance, proposed)
 
@@ -226,7 +216,7 @@ def decide_cdas_autopilot(
         final_installment_amount=final_amount,
         execute_automatically=dynamic_top_up_consent,
         reason=(
-            "Available affordability reduces the remaining term and is within the mandate ceiling."
+            "New headroom increases permissible partial-term collections or reduces the remaining term, within the mandate ceiling."
             if dynamic_top_up_consent
             else "A beneficial top-up is available, but the mandate requires customer approval before increasing the deduction."
         ),
