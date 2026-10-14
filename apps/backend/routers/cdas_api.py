@@ -668,8 +668,10 @@ def _matching_cdas_loan_for_employee(
 
 
 def _auto_deduction_period(*, principal_amount: Decimal, deduction_amount: Decimal) -> int:
-    if deduction_amount <= 0:
-        raise HTTPException(status_code=422, detail="Deduction amount must be greater than zero")
+    if principal_amount <= 0:
+        raise HTTPException(status_code=409, detail="No outstanding loan balance remains to deduct")
+    if deduction_amount <= 0 or deduction_amount.as_tuple().exponent < -2:
+        raise HTTPException(status_code=422, detail="Deduction amount must be positive and rounded to cents")
     period = int((principal_amount / deduction_amount).to_integral_value(rounding=ROUND_CEILING))
     if period < 1:
         period = 1
@@ -971,6 +973,7 @@ def list_cdas_operational_loans(
                 "borrower_name": borrower_name,
                 "loan_status": getattr(loan.status, "value", str(loan.status)),
                 "balance": str(loan.balance or 0),
+            "amount_owing": str(loan.balance or 0),
                 "installment_amount": str(loan.installment_amount or 0),
                 "repayment_period": int(loan.repayment_period or 0),
                 "employee_number": mandate.employee_number if mandate else None,
@@ -1025,6 +1028,7 @@ def get_cdas_loan_registration_draft(
     return {
         "loan_id": str(loan.id),
         "loan_reference": loan.loan_reference,
+        "amount_owing": str(Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))),
         "ready": not reasons,
         "reasons": reasons,
         "registration": registration,
@@ -1082,7 +1086,7 @@ async def register_cdas_deduction_for_loan(
             detail=f"Deduction amount cannot exceed the employee's CDAS affordability of M {affordability:.2f}",
         )
 
-    principal_amount = Decimal(str(loan.principal_amount or 0))
+    principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
     deduction_period = _auto_deduction_period(
         principal_amount=principal_amount,
         deduction_amount=payload.deduction_amount,
@@ -1090,6 +1094,7 @@ async def register_cdas_deduction_for_loan(
 
     provider_request = dict(provider_request)
     provider_request["DeductionAmount"] = payload.deduction_amount
+    provider_request["PrincipalAmount"] = principal_amount
     provider_request["TotalInstallment"] = deduction_period
 
     existing_mandate = (
