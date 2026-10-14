@@ -1952,6 +1952,33 @@ async def check_cdas_affordability(
     return {"ok": True, "affordability": affordability}
 
 
+def _employee_cdas_registration_decision(
+    *, profile: CDASPayrollProfile | None, loan: ClientCompanyLoan | None,
+    affordability: Any, discovery_reason: str,
+) -> tuple[bool, str | None]:
+    """Separate discovery from permission to submit a payroll deduction."""
+    if discovery_reason:
+        return False, discovery_reason
+    if loan is None:
+        return False, "No approved or active LoanHub loan found"
+    if profile is None or not profile.verified:
+        return False, "A verified CDAS payroll profile is required"
+    if not loan.cdas_collection_enabled:
+        return False, "CDAS collection is not enabled for this loan"
+    available = Decimal(str(affordability or 0))
+    payment = Decimal(str(loan.installment_amount or 0))
+    if available <= 0:
+        return False, "No CDAS affordability is available for payroll deduction"
+    if payment <= 0:
+        return False, "The loan does not have a valid monthly instalment"
+    if payment > available:
+        return False, (
+            f"Loan found, but its monthly instalment M {payment:.2f} exceeds "
+            f"verified CDAS affordability M {available:.2f}; deduction registration remains blocked"
+        )
+    return True, None
+
+
 def _discover_employee_loan_for_review(
     db: Session, *, company_id: UUID, employee_no: str
 ) -> tuple[CDASPayrollProfile | None, ClientCompanyLoan | None, str]:
@@ -2042,20 +2069,12 @@ async def get_employee_registration_context(
         company_id=context.company_id,
         employee_no=employee_no,
     )
-    available = Decimal(str(affordability or 0))
-    payment = Decimal(str(loan.installment_amount or 0)) if loan is not None else Decimal("0")
-    can_register = bool(
-        profile is not None and profile.verified and loan is not None
-        and loan.cdas_collection_enabled and available > 0
-        and payment > 0 and payment <= available
+    can_register, reason = _employee_cdas_registration_decision(
+        profile=profile,
+        loan=loan,
+        affordability=affordability,
+        discovery_reason=discovery_reason,
     )
-    reason = discovery_reason or None
-    if loan is not None and not reason and not can_register:
-        reason = (
-            f"Loan found, but its monthly instalment M {payment:.2f} exceeds "
-            f"verified CDAS affordability M {available:.2f}; deduction registration remains blocked"
-            if payment > available else "CDAS registration prerequisites are not satisfied"
-        )
 
     matched_loan = None
     if loan is not None:
