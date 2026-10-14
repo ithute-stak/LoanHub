@@ -174,7 +174,7 @@ def test_cdas_registration_requires_only_monthly_amount_from_operator() -> None:
     assert 'provider_request["TotalInstallment"] = deduction_period' in router
     assert "monthly_deduction=payload.deduction_amount" in router
     assert "expected_installments=deduction_period" in router
-    assert "_auto_deduction_period(" in router
+    assert "_partial_cdas_initial_period(" in router
 
     assert "<Label>Deduction Amount *</Label>" in page
     assert "<Label>No. of Months</Label>" in page
@@ -208,9 +208,9 @@ def test_register_mode_keeps_only_amount_editable_and_calculates_months() -> Non
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
-    assert "Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(amount * 100))" in page
+    assert "Math.min(600, Math.floor(Math.round(lifecycle.principal_amount * 100) / amountCents))" in page
     assert "value={calculatedMonths || \"\"}" in page
-    assert "Calculated as amount owing ÷ monthly deduction" in page
+    assert "Initial CDAS period: up to 600 months." in page
     assert 'value={lifecycle.effective_month || ""}' in page
     assert "generatedExpiryMonth(lifecycle.effective_month, calculatedMonths)" in page
     assert 'value={lifecycle.reference_no || ""}' in page
@@ -232,7 +232,7 @@ def test_employee_registration_requires_affordability_and_matched_loanhub_loan()
     assert '"can_register": can_register' in router
     assert "_discover_employee_loan_for_review(" in router
     assert "_employee_cdas_registration_decision(" in router
-    assert "_affordable_exact_cdas_schedule(amount_owing=balance, affordability=available)" in router
+    assert "affordable = min(available.quantize" in router
     assert "CDAS collection has not been enabled for this loan" in router
     assert "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee" in router
 

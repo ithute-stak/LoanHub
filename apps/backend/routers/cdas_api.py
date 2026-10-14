@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -111,6 +111,8 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
     deduction_period: int | None = Field(default=None, gt=0, le=600)
     confirmed: bool = False
     borrower_consent: bool = False
+    dynamic_top_up_consent: bool = False
+    dynamic_top_up_maximum: Decimal | None = Field(default=None, gt=Decimal("0"), max_digits=15, decimal_places=2)
 
 
 class CdasDirectEmployeeRegistrationRequest(BaseModel):
@@ -683,6 +685,23 @@ def _auto_deduction_period(*, principal_amount: Decimal, deduction_amount: Decim
     return period
 
 
+def _partial_cdas_initial_period(*, amount_owing: Decimal, deduction_amount: Decimal) -> int:
+    """Schedule the affordable initial deduction without promising full repayment.
+
+    Never send more than 600 periods and never schedule collections greater
+    than the verified amount owed. Future changes/renewal require provider
+    approval and a separate borrower authorization for dynamic increases.
+    """
+    balance = amount_owing.quantize(Decimal("0.01"))
+    monthly = deduction_amount.quantize(Decimal("0.01"))
+    if balance <= 0 or monthly <= 0 or deduction_amount != monthly:
+        raise HTTPException(status_code=422, detail="Amount owing and monthly deduction must be positive cent values")
+    periods = min(600, int((balance / monthly).to_integral_value(rounding=ROUND_FLOOR)))
+    if periods < 1:
+        raise HTTPException(status_code=409, detail="The deduction amount cannot exceed the amount owing")
+    return periods
+
+
 def _exact_cdas_repayment_period(*, amount_owing: Decimal, deduction_amount: Decimal) -> int:
     """Prevent provider schedules of equal deductions from overcollecting debt."""
     total = amount_owing.quantize(Decimal("0.01"))
@@ -1102,10 +1121,21 @@ async def register_cdas_deduction_for_loan(
         )
 
     principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
-    deduction_period = _exact_cdas_repayment_period(
+    if payload.dynamic_top_up_consent:
+        if payload.dynamic_top_up_maximum is None or not (
+            payload.deduction_amount <= payload.dynamic_top_up_maximum <= principal_amount
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Automatic monthly increases require an authorised maximum deduction between the current deduction and the outstanding balance",
+            )
+    # Partial initial deductions are bounded by the provider's 600-period
+    # maximum. This is not an automatic mandate renewal.
+    deduction_period = _partial_cdas_initial_period(
         amount_owing=principal_amount,
         deduction_amount=payload.deduction_amount,
     )
+    partial_collection = payload.deduction_amount * deduction_period < principal_amount
 
     provider_request = dict(provider_request)
     provider_request["DeductionAmount"] = payload.deduction_amount
@@ -1151,6 +1181,23 @@ async def register_cdas_deduction_for_loan(
         mandate.total_expected = principal_amount
         mandate.borrower_consent = True
 
+    plan = dict(loan.cdas_collection_plan or {})
+    plan["dynamic_top_up_consent"] = bool(payload.dynamic_top_up_consent)
+    if payload.dynamic_top_up_consent and payload.dynamic_top_up_maximum is not None:
+        plan["dynamic_top_up_maximum"] = str(payload.dynamic_top_up_maximum)
+    else:
+        plan.pop("dynamic_top_up_maximum", None)
+    if partial_collection:
+        plan["partial_initial_cdas_schedule"] = {
+            "amount_owing_at_registration": str(principal_amount),
+            "monthly_deduction": str(payload.deduction_amount),
+            "initial_period": deduction_period,
+            "scheduled_collection": str(payload.deduction_amount * deduction_period),
+            "requires_future_review": True,
+        }
+    loan.cdas_collection_plan = plan
+    db.add(loan)
+
     environment = _company_cdas_environment(db, context.company_id)
     state = (
         db.query(CdasOfficialMandateState)
@@ -1167,7 +1214,7 @@ async def register_cdas_deduction_for_loan(
             item_code=str(provider_request["ItemCode"]),
             reference_no=str(provider_request["ReferenceNo"]),
             loan_policy=int(provider_request["LoanPolicy"]),
-            principal_amount=loan.principal_amount or 0,
+            principal_amount=principal_amount,
             effective_month=effective_month,
             cdas_status=None,
             lifecycle_status="registration_pending",
@@ -1184,7 +1231,7 @@ async def register_cdas_deduction_for_loan(
         state.environment = environment
         state.item_code = str(provider_request["ItemCode"])
         state.reference_no = str(provider_request["ReferenceNo"])
-        state.principal_amount = loan.principal_amount or 0
+        state.principal_amount = principal_amount
         state.effective_month = effective_month
     mandate.status = "submitted"
     mandate.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -2004,11 +2051,11 @@ def _employee_cdas_registration_decision(
         return False, "No CDAS affordability is available for payroll deduction"
     if balance <= 0:
         return False, "No outstanding loan balance remains to deduct"
-    if _affordable_exact_cdas_schedule(amount_owing=balance, affordability=available) is None:
-        return False, (
-            f"Loan found, but amount owing M {balance:.2f} has no exact equal-payment "
-            f"schedule within CDAS affordability M {available:.2f} and 600 months"
-        )
+    affordable = min(available.quantize(Decimal("0.01"), rounding=ROUND_FLOOR), balance)
+    if affordable <= 0:
+        return False, "The CDAS affordability is too small for a cent-value deduction"
+    # A valid *partial* initial term can be modified later only under a
+    # separately consented variable-deduction mandate and provider acceptance.
     return True, None
 
 

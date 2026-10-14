@@ -113,18 +113,13 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
-function recommendedExactDeduction(balance: number, affordability: number): { monthly: number; months: number } | null {
+function recommendedAvailableDeduction(balance: number, affordability: number): { monthly: number; months: number } | null {
     const cents = Math.round(balance * 100);
     const affordableCents = Math.floor(affordability * 100);
     if (cents <= 0 || affordableCents <= 0) return null;
-    for (let months = 1; months <= 600; months += 1) {
-        if (cents % months !== 0) continue;
-        const paymentCents = cents / months;
-        if (paymentCents > 0 && paymentCents <= affordableCents) {
-            return { monthly: paymentCents / 100, months };
-        }
-    }
-    return null;
+    const paymentCents = Math.min(cents, affordableCents);
+    const months = Math.min(600, Math.floor(cents / paymentCents));
+    return months >= 1 ? { monthly: paymentCents / 100, months } : null;
 }
 
 function generatedExpiryMonth(effectiveMonth: string, period: number): string {
@@ -174,6 +169,8 @@ export default function CdasOperationsPage() {
     const [employeeContext, setEmployeeContext] = useState<EmployeeRegistrationContext | null>(null);
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
+    const [variableDeductionConsent, setVariableDeductionConsent] = useState(false);
+    const [variableDeductionMaximum, setVariableDeductionMaximum] = useState<number>(0);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
@@ -216,6 +213,9 @@ export default function CdasOperationsPage() {
         setLoading("prepare");
         setError(null);
         setEmployeeContext(null);
+        setVariableDeductionConsent(false);
+        setVariableDeductionMaximum(0);
+        setBorrowerConsentConfirmed(false);
         setRegistrationDraft(null);
         setLinkedState(null);
         setSelectedLoanId("");
@@ -252,7 +252,7 @@ export default function CdasOperationsPage() {
             }
 
             const draft = draftResponse.data.registration;
-            const suggestion = recommendedExactDeduction(Number(draft.principal_amount), Number(resolved.affordability));
+            const suggestion = recommendedAvailableDeduction(Number(draft.principal_amount), Number(resolved.affordability));
             setLifecycle({
                 request_type: draft.request_type,
                 deduction_id: draft.deduction_id,
@@ -319,11 +319,12 @@ export default function CdasOperationsPage() {
     }
 
     async function submitLifecycle(event: FormEvent<HTMLFormElement>) {
-        if (lifecycle.request_type === 1 && (!registrationScheduleValid || !registrationDraft?.ready)) {
-            setError("Choose a monthly deduction within CDAS affordability that repays the amount owing exactly in no more than 600 months.");
+        event.preventDefault();
+        if (lifecycle.request_type === 1 && (!registrationScheduleValid || !registrationDraft?.ready
+            || (variableDeductionConsent && (variableDeductionMaximum < lifecycle.deduction_amount || variableDeductionMaximum > lifecycle.principal_amount)))) {
+            setError("Choose an amount within verified CDAS affordability. The initial schedule may collect only part of the balance and must not exceed 600 months.");
             return;
         }
-        event.preventDefault();
         if (!canManage || loading || !lifecycle.confirmed) return;
         setLoading("lifecycle");
         setError(null);
@@ -335,6 +336,8 @@ export default function CdasOperationsPage() {
                         deduction_amount: lifecycle.deduction_amount,
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
+                        dynamic_top_up_consent: variableDeductionConsent,
+                        dynamic_top_up_maximum: variableDeductionConsent ? variableDeductionMaximum : null,
                     })
                     : selectedLoanId && linkedState && [3, 4, 6, 10].includes(lifecycle.request_type)
                         ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/lifecycle`, {
@@ -345,7 +348,11 @@ export default function CdasOperationsPage() {
             );
             setResult({ title: "CDAS lifecycle response", record: response.data.deduction });
             setLifecycle((current) => ({ ...current, confirmed: false }));
-            if (lifecycle.request_type === 1) setBorrowerConsentConfirmed(false);
+            if (lifecycle.request_type === 1) {
+                setBorrowerConsentConfirmed(false);
+                setVariableDeductionConsent(false);
+                setVariableDeductionMaximum(0);
+            }
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS deduction lifecycle request failed."));
         } finally {
@@ -408,18 +415,18 @@ export default function CdasOperationsPage() {
     const affordability = Number(employeeContext?.affordability || 0);
     const matchedLoan = employeeContext?.matched_loan ?? null;
     const employeeName = [employeeContext?.employee?.Name, employeeContext?.employee?.Surname].filter(Boolean).join(" ") || "—";
-    const calculatedMonths = lifecycle.deduction_amount > 0 && lifecycle.principal_amount > 0
-        ? Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(lifecycle.deduction_amount * 100))
-        : 0;
-    const amountExceedsAffordability = lifecycle.deduction_amount > affordability || affordability <= 0;
-    const exceedsPeriodLimit = calculatedMonths > 600;
-    const finalPayment = calculatedMonths > 0 ? Math.round((lifecycle.principal_amount - (calculatedMonths - 1) * lifecycle.deduction_amount) * 100) / 100 : 0;
     const balanceCents = Math.round(lifecycle.principal_amount * 100);
     const paymentCents = Math.round(lifecycle.deduction_amount * 100);
-    const exactlySettled = calculatedMonths > 0 && paymentCents * calculatedMonths === balanceCents;
-    const registrationScheduleValid = !amountExceedsAffordability && !exceedsPeriodLimit
-        && exactlySettled && lifecycle.deduction_amount > 0 && calculatedMonths < 999;
-    const proposedSchedule = recommendedExactDeduction(lifecycle.principal_amount, affordability);
+    const calculatedMonths = paymentCents > 0 && balanceCents > 0
+        ? Math.min(600, Math.floor(balanceCents / paymentCents))
+        : 0;
+    const amountExceedsAffordability = paymentCents > Math.floor(affordability * 100) || affordability <= 0;
+    const scheduleCollectionCents = calculatedMonths * paymentCents;
+    const remainingCents = Math.max(0, balanceCents - scheduleCollectionCents);
+    const registrationScheduleValid = !amountExceedsAffordability && calculatedMonths > 0
+        && calculatedMonths <= 600 && scheduleCollectionCents <= balanceCents
+        && lifecycle.deduction_amount > 0 && Number.isInteger(paymentCents)
+        && Math.abs(lifecycle.deduction_amount * 100 - paymentCents) < 0.00001;
 
 
 
@@ -657,8 +664,9 @@ export default function CdasOperationsPage() {
                                                         value={lifecycle.deduction_amount}
                                                         onChange={(event) => {
                                                             const amount = Number(event.target.value);
-                                                            const months = amount > 0 && lifecycle.principal_amount > 0
-                                                                ? Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(amount * 100))
+                                                            const amountCents = Math.round(amount * 100);
+                                                            const months = amountCents > 0 && lifecycle.principal_amount > 0
+                                                                ? Math.min(600, Math.floor(Math.round(lifecycle.principal_amount * 100) / amountCents))
                                                                 : 0;
                                                             setLifecycle((value) => ({
                                                                 ...value,
@@ -688,11 +696,9 @@ export default function CdasOperationsPage() {
                                                         placeholder="Calculated from amount owing"
                                                     />
                                                     <p className="text-xs text-muted-foreground">
-                                                        Calculated as amount owing ÷ monthly deduction, rounded up (maximum 600 months).
-                                                        {calculatedMonths > 0 ? ` Equal instalments total M ${(calculatedMonths * lifecycle.deduction_amount).toFixed(2)}; the exact final balance would be M ${finalPayment.toFixed(2)}.` : ""}
-                                                        {calculatedMonths > 0 && !exactlySettled ? " This equal-payment schedule does not settle the debt exactly; choose an amount that divides the outstanding balance into whole cents." : ""}
-                                                        {exceedsPeriodLimit ? " Too many months for CDAS; increase the deduction within verified affordability." : ""}
-                                                        {employeeContext && lifecycle.principal_amount > 0 && !proposedSchedule ? " No exact equal-payment schedule fits the verified affordability and CDAS 600-month limit." : ""}
+                                                        Initial CDAS period: up to 600 months. This does not require full settlement within the first term.
+                                                        {calculatedMonths > 0 ? ` Scheduled M ${(scheduleCollectionCents / 100).toFixed(2)}; balance remaining after the initial term (before any future changes or other repayments): M ${(remainingCents / 100).toFixed(2)}.` : ""}
+                                                        {remainingCents > 0 ? " Future changes or renewal are subject to the borrower's authorization and CDAS provider rules; neither is guaranteed." : ""}
                                                     </p>
                                                 </div>
 
@@ -755,6 +761,28 @@ export default function CdasOperationsPage() {
                                             </label>
                                         ) : null}
 
+                                        {registrationDraft?.ready && matchedLoan ? (
+                                            <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
+                                                <input type="checkbox" checked={variableDeductionConsent}
+                                                    onChange={(event) => setVariableDeductionConsent(event.target.checked)} className="mt-1" />
+                                                <span><strong>The borrower separately authorized future increases to this CDAS deduction.</strong>
+                                                    <span className="block text-muted-foreground">Optional. Without this authorization, LoanHub will not automatically increase the deduction during the 14th–21st monthly review.</span>
+                                                </span>
+                                            </label>
+                                        ) : null}
+
+                                        {variableDeductionConsent && registrationDraft?.ready ? (
+                                            <div className="space-y-2 rounded-xl border p-4">
+                                                <Label>Borrower-authorized maximum monthly deduction (M)</Label>
+                                                <Input type="number" min={lifecycle.deduction_amount || 0.01}
+                                                    max={lifecycle.principal_amount} step="0.01"
+                                                    value={variableDeductionMaximum || ""}
+                                                    onChange={(event) => setVariableDeductionMaximum(Number(event.target.value))}
+                                                    placeholder="Enter the maximum authorized on the signed mandate" />
+                                                <p className="text-xs text-muted-foreground">A future automatic modification will not exceed this limit, verified available affordability, or the amount owed.</p>
+                                            </div>
+                                        ) : null}
+
                                         <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
                                             <input
                                                 type="checkbox"
@@ -785,6 +813,7 @@ export default function CdasOperationsPage() {
                                                     || lifecycle.deduction_amount <= 0
                                                     || calculatedMonths <= 0
                                                     || !registrationScheduleValid
+                                                    || (variableDeductionConsent && (variableDeductionMaximum < lifecycle.deduction_amount || variableDeductionMaximum > lifecycle.principal_amount))
                                                     || !borrowerConsentConfirmed
                                                     || !lifecycle.confirmed
                                                 }

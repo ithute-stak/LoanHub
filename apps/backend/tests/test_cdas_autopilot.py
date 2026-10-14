@@ -178,3 +178,33 @@ def test_cash_payment_service_marks_cdas_reoptimization_after_success() -> None:
     assert "transaction.purpose == PaymentPurpose.LOAN_REPAYMENT" in payment_service
     assert "transaction.status == PaymentStatus.SUCCEEDED" in payment_service
     assert "loan.cdas_collection_enabled" in payment_service
+
+
+def test_partial_initial_mandate_can_increase_without_full_repayment_in_600_months() -> None:
+    decision = decide_cdas_autopilot(
+        outstanding_balance=Decimal("2784.00"),
+        current_deduction=Decimal("3.31"),
+        available_affordability=Decimal("0.01"),
+        evaluation_date=date(2026, 10, 14),
+        dynamic_top_up_consent=True,
+    )
+    assert decision.action == "top_up"
+    assert decision.proposed_deduction == Decimal("3.32")
+    assert decision.current_remaining_installments == 600
+    assert decision.proposed_remaining_installments == 600
+    assert decision.execute_automatically is True
+    assert decision.proposed_deduction * decision.proposed_remaining_installments <= Decimal("2784.00")
+
+
+def test_partial_mandate_changes_require_separate_variable_consent() -> None:
+    decision = decide_cdas_autopilot(
+        outstanding_balance=Decimal("2784.00"),
+        current_deduction=Decimal("3.31"),
+        available_affordability=Decimal("5.00"),
+        evaluation_date=date(2026, 10, 21),
+        dynamic_top_up_consent=False,
+    )
+    assert decision.action == "top_up"
+    assert decision.execute_automatically is False
+
+
