@@ -4,7 +4,7 @@ from decimal import Decimal
 from services.cdas_autopilot import affordability_window_open, decide_cdas_autopilot
 
 
-def test_affordability_window_is_14_through_20_inclusive() -> None:
+def test_affordability_window_is_14_through_21_inclusive() -> None:
     assert not affordability_window_open(date(2026, 10, 13))
     assert affordability_window_open(date(2026, 10, 14))
     assert affordability_window_open(date(2026, 10, 20))
@@ -128,12 +128,12 @@ def test_final_installment_is_capped_to_true_balance() -> None:
     assert decision.final_installment_amount == Decimal("350.00")
 
 
-def test_no_affordability_top_up_outside_14_to_20_window() -> None:
+def test_no_affordability_top_up_outside_14_to_21_window() -> None:
     decision = decide_cdas_autopilot(
         outstanding_balance=Decimal("12000"),
         current_deduction=Decimal("1000"),
         available_affordability=Decimal("500"),
-        evaluation_date=date(2026, 10, 21),
+        evaluation_date=date(2026, 10, 22),
         dynamic_top_up_consent=True,
     )
 
