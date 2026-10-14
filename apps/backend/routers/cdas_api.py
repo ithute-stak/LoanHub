@@ -1972,6 +1972,19 @@ async def check_cdas_affordability(
     return {"ok": True, "affordability": affordability}
 
 
+def _affordable_exact_cdas_schedule(*, amount_owing: Decimal, affordability: Decimal) -> tuple[Decimal, int] | None:
+    """Find the fewest equal monthly deductions, to the cent, within CDAS limits."""
+    cents = int((amount_owing * 100).to_integral_value())
+    affordable_cents = int((affordability * 100).to_integral_value(rounding="ROUND_FLOOR"))
+    if cents <= 0 or affordable_cents <= 0:
+        return None
+    for months in range(1, 601):
+        payment_cents, remainder = divmod(cents, months)
+        if remainder == 0 and 0 < payment_cents <= affordable_cents:
+            return Decimal(payment_cents) / 100, months
+    return None
+
+
 def _employee_cdas_registration_decision(
     *, profile: CDASPayrollProfile | None, loan: ClientCompanyLoan | None,
     affordability: Any, discovery_reason: str,
@@ -1986,15 +1999,15 @@ def _employee_cdas_registration_decision(
     if not loan.cdas_collection_enabled:
         return False, "CDAS collection is not enabled for this loan"
     available = Decimal(str(affordability or 0))
-    payment = Decimal(str(loan.installment_amount or 0))
+    balance = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
     if available <= 0:
         return False, "No CDAS affordability is available for payroll deduction"
-    if payment <= 0:
-        return False, "The loan does not have a valid monthly instalment"
-    if payment > available:
+    if balance <= 0:
+        return False, "No outstanding loan balance remains to deduct"
+    if _affordable_exact_cdas_schedule(amount_owing=balance, affordability=available) is None:
         return False, (
-            f"Loan found, but its monthly instalment M {payment:.2f} exceeds "
-            f"verified CDAS affordability M {available:.2f}; deduction registration remains blocked"
+            f"Loan found, but amount owing M {balance:.2f} has no exact equal-payment "
+            f"schedule within CDAS affordability M {available:.2f} and 600 months"
         )
     return True, None
 
