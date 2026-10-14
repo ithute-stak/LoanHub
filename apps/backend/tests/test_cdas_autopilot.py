@@ -4,11 +4,12 @@ from decimal import Decimal
 from services.cdas_autopilot import affordability_window_open, decide_cdas_autopilot
 
 
-def test_affordability_window_is_14_through_20_inclusive() -> None:
+def test_affordability_window_is_14_through_21_inclusive() -> None:
     assert not affordability_window_open(date(2026, 10, 13))
     assert affordability_window_open(date(2026, 10, 14))
     assert affordability_window_open(date(2026, 10, 20))
-    assert not affordability_window_open(date(2026, 10, 21))
+    assert affordability_window_open(date(2026, 10, 21))
+    assert not affordability_window_open(date(2026, 10, 22))
 
 
 def test_cash_payment_keeps_deduction_and_shortens_remaining_period() -> None:
@@ -127,17 +128,42 @@ def test_final_installment_is_capped_to_true_balance() -> None:
     assert decision.final_installment_amount == Decimal("350.00")
 
 
-def test_no_affordability_top_up_outside_14_to_20_window() -> None:
+def test_no_affordability_top_up_outside_14_to_21_window() -> None:
     decision = decide_cdas_autopilot(
         outstanding_balance=Decimal("12000"),
         current_deduction=Decimal("1000"),
         available_affordability=Decimal("500"),
-        evaluation_date=date(2026, 10, 21),
+        evaluation_date=date(2026, 10, 22),
         dynamic_top_up_consent=True,
     )
 
     assert decision.action == "none"
     assert decision.execute_automatically is False
+
+
+def test_small_new_headroom_is_considered_when_it_shortens_term() -> None:
+    decision = decide_cdas_autopilot(
+        outstanding_balance=Decimal("1000.00"),
+        current_deduction=Decimal("99.99"),
+        available_affordability=Decimal("0.01"),
+        evaluation_date=date(2026, 10, 21),
+        dynamic_top_up_consent=True,
+    )
+    assert decision.action == "top_up"
+    assert decision.proposed_deduction == Decimal("100.00")
+    assert decision.proposed_remaining_installments == 10
+
+
+def test_window_keeps_unconsented_modification_manual_on_21st() -> None:
+    decision = decide_cdas_autopilot(
+        outstanding_balance=Decimal("1200.00"),
+        current_deduction=Decimal("100.00"),
+        available_affordability=Decimal("10.00"),
+        evaluation_date=date(2026, 10, 21),
+        dynamic_top_up_consent=False,
+    )
+    assert decision.action == "top_up"
+    assert not decision.execute_automatically
 
 
 def test_cash_payment_service_marks_cdas_reoptimization_after_success() -> None:

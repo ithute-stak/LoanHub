@@ -7,10 +7,10 @@ from typing import Literal
 
 
 MONEY = Decimal("0.01")
-DEFAULT_MINIMUM_AFFORDABILITY = Decimal("10.00")
+DEFAULT_MINIMUM_AFFORDABILITY = Decimal("0.01")
 DEFAULT_SETTLEMENT_TOLERANCE = Decimal("0.01")
 AUTOPILOT_WINDOW_START_DAY = 14
-AUTOPILOT_WINDOW_END_DAY = 20
+AUTOPILOT_WINDOW_END_DAY = 21
 
 
 Action = Literal["none", "shorten_term", "top_up", "settle"]
@@ -147,7 +147,7 @@ def decide_cdas_autopilot(
             proposed_remaining_installments=current_terms,
             final_installment_amount=current_final,
             execute_automatically=False,
-            reason="Affordability optimisation runs only from the 14th through the 20th.",
+            reason="Affordability optimisation runs only from the 14th through the 21st.",
         )
 
     if headroom < minimum:
@@ -184,6 +184,19 @@ def decide_cdas_autopilot(
         )
 
     proposed_terms = _ceil_installments(balance, proposed)
+    if proposed_terms > 600:
+        return CdasAutopilotDecision(
+            action="none",
+            effective_balance=balance,
+            current_deduction=deduction,
+            proposed_deduction=deduction,
+            available_affordability=headroom,
+            current_remaining_installments=current_terms,
+            proposed_remaining_installments=proposed_terms,
+            final_installment_amount=current_final,
+            execute_automatically=False,
+            reason="Proposed payroll schedule exceeds the CDAS maximum of 600 months.",
+        )
     if proposed_terms >= current_terms:
         return CdasAutopilotDecision(
             action="none",

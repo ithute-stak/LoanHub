@@ -146,3 +146,13 @@ def test_shared_headroom_allocation_is_employee_day_locked() -> None:
     assert "_try_advisory_lock(db, allocation_lock_scope)" in source
     assert "_release_advisory_lock(db, allocation_lock_scope)" in source
     assert "str(profile.employee_number).strip().casefold()" in source
+
+
+
+def test_autopilot_window_uses_lesotho_local_calendar() -> None:
+    from pathlib import Path
+
+    worker = (Path(__file__).resolve().parents[1] / "services/cdas_autopilot_worker.py").read_text()
+    assert 'ZoneInfo("Africa/Maseru")' in worker
+    assert "today = _payroll_today()" in worker
+    assert "affordability_window_open(today)" in worker
