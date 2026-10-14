@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
@@ -1295,6 +1295,52 @@ def list_company_client_external_debt_events(
     assert_branch_scope(context, account.branch_id)
     debt = _external_debt_or_404(db, account=account, debt_id=debt_id)
     return external_debt_payload(debt)["events"]
+
+
+@router.get("/{account_id}/bank-account/reveal")
+def reveal_company_client_bank_account(
+    account_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    # Explicit privilege check: profile viewing alone must never reveal banking secrets.
+    require_tenant_roles(context, LENDING_ROLES)
+    account = company_client_or_404(db, account_id=account_id, company_id=context.company_id)
+    assert_branch_scope(context, account.branch_id)
+    bank = (
+        db.query(BorrowerBankAccount)
+        .filter(
+            BorrowerBankAccount.company_id == account.company_id,
+            BorrowerBankAccount.borrower_id == account.borrower_id,
+        )
+        .order_by(BorrowerBankAccount.salary_account.desc(), BorrowerBankAccount.updated_at.desc())
+        .first()
+    )
+    if bank is None:
+        raise HTTPException(status_code=404, detail="No bank account is recorded for this client")
+    account_number = decrypt_credential(bank.account_number_encrypted)
+    if not account_number:
+        raise HTTPException(status_code=422, detail="The stored bank account cannot be revealed")
+    # Never persist the full number in audit logs or normal profile responses.
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=account.company_id,
+        branch_id=account.branch_id,
+        action="company_client.bank_account_revealed",
+        table_name="borrower_bank_accounts",
+        entity_type="company_client_bank_account",
+        record_id=bank.id,
+        description="An authorised user revealed a client's bank account number.",
+        actor_role=context.role.value,
+        severity="info",
+        status="success",
+        event_data={"client_id": str(account.id)},
+    ))
+    db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"account_number": account_number}
 
 
 @router.get("/{account_id}/profile", response_model=CompanyClientProfileRead)
