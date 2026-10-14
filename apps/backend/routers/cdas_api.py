@@ -2004,7 +2004,7 @@ def _discover_employee_loan_for_review(
         return None, None, ("Ambiguous employee-to-borrower mapping; verify the payroll identity"
                             if borrower_ids else "No company loan linked to this employee number")
     borrower_id = next(iter(borrower_ids))
-    profile = next((p for p in profiles if p.borrower_id == borrower_id and p.verified), None)
+    profile = next((p for p in profiles if p.borrower_id == borrower_id), None)
     candidate = db.query(ClientCompanyLoan).filter(
         ClientCompanyLoan.company_id == company_id,
         ClientCompanyLoan.borrower_id == borrower_id,
