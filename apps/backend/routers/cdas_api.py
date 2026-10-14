@@ -1993,13 +1993,12 @@ def _discover_employee_loan_for_review(
         CDASPayrollProfile.company_id == company_id,
         CDASPayrollProfile.employee_number == number,
     ).all()
-    borrower_ids = {p.borrower_id for p in profiles}
-    if not borrower_ids:
-        employment = db.query(BorrowerEmploymentProfile).filter(
-            BorrowerEmploymentProfile.company_id == company_id,
-            BorrowerEmploymentProfile.employee_number == number,
-        ).all()
-        borrower_ids = {row.borrower_id for row in employment}
+    # Cross-check both sources: conflicting borrower identities must not be guessed.
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == company_id,
+        BorrowerEmploymentProfile.employee_number == number,
+    ).all()
+    borrower_ids = {p.borrower_id for p in profiles} | {row.borrower_id for row in employment}
     if len(borrower_ids) != 1:
         return None, None, ("Ambiguous employee-to-borrower mapping; verify the payroll identity"
                             if borrower_ids else "No company loan linked to this employee number")
@@ -2016,8 +2015,8 @@ def _discover_employee_loan_for_review(
     ).first()
     if candidate is None:
         return profile, None, "No approved or active company loan found for this employee"
-    if profile is None:
-        return None, candidate, "Loan found, but the employee's CDAS payroll profile must be verified first"
+    if profile is None or not profile.verified:
+        return profile, candidate, "Loan found, but the employee's CDAS payroll profile must be verified first"
     if not candidate.cdas_collection_enabled:
         return profile, candidate, "Loan found, but CDAS collection has not been enabled for this loan"
     return profile, candidate, ""
