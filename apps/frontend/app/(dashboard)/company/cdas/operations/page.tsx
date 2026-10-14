@@ -516,7 +516,13 @@ export default function CdasOperationsPage() {
                             </div>
                             <div className="rounded-xl border bg-muted/20 p-4">
                                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Matched LoanHub loan</p>
-                                <p className="mt-1 font-black">{matchedLoan?.folio_number || matchedLoan?.loan_reference || "No linked loan"}</p>
+                                {matchedLoan ? (
+                                    <Link href={`/company/loans?loan=${encodeURIComponent(matchedLoan.loan_id)}`}
+                                        className="mt-1 block font-black text-primary hover:underline"
+                                        title="Open this LoanHub loan">
+                                        {matchedLoan.folio_number || matchedLoan.loan_reference}
+                                    </Link>
+                                ) : <p className="mt-1 font-black">No linked loan</p>}
                                 <p className="text-xs text-muted-foreground">
                                     {matchedLoan
                                         ? `Principal M ${Number(matchedLoan.principal_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Instalment M ${Number(matchedLoan.monthly_installment).toFixed(2)} · ${matchedLoan.cdas_enabled ? "CDAS enabled" : "CDAS not enabled"}`
