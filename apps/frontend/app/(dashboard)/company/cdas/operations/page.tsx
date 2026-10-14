@@ -170,6 +170,7 @@ export default function CdasOperationsPage() {
     const [registrationDraft, setRegistrationDraft] = useState<RegistrationDraftResponse | null>(null);
     const [borrowerConsentConfirmed, setBorrowerConsentConfirmed] = useState(false);
     const [variableDeductionConsent, setVariableDeductionConsent] = useState(false);
+    const [variableDeductionMaximum, setVariableDeductionMaximum] = useState<number>(0);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
 
     const [lifecycle, setLifecycle] = useState({
@@ -213,6 +214,7 @@ export default function CdasOperationsPage() {
         setError(null);
         setEmployeeContext(null);
         setVariableDeductionConsent(false);
+        setVariableDeductionMaximum(0);
         setBorrowerConsentConfirmed(false);
         setRegistrationDraft(null);
         setLinkedState(null);
@@ -318,7 +320,8 @@ export default function CdasOperationsPage() {
 
     async function submitLifecycle(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (lifecycle.request_type === 1 && (!registrationScheduleValid || !registrationDraft?.ready)) {
+        if (lifecycle.request_type === 1 && (!registrationScheduleValid || !registrationDraft?.ready
+            || (variableDeductionConsent && (variableDeductionMaximum < lifecycle.deduction_amount || variableDeductionMaximum > lifecycle.principal_amount)))) {
             setError("Choose an amount within verified CDAS affordability. The initial schedule may collect only part of the balance and must not exceed 600 months.");
             return;
         }
@@ -334,6 +337,7 @@ export default function CdasOperationsPage() {
                         confirmed: lifecycle.confirmed,
                         borrower_consent: borrowerConsentConfirmed,
                         dynamic_top_up_consent: variableDeductionConsent,
+                        dynamic_top_up_maximum: variableDeductionConsent ? variableDeductionMaximum : null,
                     })
                     : selectedLoanId && linkedState && [3, 4, 6, 10].includes(lifecycle.request_type)
                         ? await api.post<MutationResponse>(`/cdas/loans/${selectedLoanId}/lifecycle`, {
@@ -347,6 +351,7 @@ export default function CdasOperationsPage() {
             if (lifecycle.request_type === 1) {
                 setBorrowerConsentConfirmed(false);
                 setVariableDeductionConsent(false);
+                setVariableDeductionMaximum(0);
             }
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS deduction lifecycle request failed."));
@@ -766,6 +771,18 @@ export default function CdasOperationsPage() {
                                             </label>
                                         ) : null}
 
+                                        {variableDeductionConsent && registrationDraft?.ready ? (
+                                            <div className="space-y-2 rounded-xl border p-4">
+                                                <Label>Borrower-authorized maximum monthly deduction (M)</Label>
+                                                <Input type="number" min={lifecycle.deduction_amount || 0.01}
+                                                    max={lifecycle.principal_amount} step="0.01"
+                                                    value={variableDeductionMaximum || ""}
+                                                    onChange={(event) => setVariableDeductionMaximum(Number(event.target.value))}
+                                                    placeholder="Enter the maximum authorized on the signed mandate" />
+                                                <p className="text-xs text-muted-foreground">A future automatic modification will not exceed this limit, verified available affordability, or the amount owed.</p>
+                                            </div>
+                                        ) : null}
+
                                         <label className="flex items-start gap-3 rounded-xl border border-destructive/30 p-4 text-sm">
                                             <input
                                                 type="checkbox"
@@ -796,6 +813,7 @@ export default function CdasOperationsPage() {
                                                     || lifecycle.deduction_amount <= 0
                                                     || calculatedMonths <= 0
                                                     || !registrationScheduleValid
+                                                    || (variableDeductionConsent && (variableDeductionMaximum < lifecycle.deduction_amount || variableDeductionMaximum > lifecycle.principal_amount))
                                                     || !borrowerConsentConfirmed
                                                     || !lifecycle.confirmed
                                                 }
