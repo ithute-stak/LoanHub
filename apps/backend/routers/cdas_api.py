@@ -626,7 +626,7 @@ def _loan_registration_context(
             item_code=item_code,
             deduction_amount=loan.installment_amount or 0,
             total_installment=int(loan.repayment_period or 0),
-            principal_amount=loan.principal_amount or 0,
+            principal_amount=loan.balance or 0,
             effective_month=effective_month,
             reference_no=loan.loan_reference,
         ).provider_payload()
@@ -1133,7 +1133,7 @@ async def register_cdas_deduction_for_loan(
         end_date=None,
         expected_installments=deduction_period,
         deductions_received=0,
-        total_expected=loan.total_repayable or 0,
+        total_expected=principal_amount,
         total_received=0,
         status="draft",
         borrower_consent=True,
@@ -1148,7 +1148,7 @@ async def register_cdas_deduction_for_loan(
         mandate.monthly_deduction = payload.deduction_amount
         mandate.start_date = loan.first_payment_due
         mandate.expected_installments = deduction_period
-        mandate.total_expected = loan.total_repayable or 0
+        mandate.total_expected = principal_amount
         mandate.borrower_consent = True
 
     environment = _company_cdas_environment(db, context.company_id)
