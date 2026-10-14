@@ -113,6 +113,20 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
+function recommendedExactDeduction(balance: number, affordability: number): { monthly: number; months: number } | null {
+    const cents = Math.round(balance * 100);
+    const affordableCents = Math.floor(affordability * 100);
+    if (cents <= 0 || affordableCents <= 0) return null;
+    for (let months = 1; months <= 600; months += 1) {
+        if (cents % months !== 0) continue;
+        const paymentCents = cents / months;
+        if (paymentCents > 0 && paymentCents <= affordableCents) {
+            return { monthly: paymentCents / 100, months };
+        }
+    }
+    return null;
+}
+
 function generatedExpiryMonth(effectiveMonth: string, period: number): string {
     const match = effectiveMonth.match(/^(\d{4})-(\d{2})$/);
     if (!match || !Number.isInteger(period) || period <= 0) return "Auto-generated";
@@ -238,14 +252,15 @@ export default function CdasOperationsPage() {
             }
 
             const draft = draftResponse.data.registration;
+            const suggestion = recommendedExactDeduction(Number(draft.principal_amount), Number(resolved.affordability));
             setLifecycle({
                 request_type: draft.request_type,
                 deduction_id: draft.deduction_id,
                 employee_no: draft.employee_no,
                 loan_policy: draft.loan_policy,
                 item_code: draft.item_code,
-                deduction_amount: 0,
-                total_installment: 0,
+                deduction_amount: suggestion?.monthly ?? 0,
+                total_installment: suggestion?.months ?? 0,
                 principal_amount: Number(draft.principal_amount),
                 effective_month: draft.effective_month,
                 reference_no: draft.reference_no,
@@ -404,6 +419,7 @@ export default function CdasOperationsPage() {
     const exactlySettled = calculatedMonths > 0 && paymentCents * calculatedMonths === balanceCents;
     const registrationScheduleValid = !amountExceedsAffordability && !exceedsPeriodLimit
         && exactlySettled && lifecycle.deduction_amount > 0 && calculatedMonths < 999;
+    const proposedSchedule = recommendedExactDeduction(lifecycle.principal_amount, affordability);
 
 
 
@@ -676,6 +692,7 @@ export default function CdasOperationsPage() {
                                                         {calculatedMonths > 0 ? ` Equal instalments total M ${(calculatedMonths * lifecycle.deduction_amount).toFixed(2)}; the exact final balance would be M ${finalPayment.toFixed(2)}.` : ""}
                                                         {calculatedMonths > 0 && !exactlySettled ? " This equal-payment schedule does not settle the debt exactly; choose an amount that divides the outstanding balance into whole cents." : ""}
                                                         {exceedsPeriodLimit ? " Too many months for CDAS; increase the deduction within verified affordability." : ""}
+                                                        {employeeContext && lifecycle.principal_amount > 0 && !proposedSchedule ? " No exact equal-payment schedule fits the verified affordability and CDAS 600-month limit." : ""}
                                                     </p>
                                                 </div>
 
