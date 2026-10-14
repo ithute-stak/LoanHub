@@ -232,7 +232,7 @@ def test_employee_registration_requires_affordability_and_matched_loanhub_loan()
     assert '"can_register": can_register' in router
     assert "_discover_employee_loan_for_review(" in router
     assert "_employee_cdas_registration_decision(" in router
-    assert "payment > available" in router
+    assert "_affordable_exact_cdas_schedule(amount_owing=balance, affordability=available)" in router
     assert "CDAS collection has not been enabled for this loan" in router
     assert "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee" in router
 
