@@ -49,6 +49,11 @@ export async function getCompanyClientPortfolioInsights(
 }
 
 
+export async function revealCompanyClientBankAccount(accountId: string): Promise<string> {
+  const response = await api.get<{ account_number: string }>(`/company-clients/${accountId}/bank-account/reveal`, { headers: { "Cache-Control": "no-store" } });
+  return response.data.account_number;
+}
+
 export async function getCompanyClientProfile(accountId: string): Promise<CompanyClientProfile> {
   return (await api.get<CompanyClientProfile>(`/company-clients/${accountId}/profile`)).data;
 }
