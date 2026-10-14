@@ -50,7 +50,7 @@ export async function getCompanyClientPortfolioInsights(
 
 
 export async function revealCompanyClientBankAccount(accountId: string): Promise<string> {
-  const response = await api.get<{ account_number: string }>(`/company-clients/${accountId}/bank-account/reveal`, { headers: { "Cache-Control": "no-store" } });
+  const response = await api.get<{ account_number: string }>(`/company-clients/${accountId}/bank-account/reveal`);
   return response.data.account_number;
 }
 
