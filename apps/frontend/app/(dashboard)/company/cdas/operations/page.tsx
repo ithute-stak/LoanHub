@@ -42,6 +42,7 @@ type LinkedCdasState = {
 type RegistrationDraftResponse = {
     loan_id: string;
     loan_reference: string;
+    amount_owing: string;
     ready: boolean;
     reasons: string[];
     provider_request_sent: false;
@@ -80,6 +81,7 @@ type EmployeeRegistrationContext = {
         principal_amount: string;
         total_repayable: string;
         balance: string;
+        amount_owing: string;
         status: string;
         first_payment_due: string | null;
     } | null;
@@ -215,7 +217,7 @@ export default function CdasOperationsPage() {
                 employee_no: resolved.employee.EmployeeNo || normalized,
                 deduction_amount: 0,
                 total_installment: 0,
-                principal_amount: resolved.matched_loan ? Number(resolved.matched_loan.principal_amount) : 0,
+                principal_amount: resolved.matched_loan ? Number(resolved.matched_loan.amount_owing) : 0,
                 confirmed: false,
             }));
 
@@ -390,7 +392,9 @@ export default function CdasOperationsPage() {
     const calculatedMonths = lifecycle.deduction_amount > 0 && lifecycle.principal_amount > 0
         ? Math.ceil(lifecycle.principal_amount / lifecycle.deduction_amount)
         : 0;
-    const amountExceedsAffordability = affordability > 0 && lifecycle.deduction_amount > affordability;
+    const amountExceedsAffordability = lifecycle.deduction_amount > affordability || affordability <= 0;
+    const exceedsPeriodLimit = calculatedMonths > 600;
+    const finalPayment = calculatedMonths > 0 ? Math.round((lifecycle.principal_amount - (calculatedMonths - 1) * lifecycle.deduction_amount) * 100) / 100 : 0;
 
 
 
@@ -656,15 +660,17 @@ export default function CdasOperationsPage() {
                                                         value={calculatedMonths || ""}
                                                         readOnly
                                                         className="bg-muted/30"
-                                                        placeholder="Calculated from loan amount"
+                                                        placeholder="Calculated from amount owing"
                                                     />
                                                     <p className="text-xs text-muted-foreground">
-                                                        Auto-calculated as loan principal ÷ monthly deduction, rounded up.
+                                                        Calculated as amount owing ÷ monthly deduction, rounded up (maximum 600 months).
+                                                        {calculatedMonths > 0 ? ` Final instalment would be M ${finalPayment.toFixed(2)}; equal instalments may not settle the balance exactly.` : ""}
+                                                        {exceedsPeriodLimit ? " Too many months for CDAS; increase the deduction within verified affordability." : ""}
                                                     </p>
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <Label>Principal Amt.</Label>
+                                                    <Label>Amount Owing</Label>
                                                     <Input
                                                         value={lifecycle.principal_amount > 0 ? lifecycle.principal_amount.toFixed(2) : ""}
                                                         readOnly
