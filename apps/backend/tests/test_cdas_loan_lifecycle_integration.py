@@ -277,3 +277,14 @@ def test_blocked_registration_keeps_discovered_loan_and_amount_owing_visible() -
     assert "Number(matchedLoan.amount_owing).toLocaleString" in page
     assert 'No linked loan' in page
     assert "registrationDraft?.ready && matchedLoan" in page
+
+
+def test_cdas_registration_context_returns_outstanding_balance_for_preview() -> None:
+    router = _read(ROOT / "routers/cdas_api.py")
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+    assert '"amount_owing": str(loan.balance or 0)' in router
+    assert 'safeAmountOwing(resolved.matched_loan)' in page
+    assert 'Number(loan.amount_owing ?? loan.balance ?? 0)' in page
+    assert 'Number.isFinite(amount)' in page
+    assert 'recommendedAvailableDeduction(safeAmountOwing(resolved.matched_loan)' in page
+    assert 'Preview only; CDAS verification and loan enablement required before registration.' in page
