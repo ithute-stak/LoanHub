@@ -113,6 +113,12 @@ function displayValue(value: unknown): string {
     return String(value);
 }
 
+function safeAmountOwing(loan: EmployeeRegistrationContext["matched_loan"]): number {
+    if (!loan) return 0;
+    const amount = Number(loan.amount_owing ?? loan.balance ?? 0);
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
 function recommendedAvailableDeduction(balance: number, affordability: number): { monthly: number; months: number } | null {
     const cents = Math.round(balance * 100);
     const affordableCents = Math.floor(affordability * 100);
@@ -229,9 +235,9 @@ export default function CdasOperationsPage() {
             setLifecycle((current) => ({
                 ...current,
                 employee_no: resolved.employee.EmployeeNo || normalized,
-                deduction_amount: 0,
-                total_installment: 0,
-                principal_amount: resolved.matched_loan ? Number(resolved.matched_loan.amount_owing) : 0,
+                deduction_amount: recommendedAvailableDeduction(safeAmountOwing(resolved.matched_loan), Number(resolved.affordability))?.monthly ?? 0,
+                total_installment: recommendedAvailableDeduction(safeAmountOwing(resolved.matched_loan), Number(resolved.affordability))?.months ?? 0,
+                principal_amount: safeAmountOwing(resolved.matched_loan),
                 confirmed: false,
             }));
 
@@ -620,7 +626,7 @@ export default function CdasOperationsPage() {
                                             <dt className="text-muted-foreground">Amount owing</dt>
                                             <dd className="font-bold">
                                                 {matchedLoan
-                                                    ? `M ${Number(matchedLoan.amount_owing).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                    ? `M ${safeAmountOwing(matchedLoan).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                                     : "No linked loan"}
                                             </dd>
                                         </div>
@@ -685,6 +691,7 @@ export default function CdasOperationsPage() {
                                                             }));
                                                         }}
                                                         disabled={!registrationDraft?.ready || !matchedLoan}
+                                                        title={!registrationDraft?.ready ? "Preview only; CDAS verification and loan enablement required before registration." : undefined}
                                                         placeholder="Enter amount"
                                                     />
                                                     <p className={`text-xs ${amountExceedsAffordability ? "font-bold text-destructive" : "text-muted-foreground"}`}>

@@ -2170,6 +2170,7 @@ async def get_employee_registration_context(
             "principal_amount": str(loan.principal_amount or 0),
             "total_repayable": str(loan.total_repayable or 0),
             "balance": str(loan.balance or 0),
+            "amount_owing": str(loan.balance or 0),
             "status": loan.status.value if hasattr(loan.status, "value") else str(loan.status),
             "first_payment_due": loan.first_payment_due.isoformat() if loan.first_payment_due else None,
         }
