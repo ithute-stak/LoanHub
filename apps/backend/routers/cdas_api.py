@@ -1102,10 +1102,15 @@ async def register_cdas_deduction_for_loan(
         )
 
     principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
-    deduction_period = _exact_cdas_repayment_period(
-        amount_owing=principal_amount,
+    # CDAS accepts at most 600 instalments per registration. A capped schedule
+    # is a partial collection, NOT a promise to clear the loan in this period.
+    # Outstanding debt remains in LoanHub and requires separate, approved renewal
+    # or modification if the provider period expires.
+    deduction_period = _auto_deduction_period(
+        principal_amount=principal_amount,
         deduction_amount=payload.deduction_amount,
-    )
+    ) if payload.deduction_amount * 600 >= principal_amount else 600
+    partial_collection = payload.deduction_amount * deduction_period < principal_amount
 
     provider_request = dict(provider_request)
     provider_request["DeductionAmount"] = payload.deduction_amount
@@ -1151,6 +1156,18 @@ async def register_cdas_deduction_for_loan(
         mandate.total_expected = principal_amount
         mandate.borrower_consent = True
 
+    if partial_collection:
+        plan = dict(loan.cdas_collection_plan or {})
+        plan["partial_initial_cdas_schedule"] = {
+            "amount_owing_at_registration": str(principal_amount),
+            "monthly_deduction": str(payload.deduction_amount),
+            "initial_period": deduction_period,
+            "scheduled_collection": str(payload.deduction_amount * deduction_period),
+            "requires_future_review": True,
+        }
+        loan.cdas_collection_plan = plan
+        db.add(loan)
+
     environment = _company_cdas_environment(db, context.company_id)
     state = (
         db.query(CdasOfficialMandateState)
@@ -1167,7 +1184,7 @@ async def register_cdas_deduction_for_loan(
             item_code=str(provider_request["ItemCode"]),
             reference_no=str(provider_request["ReferenceNo"]),
             loan_policy=int(provider_request["LoanPolicy"]),
-            principal_amount=loan.principal_amount or 0,
+            principal_amount=principal_amount,
             effective_month=effective_month,
             cdas_status=None,
             lifecycle_status="registration_pending",
@@ -1184,7 +1201,7 @@ async def register_cdas_deduction_for_loan(
         state.environment = environment
         state.item_code = str(provider_request["ItemCode"])
         state.reference_no = str(provider_request["ReferenceNo"])
-        state.principal_amount = loan.principal_amount or 0
+        state.principal_amount = principal_amount
         state.effective_month = effective_month
     mandate.status = "submitted"
     mandate.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
