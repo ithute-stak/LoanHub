@@ -112,6 +112,7 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
     confirmed: bool = False
     borrower_consent: bool = False
     dynamic_top_up_consent: bool = False
+    dynamic_top_up_maximum: Decimal | None = Field(default=None, gt=Decimal("0"), max_digits=15, decimal_places=2)
 
 
 class CdasDirectEmployeeRegistrationRequest(BaseModel):
@@ -1120,6 +1121,14 @@ async def register_cdas_deduction_for_loan(
         )
 
     principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
+    if payload.dynamic_top_up_consent:
+        if payload.dynamic_top_up_maximum is None or not (
+            payload.deduction_amount <= payload.dynamic_top_up_maximum <= principal_amount
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Automatic monthly increases require an authorised maximum deduction between the current deduction and the outstanding balance",
+            )
     # Partial initial deductions are bounded by the provider's 600-period
     # maximum. This is not an automatic mandate renewal.
     deduction_period = _partial_cdas_initial_period(
@@ -1174,6 +1183,10 @@ async def register_cdas_deduction_for_loan(
 
     plan = dict(loan.cdas_collection_plan or {})
     plan["dynamic_top_up_consent"] = bool(payload.dynamic_top_up_consent)
+    if payload.dynamic_top_up_consent and payload.dynamic_top_up_maximum is not None:
+        plan["dynamic_top_up_maximum"] = str(payload.dynamic_top_up_maximum)
+    else:
+        plan.pop("dynamic_top_up_maximum", None)
     if partial_collection:
         plan["partial_initial_cdas_schedule"] = {
             "amount_owing_at_registration": str(principal_amount),
