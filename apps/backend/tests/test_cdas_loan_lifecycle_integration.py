@@ -54,7 +54,7 @@ def test_cdas_approved_loan_registration_draft_is_local_and_provider_safe() -> N
     assert "item_code=item_code" in router
     assert "deduction_amount=loan.installment_amount or 0" in router
     assert "total_installment=int(loan.repayment_period or 0)" in router
-    assert "principal_amount=loan.principal_amount or 0" in router
+    assert "principal_amount=loan.balance or 0" in router
     assert "reference_no=loan.loan_reference" in router
     assert '"provider_request_sent": False' in router
     draft_block = router.split(
