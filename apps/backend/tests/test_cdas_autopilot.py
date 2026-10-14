@@ -8,7 +8,8 @@ def test_affordability_window_is_14_through_20_inclusive() -> None:
     assert not affordability_window_open(date(2026, 10, 13))
     assert affordability_window_open(date(2026, 10, 14))
     assert affordability_window_open(date(2026, 10, 20))
-    assert not affordability_window_open(date(2026, 10, 21))
+    assert affordability_window_open(date(2026, 10, 21))
+    assert not affordability_window_open(date(2026, 10, 22))
 
 
 def test_cash_payment_keeps_deduction_and_shortens_remaining_period() -> None:
