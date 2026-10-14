@@ -683,6 +683,21 @@ def _auto_deduction_period(*, principal_amount: Decimal, deduction_amount: Decim
     return period
 
 
+def _exact_cdas_repayment_period(*, amount_owing: Decimal, deduction_amount: Decimal) -> int:
+    """Prevent provider schedules of equal deductions from overcollecting debt."""
+    total = amount_owing.quantize(Decimal("0.01"))
+    payment = deduction_amount.quantize(Decimal("0.01"))
+    period = _auto_deduction_period(principal_amount=total, deduction_amount=payment)
+    if payment * period != total:
+        raise HTTPException(
+            status_code=409,
+            detail="Equal monthly CDAS deductions do not exactly settle the amount owing. "
+                   "Choose a deduction amount that divides the balance in cents exactly; "
+                   "a different final deduction requires a separately supported CDAS change process.",
+        )
+    return period
+
+
 def _first_provider_int(payload: Any, *keys: str) -> int | None:
     if not isinstance(payload, dict):
         return None
@@ -1087,8 +1102,8 @@ async def register_cdas_deduction_for_loan(
         )
 
     principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
-    deduction_period = _auto_deduction_period(
-        principal_amount=principal_amount,
+    deduction_period = _exact_cdas_repayment_period(
+        amount_owing=principal_amount,
         deduction_amount=payload.deduction_amount,
     )
 
