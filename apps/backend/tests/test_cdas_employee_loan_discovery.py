@@ -12,13 +12,12 @@ def _profile(*, verified=True):
     return SimpleNamespace(verified=verified)
 
 
-def test_existing_loan_visible_but_affordability_blocks_registration():
+def test_low_affordability_can_prepare_partial_initial_registration():
     allowed, reason = _employee_cdas_registration_decision(
         profile=_profile(), loan=_loan(), affordability="3.31", discovery_reason=""
     )
-    assert not allowed
-    assert "2784.00" in reason
-    assert "3.31" in reason
+    assert allowed
+    assert reason is None
 
 
 def test_unverified_employment_number_is_discovery_only():
