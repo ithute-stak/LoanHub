@@ -54,3 +54,14 @@ def test_no_loan_is_never_eligible():
     )
     assert not allowed
     assert "No approved" in reason
+
+
+
+def test_new_affordable_schedule_can_be_used_when_old_installment_is_higher():
+    loan = _loan(installment="928.00")
+    loan.balance = "100.00"
+    allowed, reason = _employee_cdas_registration_decision(
+        profile=_profile(), loan=loan, affordability="100.00", discovery_reason=""
+    )
+    assert allowed
+    assert reason is None
