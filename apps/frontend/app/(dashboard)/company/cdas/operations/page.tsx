@@ -74,6 +74,9 @@ type EmployeeRegistrationContext = {
     matched_loan: {
         loan_id: string;
         loan_reference: string;
+        folio_number: string;
+        monthly_installment: string;
+        cdas_enabled: boolean;
         principal_amount: string;
         total_repayable: string;
         balance: string;
@@ -513,10 +516,10 @@ export default function CdasOperationsPage() {
                             </div>
                             <div className="rounded-xl border bg-muted/20 p-4">
                                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Matched LoanHub loan</p>
-                                <p className="mt-1 font-black">{matchedLoan?.loan_reference || "No eligible loan"}</p>
+                                <p className="mt-1 font-black">{matchedLoan?.folio_number || matchedLoan?.loan_reference || "No linked loan"}</p>
                                 <p className="text-xs text-muted-foreground">
                                     {matchedLoan
-                                        ? `Principal M ${Number(matchedLoan.principal_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        ? `Principal M ${Number(matchedLoan.principal_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Instalment M ${Number(matchedLoan.monthly_installment).toFixed(2)} · ${matchedLoan.cdas_enabled ? "CDAS enabled" : "CDAS not enabled"}`
                                         : "Deduction registration is blocked"}
                                 </p>
                             </div>
