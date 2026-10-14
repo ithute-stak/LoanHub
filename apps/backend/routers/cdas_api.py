@@ -684,6 +684,23 @@ def _auto_deduction_period(*, principal_amount: Decimal, deduction_amount: Decim
     return period
 
 
+def _partial_cdas_initial_period(*, amount_owing: Decimal, deduction_amount: Decimal) -> int:
+    """Schedule the affordable initial deduction without promising full repayment.
+
+    Never send more than 600 periods and never schedule collections greater
+    than the verified amount owed. Future changes/renewal require provider
+    approval and a separate borrower authorization for dynamic increases.
+    """
+    balance = amount_owing.quantize(Decimal("0.01"))
+    monthly = deduction_amount.quantize(Decimal("0.01"))
+    if balance <= 0 or monthly <= 0 or deduction_amount != monthly:
+        raise HTTPException(status_code=422, detail="Amount owing and monthly deduction must be positive cent values")
+    periods = min(600, int((balance / monthly).to_integral_value(rounding=ROUND_FLOOR)))
+    if periods < 1:
+        raise HTTPException(status_code=409, detail="The deduction amount cannot exceed the amount owing")
+    return periods
+
+
 def _exact_cdas_repayment_period(*, amount_owing: Decimal, deduction_amount: Decimal) -> int:
     """Prevent provider schedules of equal deductions from overcollecting debt."""
     total = amount_owing.quantize(Decimal("0.01"))
@@ -1103,21 +1120,12 @@ async def register_cdas_deduction_for_loan(
         )
 
     principal_amount = Decimal(str(loan.balance or 0)).quantize(Decimal("0.01"))
-    # CDAS accepts at most 600 instalments per registration. A capped schedule
-    # is a partial collection, NOT a promise to clear the loan in this period.
-    # Outstanding debt remains in LoanHub and requires separate, approved renewal
-    # or modification if the provider period expires.
-    # Schedule at most the amount owing; never over-collect on rounding.
-    # The provider maximum is 600 months per request, not an authorization
-    # to renew automatically after that term.
-    deduction_period = min(
-        600, int((principal_amount / payload.deduction_amount).to_integral_value(rounding=ROUND_FLOOR))
+    # Partial initial deductions are bounded by the provider's 600-period
+    # maximum. This is not an automatic mandate renewal.
+    deduction_period = _partial_cdas_initial_period(
+        amount_owing=principal_amount,
+        deduction_amount=payload.deduction_amount,
     )
-    if deduction_period < 1:
-        raise HTTPException(
-            status_code=409,
-            detail="The deduction amount cannot exceed the amount owing",
-        )
     partial_collection = payload.deduction_amount * deduction_period < principal_amount
 
     provider_request = dict(provider_request)
