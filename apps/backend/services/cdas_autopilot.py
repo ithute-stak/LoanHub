@@ -10,7 +10,7 @@ MONEY = Decimal("0.01")
 DEFAULT_MINIMUM_AFFORDABILITY = Decimal("10.00")
 DEFAULT_SETTLEMENT_TOLERANCE = Decimal("0.01")
 AUTOPILOT_WINDOW_START_DAY = 14
-AUTOPILOT_WINDOW_END_DAY = 20
+AUTOPILOT_WINDOW_END_DAY = 21
 
 
 Action = Literal["none", "shorten_term", "top_up", "settle"]
@@ -147,7 +147,7 @@ def decide_cdas_autopilot(
             proposed_remaining_installments=current_terms,
             final_installment_amount=current_final,
             execute_automatically=False,
-            reason="Affordability optimisation runs only from the 14th through the 20th.",
+            reason="Affordability optimisation runs only from the 14th through the 21st.",
         )
 
     if headroom < minimum:
