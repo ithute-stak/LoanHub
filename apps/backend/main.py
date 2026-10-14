@@ -159,6 +159,7 @@ app.add_middleware(
         "X-Request-ID",
         "X-Active-Role",
         "X-LoanHub-Cache",
+        "Cache-Control",
     ],
     expose_headers=[
         "X-Request-ID",
