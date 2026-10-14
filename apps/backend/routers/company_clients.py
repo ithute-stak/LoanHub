@@ -96,7 +96,7 @@ from services.borrower_profile_service import build_payment_rating
 from services.file_service import physical_path, read_file_bytes, save_upload
 from services.payment_service import build_idempotency_key, initiate_payment
 from services.receipt_service import ensure_payment_receipt
-from services.credential_service import encrypt_credential
+from services.credential_service import encrypt_credential, decrypt_credential
 
 
 router = APIRouter(prefix="/company-clients", tags=["Company Clients"])
