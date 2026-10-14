@@ -5,7 +5,7 @@ from routers.cdas_api import _employee_cdas_registration_decision
 
 
 def _loan(*, enabled=True, installment="928.00"):
-    return SimpleNamespace(cdas_collection_enabled=enabled, installment_amount=installment)
+    return SimpleNamespace(cdas_collection_enabled=enabled, installment_amount=installment, balance="2784.00")
 
 
 def _profile(*, verified=True):
@@ -17,7 +17,7 @@ def test_existing_loan_visible_but_affordability_blocks_registration():
         profile=_profile(), loan=_loan(), affordability="3.31", discovery_reason=""
     )
     assert not allowed
-    assert "928.00" in reason
+    assert "2784.00" in reason
     assert "3.31" in reason
 
 
@@ -54,3 +54,14 @@ def test_no_loan_is_never_eligible():
     )
     assert not allowed
     assert "No approved" in reason
+
+
+
+def test_new_affordable_schedule_can_be_used_when_old_installment_is_higher():
+    loan = _loan(installment="928.00")
+    loan.balance = "100.00"
+    allowed, reason = _employee_cdas_registration_decision(
+        profile=_profile(), loan=loan, affordability="100.00", discovery_reason=""
+    )
+    assert allowed
+    assert reason is None

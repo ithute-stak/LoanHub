@@ -54,7 +54,7 @@ def test_cdas_approved_loan_registration_draft_is_local_and_provider_safe() -> N
     assert "item_code=item_code" in router
     assert "deduction_amount=loan.installment_amount or 0" in router
     assert "total_installment=int(loan.repayment_period or 0)" in router
-    assert "principal_amount=loan.principal_amount or 0" in router
+    assert "principal_amount=loan.balance or 0" in router
     assert "reference_no=loan.loan_reference" in router
     assert '"provider_request_sent": False' in router
     draft_block = router.split(
@@ -178,7 +178,7 @@ def test_cdas_registration_requires_only_monthly_amount_from_operator() -> None:
 
     assert "<Label>Deduction Amount *</Label>" in page
     assert "<Label>No. of Months</Label>" in page
-    assert "Calculated from loan amount" in page
+    assert "Calculated from amount owing" in page
     assert "readOnly" in page
     assert "Approve & Register Deduction" in page
     assert "deduction_amount: lifecycle.deduction_amount" in page
@@ -197,7 +197,7 @@ def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
     assert "Deduction Amount *" in page
     assert "No. of Months" in page
     assert "Approve & Register Deduction" in page
-    assert "Principal Amt." in page
+    assert "<Label>Amount Owing</Label>" in page
     assert "Expiry Month" in page
     assert "Policy / Loan Ref No" in page
     assert "generatedExpiryMonth" in page
@@ -208,9 +208,9 @@ def test_register_mode_keeps_only_amount_editable_and_calculates_months() -> Non
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
-    assert "Math.ceil(lifecycle.principal_amount / amount)" in page
+    assert "Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(amount * 100))" in page
     assert "value={calculatedMonths || \"\"}" in page
-    assert "Auto-calculated as loan principal ÷ monthly deduction, rounded up." in page
+    assert "Calculated as amount owing ÷ monthly deduction" in page
     assert 'value={lifecycle.effective_month || ""}' in page
     assert "generatedExpiryMonth(lifecycle.effective_month, calculatedMonths)" in page
     assert 'value={lifecycle.reference_no || ""}' in page
@@ -232,7 +232,7 @@ def test_employee_registration_requires_affordability_and_matched_loanhub_loan()
     assert '"can_register": can_register' in router
     assert "_discover_employee_loan_for_review(" in router
     assert "_employee_cdas_registration_decision(" in router
-    assert "payment > available" in router
+    assert "_affordable_exact_cdas_schedule(amount_owing=balance, affordability=available)" in router
     assert "CDAS collection has not been enabled for this loan" in router
     assert "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee" in router
 
@@ -262,7 +262,7 @@ def test_cdas_registration_enforces_live_affordability_and_server_calculated_per
     assert "affordability = Decimal(str(await client.check_affordability(profile.employee_number)))" in router
     assert "if payload.deduction_amount > affordability:" in router
     assert "Deduction amount cannot exceed the employee's CDAS affordability" in router
-    assert "principal_amount = Decimal(str(loan.principal_amount or 0))" in router
+    assert "principal_amount = Decimal(str(loan.balance or 0))" in router
     assert "rounding=ROUND_CEILING" in router
     assert 'provider_request["TotalInstallment"] = deduction_period' in router
     assert "expected_installments=deduction_period" in router
