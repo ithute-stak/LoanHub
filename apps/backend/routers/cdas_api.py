@@ -2009,7 +2009,11 @@ def _discover_employee_loan_for_review(
         ClientCompanyLoan.company_id == company_id,
         ClientCompanyLoan.borrower_id == borrower_id,
         ClientCompanyLoan.status.in_([LoanStatus.APPROVED, LoanStatus.ACTIVE]),
-    ).order_by(ClientCompanyLoan.approved_at.desc().nullslast(), ClientCompanyLoan.id.desc()).first()
+    ).order_by(
+        ClientCompanyLoan.cdas_collection_enabled.desc(),
+        ClientCompanyLoan.approved_at.desc().nullslast(),
+        ClientCompanyLoan.id.desc(),
+    ).first()
     if candidate is None:
         return profile, None, "No approved or active company loan found for this employee"
     if profile is None:
