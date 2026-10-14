@@ -27,6 +27,7 @@ from database.models.cdas_official import (
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import LoanStatus, UserRole
 from database.models.lending_operations import CDASDeductionMandate, CDASPayrollProfile
+from database.models.origination import BorrowerEmploymentProfile
 from database.models.professional_lending import DirectLoanApplication
 from database.models.platform_cdas import PlatformCdasTransaction
 from database.session import get_db
@@ -1951,6 +1952,77 @@ async def check_cdas_affordability(
     return {"ok": True, "affordability": affordability}
 
 
+def _employee_cdas_registration_decision(
+    *, profile: CDASPayrollProfile | None, loan: ClientCompanyLoan | None,
+    affordability: Any, discovery_reason: str,
+) -> tuple[bool, str | None]:
+    """Separate discovery from permission to submit a payroll deduction."""
+    if discovery_reason:
+        return False, discovery_reason
+    if loan is None:
+        return False, "No approved or active LoanHub loan found"
+    if profile is None or not profile.verified:
+        return False, "A verified CDAS payroll profile is required"
+    if not loan.cdas_collection_enabled:
+        return False, "CDAS collection is not enabled for this loan"
+    available = Decimal(str(affordability or 0))
+    payment = Decimal(str(loan.installment_amount or 0))
+    if available <= 0:
+        return False, "No CDAS affordability is available for payroll deduction"
+    if payment <= 0:
+        return False, "The loan does not have a valid monthly instalment"
+    if payment > available:
+        return False, (
+            f"Loan found, but its monthly instalment M {payment:.2f} exceeds "
+            f"verified CDAS affordability M {available:.2f}; deduction registration remains blocked"
+        )
+    return True, None
+
+
+def _discover_employee_loan_for_review(
+    db: Session, *, company_id: UUID, employee_no: str
+) -> tuple[CDASPayrollProfile | None, ClientCompanyLoan | None, str]:
+    """Discover existing loans for display only; never grant CDAS registration rights.
+
+    A verified CDAS payroll profile is authoritative. If it is missing, an
+    exact employee-number match in the company employment profile can surface
+    a *candidate* for manual verification, but must not authorise registration.
+    """
+    number = employee_no.strip()
+    profiles = db.query(CDASPayrollProfile).filter(
+        CDASPayrollProfile.company_id == company_id,
+        CDASPayrollProfile.employee_number == number,
+    ).all()
+    borrower_ids = {p.borrower_id for p in profiles}
+    if not borrower_ids:
+        employment = db.query(BorrowerEmploymentProfile).filter(
+            BorrowerEmploymentProfile.company_id == company_id,
+            BorrowerEmploymentProfile.employee_number == number,
+        ).all()
+        borrower_ids = {row.borrower_id for row in employment}
+    if len(borrower_ids) != 1:
+        return None, None, ("Ambiguous employee-to-borrower mapping; verify the payroll identity"
+                            if borrower_ids else "No company loan linked to this employee number")
+    borrower_id = next(iter(borrower_ids))
+    profile = next((p for p in profiles if p.borrower_id == borrower_id), None)
+    candidate = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == company_id,
+        ClientCompanyLoan.borrower_id == borrower_id,
+        ClientCompanyLoan.status.in_([LoanStatus.APPROVED, LoanStatus.ACTIVE]),
+    ).order_by(
+        ClientCompanyLoan.cdas_collection_enabled.desc(),
+        ClientCompanyLoan.approved_at.desc().nullslast(),
+        ClientCompanyLoan.id.desc(),
+    ).first()
+    if candidate is None:
+        return profile, None, "No approved or active company loan found for this employee"
+    if profile is None:
+        return None, candidate, "Loan found, but the employee's CDAS payroll profile must be verified first"
+    if not candidate.cdas_collection_enabled:
+        return profile, candidate, "Loan found, but CDAS collection has not been enabled for this loan"
+    return profile, candidate, ""
+
+
 @router.post("/employees/registration-context")
 async def get_employee_registration_context(
     payload: CdasEmployeeLookupRequest,
@@ -1996,10 +2068,16 @@ async def get_employee_registration_context(
         source_reference=employee_no,
     )
 
-    profile, loan = _matching_cdas_loan_for_employee(
+    profile, loan, discovery_reason = _discover_employee_loan_for_review(
         db,
         company_id=context.company_id,
         employee_no=employee_no,
+    )
+    can_register, reason = _employee_cdas_registration_decision(
+        profile=profile,
+        loan=loan,
+        affordability=affordability,
+        discovery_reason=discovery_reason,
     )
 
     matched_loan = None
@@ -2007,6 +2085,9 @@ async def get_employee_registration_context(
         matched_loan = {
             "loan_id": str(loan.id),
             "loan_reference": loan.loan_reference,
+            "folio_number": loan.folio_number,
+            "monthly_installment": str(loan.installment_amount or 0),
+            "cdas_enabled": bool(loan.cdas_collection_enabled),
             "principal_amount": str(loan.principal_amount or 0),
             "total_repayable": str(loan.total_repayable or 0),
             "balance": str(loan.balance or 0),
@@ -2020,8 +2101,8 @@ async def get_employee_registration_context(
         "affordability": affordability,
         "payroll_profile_found": profile is not None,
         "matched_loan": matched_loan,
-        "can_register": profile is not None and loan is not None,
-        "reason": None if loan is not None else "No eligible approved or active CDAS-enabled LoanHub loan was found for this employee",
+        "can_register": can_register,
+        "reason": reason,
     }
 
 
