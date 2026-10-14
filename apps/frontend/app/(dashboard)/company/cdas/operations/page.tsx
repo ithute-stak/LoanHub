@@ -394,7 +394,7 @@ export default function CdasOperationsPage() {
     const matchedLoan = employeeContext?.matched_loan ?? null;
     const employeeName = [employeeContext?.employee?.Name, employeeContext?.employee?.Surname].filter(Boolean).join(" ") || "—";
     const calculatedMonths = lifecycle.deduction_amount > 0 && lifecycle.principal_amount > 0
-        ? Math.ceil(lifecycle.principal_amount / lifecycle.deduction_amount)
+        ? Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(lifecycle.deduction_amount * 100))
         : 0;
     const amountExceedsAffordability = lifecycle.deduction_amount > affordability || affordability <= 0;
     const exceedsPeriodLimit = calculatedMonths > 600;
@@ -642,7 +642,7 @@ export default function CdasOperationsPage() {
                                                         onChange={(event) => {
                                                             const amount = Number(event.target.value);
                                                             const months = amount > 0 && lifecycle.principal_amount > 0
-                                                                ? Math.ceil(lifecycle.principal_amount / amount)
+                                                                ? Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(amount * 100))
                                                                 : 0;
                                                             setLifecycle((value) => ({
                                                                 ...value,
@@ -767,7 +767,7 @@ export default function CdasOperationsPage() {
                                                     || !matchedLoan
                                                     || lifecycle.deduction_amount <= 0
                                                     || calculatedMonths <= 0
-                                                    || amountExceedsAffordability
+                                                    || !registrationScheduleValid
                                                     || !borrowerConsentConfirmed
                                                     || !lifecycle.confirmed
                                                 }
