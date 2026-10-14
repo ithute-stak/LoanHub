@@ -39,3 +39,20 @@ def test_fraction_of_cent_is_rejected():
 def test_zero_balance_is_rejected():
     with pytest.raises(HTTPException):
         _partial_cdas_initial_period(amount_owing=Decimal("0.00"), deduction_amount=Decimal("1.00"))
+
+def test_auto_adjustment_cap_requires_explicit_positive_amount():
+    from pydantic import ValidationError
+    from routers.cdas_api import CdasLoanRegistrationConfirmRequest
+
+    payload = CdasLoanRegistrationConfirmRequest(
+        deduction_amount=Decimal("3.31"),
+        borrower_consent=True,
+        dynamic_top_up_consent=True,
+        dynamic_top_up_maximum=Decimal("100.00"),
+        confirmed=True,
+    )
+    assert payload.dynamic_top_up_maximum == Decimal("100.00")
+    with pytest.raises(ValidationError):
+        CdasLoanRegistrationConfirmRequest(
+            deduction_amount=Decimal("3.31"), dynamic_top_up_maximum=Decimal("-1.00")
+        )
