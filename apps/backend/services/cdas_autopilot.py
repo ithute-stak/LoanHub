@@ -117,8 +117,9 @@ def decide_cdas_autopilot(
             reason="No active monthly CDAS deduction exists to optimise.",
         )
 
-    current_terms = _ceil_installments(balance, deduction)
-    current_final = money(balance - (deduction * max(current_terms - 1, 0)))
+    current_terms_full = _ceil_installments(balance, deduction)
+    current_terms = min(600, current_terms_full)
+    current_final = min(deduction, money(balance - (deduction * max(current_terms - 1, 0))))
     if current_final <= 0:
         current_final = min(balance, deduction)
 
@@ -187,7 +188,7 @@ def decide_cdas_autopilot(
     # schedule may still benefit from greater available payroll headroom.
     proposed_terms_full = _ceil_installments(balance, proposed)
     proposed_terms = min(600, max(1, int(balance // proposed)))
-    if proposed_terms_full >= current_terms and current_terms <= 600:
+    if proposed_terms_full >= current_terms_full and current_terms_full <= 600:
         return CdasAutopilotDecision(
             action="none",
             effective_balance=balance,
