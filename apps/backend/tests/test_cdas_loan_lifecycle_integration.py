@@ -197,7 +197,7 @@ def test_register_mode_matches_focused_cdas_add_deduction_flow() -> None:
     assert "Deduction Amount *" in page
     assert "No. of Months" in page
     assert "Approve & Register Deduction" in page
-    assert "Principal Amt." in page
+    assert "<Label>Amount Owing</Label>" in page
     assert "Expiry Month" in page
     assert "Policy / Loan Ref No" in page
     assert "generatedExpiryMonth" in page
@@ -208,9 +208,9 @@ def test_register_mode_keeps_only_amount_editable_and_calculates_months() -> Non
     page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
 
     assert 'value={lifecycle.item_code ? lifecycle.item_code : "Auto-generated from company CDAS profile"}' in page
-    assert "Math.ceil(lifecycle.principal_amount / amount)" in page
+    assert "Math.ceil(Math.round(lifecycle.principal_amount * 100) / Math.round(amount * 100))" in page
     assert "value={calculatedMonths || \"\"}" in page
-    assert "Auto-calculated as loan principal ÷ monthly deduction, rounded up." in page
+    assert "Calculated as amount owing ÷ monthly deduction" in page
     assert 'value={lifecycle.effective_month || ""}' in page
     assert "generatedExpiryMonth(lifecycle.effective_month, calculatedMonths)" in page
     assert 'value={lifecycle.reference_no || ""}' in page
@@ -262,7 +262,7 @@ def test_cdas_registration_enforces_live_affordability_and_server_calculated_per
     assert "affordability = Decimal(str(await client.check_affordability(profile.employee_number)))" in router
     assert "if payload.deduction_amount > affordability:" in router
     assert "Deduction amount cannot exceed the employee's CDAS affordability" in router
-    assert "principal_amount = Decimal(str(loan.principal_amount or 0))" in router
+    assert "principal_amount = Decimal(str(loan.balance or 0))" in router
     assert "rounding=ROUND_CEILING" in router
     assert 'provider_request["TotalInstallment"] = deduction_period' in router
     assert "expected_installments=deduction_period" in router
