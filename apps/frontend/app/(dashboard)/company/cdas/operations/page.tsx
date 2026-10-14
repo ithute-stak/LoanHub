@@ -235,8 +235,16 @@ export default function CdasOperationsPage() {
                 confirmed: false,
             }));
 
-            if (!resolved.can_register || !resolved.matched_loan) {
-                setError(resolved.reason || "This employee does not have an eligible LoanHub loan, so no CDAS deduction can be created.");
+            if (!resolved.matched_loan) {
+                setError(resolved.reason || "No approved or active LoanHub loan is linked to this employee number.");
+                return;
+            }
+
+            // Keep the discovered loan visible even when verification or CDAS
+            // enablement blocks a new registration. Lookup and permission differ.
+            setSelectedLoanId(resolved.matched_loan.loan_id);
+            if (!resolved.can_register) {
+                setError(resolved.reason || "The loan was found but CDAS registration prerequisites are incomplete.");
                 return;
             }
 
@@ -609,11 +617,11 @@ export default function CdasOperationsPage() {
                                             <dd className="break-all font-bold">{matchedLoan?.loan_reference || "No eligible loan"}</dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
-                                            <dt className="text-muted-foreground">Principal</dt>
+                                            <dt className="text-muted-foreground">Amount owing</dt>
                                             <dd className="font-bold">
-                                                {lifecycle.principal_amount > 0
-                                                    ? `M ${lifecycle.principal_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                                    : "No matched loan"}
+                                                {matchedLoan
+                                                    ? `M ${Number(matchedLoan.amount_owing).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                    : "No linked loan"}
                                             </dd>
                                         </div>
                                         <div className="grid grid-cols-[120px_1fr] gap-3">
@@ -627,7 +635,9 @@ export default function CdasOperationsPage() {
                                             <p className="mt-1 font-black">
                                                 {registrationDraft?.ready && matchedLoan
                                                     ? "Ready for deduction capture"
-                                                    : "Blocked until an eligible LoanHub loan is found"}
+                                                    : matchedLoan
+                                                        ? (employeeContext?.reason || "Loan found; registration prerequisites must be completed.")
+                                                        : "No LoanHub loan linked to this employee"}
                                             </p>
                                         </div>
                                     </dl>

@@ -266,3 +266,14 @@ def test_cdas_registration_enforces_live_affordability_and_server_calculated_per
     assert "rounding=ROUND_CEILING" in router
     assert 'provider_request["TotalInstallment"] = deduction_period' in router
     assert "expected_installments=deduction_period" in router
+
+
+
+def test_blocked_registration_keeps_discovered_loan_and_amount_owing_visible() -> None:
+    page = _read(FRONTEND_ROOT / "app/(dashboard)/company/cdas/operations/page.tsx")
+    assert "setSelectedLoanId(resolved.matched_loan.loan_id)" in page
+    assert "if (!resolved.can_register)" in page
+    assert "employeeContext?.reason ||" in page
+    assert "Number(matchedLoan.amount_owing).toLocaleString" in page
+    assert 'No linked loan' in page
+    assert "registrationDraft?.ready && matchedLoan" in page
