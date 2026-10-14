@@ -529,7 +529,7 @@ export function CompanyClientProfileEditorCards({
                 <div className="min-w-0 flex-1">
                   <EditableRow label="Account" value={revealedAccount ?? client.masked_bank_account} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
                 </div>
-                {permissions.can_edit_banking && client.has_bank_account ? (
+                {permissions.can_edit_banking && Boolean(client.masked_bank_account) ? (
                   <Button type="button" variant="outline" size="icon" disabled={revealingAccount}
                     onClick={() => void toggleBankAccountReveal()}
                     aria-label={revealedAccount ? "Hide bank account number" : "Reveal bank account number"}
