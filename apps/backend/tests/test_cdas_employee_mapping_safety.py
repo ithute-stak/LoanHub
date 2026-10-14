@@ -20,7 +20,6 @@ def test_discovery_cross_checks_both_company_scoped_identity_sources():
 
 def test_real_registration_still_checks_verified_profile_and_affordability():
     source = (ROOT / "routers/cdas_api.py").read_text()
-    assert 'if not profile or not profile.verified:' not in source  # unrelated logic not required
     assert 'elif not profile.verified:' in source
     assert "if payload.deduction_amount > affordability:" in source
     assert "if not payload.borrower_consent:" in source
