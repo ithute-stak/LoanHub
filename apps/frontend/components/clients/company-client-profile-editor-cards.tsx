@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   BadgeCheck,
   BriefcaseBusiness,
   Check,
   CircleX,
+  Eye,
+  EyeOff,
   IdCard,
   Landmark,
   MapPin,
@@ -18,6 +20,7 @@ import {
 import {
   decideCompanyClientNationalIdChangeAsOwner,
   getCompanyClientProfile,
+  revealCompanyClientBankAccount,
   requestCompanyClientNationalIdChange,
   updateCompanyClientProfile,
 } from "@/api/companyClients";
@@ -140,6 +143,35 @@ export function CompanyClientProfileEditorCards({
   const [editing, setEditing] = useState<EditSection | null>(null);
   const [draft, setDraft] = useState<CompanyClientProfileUpdate>({});
   const [saving, setSaving] = useState(false);
+  const [revealedAccount, setRevealedAccount] = useState<string | null>(null);
+  const [revealingAccount, setRevealingAccount] = useState(false);
+  useEffect(() => {
+    setRevealedAccount(null);
+  }, [client.id, client.masked_bank_account]);
+  useEffect(() => {
+    if (!revealedAccount) return;
+    const timer = window.setTimeout(() => setRevealedAccount(null), 15000);
+    return () => window.clearTimeout(timer);
+  }, [revealedAccount]);
+
+  async function toggleBankAccountReveal() {
+    if (revealedAccount) {
+      setRevealedAccount(null);
+      return;
+    }
+    if (!permissions.can_edit_banking || revealingAccount) return;
+    setRevealingAccount(true);
+    const accountId = client.id;
+    try {
+      const number = await revealCompanyClientBankAccount(accountId);
+      if (client.id === accountId) setRevealedAccount(number);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Unable to reveal the bank account number."));
+    } finally {
+      setRevealingAccount(false);
+    }
+  }
+
   const [showNationalIdRequest, setShowNationalIdRequest] = useState(false);
   const [proposedNationalId, setProposedNationalId] = useState("");
   const [nationalIdReason, setNationalIdReason] = useState("");
@@ -493,7 +525,19 @@ export function CompanyClientProfileEditorCards({
               <EditableRow label="Account holder" value={client.bank_account_holder} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
               <EditableRow label="Bank" value={client.bank_name} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
               <EditableRow label="Branch" value={[client.bank_branch_name, client.bank_branch_code].filter(Boolean).join(" · ")} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
-              <EditableRow label="Account" value={client.masked_bank_account} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <EditableRow label="Account" value={revealedAccount ?? client.masked_bank_account} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
+                </div>
+                {permissions.can_edit_banking && client.has_bank_account ? (
+                  <Button type="button" variant="outline" size="icon" disabled={revealingAccount}
+                    onClick={() => void toggleBankAccountReveal()}
+                    aria-label={revealedAccount ? "Hide bank account number" : "Reveal bank account number"}
+                    title={revealedAccount ? "Hide account number" : "Reveal account number for 15 seconds"}>
+                    {revealedAccount ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                ) : null}
+              </div>
               <EditableRow label="Account type" value={client.bank_account_type ? titleCase(client.bank_account_type) : null} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
               <EditableRow label="Salary account" value={client.salary_account ? "Yes" : "No"} editable={permissions.can_edit_banking} onEdit={() => startEditing("banking")} />
               <EditableRow label="Bank verification" value={client.bank_verification_status ? titleCase(client.bank_verification_status) : null} />
