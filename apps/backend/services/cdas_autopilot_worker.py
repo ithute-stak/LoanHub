@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 import hashlib
 from uuid import UUID
@@ -31,6 +32,11 @@ from services.platform_cdas_service import (
 
 ACTIVE_MANDATE_STATUSES = {"active", "approved", "changed", "registered"}
 ACTIVE_PROVIDER_STATUSES = {4, 5, 10}
+
+
+def _payroll_today() -> date:
+    """Evaluate payroll cutoff in Lesotho local time, not server UTC."""
+    return datetime.now(ZoneInfo("Africa/Maseru")).date()
 
 
 def _now_naive() -> datetime:
@@ -249,7 +255,7 @@ async def _tracked_modify(
         deduction_amount=_money(deduction_amount),
         principal_amount=max(_money(principal_amount), Decimal("0.01")),
         deduction_id=int(state.deduction_id),
-        effective_date=date.today().isoformat(),
+        effective_date=_payroll_today().isoformat(),
     )
     provider_request = payload.provider_payload()
     ledger_request = payload.ledger_payload()
@@ -344,7 +350,7 @@ async def _tracked_settle(
     payload = CdasSettlementPayload(
         item_code=state.item_code,
         deduction_id=int(state.deduction_id),
-        effective_date=date.today().isoformat(),
+        effective_date=_payroll_today().isoformat(),
         employee_no=mandate.employee_number,
         settlement_reason=2,
     )
@@ -454,7 +460,7 @@ async def process_pending_payment_reoptimizations(db: Session, *, limit: int = 1
             decision = decide_cdas_autopilot(
                 outstanding_balance=_money(loan.balance),
                 current_deduction=_money(mandate.monthly_deduction),
-                evaluation_date=date.today(),
+                evaluation_date=_payroll_today(),
                 dynamic_top_up_consent=bool(plan.get("dynamic_top_up_consent")),
                 payment_triggered=True,
             )
@@ -506,7 +512,7 @@ async def process_pending_payment_reoptimizations(db: Session, *, limit: int = 1
 
 
 async def scan_affordability_opportunities(db: Session, *, limit: int = 250) -> dict[str, int]:
-    today = date.today()
+    today = _payroll_today()
     if not affordability_window_open(today):
         return {"checked": 0, "provider_reads": 0, "reused_reads": 0, "opportunities": 0, "topups": 0, "skipped": 0}
 
