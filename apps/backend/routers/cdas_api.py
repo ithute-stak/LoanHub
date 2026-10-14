@@ -1106,10 +1106,17 @@ async def register_cdas_deduction_for_loan(
     # is a partial collection, NOT a promise to clear the loan in this period.
     # Outstanding debt remains in LoanHub and requires separate, approved renewal
     # or modification if the provider period expires.
-    deduction_period = _auto_deduction_period(
-        principal_amount=principal_amount,
-        deduction_amount=payload.deduction_amount,
-    ) if payload.deduction_amount * 600 >= principal_amount else 600
+    # Schedule at most the amount owing; never over-collect on rounding.
+    # The provider maximum is 600 months per request, not an authorization
+    # to renew automatically after that term.
+    deduction_period = min(
+        600, int((principal_amount / payload.deduction_amount).to_integral_value(rounding=ROUND_FLOOR))
+    )
+    if deduction_period < 1:
+        raise HTTPException(
+            status_code=409,
+            detail="The deduction amount cannot exceed the amount owing",
+        )
     partial_collection = payload.deduction_amount * deduction_period < principal_amount
 
     provider_request = dict(provider_request)
