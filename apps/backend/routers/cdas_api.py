@@ -111,6 +111,7 @@ class CdasLoanRegistrationConfirmRequest(BaseModel):
     deduction_period: int | None = Field(default=None, gt=0, le=600)
     confirmed: bool = False
     borrower_consent: bool = False
+    dynamic_top_up_consent: bool = False
 
 
 class CdasDirectEmployeeRegistrationRequest(BaseModel):
@@ -1163,8 +1164,9 @@ async def register_cdas_deduction_for_loan(
         mandate.total_expected = principal_amount
         mandate.borrower_consent = True
 
+    plan = dict(loan.cdas_collection_plan or {})
+    plan["dynamic_top_up_consent"] = bool(payload.dynamic_top_up_consent)
     if partial_collection:
-        plan = dict(loan.cdas_collection_plan or {})
         plan["partial_initial_cdas_schedule"] = {
             "amount_owing_at_registration": str(principal_amount),
             "monthly_deduction": str(payload.deduction_amount),
@@ -1172,8 +1174,8 @@ async def register_cdas_deduction_for_loan(
             "scheduled_collection": str(payload.deduction_amount * deduction_period),
             "requires_future_review": True,
         }
-        loan.cdas_collection_plan = plan
-        db.add(loan)
+    loan.cdas_collection_plan = plan
+    db.add(loan)
 
     environment = _company_cdas_environment(db, context.company_id)
     state = (
@@ -2028,11 +2030,11 @@ def _employee_cdas_registration_decision(
         return False, "No CDAS affordability is available for payroll deduction"
     if balance <= 0:
         return False, "No outstanding loan balance remains to deduct"
-    if _affordable_exact_cdas_schedule(amount_owing=balance, affordability=available) is None:
-        return False, (
-            f"Loan found, but amount owing M {balance:.2f} has no exact equal-payment "
-            f"schedule within CDAS affordability M {available:.2f} and 600 months"
-        )
+    affordable = min(available.quantize(Decimal("0.01"), rounding=ROUND_FLOOR), balance)
+    if affordable <= 0:
+        return False, "The CDAS affordability is too small for a cent-value deduction"
+    # A valid *partial* initial term can be modified later only under a
+    # separately consented variable-deduction mandate and provider acceptance.
     return True, None
 
 
