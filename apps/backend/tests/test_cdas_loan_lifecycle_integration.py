@@ -178,7 +178,7 @@ def test_cdas_registration_requires_only_monthly_amount_from_operator() -> None:
 
     assert "<Label>Deduction Amount *</Label>" in page
     assert "<Label>No. of Months</Label>" in page
-    assert "Calculated from loan amount" in page
+    assert "Calculated from amount owing" in page
     assert "readOnly" in page
     assert "Approve & Register Deduction" in page
     assert "deduction_amount: lifecycle.deduction_amount" in page
