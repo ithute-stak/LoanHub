@@ -15,6 +15,7 @@ import { LoadingButton } from "@/components/ui/loading-button";
 import { PageLoader } from "@/components/ui/page-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ContractSignatureCapture } from "@/components/contracts/contract-signature-capture";
 import { api } from "@/lib/api";
 import { formatDate, titleCase } from "@/lib/format";
 import type { LoanContract } from "@/types/origination";
@@ -304,6 +305,10 @@ export default function ContractsPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Signing control</AlertTitle><AlertDescription>Email + OTP codes are single-use, expire after 10 minutes, and are never stored in plaintext. A verified code records the borrower signature evidence and refreshes the contract PDF.</AlertDescription></Alert>
+
+            {!selected.borrower_signed_at ? (
+              <ContractSignatureCapture key={selected.id} contractId={selected.id} />
+            ) : null}
 
             <div className="grid gap-3 sm:grid-cols-3">
               <StatusValue label="Borrower" value={selected.borrower_signed_at ? `Signed ${formatDate(selected.borrower_signed_at)}` : "Pending"} />
