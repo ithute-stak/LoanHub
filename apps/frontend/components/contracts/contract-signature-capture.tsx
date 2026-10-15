@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
 
 type Point = { x: number; y: number; at: number; pressure: number };
@@ -63,7 +63,7 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
     paint();
   }, [contractId, paint]);
 
-  const point = (event: React.PointerEvent<HTMLCanvasElement>): Point => {
+  const point = (event: PointerEvent<HTMLCanvasElement>): Point => {
     const rect = event.currentTarget.getBoundingClientRect();
     return {
       x: Math.min(WIDTH, Math.max(0, (event.clientX - rect.left) * WIDTH / rect.width)),
@@ -73,7 +73,7 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
     };
   };
 
-  const start = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const start = (event: PointerEvent<HTMLCanvasElement>) => {
     if (disabled || preview || event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -82,7 +82,7 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
     paint();
   };
 
-  const move = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const move = (event: PointerEvent<HTMLCanvasElement>) => {
     if (!drawing.current || !active.current || disabled) return;
     event.preventDefault();
     const total = strokes.current.reduce((count, stroke) => count + stroke.length, 0);
