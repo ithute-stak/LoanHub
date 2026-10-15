@@ -1,14 +1,14 @@
 """Persist contract-bound pad signing sessions and encrypted evidence references.
 
 Revision ID: w1p2a3d4s516
-Revises: z9n3p5q7r800
+Revises: h5j9l1n3p572
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "w1p2a3d4s516"
-down_revision = "z9n3p5q7r800"
+down_revision = "h5j9l1n3p572"
 branch_labels = None
 depends_on = None
 
