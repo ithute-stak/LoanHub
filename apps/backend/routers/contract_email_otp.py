@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +17,7 @@ from core.access_control import (
 )
 from database.models.enums import UserRole
 from database.models.origination import LoanContract
+from database.models.pad_signing import ContractPadSigningSession
 from database.session import get_db
 from services.contract_email_otp_service import (
     request_signing_code,
@@ -149,4 +151,73 @@ def pad_capture_preflight(
         "requires_identity_verification": True,
         "requires_explicit_signer_consent": True,
         "capture_is_signature": False,
+    }
+
+
+@router.post("/contracts/{contract_id}/pad/sessions", status_code=201)
+def create_pad_signing_session(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Create a short-lived candidate capture session; does NOT authorize signing."""
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id, lock=True)
+    if (contract.borrower_signed_at is not None or contract.locked_at is not None
+            or contract.status == "signed" or contract.pdf_file_id is None
+            or not contract.contract_hash):
+        raise HTTPException(status_code=409, detail="Contract cannot start pad capture")
+    now = datetime.now(timezone.utc)
+    # Persist UTC as naive datetimes for parity with existing LoanHub DateTime columns.
+    created = now.replace(tzinfo=None)
+    row = ContractPadSigningSession(
+        id=uuid4(),
+        company_id=context.company_id,
+        contract_id=contract.id,
+        operator_user_id=context.user.id,
+        contract_hash=contract.contract_hash,
+        status="created",
+        expires_at=created + timedelta(minutes=10),
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "session_id": str(row.id),
+        "contract_id": str(contract.id),
+        "contract_hash": contract.contract_hash,
+        "status": "created",
+        "expires_at": row.expires_at.isoformat() + "Z",
+        "capture_enabled": False,
+        "reason": "Identity verification, consent and evidence submission not yet implemented",
+    }
+
+
+@router.get("/contracts/{contract_id}/pad/sessions/{session_id}")
+def pad_signing_session_status(
+    contract_id: UUID,
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    row = (
+        db.query(ContractPadSigningSession)
+        .filter(
+            ContractPadSigningSession.id == session_id,
+            ContractPadSigningSession.company_id == context.company_id,
+            ContractPadSigningSession.contract_id == contract.id,
+            ContractPadSigningSession.operator_user_id == context.user.id,
+        )
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Signing session not found")
+    expired = datetime.now(timezone.utc).replace(tzinfo=None) >= row.expires_at
+    return {
+        "session_id": str(row.id),
+        "contract_id": str(row.contract_id),
+        "status": "expired" if expired and row.status == "created" else row.status,
+        "expires_at": row.expires_at.isoformat() + "Z",
+        "capture_enabled": False,
     }
