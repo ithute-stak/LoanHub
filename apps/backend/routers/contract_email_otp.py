@@ -168,8 +168,6 @@ def create_pad_signing_session(
             or not contract.contract_hash):
         raise HTTPException(status_code=409, detail="Contract cannot start pad capture")
     now = datetime.now(timezone.utc)
-    # Persist UTC as naive datetimes for parity with existing LoanHub DateTime columns.
-    created = now.replace(tzinfo=None)
     row = ContractPadSigningSession(
         id=uuid4(),
         company_id=context.company_id,
@@ -177,7 +175,7 @@ def create_pad_signing_session(
         operator_user_id=context.user.id,
         contract_hash=contract.contract_hash,
         status="created",
-        expires_at=created + timedelta(minutes=10),
+        expires_at=now + timedelta(minutes=10),
     )
     db.add(row)
     db.commit()
@@ -186,7 +184,7 @@ def create_pad_signing_session(
         "contract_id": str(contract.id),
         "contract_hash": contract.contract_hash,
         "status": "created",
-        "expires_at": row.expires_at.isoformat() + "Z",
+        "expires_at": row.expires_at.isoformat(),
         "capture_enabled": False,
         "reason": "Identity verification, consent and evidence submission not yet implemented",
     }
@@ -213,7 +211,7 @@ def pad_signing_session_status(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Signing session not found")
-    expired = datetime.now(timezone.utc).replace(tzinfo=None) >= row.expires_at
+    expired = datetime.now(timezone.utc) >= row.expires_at
     return {
         "session_id": str(row.id),
         "contract_id": str(row.contract_id),
