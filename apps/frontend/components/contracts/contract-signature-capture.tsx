@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { checkWacomConnector, type WacomConnectionStatus } from "@/lib/wacom-connector";
 
 type Point = { x: number; y: number; at: number; pressure: number };
 type Stroke = Point[];
@@ -32,6 +33,8 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
   const active = useRef<Stroke | null>(null);
   const [pointCount, setPointCount] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
+  const [device, setDevice] = useState<WacomConnectionStatus | null>(null);
+  const [checkingDevice, setCheckingDevice] = useState(false);
 
   const paint = useCallback(() => {
     const ctx = canvas.current?.getContext("2d");
@@ -101,6 +104,12 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
     paint();
   };
 
+  async function detectDevice() {
+    setCheckingDevice(true);
+    try { setDevice(await checkWacomConnector()); }
+    finally { setCheckingDevice(false); }
+  }
+
   const clear = () => {
     strokes.current = [];
     active.current = null;
@@ -130,6 +139,12 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
           Test handwriting with a mouse or touchscreen. Direct Wacom STU USB capture requires
           the vendor SDK connector. This preview is not legally submitted and does not sign the contract.
         </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" onClick={() => void detectDevice()} disabled={checkingDevice || disabled}>
+          {checkingDevice ? "Checking Wacom..." : "Detect Wacom pad"}
+        </Button>
+        {device ? <p role="status" className="text-xs text-muted-foreground">{device.state === "available" ? `Connector reports: ${device.model}. Hardware signing is not enabled.` : device.reason}</p> : null}
       </div>
       <canvas
         ref={canvas}
