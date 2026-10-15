@@ -115,3 +115,38 @@ def verify_email_otp(
         otp=payload.otp,
         verified_by_user_id=context.user.id,
     )
+
+
+@router.get("/contracts/{contract_id}/pad/preflight")
+def pad_capture_preflight(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Read-only preparation. This endpoint never signs a contract.
+
+    A later evidence-upload route MUST recheck all conditions under a row lock,
+    bind the exact contract hash, and verify explicit signer consent.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    reasons: list[str] = []
+    if contract.borrower_signed_at is not None:
+        reasons.append("borrower_already_signed")
+    if contract.locked_at is not None or contract.status == "signed":
+        reasons.append("contract_locked")
+    if contract.pdf_file_id is None:
+        reasons.append("contract_pdf_missing")
+    if not contract.contract_hash:
+        reasons.append("contract_hash_missing")
+    return {
+        "contract_id": str(contract.id),
+        "contract_number": contract.contract_number,
+        "contract_version": contract.version,
+        "contract_hash": contract.contract_hash,
+        "ready": not reasons,
+        "blockers": reasons,
+        "requires_identity_verification": True,
+        "requires_explicit_signer_consent": True,
+        "capture_is_signature": False,
+    }
