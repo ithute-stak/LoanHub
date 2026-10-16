@@ -13,6 +13,7 @@ import { formatMoney } from "@/lib/format";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
 
+type InstallmentPreview = { new_principal: string; monthly_installment: string; total_repayable: string; interest_rate_percent: string; interest_method: string; processing_fee: string; schedule_amounts: string[] };
 type SettlementPreview = { settlement_amount: string; scheduled_balance: string; unearned_interest_rebate: string; calculation_method: string; settlement_date: string };
 
 type Props = {
@@ -22,7 +23,10 @@ type Props = {
 };
 
 function inheritedDates(loan: Loan): string[] {
-  const term = Math.max(1, Math.min(120, Math.trunc(loan.repayment_period || 1)));
+  const remaining = (loan.installments ?? []).filter((row) =>
+    !row.is_superseded && row.status !== "paid" && Number(row.paid_amount) < Number(row.total_due)
+  ).length;
+  const term = Math.max(1, Math.min(120, remaining || Math.trunc(loan.repayment_period || 1)));
   const day = loan.first_payment_due ? Number(loan.first_payment_due.slice(8, 10)) : 20;
   const now = new Date();
   const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
@@ -42,6 +46,8 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   const [cash, setCash] = useState("");
   const [eligibility, setEligibility] = useState<TopUpEligibility | null>(null);
   const [settlement, setSettlement] = useState<SettlementPreview | null>(null);
+  const [installmentPreview, setInstallmentPreview] = useState<InstallmentPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -49,6 +55,8 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
     setCash("");
     setEligibility(null);
     setSettlement(null);
+    setInstallmentPreview(null);
+    setPreviewError(null);
     if (!loan) return;
     let active = true;
     setLoading(true);
@@ -64,11 +72,34 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
     return () => { active = false; };
   }, [loan]);
 
+  useEffect(() => {
+    if (!loan || !settlement || !cash.trim() || !Number.isFinite(Number(cash)) || Number(cash) <= 0) {
+      setInstallmentPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      api.post<InstallmentPreview>(`/origination/loans/${loan.id}/top-up-calculation-preview`, {
+        cash_top_up: Number(cash),
+        due_dates: inheritedDates(loan),
+      }).then(({ data }) => {
+        if (active) { setInstallmentPreview(data); setPreviewError(null); }
+      }).catch((error: unknown) => {
+        if (active) {
+          setInstallmentPreview(null);
+          setPreviewError(getErrorMessage(error, "Could not calculate the replacement loan."));
+        }
+      });
+    }, 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [loan, settlement, cash]);
+
   if (!loan) return null;
   const amount = Number(cash);
   const validAmount = cash.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.abs(Math.round(amount * 100) - amount * 100) < 1e-7;
   const balance = settlement ? Number(settlement.settlement_amount) : 0;
-  const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && settlement !== null && !loading && !saving);
+  const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && settlement !== null && installmentPreview !== null && !loading && !saving);
   const dueDates = inheritedDates(loan);
 
   async function create() {
@@ -115,6 +146,14 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
         </div>
         {settlement ? <p className="text-xs text-muted-foreground">Scheduled balance: {formatMoney(Number(settlement.scheduled_balance))} · Unearned interest rebate: {formatMoney(Number(settlement.unearned_interest_rebate))} · Method: {settlement.calculation_method} · Quote date: {settlement.settlement_date}</p> : null}
         <p className="text-sm">Proposed replacement principal: <strong>{formatMoney(balance + (validAmount ? amount : 0))}</strong></p>
+        {installmentPreview ? (
+          <div className="rounded-xl border bg-muted/20 p-3 text-sm">
+            <p><strong>New repayment:</strong> {formatMoney(Number(installmentPreview.monthly_installment))} first installment</p>
+            <p><strong>Total repayable:</strong> {formatMoney(Number(installmentPreview.total_repayable))}</p>
+            <p className="text-xs text-muted-foreground">Product method: {installmentPreview.interest_method} · Rate: {installmentPreview.interest_rate_percent}% · Fee: {formatMoney(Number(installmentPreview.processing_fee))}</p>
+            <p className="text-xs text-muted-foreground">Schedule: {installmentPreview.schedule_amounts.map((value) => formatMoney(Number(value))).join(" · ")}</p>
+          </div>
+        ) : previewError ? <p role="alert" className="text-sm text-destructive">{previewError}</p> : null}
         {loading ? <p className="text-sm text-muted-foreground">Checking eligibility...</p> : eligibility && !eligibility.eligible ? (
           <p role="alert" className="text-sm text-destructive">Top-up unavailable: {eligibility.reason}. Owner exceptions require the existing review process.</p>
         ) : null}
