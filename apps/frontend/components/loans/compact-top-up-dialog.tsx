@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { originationApi } from "@/api/origination";
+import { api } from "@/lib/api";
 import type { Loan } from "@/types/loan";
 import type { TopUpEligibility } from "@/types/origination";
 import { CustomDialog } from "@/components/ui/custom-dialog";
@@ -11,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/lib/format";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
+
+type SettlementPreview = { settlement_amount: string; scheduled_balance: string; unearned_interest_rebate: string; calculation_method: string; settlement_date: string };
 
 type Props = {
   loan: Loan | null;
@@ -38,17 +41,22 @@ function inheritedDates(loan: Loan): string[] {
 export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   const [cash, setCash] = useState("");
   const [eligibility, setEligibility] = useState<TopUpEligibility | null>(null);
+  const [settlement, setSettlement] = useState<SettlementPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setCash("");
     setEligibility(null);
+    setSettlement(null);
     if (!loan) return;
     let active = true;
     setLoading(true);
-    originationApi.topUpEligibility(loan.borrower_id, loan.id)
-      .then((data) => { if (active) setEligibility(data); })
+    Promise.all([
+      originationApi.topUpEligibility(loan.borrower_id, loan.id),
+      api.get<SettlementPreview>(`/origination/loans/${loan.id}/top-up-settlement-preview`),
+    ])
+      .then(([data, quote]) => { if (active) { setEligibility(data); setSettlement(quote.data); } })
       .catch((error: unknown) => {
         if (active) toast.error(getErrorMessage(error, "Could not check top-up eligibility"));
       })
@@ -59,8 +67,8 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   if (!loan) return null;
   const amount = Number(cash);
   const validAmount = cash.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.abs(Math.round(amount * 100) - amount * 100) < 1e-7;
-  const balance = eligibility?.loan?.balance ?? loan.balance;
-  const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && !loading && !saving);
+  const balance = settlement ? Number(settlement.settlement_amount) : 0;
+  const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && settlement !== null && !loading && !saving);
   const dueDates = inheritedDates(loan);
 
   async function create() {
@@ -97,7 +105,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
           <p className="text-sm text-muted-foreground">Loan {loan.loan_reference} — customer and repayment settings inherited.</p>
         </div>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="rounded-xl border p-3"><p className="text-muted-foreground">Current balance</p><strong>{formatMoney(balance)}</strong></div>
+          <div className="rounded-xl border p-3"><p className="text-muted-foreground">Settlement amount</p><strong>{settlement ? formatMoney(balance) : "Calculating..."}</strong></div>
           <div className="rounded-xl border p-3"><p className="text-muted-foreground">Inherited period</p><strong>{dueDates.length} months</strong></div>
         </div>
         <div className="space-y-2">
@@ -105,6 +113,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
           <Input id="compact-top-up-cash" type="number" min="0.01" step="0.01"
             value={cash} onChange={(event) => setCash(event.target.value)} placeholder="Enter top-up amount" />
         </div>
+        {settlement ? <p className="text-xs text-muted-foreground">Scheduled balance: {formatMoney(Number(settlement.scheduled_balance))} · Unearned interest rebate: {formatMoney(Number(settlement.unearned_interest_rebate))} · Method: {settlement.calculation_method} · Quote date: {settlement.settlement_date}</p> : null}
         <p className="text-sm">Proposed replacement principal: <strong>{formatMoney(balance + (validAmount ? amount : 0))}</strong></p>
         {loading ? <p className="text-sm text-muted-foreground">Checking eligibility...</p> : eligibility && !eligibility.eligible ? (
           <p role="alert" className="text-sm text-destructive">Top-up unavailable: {eligibility.reason}. Owner exceptions require the existing review process.</p>
