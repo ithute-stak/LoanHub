@@ -382,6 +382,19 @@ def create_application(
     return _application_payload(db, application)
 
 
+@router.post("/applications/compact-top-up", status_code=status.HTTP_201_CREATED)
+def create_compact_top_up(
+    payload: OriginationApplicationCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Owner/branch-manager-only compact top-up; standard credit approvals stay mandatory."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    if payload.application_type != "top_up" or payload.parent_loan_id is None:
+        raise HTTPException(status_code=422, detail="An existing loan is required")
+    return create_application(payload=payload, db=db, context=context)
+
+
 @router.patch("/applications/{application_id}")
 def update_application(
     application_id: UUID,

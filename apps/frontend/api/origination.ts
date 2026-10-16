@@ -69,6 +69,9 @@ export const originationApi = {
   createApplication: async (payload: OriginationApplicationCreate): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>("/origination/applications", payload)).data,
 
+  createCompactTopUp: async (payload: OriginationApplicationCreate): Promise<OriginationApplication> =>
+    (await api.post<OriginationApplication>("/origination/applications/compact-top-up", payload)).data,
+
   updateApplication: async (id: string, payload: Partial<Omit<OriginationApplicationCreate, "borrower_id">> & { application_step?: number }): Promise<OriginationApplication> =>
     (await api.patch<OriginationApplication>(`/origination/applications/${id}`, payload)).data,
 

@@ -54,6 +54,7 @@ import {
     installmentDueDatesComplete,
 } from "@/components/loans/installment-due-date-fields";
 import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";
+import {CompactTopUpDialog} from "@/components/loans/compact-top-up-dialog";
 import {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";
 import {LoanPortfolioWorkspace} from "@/components/loans/loan-portfolio-workspace";
 import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
@@ -155,6 +156,7 @@ export default function CompanyLoansPage() {
     const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
     const [scheduleOpen, setScheduleOpen] = useState(false);
     const [settlementLoan, setSettlementLoan] = useState<Loan | null>(null);
+    const [topUpLoan, setTopUpLoan] = useState<Loan | null>(null);
     const [editingInstallment, setEditingInstallment] = useState<RepaymentInstallment | null>(null);
     const [extendedDueDate, setExtendedDueDate] = useState("");
     const [extensionNote, setExtensionNote] = useState("");
@@ -1381,19 +1383,24 @@ export default function CompanyLoansPage() {
                                 Settle early
                             </Button>
                         ) : null}
-                        {selectedLoan && ["active", "defaulted"].includes(selectedLoan.status) ? (
-                            <Button asChild>
-                                <Link
-                                    href={`/company/origination/new?borrower=${selectedLoan.borrower_id}&type=top_up&loan=${selectedLoan.id}`}
-                                    onClick={() => setScheduleOpen(false)}>
-                                    <Sparkles className="h-4 w-4"/>
-                                    Apply for loan top-up
-                                </Link>
+                        {selectedLoan && (activeRole === "company_owner" || activeRole === "branch_manager") && ["active", "defaulted"].includes(selectedLoan.status) ? (
+                            <Button onClick={() => { setScheduleOpen(false); setTopUpLoan(selectedLoan); }}>
+                                <Sparkles className="h-4 w-4"/>
+                                Apply for loan top-up
                             </Button>
                         ) : null}
                     </DialogFooter>
                 </div>
             </CustomDialog>
+
+            <CompactTopUpDialog
+                loan={topUpLoan}
+                onClose={() => setTopUpLoan(null)}
+                onCreated={(applicationId) => {
+                    setTopUpLoan(null);
+                    router.push(`/company/origination/new?application=${applicationId}`);
+                }}
+            />
 
             <EarlySettlementDialog
                 open={Boolean(settlementLoan)}
