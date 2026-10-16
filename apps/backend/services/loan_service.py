@@ -36,6 +36,7 @@ from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from services.accounting_service import record_payment_accounting
 from services.interest_calculation_service import calculate_loan_terms
+from services.top_up_settlement import preview_top_up_settlement
 from utils.payment_dates import payment_date_to_utc
 
 
@@ -745,12 +746,17 @@ def disburse_cash_loan(
                 raise HTTPException(status_code=409, detail="The original loan for this top-up was not found")
             if parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
                 raise HTTPException(status_code=409, detail="The original loan is no longer eligible for top-up settlement")
-            settlement_amount = money(parent.balance)
+            # Recalculate from the actual payment ledger and original interest
+            # method. Refuse disbursement if the dated settlement quote changed.
+            settlement_quote = preview_top_up_settlement(
+                db, loan=parent, actor_user_id=initiated_by_user_id,
+            )
+            settlement_amount = money(settlement_quote.settlement_amount)
             configured_settlement = money(loan.top_up_settlement_amount)
             if abs(settlement_amount - configured_settlement) > MONEY:
                 raise HTTPException(
                     status_code=409,
-                    detail="The original loan balance changed after top-up approval; reassess the top-up before disbursement",
+                    detail="The original loan settlement quote changed after top-up approval; reassess the top-up before disbursement",
                 )
             settlement = LoanTopUpSettlement(
                 company_id=loan.company_id,
@@ -765,7 +771,9 @@ def disburse_cash_loan(
                 status="settled",
                 settled_at=now,
                 settled_by_user_id=initiated_by_user_id,
-                notes=f"Original loan {parent.loan_reference} settled from top-up {loan.loan_reference}",
+                notes=(f"Original loan {parent.loan_reference} settled from top-up {loan.loan_reference}; "
+                       f"method={settlement_quote.calculation_method}; "
+                       f"unearned_interest_rebate={settlement_quote.unearned_interest_rebate}"),
             )
             db.add(settlement)
             parent.amount_paid = money(parent.total_repayable)
