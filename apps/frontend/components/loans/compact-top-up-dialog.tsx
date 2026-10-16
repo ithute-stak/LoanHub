@@ -78,6 +78,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
       setPreviewError(null);
       return;
     }
+    setInstallmentPreview(null);
     let active = true;
     const timer = setTimeout(() => {
       api.post<InstallmentPreview>(`/origination/loans/${loan.id}/top-up-calculation-preview`, {
