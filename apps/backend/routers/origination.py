@@ -336,7 +336,22 @@ def create_application(
             policy=policy,
         )
 
-    product = _product(db, company_id=context.company_id, product_id=payload.product_id)
+    # Inherit the parent loan's active product for the compact top-up when
+    # the client has not selected another product. The assessment still
+    # recalculates affordability and the final installment schedule.
+    inherited_product_id = payload.product_id
+    if payload.application_type == "top_up" and inherited_product_id is None:
+        source = (
+            db.query(DirectLoanApplication)
+            .filter(
+                DirectLoanApplication.id == parent.direct_application_id,
+                DirectLoanApplication.company_id == context.company_id,
+            )
+            .first()
+            if parent.direct_application_id else None
+        )
+        inherited_product_id = source.product_id if source else None
+    product = _product(db, company_id=context.company_id, product_id=inherited_product_id)
     if product:
         if not (Decimal(product.min_amount) <= requested_amount <= Decimal(product.max_amount)):
             raise HTTPException(status_code=422, detail="Requested amount, including any old-loan settlement, is outside the selected product range")
@@ -348,7 +363,7 @@ def create_application(
         company_id=context.company_id,
         branch_id=payload.branch_id or client.branch_id or context.branch_id,
         borrower_id=payload.borrower_id,
-        product_id=payload.product_id,
+        product_id=inherited_product_id,
         application_reference=f"{'TOP' if payload.application_type == 'top_up' else 'ORG'}-{now:%Y%m%d}-{secrets.token_hex(4).upper()}",
         channel="credit_origination",
         application_type=payload.application_type,
