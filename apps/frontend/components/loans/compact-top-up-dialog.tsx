@@ -58,7 +58,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
 
   if (!loan) return null;
   const amount = Number(cash);
-  const validAmount = cash.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.round(amount * 100) === amount * 100;
+  const validAmount = cash.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.abs(Math.round(amount * 100) - amount * 100) < 1e-7;
   const balance = eligibility?.loan?.balance ?? loan.balance;
   const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && !loading && !saving);
   const dueDates = inheritedDates(loan);
