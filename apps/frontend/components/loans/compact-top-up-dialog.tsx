@@ -67,7 +67,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
     if (!canCreate || !loan || !eligibility) return;
     setSaving(true);
     try {
-      const created = await originationApi.createApplication({
+      const created = await originationApi.createCompactTopUp({
         borrower_id: loan.borrower_id,
         branch_id: loan.branch_id,
         application_type: "top_up",
