@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from io import BytesIO
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import secrets
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -48,6 +49,7 @@ from database.schemas.origination import (
     TopUpExceptionApproveRequest,
 )
 from database.session import get_db
+from utils.payment_dates import current_payment_date
 from integrations.cdas import CdasError
 from services.cdas_collection_policy import build_cdas_collection_plan
 from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
@@ -66,6 +68,7 @@ from services.contract_service import (
 from services.credential_service import encrypt_credential
 from services.lending_integration_service import application_integration_readiness
 from services.top_up_settlement import preview_top_up_settlement, replacement_principal
+from services.interest_calculation_service import calculate_loan_terms
 from services.origination_service import (
     assessment_effective_decision,
     borrower_identity,
@@ -434,6 +437,84 @@ def top_up_settlement_preview(
         "calculation_method": quote.calculation_method,
         "settlement_date": quote.settlement_date.isoformat(),
         "original_amount_paid": str(quote.original_amount_paid),
+    }
+
+
+class TopUpCalculationPreviewRequest(BaseModel):
+    cash_top_up: Decimal = Field(gt=0)
+    due_dates: list[date] = Field(min_length=1, max_length=120)
+
+
+@router.post("/loans/{loan_id}/top-up-calculation-preview")
+def top_up_calculation_preview(
+    loan_id: UUID,
+    payload: TopUpCalculationPreviewRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+    assert_branch_scope(context, loan.branch_id)
+    policy = get_or_create_policy(db, context.company_id, context.user.id)
+    eligibility = top_up_eligibility(
+        db, borrower_id=loan.borrower_id, company_id=context.company_id,
+        policy=policy, loan_id=loan.id,
+    )
+    if not (eligibility["eligible"] or eligibility["requires_owner_exception"]):
+        raise HTTPException(409, eligibility["reason"])
+
+    source = (
+        db.query(DirectLoanApplication)
+        .filter(
+            DirectLoanApplication.id == loan.direct_application_id,
+            DirectLoanApplication.company_id == context.company_id,
+        )
+        .first()
+        if loan.direct_application_id else None
+    )
+    product = _product(
+        db, company_id=context.company_id,
+        product_id=source.product_id if source else None,
+    )
+    quote = preview_top_up_settlement(db, loan=loan, actor_user_id=context.user.id)
+    principal = replacement_principal(quote, payload.cash_top_up)
+    term = len(payload.due_dates)
+    if product and not (
+        product.min_amount <= principal <= product.max_amount
+        and product.min_term_months <= term <= product.max_term_months
+    ):
+        raise HTTPException(422, "Replacement loan does not satisfy current product limits")
+    method = product.interest_method if product else loan.calculation_method
+    rate = product.interest_rate_percent if product else loan.interest_rate
+    fee = product.processing_fee if product else loan.processing_fee
+    try:
+        monthly, total, details = calculate_loan_terms(
+            principal=principal,
+            rate_percent=rate,
+            term_months=term,
+            processing_fee=fee,
+            interest_method=method,
+            start_date=current_payment_date(),
+            due_dates=payload.due_dates,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "settlement_amount": str(quote.settlement_amount),
+        "new_principal": str(principal),
+        "monthly_installment": str(monthly),
+        "total_repayable": str(total),
+        "interest_rate_percent": str(rate),
+        "interest_method": str(method.value if hasattr(method, "value") else method),
+        "processing_fee": str(fee),
+        "product_id": str(product.id) if product else None,
+        "schedule_amounts": details["schedule_amounts"],
+        "requires_credit_assessment": True,
     }
 
 
