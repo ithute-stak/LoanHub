@@ -187,6 +187,24 @@ def calculate_method_earned_interest(
             "segments": segments,
         }
 
+    # Micro Loan interest is earned only on scheduled installment dates.
+    # A top-up before the first due date carries principal and retained
+    # contractual fees, but no *future* cycle interest. Other interest
+    # methods retain their existing accrual conventions.
+    if resolved == LoanCalculationMethod.MICRO_LOAN:
+        earned_cycles = min(
+            sum(settlement_date >= due for due in due_dates),
+            original_term_months,
+        )
+        if earned_cycles == 0:
+            return Decimal("0.00"), 0, {
+                "basis": "micro_loan_due_date_earned_cycles",
+                "calculator": resolved.value,
+                "chargeable_periods": 0,
+                "first_due_date": due_dates[0].isoformat() if due_dates else None,
+            }
+        periods = earned_cycles
+
     shortened_dates = due_dates[:periods]
     if len(shortened_dates) < periods:
         shortened_dates = generate_monthly_due_dates(start_date, periods)
@@ -200,7 +218,7 @@ def calculate_method_earned_interest(
         due_dates=shortened_dates,
     )
     return money(details["total_interest"]), periods, {
-        "basis": "same_calculator_shortened_term",
+        "basis": ("micro_loan_due_date_earned_cycles" if resolved == LoanCalculationMethod.MICRO_LOAN else "same_calculator_shortened_term"),
         "calculator": resolved.value,
         "chargeable_periods": periods,
         "recalculation": details,
