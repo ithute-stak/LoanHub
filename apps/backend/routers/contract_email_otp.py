@@ -212,10 +212,49 @@ def pad_signing_session_status(
     if row is None:
         raise HTTPException(status_code=404, detail="Signing session not found")
     expired = datetime.now(timezone.utc) >= row.expires_at
+    contract_changed = row.contract_hash != contract.contract_hash
+    if (expired or contract_changed) and row.status not in ("completed", "cancelled", "expired"):
+        row.status = "expired" if expired else "cancelled"
+        db.commit()
+
     return {
         "session_id": str(row.id),
         "contract_id": str(row.contract_id),
-        "status": "expired" if expired and row.status == "created" else row.status,
+        "status": row.status,
         "expires_at": row.expires_at.isoformat() + "Z",
         "capture_enabled": False,
     }
+
+
+@router.post("/contracts/{contract_id}/pad/sessions/{session_id}/cancel")
+def cancel_pad_signing_session(
+    contract_id: UUID,
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Revoke the requesting operator's active pad capture session.
+
+    This does not alter the loan contract or any other signing method.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    row = (
+        db.query(ContractPadSigningSession)
+        .filter(
+            ContractPadSigningSession.id == session_id,
+            ContractPadSigningSession.company_id == context.company_id,
+            ContractPadSigningSession.contract_id == contract.id,
+            ContractPadSigningSession.operator_user_id == context.user.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Signing session not found")
+    if row.status == "completed":
+        raise HTTPException(status_code=409, detail="Completed session cannot be cancelled")
+    if row.status not in ("expired", "cancelled"):
+        row.status = "cancelled"
+        db.commit()
+    return {"session_id": str(row.id), "status": row.status, "capture_enabled": False}
