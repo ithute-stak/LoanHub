@@ -1383,7 +1383,7 @@ export default function CompanyLoansPage() {
                                 Settle early
                             </Button>
                         ) : null}
-                        {selectedLoan && ["active", "defaulted"].includes(selectedLoan.status) ? (
+                        {selectedLoan && (activeRole === "company_owner" || activeRole === "branch_manager") && ["active", "defaulted"].includes(selectedLoan.status) ? (
                             <Button onClick={() => { setScheduleOpen(false); setTopUpLoan(selectedLoan); }}>
                                 <Sparkles className="h-4 w-4"/>
                                 Apply for loan top-up
