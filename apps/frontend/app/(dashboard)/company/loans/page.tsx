@@ -1398,7 +1398,7 @@ export default function CompanyLoansPage() {
                 onClose={() => setTopUpLoan(null)}
                 onCreated={(applicationId) => {
                     setTopUpLoan(null);
-                    router.push(`/company/origination/applications/${applicationId}`);
+                    router.push(`/company/origination/new?application=${applicationId}`);
                 }}
             />
 
