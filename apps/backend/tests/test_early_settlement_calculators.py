@@ -63,10 +63,15 @@ def test_early_settlement_reuses_original_calculator_with_shortened_term(method)
         due_dates=original_dates,
     )
 
-    assert periods == 1
-    assert earned == Decimal(one_month["total_interest"])
+    if method == LoanCalculationMethod.MICRO_LOAN:
+        assert periods == 0
+        assert earned == Decimal("0.00")
+        assert audit["basis"] == "micro_loan_due_date_earned_cycles"
+    else:
+        assert periods == 1
+        assert earned == Decimal(one_month["total_interest"])
+        assert audit["basis"] == "same_calculator_shortened_term"
     assert earned < Decimal(original["total_interest"])
-    assert audit["basis"] == "same_calculator_shortened_term"
     assert audit["calculator"] == method.value
 
 
@@ -189,3 +194,30 @@ def test_legacy_settlement_cannot_predate_original_disbursement():
         )
     assert error.value.status_code == 422
     assert "interest start" in str(error.value.detail).lower()
+
+
+@pytest.mark.parametrize(
+    ("topup_date", "earned_interest", "charged_cycles"),
+    [
+        (date(2026, 10, 16), Decimal("0.00"), 0),
+        (date(2026, 10, 19), Decimal("0.00"), 0),
+        (date(2026, 10, 20), Decimal("200.00"), 1),
+        (date(2026, 11, 19), Decimal("200.00"), 1),
+        (date(2026, 11, 20), Decimal("320.00"), 2),
+    ],
+)
+def test_micro_loan_top_up_earns_interest_only_on_due_dates(
+    topup_date, earned_interest, charged_cycles
+):
+    earned, periods, details = calculate_method_earned_interest(
+        method=LoanCalculationMethod.MICRO_LOAN,
+        principal=Decimal("1000"),
+        rate_percent=Decimal("20"),
+        original_term_months=2,
+        start_date=date(2026, 10, 1),
+        due_dates=[date(2026, 10, 20), date(2026, 11, 20)],
+        settlement_date=topup_date,
+    )
+    assert earned == earned_interest
+    assert periods == charged_cycles
+    assert details["basis"] == "micro_loan_due_date_earned_cycles"
