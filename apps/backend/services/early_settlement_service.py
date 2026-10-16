@@ -362,6 +362,7 @@ def quote_early_settlement(
     settlement_date: date,
     quoted_by_user_id: UUID,
     valid_for_days: int = 3,
+    persist: bool = True,
 ) -> LoanEarlySettlement:
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only an active or defaulted loan can be settled early")
@@ -389,14 +390,15 @@ def quote_early_settlement(
         raise HTTPException(status_code=409, detail="This loan already has a settlement payment in progress")
 
     now = datetime.now(timezone.utc)
-    (
-        db.query(LoanEarlySettlement)
-        .filter(
-            LoanEarlySettlement.loan_id == loan.id,
-            LoanEarlySettlement.status == "quoted",
+    if persist:
+        (
+            db.query(LoanEarlySettlement)
+            .filter(
+                LoanEarlySettlement.loan_id == loan.id,
+                LoanEarlySettlement.status == "quoted",
+            )
+            .update({"status": "expired"}, synchronize_session=False)
         )
-        .update({"status": "expired"}, synchronize_session=False)
-    )
 
     repayments = _successful_repayments(db, loan)
     ledger_received = money(sum((money(item.amount) for item in repayments), Decimal("0")))
@@ -539,9 +541,10 @@ def quote_early_settlement(
         },
         installment_snapshot=_installment_snapshot(loan),
     )
-    db.add(quote)
-    db.commit()
-    db.refresh(quote)
+    if persist:
+        db.add(quote)
+        db.commit()
+        db.refresh(quote)
     return quote
 
 

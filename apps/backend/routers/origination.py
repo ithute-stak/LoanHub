@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from io import BytesIO
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import secrets
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -48,6 +49,7 @@ from database.schemas.origination import (
     TopUpExceptionApproveRequest,
 )
 from database.session import get_db
+from utils.payment_dates import current_payment_date
 from integrations.cdas import CdasError
 from services.cdas_collection_policy import build_cdas_collection_plan
 from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
@@ -65,6 +67,8 @@ from services.contract_service import (
 )
 from services.credential_service import encrypt_credential
 from services.lending_integration_service import application_integration_readiness
+from services.top_up_settlement import preview_top_up_settlement, replacement_principal
+from services.interest_calculation_service import calculate_loan_terms
 from services.origination_service import (
     assessment_effective_decision,
     borrower_identity,
@@ -315,7 +319,12 @@ def create_application(
                 detail=f"The borrower has another active loan that is not part of this top-up: {references}",
             )
         top_up_cash_requested = Decimal(payload.top_up_cash_requested or 0)
-        requested_amount = Decimal(eligibility["loan"]["balance"]) + top_up_cash_requested
+        parent = db.query(ClientCompanyLoan).filter(
+            ClientCompanyLoan.id == parent_loan_id,
+            ClientCompanyLoan.company_id == context.company_id,
+        ).with_for_update().one()
+        settlement_quote = preview_top_up_settlement(db, loan=parent, actor_user_id=context.user.id)
+        requested_amount = replacement_principal(settlement_quote, top_up_cash_requested)
         if not eligibility["eligible"]:
             if not eligibility["requires_owner_exception"]:
                 raise HTTPException(status_code=409, detail=eligibility["reason"])
@@ -330,7 +339,22 @@ def create_application(
             policy=policy,
         )
 
-    product = _product(db, company_id=context.company_id, product_id=payload.product_id)
+    # Inherit the parent loan's active product for the compact top-up when
+    # the client has not selected another product. The assessment still
+    # recalculates affordability and the final installment schedule.
+    inherited_product_id = payload.product_id
+    if payload.application_type == "top_up" and inherited_product_id is None:
+        source = (
+            db.query(DirectLoanApplication)
+            .filter(
+                DirectLoanApplication.id == parent.direct_application_id,
+                DirectLoanApplication.company_id == context.company_id,
+            )
+            .first()
+            if parent.direct_application_id else None
+        )
+        inherited_product_id = source.product_id if source else None
+    product = _product(db, company_id=context.company_id, product_id=inherited_product_id)
     if product:
         if not (Decimal(product.min_amount) <= requested_amount <= Decimal(product.max_amount)):
             raise HTTPException(status_code=422, detail="Requested amount, including any old-loan settlement, is outside the selected product range")
@@ -342,14 +366,14 @@ def create_application(
         company_id=context.company_id,
         branch_id=payload.branch_id or client.branch_id or context.branch_id,
         borrower_id=payload.borrower_id,
-        product_id=payload.product_id,
+        product_id=inherited_product_id,
         application_reference=f"{'TOP' if payload.application_type == 'top_up' else 'ORG'}-{now:%Y%m%d}-{secrets.token_hex(4).upper()}",
         channel="credit_origination",
         application_type=payload.application_type,
         parent_loan_id=payload.parent_loan_id,
         requested_amount=requested_amount,
         top_up_cash_requested=top_up_cash_requested,
-        top_up_settlement_amount=(Decimal(eligibility["loan"]["balance"]) if eligibility else None),
+        top_up_settlement_amount=(settlement_quote.settlement_amount if eligibility else None),
         top_up_cash_to_borrower=top_up_cash_requested,
         top_up_eligibility_snapshot=(eligibility or {}),
         top_up_exception_requested=top_up_exception_requested,
@@ -380,6 +404,118 @@ def create_application(
         raise HTTPException(status_code=409, detail="A duplicate application reference was generated; retry the request") from exc
     db.refresh(application)
     return _application_payload(db, application)
+
+
+@router.get("/loans/{loan_id}/top-up-settlement-preview")
+def top_up_settlement_preview(
+    loan_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+    assert_branch_scope(context, loan.branch_id)
+    policy = get_or_create_policy(db, context.company_id, context.user.id)
+    eligible = top_up_eligibility(
+        db, borrower_id=loan.borrower_id, company_id=context.company_id,
+        policy=policy, loan_id=loan.id,
+    )
+    if not (eligible["eligible"] or eligible["requires_owner_exception"]):
+        raise HTTPException(409, eligible["reason"])
+    quote = preview_top_up_settlement(db, loan=loan, actor_user_id=context.user.id)
+    return {
+        "loan_id": str(loan.id),
+        "scheduled_balance": str(loan.balance),
+        "settlement_amount": str(quote.settlement_amount),
+        "unearned_interest_rebate": str(quote.unearned_interest_rebate),
+        "earned_interest": str(quote.earned_interest),
+        "calculation_method": quote.calculation_method,
+        "settlement_date": quote.settlement_date.isoformat(),
+        "original_amount_paid": str(quote.original_amount_paid),
+    }
+
+
+class TopUpCalculationPreviewRequest(BaseModel):
+    cash_top_up: Decimal = Field(gt=0)
+    due_dates: list[date] = Field(min_length=1, max_length=120)
+
+
+@router.post("/loans/{loan_id}/top-up-calculation-preview")
+def top_up_calculation_preview(
+    loan_id: UUID,
+    payload: TopUpCalculationPreviewRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+    ).first()
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+    assert_branch_scope(context, loan.branch_id)
+    policy = get_or_create_policy(db, context.company_id, context.user.id)
+    eligibility = top_up_eligibility(
+        db, borrower_id=loan.borrower_id, company_id=context.company_id,
+        policy=policy, loan_id=loan.id,
+    )
+    if not (eligibility["eligible"] or eligibility["requires_owner_exception"]):
+        raise HTTPException(409, eligibility["reason"])
+
+    source = (
+        db.query(DirectLoanApplication)
+        .filter(
+            DirectLoanApplication.id == loan.direct_application_id,
+            DirectLoanApplication.company_id == context.company_id,
+        )
+        .first()
+        if loan.direct_application_id else None
+    )
+    product = _product(
+        db, company_id=context.company_id,
+        product_id=source.product_id if source else None,
+    )
+    quote = preview_top_up_settlement(db, loan=loan, actor_user_id=context.user.id)
+    principal = replacement_principal(quote, payload.cash_top_up)
+    term = len(payload.due_dates)
+    if product and not (
+        product.min_amount <= principal <= product.max_amount
+        and product.min_term_months <= term <= product.max_term_months
+    ):
+        raise HTTPException(422, "Replacement loan does not satisfy current product limits")
+    method = product.interest_method if product else loan.calculation_method
+    rate = product.interest_rate_percent if product else loan.interest_rate
+    fee = product.processing_fee if product else loan.processing_fee
+    try:
+        monthly, total, details = calculate_loan_terms(
+            principal=principal,
+            rate_percent=rate,
+            term_months=term,
+            processing_fee=fee,
+            interest_method=method,
+            start_date=current_payment_date(),
+            due_dates=payload.due_dates,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "settlement_amount": str(quote.settlement_amount),
+        "new_principal": str(principal),
+        "monthly_installment": str(monthly),
+        "total_repayable": str(total),
+        "interest_rate_percent": str(rate),
+        "interest_method": str(method.value if hasattr(method, "value") else method),
+        "processing_fee": str(fee),
+        "product_id": str(product.id) if product else None,
+        "schedule_amounts": details["schedule_amounts"],
+        "requires_credit_assessment": True,
+    }
 
 
 @router.post("/applications/compact-top-up", status_code=status.HTTP_201_CREATED)
@@ -441,11 +577,16 @@ def update_application(
         cash_requested = Decimal(
             changes.pop("top_up_cash_requested", application.top_up_cash_requested or 0)
         )
-        settlement_amount = Decimal(eligibility["loan"]["balance"])
+        parent = db.query(ClientCompanyLoan).filter(
+            ClientCompanyLoan.id == application.parent_loan_id,
+            ClientCompanyLoan.company_id == context.company_id,
+        ).with_for_update().one()
+        settlement_quote = preview_top_up_settlement(db, loan=parent, actor_user_id=context.user.id)
+        settlement_amount = settlement_quote.settlement_amount
         application.top_up_cash_requested = cash_requested
         application.top_up_settlement_amount = settlement_amount
         application.top_up_cash_to_borrower = cash_requested
-        application.requested_amount = settlement_amount + cash_requested
+        application.requested_amount = replacement_principal(settlement_quote, cash_requested)
         application.top_up_eligibility_snapshot = eligibility
         if not eligibility["eligible"]:
             if not eligibility["requires_owner_exception"]:
