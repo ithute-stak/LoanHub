@@ -8,6 +8,7 @@ import { CustomDialog } from "@/components/ui/custom-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { formatMoney } from "@/lib/format";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
@@ -37,12 +38,14 @@ function inheritedDates(loan: Loan): string[] {
 
 export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   const [cash, setCash] = useState("");
+  const [exceptionReason, setExceptionReason] = useState("");
   const [eligibility, setEligibility] = useState<TopUpEligibility | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setCash("");
+    setExceptionReason("");
     setEligibility(null);
     if (!loan) return;
     let active = true;
@@ -60,7 +63,8 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   const amount = Number(cash);
   const validAmount = cash.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.abs(Math.round(amount * 100) - amount * 100) < 1e-7;
   const balance = eligibility?.loan?.balance ?? loan.balance;
-  const canCreate = Boolean(eligibility?.eligible && eligibility.loan?.id === loan.id && validAmount && !loading && !saving);
+  const ownerException = Boolean(eligibility?.requires_owner_exception && !eligibility?.eligible);
+  const canCreate = Boolean((eligibility?.eligible || (ownerException && exceptionReason.trim().length >= 10)) && eligibility?.loan?.id === loan.id && validAmount && !loading && !saving);
   const dueDates = inheritedDates(loan);
 
   async function create() {
@@ -74,12 +78,13 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
         parent_loan_id: loan.id,
         requested_amount: Number((balance + amount).toFixed(2)),
         top_up_cash_requested: amount,
+        top_up_exception_reason: ownerException ? exceptionReason.trim() : null,
         term_count: dueDates.length,
         installment_due_dates: dueDates,
         purpose: "Loan top-up on existing loan " + loan.loan_reference,
       });
       toast.success("Top-up application created", {
-        description: "Existing borrower details inherited. Assessment and approval are still required.",
+        description: ownerException ? "Owner exception requested. The company owner must approve the exception and all credit checks must pass." : "Existing borrower details inherited. Assessment and approval are still required.",
       });
       onCreated(created.id);
     } catch (error: unknown) {
@@ -106,13 +111,20 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
             value={cash} onChange={(event) => setCash(event.target.value)} placeholder="Enter top-up amount" />
         </div>
         <p className="text-sm">Proposed replacement principal: <strong>{formatMoney(balance + (validAmount ? amount : 0))}</strong></p>
-        {loading ? <p className="text-sm text-muted-foreground">Checking eligibility...</p> : eligibility && !eligibility.eligible ? (
-          <p role="alert" className="text-sm text-destructive">Top-up unavailable: {eligibility.reason}. Owner exceptions require the existing review process.</p>
+        {loading ? <p className="text-sm text-muted-foreground">Checking eligibility...</p> : ownerException ? (
+          <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-950">
+            <p role="status" className="text-sm">Normal eligibility threshold not met: {eligibility?.reason}. An owner exception can be requested, subject to company policy.</p>
+            <Label htmlFor="compact-top-up-exception">Reason for owner exception (at least 10 characters)</Label>
+            <Textarea id="compact-top-up-exception" value={exceptionReason} onChange={(event) => setExceptionReason(event.target.value)} placeholder="Explain why this top-up should be reviewed" />
+            <p className="text-xs">Requesting an exception does not approve the loan. Only a company owner can approve the exception.</p>
+          </div>
+        ) : eligibility && !eligibility.eligible ? (
+          <p role="alert" className="text-sm text-destructive">Top-up unavailable: {eligibility.reason}</p>
         ) : null}
         <p className="text-xs text-muted-foreground">Submitting creates an application, not an approved loan. LoanHub must still validate current affordability, policy, contract and approval requirements before funds can be released.</p>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={() => void create()} disabled={!canCreate}>{saving ? "Submitting..." : "Submit top-up"}</Button>
+          <Button onClick={() => void create()} disabled={!canCreate}>{saving ? "Submitting..." : ownerException ? "Request owner exception" : "Submit top-up"}</Button>
         </div>
       </div>
     </CustomDialog>
