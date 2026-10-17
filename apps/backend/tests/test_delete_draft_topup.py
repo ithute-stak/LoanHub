@@ -28,3 +28,13 @@ def test_draft_topup_delete_requires_confirmed_user_action():
     assert 'setDeleteTopUp(application)' in UI
     assert "originationApi.deleteDraftTopUp(deleteTopUp.id)" in UI
     assert "Delete draft top-up" in UI
+
+
+def test_owner_threshold_exception_does_not_block_draft_deletion():
+    section = ROUTER.split("def delete_draft_top_up(", 1)[1].split("@router.", 1)[0]
+    assert "application.top_up_exception_approved" not in section
+    assert 'application.status != "draft"' in section
+    assert "application.submitted_at is not None" in section
+    assert "application.approved_at is not None" in section
+    assert "application.loan_id is not None" in section
+    assert 'application.status = "cancelled"' in section
