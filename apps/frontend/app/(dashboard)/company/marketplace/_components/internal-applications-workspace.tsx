@@ -377,9 +377,10 @@ export function InternalApplicationsWorkspace() {
                     {canApprove ? <div className="space-y-2"><Label>Rejection reason</Label><Textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Required only when rejecting the application"/></div> : null}
                     <DialogFooter className="mx-0 mb-0 flex-wrap">
                         <Button type="button" variant="outline" onClick={() => setSelected(null)} disabled={working}>Close</Button>
+                        {selected.status === "draft" ? <Button type="button" variant="outline" asChild><Link href={`/company/origination/new?application=${selected.id}`}>Complete assessment and submit draft</Link></Button> : null}
                         {selected.status === "submitted" && canReview ? <LoadingButton type="button" variant="secondary" loading={working} loadingText="Starting review…" onClick={() => void startReview()}><BookOpenCheck className="h-4 w-4"/>Start review</LoadingButton> : null}
-                        {canApprove ? <LoadingButton type="button" variant="destructive" loading={working} loadingText="Rejecting…" disabled={rejectReason.trim().length < 3} onClick={() => void rejectApplication()}><XCircle className="h-4 w-4"/>Reject</LoadingButton> : null}
-                        {canApprove ? <LoadingButton type="submit" loading={working} loadingText="Approving and creating loan…" disabled={!selectedProduct || !calculation || calculating}><CheckCircle2 className="h-4 w-4"/>Approve and create loan</LoadingButton> : null}
+                        {canApprove && ["submitted", "under_review"].includes(selected.status) ? <LoadingButton type="button" variant="destructive" loading={working} loadingText="Rejecting…" disabled={rejectReason.trim().length < 3} onClick={() => void rejectApplication()}><XCircle className="h-4 w-4"/>Reject</LoadingButton> : null}
+                        {canApprove && ["submitted", "under_review"].includes(selected.status) ? <LoadingButton type="submit" loading={working} loadingText="Approving and creating loan…" disabled={!selectedProduct || !calculation || calculating}><CheckCircle2 className="h-4 w-4"/>Approve and create loan</LoadingButton> : null}
                     </DialogFooter>
                 </>}
             </form> : null}
