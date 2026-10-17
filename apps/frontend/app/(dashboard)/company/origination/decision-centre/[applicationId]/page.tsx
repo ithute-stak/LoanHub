@@ -56,6 +56,7 @@ export default function LoanDecisionCentrePage() {
   const { activeRole } = useTenant();
   const [workspace, setWorkspace] = useState<OriginationWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshingTopUp, setRefreshingTopUp] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +72,21 @@ export default function LoanDecisionCentrePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function refreshTopUpDraft() {
+    setRefreshingTopUp(true);
+    try {
+      const updated = await originationApi.refreshDraftTopUp(applicationId);
+      toast.success("Draft top-up recalculated", {
+        description: `Replacement principal ${formatMoney(updated.requested_amount)} over ${updated.term_count} remaining installments. Complete a new affordability assessment before approval.`,
+      });
+      await load();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not refresh the top-up draft."));
+    } finally {
+      setRefreshingTopUp(false);
+    }
+  }
 
   const assessment = workspace?.assessments[0] ?? workspace?.application.affordability_assessment ?? null;
   const readiness = workspace?.integration_readiness;
@@ -162,6 +178,11 @@ export default function LoanDecisionCentrePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {workspace?.application.application_type === "top_up" && workspace.application.status === "draft" ? (
+              <Button variant="outline" onClick={() => void refreshTopUpDraft()} disabled={refreshingTopUp}>
+                <Calculator className="h-4 w-4"/>{refreshingTopUp ? "Recalculating..." : "Refresh top-up amount and dates"}
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh evidence</Button>
             <Button variant="outline" asChild><Link href={`/company/origination/new?application=${application.id}`}><Calculator className="h-4 w-4" />Edit / recalculate</Link></Button>
             <Button asChild><Link href={`/company/marketplace?workspace=applications&application=${application.id}`}><FileSearch className="h-4 w-4" />Manager decision</Link></Button>
