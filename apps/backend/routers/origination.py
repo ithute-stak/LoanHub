@@ -642,10 +642,42 @@ def list_applications(
     query = db.query(DirectLoanApplication).filter(
         DirectLoanApplication.company_id == context.company_id,
         DirectLoanApplication.channel == "credit_origination",
+        DirectLoanApplication.status != "cancelled",
     )
     if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
         query = query.filter(DirectLoanApplication.branch_id == context.branch_id)
     return [_application_payload(db, item) for item in query.order_by(DirectLoanApplication.created_at.desc()).limit(500)]
+
+
+@router.delete("/applications/{application_id}/draft-top-up")
+def delete_draft_top_up(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Soft-delete a never-submitted top-up without touching the parent loan.
+
+    Keep the application as an audit record; cancelled drafts no longer
+    participate in duplicate-exposure checks or default list views.
+    """
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    application = _application(db, context=context, application_id=application_id, lock=True)
+    if application.application_type != "top_up" or application.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft top-up applications can be deleted")
+    if (
+        application.submitted_at is not None
+        or application.approved_at is not None
+        or application.loan_id is not None
+        or application.top_up_exception_approved
+    ):
+        raise HTTPException(status_code=409, detail="This top-up has progressed and cannot be deleted")
+    application.status = "cancelled"
+    application.decision_notes = (
+        (application.decision_notes or "")
+        + f"\\nDraft top-up deleted by {context.user.id} at {datetime.now(timezone.utc).isoformat()}."
+    ).strip()
+    db.commit()
+    return {"id": str(application.id), "status": "cancelled"}
 
 
 @router.get("/applications/{application_id}/workspace")

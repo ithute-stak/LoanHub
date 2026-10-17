@@ -66,6 +66,10 @@ export const originationApi = {
   listApplications: async (): Promise<OriginationApplication[]> =>
     (await api.get<OriginationApplication[]>("/origination/applications")).data,
 
+  deleteDraftTopUp: async (applicationId: string): Promise<void> => {
+    await api.delete(`/origination/applications/${applicationId}/draft-top-up`);
+  },
+
   createApplication: async (payload: OriginationApplicationCreate): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>("/origination/applications", payload)).data,
 

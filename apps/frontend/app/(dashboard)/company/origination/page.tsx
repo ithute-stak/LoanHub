@@ -10,6 +10,7 @@ import {
   PlugZap,
   RefreshCcw,
   Settings2,
+  Trash2,
   ShieldCheck,
   UserRoundSearch,
 } from "lucide-react";
@@ -62,6 +63,7 @@ export default function OriginationDashboardPage() {
   const [integrationCredentials, setIntegrationCredentials] = useState("");
   const [exceptionApplication, setExceptionApplication] = useState<OriginationApplication | null>(null);
   const [exceptionReason, setExceptionReason] = useState("");
+  const [deleteTopUp, setDeleteTopUp] = useState<OriginationApplication | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +134,21 @@ export default function OriginationDashboardPage() {
     }
   }
 
+  async function confirmDeleteTopUp() {
+    if (!deleteTopUp || saving) return;
+    setSaving(true);
+    try {
+      await originationApi.deleteDraftTopUp(deleteTopUp.id);
+      setApplications((current) => current.filter((item) => item.id !== deleteTopUp.id));
+      setDeleteTopUp(null);
+      toast.success("Draft top-up removed from active applications");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not delete the draft top-up."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function approveTopUpException(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!exceptionApplication || exceptionReason.trim().length < 10) return;
@@ -195,7 +212,7 @@ export default function OriginationDashboardPage() {
                     <TableCell><StatusBadge value={application.kyc_status ?? "not started"} /></TableCell>
                     <TableCell><StatusBadge value={application.affordability_decision ?? "pending"} /></TableCell>
                     <TableCell><StatusBadge value={application.status} /></TableCell>
-                    <TableCell className="text-right"><div className="flex flex-wrap justify-end gap-2">{isCompanyOwner && application.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? <Button size="sm" variant="secondary" onClick={() => { setExceptionApplication(application); setExceptionReason(application.top_up_exception_reason ?? ""); }}>Approve exception</Button> : null}<Button size="sm" variant="outline" asChild><Link href={`/company/origination/decision-centre/${application.id}`}>Decision centre</Link></Button><Button size="sm" asChild><Link href={`/company/origination/new?application=${application.id}`}>Open step form</Link></Button></div></TableCell>
+                    <TableCell className="text-right"><div className="flex flex-wrap justify-end gap-2">{isCompanyOwner && application.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? <Button size="sm" variant="secondary" onClick={() => { setExceptionApplication(application); setExceptionReason(application.top_up_exception_reason ?? ""); }}>Approve exception</Button> : null}{(activeRole === "company_owner" || activeRole === "branch_manager") && application.application_type === "top_up" && application.status === "draft" ? <Button size="sm" variant="destructive" onClick={() => setDeleteTopUp(application)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete</Button> : null}<Button size="sm" variant="outline" asChild><Link href={`/company/origination/decision-centre/${application.id}`}>Decision centre</Link></Button><Button size="sm" asChild><Link href={`/company/origination/new?application=${application.id}`}>Open step form</Link></Button></div></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -266,6 +283,15 @@ export default function OriginationDashboardPage() {
         ) : null}
       </CustomDialog>
 
+      <CustomDialog open={Boolean(deleteTopUp)} onOpenChange={(open) => { if (!open && !saving) setDeleteTopUp(null); }} title="Delete draft top-up" description="This action removes the draft from the active application list without changing the original loan." contentClassName="sm:max-w-lg">
+        <div className="space-y-4 p-5">
+          <p className="text-sm">Delete draft <strong>{deleteTopUp?.application_reference}</strong>? The record will be marked cancelled for audit purposes and the borrower can submit a new top-up.</p>
+          <DialogFooter>
+            <Button variant="outline" disabled={saving} onClick={() => setDeleteTopUp(null)}>Keep draft</Button>
+            <Button variant="destructive" disabled={saving} onClick={() => void confirmDeleteTopUp()}>{saving ? "Deleting..." : "Delete draft top-up"}</Button>
+          </DialogFooter>
+        </div>
+      </CustomDialog>
       <CustomDialog open={Boolean(exceptionApplication)} onOpenChange={(open) => !open && !saving && setExceptionApplication(null)} title="Approve exceptional top-up" description={exceptionApplication ? `${exceptionApplication.application_reference} · ${exceptionApplication.borrower_name}` : undefined}>
         <form onSubmit={approveTopUpException} className="space-y-5 p-6 sm:p-8">
           <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Owner accountability</AlertTitle><AlertDescription>This borrower has not met the normal top-up threshold. Your decision, reason, user ID and time are permanently recorded.</AlertDescription></Alert>
