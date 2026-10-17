@@ -668,9 +668,11 @@ def delete_draft_top_up(
         application.submitted_at is not None
         or application.approved_at is not None
         or application.loan_id is not None
-        or application.top_up_exception_approved
     ):
         raise HTTPException(status_code=409, detail="This top-up has progressed and cannot be deleted")
+    # A company-owner top-up threshold exception can be granted while the
+    # application is still a draft. That exception is NOT loan approval.
+    # Preserve its audit fields instead of blocking draft cancellation.
     application.status = "cancelled"
     application.decision_notes = (
         (application.decision_notes or "")
