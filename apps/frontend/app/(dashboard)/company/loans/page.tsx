@@ -87,7 +87,7 @@ import type {
     LoanPaymentSlip,
     RepaymentInstallment
 } from "@/types/loan";
-import type {ContractTemplateStyle, LoanContract, OriginationPolicy} from "@/types/origination";
+import type {ContractTemplateStyle, LoanContract, OriginationPolicy, OriginationApplication} from "@/types/origination";
 import {getErrorMessage} from "@/utils/apiError";
 import {toast} from "@/utils/toast";
 
@@ -149,6 +149,7 @@ export default function CompanyLoansPage() {
     const [clients, setClients] = useState<CompanyClient[]>([]);
     const [contracts, setContracts] = useState<LoanContract[]>([]);
     const [originationPolicy, setOriginationPolicy] = useState<OriginationPolicy | null>(null);
+    const [pendingTopUps, setPendingTopUps] = useState<OriginationApplication[]>([]);
     const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState<WorkspaceTab>("portfolio");
@@ -218,12 +219,23 @@ export default function CompanyLoansPage() {
             setMethods(methodRows);
             setClients(clientRows);
             setOriginationPolicy(policy);
+            if (activeRole === "company_owner" || activeRole === "branch_manager") {
+                try {
+                    const applications = await originationApi.listApplications();
+                    setPendingTopUps(applications.filter((application) =>
+                        application.application_type === "top_up" &&
+                        ["draft", "submitted", "under_review"].includes(application.status)
+                    ));
+                } catch {
+                    setPendingTopUps([]);
+                }
+            }
         } catch (error: unknown) {
             toast.error(getErrorMessage(error, "Loans and contracts could not be loaded."));
         } finally {
             setLoading(false);
         }
-    }, [canDisburse, canManageContracts]);
+    }, [canDisburse, canManageContracts, activeRole]);
 
     useEffect(() => {
         const requestedId = new URLSearchParams(window.location.search).get("loan");
@@ -1383,10 +1395,26 @@ export default function CompanyLoansPage() {
                                 Settle early
                             </Button>
                         ) : null}
+                        {selectedLoan && pendingTopUps.filter((item) =>
+                            item.parent_loan_id === selectedLoan.id
+                        ).map((item) => (
+                            <Button key={item.id} variant="outline" onClick={() => {
+                                setScheduleOpen(false);
+                                router.push(`/company/origination/new?application=${item.id}`);
+                            }}>
+                                <FileClock className="h-4 w-4"/>
+                                Top-up {item.status}: {item.application_reference}
+                            </Button>
+                        ))}
                         {selectedLoan && (activeRole === "company_owner" || activeRole === "branch_manager") && ["active", "defaulted"].includes(selectedLoan.status) ? (
-                            <Button onClick={() => { setScheduleOpen(false); setTopUpLoan(selectedLoan); }}>
+                            <Button onClick={() => {
+                                const existing = pendingTopUps.find((item) => item.parent_loan_id === selectedLoan.id);
+                                setScheduleOpen(false);
+                                if (existing) router.push(`/company/origination/new?application=${existing.id}`);
+                                else setTopUpLoan(selectedLoan);
+                            }}>
                                 <Sparkles className="h-4 w-4"/>
-                                Apply for loan top-up
+                                {pendingTopUps.some((item) => item.parent_loan_id === selectedLoan.id) ? "Continue existing top-up" : "Apply for loan top-up"}
                             </Button>
                         ) : null}
                     </DialogFooter>
