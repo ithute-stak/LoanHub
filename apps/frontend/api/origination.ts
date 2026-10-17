@@ -76,6 +76,9 @@ export const originationApi = {
   createCompactTopUp: async (payload: OriginationApplicationCreate): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>("/origination/applications/compact-top-up", payload)).data,
 
+  refreshDraftTopUp: async (applicationId: string): Promise<OriginationApplication> =>
+    (await api.post<OriginationApplication>(`/origination/applications/${applicationId}/refresh-draft-top-up`)).data,
+
   updateApplication: async (id: string, payload: Partial<Omit<OriginationApplicationCreate, "borrower_id">> & { application_step?: number }): Promise<OriginationApplication> =>
     (await api.patch<OriginationApplication>(`/origination/applications/${id}`, payload)).data,
 

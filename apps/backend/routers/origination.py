@@ -518,6 +518,56 @@ def top_up_calculation_preview(
     }
 
 
+@router.post("/applications/{application_id}/refresh-draft-top-up")
+def refresh_draft_top_up(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Refresh old draft principal/remaining dates before a new assessment.
+
+    No loan or payout is created. Only authorized owners/managers can refresh.
+    """
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    application = _application(db, context=context, application_id=application_id, lock=True)
+    if application.application_type != "top_up" or application.status != "draft" or application.loan_id:
+        raise HTTPException(409, "Only an unapproved draft top-up can be refreshed")
+    if not application.parent_loan_id:
+        raise HTTPException(409, "The original loan is missing")
+    parent = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == application.parent_loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+        ClientCompanyLoan.borrower_id == application.borrower_id,
+        ClientCompanyLoan.status.in_([LoanStatus.ACTIVE, LoanStatus.DEFAULTED]),
+    ).with_for_update().first()
+    if parent is None:
+        raise HTTPException(409, "Original loan is no longer active")
+    today = current_payment_date()
+    remaining_dates = sorted(
+        item.due_date
+        for item in parent.installments
+        if not item.is_superseded
+        and Decimal(item.total_due) > Decimal(item.paid_amount)
+        and item.due_date >= today
+    )
+    if not remaining_dates or len(remaining_dates) > 120:
+        raise HTTPException(409, "Remaining loan dates require manual review")
+    cash = Decimal(application.top_up_cash_requested or 0)
+    quote = preview_top_up_settlement(db, loan=parent, actor_user_id=context.user.id)
+    principal = replacement_principal(quote, cash)
+    application.requested_amount = principal
+    application.top_up_settlement_amount = quote.settlement_amount
+    application.top_up_cash_to_borrower = cash
+    application.term_count = len(remaining_dates)
+    application.installment_due_dates = [value.isoformat() for value in remaining_dates]
+    application.first_payment_date = remaining_dates[0]
+    application.affordability_assessment_id = None
+    application.application_step = 1
+    db.commit()
+    db.refresh(application)
+    return _application_payload(db, application)
+
+
 @router.post("/applications/compact-top-up", status_code=status.HTTP_201_CREATED)
 def create_compact_top_up(
     payload: OriginationApplicationCreate,
