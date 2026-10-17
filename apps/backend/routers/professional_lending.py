@@ -60,6 +60,7 @@ from services.cdas_collection_policy import build_cdas_collection_plan
 from services.file_service import read_file_bytes
 from services.interest_calculation_service import calculate_loan_terms
 from services.lending_integration_service import assert_application_integration_readiness_for_approval
+from services.top_up_settlement import preview_top_up_settlement, replacement_principal
 from services.loan_service import (
     create_repayment_schedule,
     generate_loan_reference,
@@ -459,12 +460,26 @@ def approve_direct(
         )
         if not parent_loan:
             raise HTTPException(status_code=409, detail="The existing loan selected for this top-up is no longer active")
-        top_up_settlement_amount = Decimal(parent_loan.balance)
-        top_up_cash_amount = Decimal(payload.approved_amount) - top_up_settlement_amount
-        if top_up_cash_amount <= 0:
+        # The balance contains unearned scheduled interest. Never use it as
+        # top-up settlement or cash-to-borrower: quote the same ledger-based
+        # settlement amount that disbursement will validate.
+        quote = preview_top_up_settlement(
+            db, loan=parent_loan, actor_user_id=context.user.id,
+        )
+        top_up_settlement_amount = Decimal(quote.settlement_amount)
+        top_up_cash_amount = Decimal(application.top_up_cash_requested or 0)
+        expected_principal = replacement_principal(quote, top_up_cash_amount)
+        if (
+            abs(Decimal(application.requested_amount) - expected_principal) > Decimal("0.01")
+            or abs(Decimal(payload.approved_amount) - expected_principal) > Decimal("0.01")
+        ):
             raise HTTPException(
-                status_code=422,
-                detail=f"The approved top-up amount must exceed the existing balance of {top_up_settlement_amount}",
+                status_code=409,
+                detail=(
+                    "The top-up settlement or application amount is outdated. "
+                    "Recalculate the draft top-up and repeat affordability assessment "
+                    "before approving."
+                ),
             )
 
     if len(payload.installment_due_dates) != application.term_count:
