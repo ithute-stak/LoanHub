@@ -542,9 +542,14 @@ def refresh_draft_top_up(
     ).with_for_update().first()
     if parent is None:
         raise HTTPException(409, "Original loan is no longer active")
-    from services.early_settlement_service import settlement_due_dates
     today = current_payment_date()
-    remaining_dates = [due for due in settlement_due_dates(parent) if due >= today]
+    remaining_dates = sorted(
+        item.due_date
+        for item in parent.installments
+        if not item.is_superseded
+        and Decimal(item.total_due) > Decimal(item.paid_amount)
+        and item.due_date >= today
+    )
     if not remaining_dates or len(remaining_dates) > 120:
         raise HTTPException(409, "Remaining loan dates require manual review")
     cash = Decimal(application.top_up_cash_requested or 0)
