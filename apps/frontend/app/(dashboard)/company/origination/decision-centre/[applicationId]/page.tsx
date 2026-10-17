@@ -178,7 +178,7 @@ export default function LoanDecisionCentrePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {workspace?.application.application_type === "top_up" && workspace.application.status === "draft" ? (
+            {workspace?.application.application_type === "top_up" && workspace.application.status === "draft" && (activeRole === "company_owner" || activeRole === "branch_manager") ? (
               <Button variant="outline" onClick={() => void refreshTopUpDraft()} disabled={refreshingTopUp}>
                 <Calculator className="h-4 w-4"/>{refreshingTopUp ? "Recalculating..." : "Refresh top-up amount and dates"}
               </Button>
