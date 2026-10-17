@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { originationApi } from "@/api/origination";
+import { useTenant } from "@/provider/tenantProvider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ function TimelineRow({ title, detail, date }: { title: string; detail: string; d
 export default function LoanDecisionCentrePage() {
   const params = useParams<{ applicationId: string }>();
   const applicationId = params.applicationId;
+  const { activeRole } = useTenant();
   const [workspace, setWorkspace] = useState<OriginationWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -74,13 +76,14 @@ export default function LoanDecisionCentrePage() {
   const readiness = workspace?.integration_readiness;
 
   const decision = readiness?.final_decision ?? "action_required";
-  const decisionLabel = decision === "loanable"
+  const missingAssessment = !assessment && decision === "not_loanable";
+  const decisionLabel = missingAssessment ? "ASSESSMENT REQUIRED" : decision === "loanable"
     ? "LOANABLE"
     : decision === "not_loanable"
       ? "NOT LOANABLE"
       : "ACTION REQUIRED";
 
-  const decisionTone = decision === "loanable"
+  const decisionTone = missingAssessment ? "border-amber-500/30 bg-amber-500/5" : decision === "loanable"
     ? "border-emerald-500/30 bg-emerald-500/5"
     : decision === "not_loanable"
       ? "border-destructive/30 bg-destructive/5"
@@ -168,7 +171,7 @@ export default function LoanDecisionCentrePage() {
         <div className="mt-6 flex flex-col gap-3 rounded-3xl border bg-background/80 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Final decision</p>
-            <p className={`mt-1 text-3xl font-black ${decision === "loanable" ? "text-emerald-700" : decision === "not_loanable" ? "text-destructive" : "text-amber-700"}`}>{decisionLabel}</p>
+            <p className={`mt-1 text-3xl font-black ${missingAssessment ? "text-amber-700" : decision === "loanable" ? "text-emerald-700" : decision === "not_loanable" ? "text-destructive" : "text-amber-700"}`}>{decisionLabel}</p>
           </div>
           <Badge variant={readiness.ready_for_approval ? "default" : "secondary"}>
             {readiness.ready_for_approval ? "Ready for approval" : `${readiness.blockers.length} blocker(s)`}
@@ -176,6 +179,26 @@ export default function LoanDecisionCentrePage() {
         </div>
       </section>
 
+      {application.application_type === "top_up" && activeRole === "company_owner" ? (
+        <Card className="rounded-3xl border-primary/30">
+          <CardHeader>
+            <CardTitle>Company owner · Quick top-up workflow</CardTitle>
+            <CardDescription>Reuse the existing borrower records and finish only the checks still required for this top-up. Approval and payment remain separate authorized actions.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button asChild variant="outline"><Link href={`/company/origination/new?application=${application.id}`}>1. Verify terms and assess affordability</Link></Button>
+            {application.status === "draft" ? (
+              <Badge variant="secondary">Draft — submit after assessment</Badge>
+            ) : (
+              <Badge variant="outline">Application: {titleCase(application.status)}</Badge>
+            )}
+            <Button asChild><Link href={`/company/marketplace?workspace=applications&application=${application.id}`}>2. Review owner decision</Link></Button>
+            {application.loan_id ? (
+              <Button asChild variant="outline"><Link href={`/company/loans?loan=${application.loan_id}`}>3. Contract and authorized disbursement</Link></Button>
+            ) : <Badge variant="secondary">Disbursement unavailable until loan creation and signing</Badge>}
+          </CardContent>
+        </Card>
+      ) : null}
       <div className="grid gap-5 xl:grid-cols-3">
         <Card className="rounded-3xl">
           <CardHeader>
