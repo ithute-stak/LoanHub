@@ -744,6 +744,10 @@ def disburse_cash_loan(
             )
             if not parent:
                 raise HTTPException(status_code=409, detail="The original loan for this top-up was not found")
+            if parent.company_id != loan.company_id or parent.borrower_id != loan.borrower_id:
+                raise HTTPException(status_code=409, detail="The original loan does not match the top-up company and borrower")
+            if money(loan.principal_amount) != money(loan.top_up_settlement_amount) + money(disbursement_amount):
+                raise HTTPException(status_code=409, detail="Top-up principal must equal settlement plus borrower cash")
             if parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
                 raise HTTPException(status_code=409, detail="The original loan is no longer eligible for top-up settlement")
             # Recalculate from the actual payment ledger and original interest
