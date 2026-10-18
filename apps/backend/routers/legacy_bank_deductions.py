@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from core.access_control import FINANCE_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.employer_group import EmployerGroup
 from database.models.legacy_bank_deduction import LegacyBankDeduction
+from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.legacy_employer import LegacyEmployer
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from database.models.user import User
@@ -21,7 +22,7 @@ from database.models.person import Person
 from database.session import get_db
 from services.credential_service import encrypt_credential, decrypt_credential
 from services.bank_submission_export import build_bank_submission_zip
-from services.legacy_bank_routing import resolve_legacy_bank
+from services.legacy_bank_routing import resolve_legacy_bank, BANK_RULES
 from services.legacy_bank_import import parse_legacy_csv, parse_legacy_spreadsheet
 from services.legacy_employer_names import canonical_employer_name, employer_key
 
@@ -545,5 +546,171 @@ def export_combined_bank_zip(context: TenantContext = Depends(get_tenant_context
     return StreamingResponse(BytesIO(payload), media_type="application/zip", headers={
         "Content-Disposition": 'attachment; filename="loanhub-combined-bank-submissions.zip"',
         "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+        "X-Exported-Rows": str(summary["rows"]),
+    })
+
+
+# Custom bank submissions store selection metadata only, never change source deductions.
+_CUSTOM_MODULE = "legacy_bank_deductions"
+_CUSTOM_TYPE = "custom_bank_group"
+
+
+class CustomBankGroupInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    branch_code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+    work_group_id: UUID
+    employers: list[str] = Field(min_length=1, max_length=250)
+
+    @field_validator("employers")
+    @classmethod
+    def validate_employers(cls, names: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(" ".join(n.split()) for n in names))
+        if any(not n or len(n) > 120 for n in cleaned):
+            raise ValueError("Every employer must have a valid name")
+        return cleaned
+
+
+def _custom_record(db: Session, company_id: UUID, record_id: UUID) -> CompanyOperatingRecord:
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == record_id,
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == _CUSTOM_MODULE,
+        CompanyOperatingRecord.record_type == _CUSTOM_TYPE,
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).first()
+    if record is None:
+        raise HTTPException(404, "Custom bank group not found")
+    return record
+
+
+def _custom_view(record: CompanyOperatingRecord) -> dict:
+    data = record.data or {}
+    return {
+        "id": str(record.id), "name": record.title,
+        "branch_code": data.get("branch_code", ""),
+        "work_group_id": data.get("work_group_id", ""),
+        "employers": data.get("employers", []),
+    }
+
+
+def _validate_custom_group(db: Session, company_id: UUID, payload: CustomBankGroupInput) -> None:
+    if payload.branch_code not in {branch for _, branch, _ in BANK_RULES}:
+        raise HTTPException(422, "Select a bank branch supported by configured LoanHub bank rules")
+    group = db.query(EmployerGroup).filter(
+        EmployerGroup.id == payload.work_group_id, EmployerGroup.is_active.is_(True)).first()
+    if group is None or _group_kind(group) is None:
+        raise HTTPException(422, "Select a valid CIVIL, FORCE or S/E work group")
+    available = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == company_id,
+        LegacyBankDeduction.work_group_id == payload.work_group_id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).all()
+    valid = set()
+    for entry in available:
+        routing = resolve_legacy_bank(decrypt_credential(entry.account_number_encrypted))
+        if routing and routing[1] == payload.branch_code and (entry.branch_code or routing[1]) == payload.branch_code:
+            valid.add(employer_key(entry.employer or ""))
+    if not all(employer_key(name) in valid for name in payload.employers):
+        raise HTTPException(422, "Some selected employers have no active deductions in the selected bank and work group")
+
+
+@router.get("/custom-groups")
+def list_custom_groups(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    records = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == context.company_id,
+        CompanyOperatingRecord.module == _CUSTOM_MODULE,
+        CompanyOperatingRecord.record_type == _CUSTOM_TYPE,
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).order_by(CompanyOperatingRecord.title).all()
+    return [_custom_view(item) for item in records]
+
+
+@router.post("/custom-groups", status_code=201)
+def create_custom_group(payload: CustomBankGroupInput, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    _validate_custom_group(db, context.company_id, payload)
+    record = CompanyOperatingRecord(
+        company_id=context.company_id,
+        module=_CUSTOM_MODULE, record_type=_CUSTOM_TYPE,
+        reference="legacy-custom-" + uuid4().hex,
+        title=payload.name.strip(), status="active",
+        created_by_user_id=context.user.id,
+        data={"branch_code": payload.branch_code, "work_group_id": str(payload.work_group_id), "employers": payload.employers},
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return _custom_view(record)
+
+
+@router.put("/custom-groups/{record_id}")
+def update_custom_group(record_id: UUID, payload: CustomBankGroupInput, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    record = _custom_record(db, context.company_id, record_id)
+    _validate_custom_group(db, context.company_id, payload)
+    record.title = payload.name.strip()
+    record.data = {"branch_code": payload.branch_code, "work_group_id": str(payload.work_group_id), "employers": payload.employers}
+    db.commit()
+    return _custom_view(record)
+
+
+@router.delete("/custom-groups/{record_id}", status_code=204)
+def archive_custom_group(record_id: UUID, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    record = _custom_record(db, context.company_id, record_id)
+    record.is_archived = True
+    db.commit()
+
+
+@router.get("/custom-groups/{record_id}/export.zip")
+def export_custom_group(record_id: UUID, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+    _authorized(context)
+    record = _custom_record(db, context.company_id, record_id)
+    config = record.data or {}
+    branch_code = config.get("branch_code")
+    work_group_id = config.get("work_group_id")
+    employers = {employer_key(name) for name in config.get("employers", [])}
+    if not branch_code or not work_group_id or not employers:
+        raise HTTPException(422, "Custom group is incomplete")
+    group = db.query(EmployerGroup).filter(EmployerGroup.id == work_group_id).first()
+    if not group or _group_kind(group) is None:
+        raise HTTPException(422, "Custom group has an invalid work group")
+    rows = db.query(LegacyBankDeduction).filter(
+        LegacyBankDeduction.company_id == context.company_id,
+        LegacyBankDeduction.work_group_id == group.id,
+        LegacyBankDeduction.deleted_at.is_(None),
+    ).order_by(LegacyBankDeduction.created_at, LegacyBankDeduction.id).all()
+    data = []
+    for entry in rows:
+        if employer_key(entry.employer or "") not in employers:
+            continue
+        number = decrypt_credential(entry.account_number_encrypted)
+        routing = resolve_legacy_bank(number)
+        if not routing or routing[1] != branch_code or (entry.branch_code or routing[1]) != branch_code:
+            continue
+        data.append({
+            "name": entry.client_name, "bank": routing[0],
+            "account": number, "branch": branch_code,
+            "group": _group_kind(group), "installment": entry.amount,
+            "balance": entry.amount, "employer": entry.employer,
+        })
+    if not data:
+        raise HTTPException(422, "No active matching deductions remain in this custom group")
+    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
+    if summary["excluded"]:
+        raise HTTPException(422, detail={
+            "message": "Custom group export blocked: correct invalid bank deductions first",
+            "exportable_rows": summary["rows"], "excluded": summary["excluded"],
+        })
+    if not summary["rows"]:
+        raise HTTPException(422, "No valid records available for custom bank export")
+    return StreamingResponse(BytesIO(payload), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="legacy-custom-bank-group.zip"',
+        "Cache-Control": "no-store, private",
+        "X-Content-Type-Options": "nosniff",
         "X-Exported-Rows": str(summary["rows"]),
     })
