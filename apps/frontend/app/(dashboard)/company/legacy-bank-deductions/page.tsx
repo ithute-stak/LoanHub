@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 
 type Group = { id: string; code: string; name: string };
 type Entry = { id: string; work_group_id: string; work_group: string; client_name: string; employer: string; masked_account: string; branch_code: string; amount: string; created_at?: string | null; created_by_name?: string | null; source?: string };
+type CustomGroup = { id: string; name: string; branch_code: string; work_group_id: string; employers: string[] };
 type Removed = { id: string; client_name: string; account_last4: string; amount: string };
 const empty = { work_group_id: "", client_name: "", employer: "", account_number: "", branch_code: "", amount: "" };
 function explain(error: unknown) {
@@ -19,6 +20,13 @@ function explain(error: unknown) {
 }
 export default function LegacyBankDeductionsPage() {
   const [groups,setGroups] = useState<Group[]>([]);
+  const [customGroups,setCustomGroups] = useState<CustomGroup[]>([]);
+  const [customEditor,setCustomEditor] = useState(false);
+  const [customEditing,setCustomEditing] = useState<string | null>(null);
+  const [customName,setCustomName] = useState("");
+  const [customBranch,setCustomBranch] = useState("");
+  const [customWork,setCustomWork] = useState("");
+  const [customEmployers,setCustomEmployers] = useState<string[]>([]);
   const [employerOptions,setEmployerOptions] = useState<string[]>([]);
   const [addingEmployer,setAddingEmployer] = useState(false);
   const [records,setRecords] = useState<Entry[]>([]);
@@ -42,8 +50,8 @@ export default function LegacyBankDeductionsPage() {
   const [removed,setRemoved] = useState<Removed[]>([]);
   const [showRemoved,setShowRemoved] = useState(false);
   const refresh = useCallback(async () => {
-    const [a,b,c] = await Promise.all([api.get<Group[]>("/legacy-bank-deductions/work-groups"),api.get<Entry[]>("/legacy-bank-deductions/"),api.get<string[]>("/legacy-bank-deductions/employers")]);
-    setGroups(a.data);setRecords(b.data);setEmployerOptions(c.data);
+    const [a,b,c,d] = await Promise.all([api.get<Group[]>("/legacy-bank-deductions/work-groups"),api.get<Entry[]>("/legacy-bank-deductions/"),api.get<string[]>("/legacy-bank-deductions/employers"),api.get<CustomGroup[]>("/legacy-bank-deductions/custom-groups")]);
+    setGroups(a.data);setRecords(b.data);setEmployerOptions(c.data);setCustomGroups(d.data);
   },[]);
   useEffect(()=>{void refresh().catch(e=>setStatus(explain(e)));},[refresh]);
   const creators = useMemo(() => [...new Set(records.map(r => r.created_by_name).filter((v): v is string => !!v))].sort(), [records]);
@@ -135,6 +143,81 @@ export default function LegacyBankDeductionsPage() {
     if(!window.confirm("Restore this deduction to the active bank register?"))return;
     setBusy(true);try{await api.post("/legacy-bank-deductions/"+id+"/restore",{});await loadRemoved();await refresh();setStatus("Record restored.");}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
+
+  const eligibleCustomEmployers = useMemo(() => [...new Set(records.filter(r =>
+    r.branch_code === customBranch && r.work_group_id === customWork
+  ).map(r => r.employer).filter(Boolean))].sort(), [records,customBranch,customWork]);
+  function resetCustomEditor() {
+    setCustomEditing(null);setCustomName("");setCustomBranch("");setCustomWork("");
+    setCustomEmployers([]);setCustomEditor(false);
+  }
+  function editCustomGroup(group: CustomGroup) {
+    setCustomEditing(group.id);setCustomName(group.name);setCustomBranch(group.branch_code);
+    setCustomWork(group.work_group_id);setCustomEmployers([...group.employers]);setCustomEditor(true);
+  }
+  async function saveCustomGroup() {
+    if (!customName.trim() || !customBranch || !customWork || !customEmployers.length) {
+      setStatus("Choose a bank, a work group and at least one employer, then enter a group name.");return;
+    }
+    setBusy(true);setStatus("");
+    try {
+      const payload = {name:customName.trim(),branch_code:customBranch,work_group_id:customWork,employers:customEmployers};
+      if (customEditing) await api.put("/legacy-bank-deductions/custom-groups/" + customEditing,payload);
+      else await api.post("/legacy-bank-deductions/custom-groups",payload);
+      await refresh();resetCustomEditor();setStatus("Custom bank deduction group saved.");
+    } catch(e) {setStatus(explain(e));} finally {setBusy(false);}
+  }
+  async function deleteCustomGroup(group: CustomGroup) {
+    if (!window.confirm("Remove custom group " + group.name + "? Original deductions will remain untouched.")) return;
+    setBusy(true);setStatus("");
+    try {await api.delete("/legacy-bank-deductions/custom-groups/" + group.id);await refresh();setStatus("Custom group removed. Original deductions preserved.");}
+    catch(e) {setStatus(explain(e));} finally {setBusy(false);}
+  }
+  async function exportCustomGroup(group: CustomGroup) {
+    setBusy(true);setStatus("");
+    try {
+      const result=await api.get<Blob>("/legacy-bank-deductions/custom-groups/" + group.id + "/export.zip",{responseType:"blob"});
+      const url=URL.createObjectURL(result.data);const link=document.createElement("a");
+      link.href=url;link.download="loanhub-custom-bank-group.zip";document.body.appendChild(link);
+      link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      setStatus("Custom group ZIP generated. Handle this confidential bank file securely.");
+    } catch(e) {
+      if(axios.isAxiosError(e) && e.response?.data instanceof Blob) {
+        try {const body=JSON.parse(await e.response.data.text()) as {detail?:string|{message?:string}};setStatus(typeof body.detail==="string"?body.detail:body.detail?.message??"Custom ZIP export failed.");}
+        catch {setStatus("Custom ZIP export failed. Please check the bank details.");}
+      } else setStatus(explain(e));
+    } finally {setBusy(false);}
+  }
+  const customGroupSection = <section className="space-y-3 rounded-xl border bg-card p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Custom bank deduction groups</h2><p className="text-sm text-muted-foreground">Bank / branch → work group → selected employers. Original deductions stay unchanged.</p></div><Button disabled={busy} onClick={()=>{resetCustomEditor();setCustomEditor(true);}}>+ Create custom group</Button></div>
+    {customEditor&&<div className="space-y-3 rounded-lg border p-4">
+      <h3 className="font-medium">{customEditing?"Edit":"Create"} custom bank group</h3>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="text-sm">Bank / clearing branch
+          <select aria-label="Custom group bank" className="mt-1 w-full rounded-md border bg-background p-2" value={customBranch} onChange={e=>{setCustomBranch(e.target.value);setCustomEmployers([]);}}>
+            <option value="">Choose bank / branch</option>
+            {[["FNB","280061"],["Standard Lesotho Bank","060667"],["Lesotho PostBank","500100"],["Nedbank","390161"]].filter(([,code])=>records.some(r=>r.branch_code===code)).map(([name,code])=><option key={code} value={code}>{name} — {code}</option>)}
+          </select>
+        </label>
+        <label className="text-sm">Work group
+          <select aria-label="Custom group work group" className="mt-1 w-full rounded-md border bg-background p-2" value={customWork} onChange={e=>{setCustomWork(e.target.value);setCustomEmployers([]);}}>
+            <option value="">Choose work group</option>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm">Custom group name<Input className="mt-1" maxLength={120} placeholder="e.g. CIVIL - Selected Employers" value={customName} onChange={e=>setCustomName(e.target.value)}/></label>
+      </div>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Mark employers ({customEmployers.length} selected)</p><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>setCustomEmployers(eligibleCustomEmployers)}>Select all</Button><Button size="sm" variant="outline" onClick={()=>setCustomEmployers([])}>Clear</Button></div></div>
+        {!customBranch||!customWork?<p className="text-sm text-muted-foreground">Choose bank and work group to list matching employers.</p>:null}
+        {customBranch&&customWork&&!eligibleCustomEmployers.length?<p className="text-sm text-muted-foreground">No matching employers in the loaded register.</p>:null}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{eligibleCustomEmployers.map(name=><label key={name} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={customEmployers.includes(name)} onChange={e=>setCustomEmployers(old=>e.target.checked?[...old,name]:old.filter(n=>n!==name))}/>{name}</label>)}</div>
+      </div>
+      <div className="flex gap-2"><Button disabled={busy||!customName.trim()||!customBranch||!customWork||!customEmployers.length} onClick={()=>void saveCustomGroup()}>Save custom group</Button><Button variant="outline" onClick={resetCustomEditor}>Cancel</Button></div>
+    </div>}
+    <div className="grid gap-2 sm:grid-cols-2">{customGroups.map(group=><div key={group.id} className="space-y-2 rounded-lg border p-3"><p className="font-medium">{group.name}</p><p className="text-sm text-muted-foreground">{group.branch_code} · {groups.find(g=>g.id===group.work_group_id)?.name??"Work group"} · {group.employers.length} employers</p><div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={()=>void exportCustomGroup(group)}>Export ZIP</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>editCustomGroup(group)}>Edit</Button><Button size="sm" variant="destructive" disabled={busy} onClick={()=>void deleteCustomGroup(group)}>Remove</Button></div></div>)}</div>
+    {!customGroups.length&&!customEditor?<p className="text-sm text-muted-foreground">No custom groups yet. Create one to select employers for a specific bank and work group.</p>:null}
+  </section>;
+
   const fields = <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
     <label className="text-sm">Work group<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.work_group_id} onChange={e=>setForm({...form,work_group_id:e.target.value})}><option value="">Choose work group</option>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
     <label className="text-sm">Employer
@@ -153,8 +236,9 @@ export default function LegacyBankDeductionsPage() {
     <label className="text-sm">Deduction (LSL)<Input className="mt-1" inputMode="decimal" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
   </div>;
   return <main className="mx-auto w-full space-y-5 px-3 py-5 lg:px-6">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">Legacy bank deductions</h1><p className="text-sm text-muted-foreground">Capture historical deductions, validate CSV imports and create bank submission ZIPs.</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button variant="destructive" disabled={busy||records.length===0} onClick={()=>void deleteAllLegacy()}>Delete all legacy records</Button><Button disabled={busy||records.length===0} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button disabled={busy} onClick={()=>void exportZip(true)}>Export legacy + current loans</Button></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">Legacy bank deductions</h1><p className="text-sm text-muted-foreground">Capture historical deductions, validate CSV imports and create bank submission ZIPs.</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={()=>{resetCustomEditor();setCustomEditor(true);}}>Create custom group</Button><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button variant="destructive" disabled={busy||records.length===0} onClick={()=>void deleteAllLegacy()}>Delete all legacy records</Button><Button disabled={busy||records.length===0} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button disabled={busy} onClick={()=>void exportZip(true)}>Export legacy + current loans</Button></div></div>
     {status&&<div role="status" className="rounded-lg border px-3 py-2 text-sm">{status}</div>}
+    {customGroupSection}
     <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">{editing?"Edit deduction":"Capture deduction"}</h2>{fields}<div className="flex gap-2"><Button disabled={busy} onClick={()=>void save()}>{editing?"Save changes":"Save deduction"}</Button>{editing&&<Button variant="outline" onClick={()=>{setEditing(null);setForm({...empty});}}>Cancel</Button>}</div></section>
     <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">Bulk CSV import</h2><p className="text-sm text-muted-foreground">Choose a work group once, then upload CSV/XLSX columns: Client name, Account number, Amount, Employer. Select the work group once; branch codes are resolved by LoanHub.</p><div className="flex flex-wrap items-center gap-2"><select aria-label="Bulk import work group" className="rounded-md border bg-background px-3 py-2" value={bulkGroup} onChange={e=>{setBulkGroup(e.target.value);setPreview(null);}}><option value="">Choose CIVIL, FORCE or S/E</option>{groups.map(g=><option key={g.id} value={g.id}>{g.code} — {g.name}</option>)}</select><Input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="max-w-sm" onChange={e=>{setCsv(e.target.files?.[0]??null);setPreview(null);}}/><Button variant="outline" disabled={!csv||!bulkGroup||busy} onClick={()=>void importCsv(false)}>Preview validation</Button></div>{preview&&<div className="space-y-2 text-sm"><p>{preview.valid} ready, {preview.rejected} rejected</p>{preview.issues.slice(0,20).map(i=><p key={i.row} className="text-destructive">Row {i.row}: {i.reason}</p>)}<Button disabled={busy||preview.rejected>0||preview.valid===0} onClick={()=>void importCsv(true)}>Confirm import</Button></div>}</section>
     <section className="space-y-3 rounded-xl border bg-card p-4">
