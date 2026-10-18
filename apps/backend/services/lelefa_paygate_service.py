@@ -137,11 +137,22 @@ def _finalize_top_up(db: Session, payment: PaymentTransaction) -> None:
     )
     if not parent or parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="The original loan is not eligible for top-up settlement")
-    settlement_amount = _money(parent.balance)
+    if parent.company_id != loan.company_id or parent.borrower_id != loan.borrower_id:
+        raise HTTPException(status_code=409, detail="Original loan does not match the top-up company and borrower")
+    if _money(loan.principal_amount) != _money(loan.top_up_settlement_amount) + _money(payment.amount):
+        raise HTTPException(status_code=409, detail="Top-up principal must equal settlement plus borrower cash")
+    # The contractual balance may contain unearned interest: quote the same
+    # method-aware settlement calculation used by cash top-ups.
+    from services.top_up_settlement import preview_top_up_settlement
+
+    quote = preview_top_up_settlement(
+        db, loan=parent, actor_user_id=payment.initiated_by_user_id,
+    )
+    settlement_amount = _money(quote.settlement_amount)
     if abs(settlement_amount - _money(loan.top_up_settlement_amount)) > Decimal("0.01"):
         raise HTTPException(
             status_code=409,
-            detail="The original loan balance changed after top-up approval; reassess the top-up",
+            detail="The original loan settlement quote changed after top-up approval; reconcile the gateway payout before completing settlement",
         )
     now = payment.completed_at or datetime.now(timezone.utc)
     db.add(
@@ -158,10 +169,11 @@ def _finalize_top_up(db: Session, payment: PaymentTransaction) -> None:
             status="settled",
             settled_at=now,
             settled_by_user_id=payment.initiated_by_user_id,
-            notes=f"Original loan {parent.loan_reference} settled from top-up {loan.loan_reference}",
+            notes=(f"Original loan {parent.loan_reference} settled from top-up {loan.loan_reference}; "
+                   f"method={quote.calculation_method}; unearned_interest_rebate={quote.unearned_interest_rebate}"),
         )
     )
-    parent.amount_paid = _money(parent.total_repayable)
+    # Preserve actual cash repayments; internal refinancing is not borrower cash paid.
     parent.balance = _money(0)
     parent.status = LoanStatus.COMPLETED
 
