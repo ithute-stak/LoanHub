@@ -603,6 +603,22 @@ def assert_disbursement_governance_ready(
         )
 
 
+def _reject_existing_top_up_settlement(db: Session, loan: ClientCompanyLoan) -> None:
+    """Fail closed before recording a payout for an already-settled top-up."""
+    if not loan.is_top_up:
+        return
+    existing = (
+        db.query(LoanTopUpSettlement)
+        .filter(LoanTopUpSettlement.new_loan_id == loan.id)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This top-up has already settled the original loan; reconcile the existing transaction before attempting another disbursement",
+        )
+
+
 def disburse_cash_loan(
     db: Session,
     *,
@@ -630,6 +646,7 @@ def disburse_cash_loan(
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
     _require_signed_contract_before_disbursement(db, loan)
+    _reject_existing_top_up_settlement(db, loan)
     owner_override_verified = bool(
         owner_override_verified and payment_method == PaymentMethod.CASH
     )
