@@ -198,6 +198,21 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
         .order_by(LegacyBankDeduction.created_at.asc(), LegacyBankDeduction.id.asc())
         .all()
     )
+    custom_groups = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == context.company_id,
+        CompanyOperatingRecord.module == _CUSTOM_MODULE,
+        CompanyOperatingRecord.record_type == _CUSTOM_TYPE,
+        CompanyOperatingRecord.is_archived.is_(False),
+    ).order_by(CompanyOperatingRecord.id).all()
+    configured = []
+    for saved in custom_groups:
+        config = saved.data or {}
+        bank_branch = config.get("branch_code")
+        work_id = config.get("work_group_id")
+        employers = {employer_key(name) for name in config.get("employers", []) if isinstance(name, str)}
+        if not bank_branch or not work_id or not employers:
+            raise HTTPException(422, "A saved custom bank group is incomplete; edit or remove it before exporting")
+        configured.append((saved, bank_branch, str(work_id), employers))
     data = []
     for entry, group in rows:
         number = decrypt_credential(entry.account_number_encrypted)
@@ -215,12 +230,26 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
             work_group = "S/E"
         else:
             work_group = str(group.code)
-        data.append({
+        matched = [
+            saved for saved, bank_branch, work_id, employers in configured
+            if str(group.id) == work_id
+            and bank_branch == branch
+            and routing is not None and routing[1] == bank_branch
+            and employer_key(entry.employer or "") in employers
+        ]
+        if len(matched) > 1:
+            raise HTTPException(422, "Overlapping custom groups include the same deduction. Edit the groups before export.")
+        record = {
             "name": entry.client_name, "bank": bank,
             "account": number, "branch": branch,
             "group": work_group, "installment": entry.amount, "balance": entry.amount,
             "employer": entry.employer,
-        })
+        }
+        if matched:
+            # Stable ID prevents collisions between equal or renamed group names.
+            # One instruction can be routed to exactly one custom CSV.
+            record["custom_filename"] = "CUSTOM-" + str(matched[0].id).replace("-", "") + ".csv"
+        data.append(record)
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
     if summary["excluded"]:
