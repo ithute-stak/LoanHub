@@ -35,6 +35,7 @@ import { listLoanProducts } from "@/api/loanProducts";
 import { uploadManagedFile } from "@/api/files";
 import { calculateLoan } from "@/api/loans";
 import { originationApi } from "@/api/origination";
+import { api } from "@/lib/api";
 import { useTenant } from "@/provider/tenantProvider";
 import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
@@ -204,6 +205,7 @@ function OriginationWizard() {
   const [productId, setProductId] = useState("");
   const [applicationType, setApplicationType] = useState<"new_loan" | "top_up">(requestedType === "top_up" ? "top_up" : "new_loan");
   const [topUpEligibility, setTopUpEligibility] = useState<TopUpEligibility | null>(null);
+  const [topUpSettlementQuote, setTopUpSettlementQuote] = useState<number | null>(null);
   const [topUpCashRequested, setTopUpCashRequested] = useState(0);
   const [topUpExceptionReason, setTopUpExceptionReason] = useState("");
   const [requestedAmount, setRequestedAmount] = useState(0);
@@ -223,7 +225,7 @@ function OriginationWizard() {
 
   const selectedClient = useMemo(() => clients.find((item) => item.borrower_id === borrowerId) ?? null, [borrowerId, clients]);
   const selectedProduct = useMemo(() => products.find((item) => item.id === productId) ?? null, [productId, products]);
-  const topUpSettlement = Number(topUpEligibility?.loan?.balance ?? 0);
+  const topUpSettlement = topUpSettlementQuote ?? 0;
   const topUpTotal = topUpSettlement + Number(topUpCashRequested || 0);
 
   const applyProfile = useCallback((row: FinancialProfile) => {
@@ -363,6 +365,21 @@ function OriginationWizard() {
   }, [load]);
 
   useEffect(() => {
+    const loanId = applicationType === "top_up" ? topUpEligibility?.loan?.id : null;
+    setTopUpSettlementQuote(null);
+    if (!loanId) return;
+    let active = true;
+    api.get<{ settlement_amount: string }>(`/origination/loans/${loanId}/top-up-settlement-preview`)
+      .then(({ data }) => {
+        if (active) setTopUpSettlementQuote(Number(data.settlement_amount));
+      })
+      .catch((error: unknown) => {
+        if (active) toast.error(getErrorMessage(error, "Could not load the correct top-up settlement quote."));
+      });
+    return () => { active = false; };
+  }, [applicationType, topUpEligibility?.loan?.id]);
+
+  useEffect(() => {
     if (applicationType === "top_up") setRequestedAmount(topUpTotal);
   }, [applicationType, topUpTotal]);
 
@@ -448,6 +465,7 @@ function OriginationWizard() {
     if (!productId) throw new Error("Select a loan product");
     if (applicationType === "top_up") {
       if (!topUpEligibility?.loan) throw new Error("No active loan is available for a top-up");
+      if (topUpSettlementQuote === null || !Number.isFinite(topUpSettlementQuote)) throw new Error("Wait for the verified top-up settlement quote before continuing");
       if (topUpCashRequested <= 0) throw new Error("Enter the additional cash requested for the top-up");
       if (!topUpEligibility.eligible && topUpEligibility.requires_owner_exception && topUpExceptionReason.trim().length < 10) {
         throw new Error("Explain why the company owner should approve this top-up exception");
