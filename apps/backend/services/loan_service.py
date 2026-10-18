@@ -744,6 +744,10 @@ def disburse_cash_loan(
             )
             if not parent:
                 raise HTTPException(status_code=409, detail="The original loan for this top-up was not found")
+            if parent.company_id != loan.company_id or parent.borrower_id != loan.borrower_id:
+                raise HTTPException(status_code=409, detail="The original loan does not match the top-up company and borrower")
+            if money(loan.principal_amount) != money(loan.top_up_settlement_amount) + money(disbursement_amount):
+                raise HTTPException(status_code=409, detail="Top-up principal must equal settlement plus borrower cash")
             if parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
                 raise HTTPException(status_code=409, detail="The original loan is no longer eligible for top-up settlement")
             # Recalculate from the actual payment ledger and original interest
@@ -776,7 +780,11 @@ def disburse_cash_loan(
                        f"unearned_interest_rebate={settlement_quote.unearned_interest_rebate}"),
             )
             db.add(settlement)
-            parent.amount_paid = money(parent.total_repayable)
+            # This is a refinancing settlement, not a borrower repayment.
+            # Do not fabricate cash receipts by setting amount_paid to the
+            # original contract's total repayable (including rebated interest).
+            # Preserve posted borrower payments; the internal settlement and
+            # rebate are separately evidenced in LoanTopUpSettlement.
             parent.balance = money(0)
             parent.status = LoanStatus.COMPLETED
 
