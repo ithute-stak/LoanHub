@@ -5,6 +5,8 @@ import axios from "axios";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Maximize2, Layers3, Search, UploadCloud, Plus } from "lucide-react";
 
 type Group = { id: string; code: string; name: string };
 type Entry = { id: string; work_group_id: string; work_group: string; client_name: string; employer: string; masked_account: string; branch_code: string; amount: string; created_at?: string | null; created_by_name?: string | null; source?: string };
@@ -49,6 +51,10 @@ export default function LegacyBankDeductionsPage() {
   const [bulkGroup,setBulkGroup] = useState("");
   const [removed,setRemoved] = useState<Removed[]>([]);
   const [showRemoved,setShowRemoved] = useState(false);
+  const [expandedTable,setExpandedTable] = useState(false);
+  const [captureOpen,setCaptureOpen] = useState(false);
+  const [importOpen,setImportOpen] = useState(false);
+  const [confirmAction,setConfirmAction] = useState<{label:string;description:string;action:()=>Promise<void>} | null>(null);
   const refresh = useCallback(async () => {
     const [a,b,c,d] = await Promise.all([api.get<Group[]>("/legacy-bank-deductions/work-groups"),api.get<Entry[]>("/legacy-bank-deductions/"),api.get<string[]>("/legacy-bank-deductions/employers"),api.get<CustomGroup[]>("/legacy-bank-deductions/custom-groups")]);
     setGroups(a.data);setRecords(b.data);setEmployerOptions(c.data);setCustomGroups(d.data);
@@ -85,12 +91,12 @@ export default function LegacyBankDeductionsPage() {
       const payload=editing?{work_group_id:form.work_group_id,client_name:form.client_name,employer:form.employer,branch_code:form.branch_code,amount:form.amount}:form;
       if(editing) await api.patch("/legacy-bank-deductions/"+editing,payload);
       else await api.post("/legacy-bank-deductions/",payload);
-      setForm({...empty});setAddingEmployer(false);setEditing(null);await refresh();setStatus("Record saved.");
+      setForm({...empty});setAddingEmployer(false);setEditing(null);setCaptureOpen(false);await refresh();setStatus("Record saved.");
     } catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
-  function startEdit(r:Entry){setAddingEmployer(false);setEditing(r.id);setForm({work_group_id:r.work_group_id,client_name:r.client_name,employer:r.employer,account_number:"",branch_code:r.branch_code,amount:r.amount});window.scrollTo({top:0,behavior:"smooth"});}
+  function startEdit(r:Entry){setAddingEmployer(false);setEditing(r.id);setForm({work_group_id:r.work_group_id,client_name:r.client_name,employer:r.employer,account_number:"",branch_code:r.branch_code,amount:r.amount});setExpandedTable(false);setCaptureOpen(true);}
   async function remove(r:Entry) {
-    if(!window.confirm("Remove "+r.client_name+" from future bank exports? Managers can restore it."))return;
+
     setBusy(true);try{await api.delete("/legacy-bank-deductions/"+r.id);await refresh();setStatus("Record removed; recoverable by management.");}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
   async function exportZip(combined = false){
@@ -140,7 +146,7 @@ export default function LegacyBankDeductionsPage() {
     setBusy(true);try{const r=await api.get<Removed[]>("/legacy-bank-deductions/deleted");setRemoved(r.data);setShowRemoved(true);}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
   async function restore(id:string){
-    if(!window.confirm("Restore this deduction to the active bank register?"))return;
+
     setBusy(true);try{await api.post("/legacy-bank-deductions/"+id+"/restore",{});await loadRemoved();await refresh();setStatus("Record restored.");}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
 
@@ -168,7 +174,7 @@ export default function LegacyBankDeductionsPage() {
     } catch(e) {setStatus(explain(e));} finally {setBusy(false);}
   }
   async function deleteCustomGroup(group: CustomGroup) {
-    if (!window.confirm("Remove custom group " + group.name + "? Original deductions will remain untouched.")) return;
+
     setBusy(true);setStatus("");
     try {await api.delete("/legacy-bank-deductions/custom-groups/" + group.id);await refresh();setStatus("Custom group removed. Original deductions preserved.");}
     catch(e) {setStatus(explain(e));} finally {setBusy(false);}
@@ -188,10 +194,10 @@ export default function LegacyBankDeductionsPage() {
       } else setStatus(explain(e));
     } finally {setBusy(false);}
   }
-  const customGroupSection = <section className="space-y-3 rounded-xl border bg-card p-4">
+  const customGroupSection = <section className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
     <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Custom bank deduction groups</h2><p className="text-sm text-muted-foreground">Bank / branch → work group → selected employers. Original deductions stay unchanged.</p></div><Button disabled={busy} onClick={()=>{resetCustomEditor();setCustomEditor(true);}}>+ Create custom group</Button></div>
-    {customEditor&&<div className="space-y-3 rounded-lg border p-4">
-      <h3 className="font-medium">{customEditing?"Edit":"Create"} custom bank group</h3>
+    <Dialog open={customEditor} onOpenChange={open=>{if(!open&&!busy)resetCustomEditor();}}><DialogContent className="sm:max-w-4xl max-h-[92vh] overflow-y-auto"><DialogHeader><DialogTitle>{customEditing?"Edit":"Create"} custom bank group</DialogTitle><DialogDescription>Select a bank and work group, then mark employers to combine into one bank CSV.</DialogDescription></DialogHeader><div className="space-y-5">
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="text-sm">Bank / clearing branch
           <select aria-label="Custom group bank" className="mt-1 w-full rounded-md border bg-background p-2" value={customBranch} onChange={e=>{setCustomBranch(e.target.value);setCustomEmployers([]);}}>
@@ -210,11 +216,11 @@ export default function LegacyBankDeductionsPage() {
         <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Mark employers ({customEmployers.length} selected)</p><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>setCustomEmployers(eligibleCustomEmployers)}>Select all</Button><Button size="sm" variant="outline" onClick={()=>setCustomEmployers([])}>Clear</Button></div></div>
         {!customBranch||!customWork?<p className="text-sm text-muted-foreground">Choose bank and work group to list matching employers.</p>:null}
         {customBranch&&customWork&&!eligibleCustomEmployers.length?<p className="text-sm text-muted-foreground">No matching employers in the loaded register.</p>:null}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{eligibleCustomEmployers.map(name=><label key={name} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={customEmployers.includes(name)} onChange={e=>setCustomEmployers(old=>e.target.checked?[...old,name]:old.filter(n=>n!==name))}/>{name}</label>)}</div>
+        <div className="grid max-h-[35vh] gap-2 overflow-y-auto rounded-xl border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">{eligibleCustomEmployers.map(name=><label key={name} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={customEmployers.includes(name)} onChange={e=>setCustomEmployers(old=>e.target.checked?[...old,name]:old.filter(n=>n!==name))}/>{name}</label>)}</div>
       </div>
-      <div className="flex gap-2"><Button disabled={busy||!customName.trim()||!customBranch||!customWork||!customEmployers.length} onClick={()=>void saveCustomGroup()}>Save custom group</Button><Button variant="outline" onClick={resetCustomEditor}>Cancel</Button></div>
-    </div>}
-    <div className="grid gap-2 sm:grid-cols-2">{customGroups.map(group=><div key={group.id} className="space-y-2 rounded-lg border p-3"><p className="font-medium">{group.name}</p><p className="text-sm text-muted-foreground">{group.branch_code} · {groups.find(g=>g.id===group.work_group_id)?.name??"Work group"} · {group.employers.length} employers</p><div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={()=>void exportCustomGroup(group)}>Export ZIP</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>editCustomGroup(group)}>Edit</Button><Button size="sm" variant="destructive" disabled={busy} onClick={()=>void deleteCustomGroup(group)}>Remove</Button></div></div>)}</div>
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-4"><Button variant="outline" disabled={busy} onClick={resetCustomEditor}>Cancel</Button><Button disabled={busy||!customName.trim()||!customBranch||!customWork||!customEmployers.length} onClick={()=>void saveCustomGroup()}>Save custom group</Button></div>
+    </div></DialogContent></Dialog>
+    <div className="grid gap-2 sm:grid-cols-2">{customGroups.map(group=><div key={group.id} className="space-y-3 rounded-xl border bg-background p-4 shadow-sm"><p className="font-semibold">{group.name}</p><p className="text-sm text-muted-foreground">{group.branch_code} · {groups.find(g=>g.id===group.work_group_id)?.name??"Work group"} · {group.employers.length} employers</p><div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={()=>void exportCustomGroup(group)}>Export ZIP</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>editCustomGroup(group)}>Edit</Button><Button size="sm" variant="destructive" disabled={busy} onClick={()=>setConfirmAction({label:"Remove custom group",description:"Remove "+group.name+"? Original deductions stay unchanged.",action:()=>deleteCustomGroup(group)})}>Remove</Button></div></div>)}</div>
     {!customGroups.length&&!customEditor?<p className="text-sm text-muted-foreground">No custom groups yet. Create one to select employers for a specific bank and work group.</p>:null}
   </section>;
 
@@ -235,12 +241,22 @@ export default function LegacyBankDeductionsPage() {
     <label className="text-sm">Branch code (auto-filled from bank rules)<Input className="mt-1" inputMode="numeric" maxLength={6} value={form.branch_code} onChange={e=>setForm({...form,branch_code:e.target.value.replace(/\D/g,"")})}/></label>
     <label className="text-sm">Deduction (LSL)<Input className="mt-1" inputMode="decimal" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
   </div>;
-  return <main className="mx-auto w-full space-y-5 px-3 py-5 lg:px-6">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">Legacy bank deductions</h1><p className="text-sm text-muted-foreground">Capture historical deductions, validate CSV imports and create bank submission ZIPs.</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={()=>{resetCustomEditor();setCustomEditor(true);}}>Create custom group</Button><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button variant="destructive" disabled={busy||records.length===0} onClick={()=>void deleteAllLegacy()}>Delete all legacy records</Button><Button disabled={busy||records.length===0} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button disabled={busy} onClick={()=>void exportZip(true)}>Export legacy + current loans</Button></div></div>
+  return <main className="mx-auto w-full space-y-6 px-3 py-5 lg:px-6">
+    <header className="rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Bank operations</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Legacy bank deductions</h1><p className="mt-1 text-sm text-muted-foreground">Manage employer groups, capture deductions, and prepare bank submission ZIPs.</p></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={()=>{setEditing(null);setForm({...empty});setCaptureOpen(true);}}><Plus className="mr-2 h-4 w-4"/>Capture</Button><Button variant="outline" disabled={busy} onClick={()=>setImportOpen(true)}><UploadCloud className="mr-2 h-4 w-4"/>Import CSV</Button><Button disabled={busy||!records.length} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button variant="outline" disabled={busy} onClick={()=>void exportZip(true)}>Legacy + current loans</Button></div>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-muted/50 p-4"><p className="text-xs text-muted-foreground">Active deductions</p><p className="mt-1 text-2xl font-semibold tabular-nums">{records.length}</p></div>
+        <div className="rounded-xl bg-muted/50 p-4"><p className="text-xs text-muted-foreground">Custom groups</p><p className="mt-1 text-2xl font-semibold tabular-nums">{customGroups.length}</p></div>
+        <div className="rounded-xl bg-muted/50 p-4"><p className="text-xs text-muted-foreground">Filtered amount</p><p className="mt-1 text-2xl font-semibold tabular-nums">M {totalAmount.toLocaleString("en-LS",{minimumFractionDigits:2,maximumFractionDigits:2})}</p></div>
+      </div>
+    </header>
     {status&&<div role="status" className="rounded-lg border px-3 py-2 text-sm">{status}</div>}
     {customGroupSection}
-    <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">{editing?"Edit deduction":"Capture deduction"}</h2>{fields}<div className="flex gap-2"><Button disabled={busy} onClick={()=>void save()}>{editing?"Save changes":"Save deduction"}</Button>{editing&&<Button variant="outline" onClick={()=>{setEditing(null);setForm({...empty});}}>Cancel</Button>}</div></section>
-    <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">Bulk CSV import</h2><p className="text-sm text-muted-foreground">Choose a work group once, then upload CSV/XLSX columns: Client name, Account number, Amount, Employer. Select the work group once; branch codes are resolved by LoanHub.</p><div className="flex flex-wrap items-center gap-2"><select aria-label="Bulk import work group" className="rounded-md border bg-background px-3 py-2" value={bulkGroup} onChange={e=>{setBulkGroup(e.target.value);setPreview(null);}}><option value="">Choose CIVIL, FORCE or S/E</option>{groups.map(g=><option key={g.id} value={g.id}>{g.code} — {g.name}</option>)}</select><Input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="max-w-sm" onChange={e=>{setCsv(e.target.files?.[0]??null);setPreview(null);}}/><Button variant="outline" disabled={!csv||!bulkGroup||busy} onClick={()=>void importCsv(false)}>Preview validation</Button></div>{preview&&<div className="space-y-2 text-sm"><p>{preview.valid} ready, {preview.rejected} rejected</p>{preview.issues.slice(0,20).map(i=><p key={i.row} className="text-destructive">Row {i.row}: {i.reason}</p>)}<Button disabled={busy||preview.rejected>0||preview.valid===0} onClick={()=>void importCsv(true)}>Confirm import</Button></div>}</section>
+    <Dialog open={captureOpen} onOpenChange={open=>{if(!open&&!busy){setCaptureOpen(false);setEditing(null);setForm({...empty});}}}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>{editing?"Edit deduction":"Capture deduction"}</DialogTitle><DialogDescription>Enter bank deduction information. Existing account numbers remain protected.</DialogDescription></DialogHeader>{fields}<div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={()=>{setCaptureOpen(false);setEditing(null);setForm({...empty});}}>Cancel</Button><Button disabled={busy} onClick={()=>void save()}>{editing?"Save changes":"Save deduction"}</Button></div></DialogContent></Dialog>
+    <Dialog open={importOpen} onOpenChange={setImportOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Import deductions</DialogTitle><DialogDescription>Upload CSV/XLSX with client, bank account, amount, and employer columns. Review validation before importing.</DialogDescription></DialogHeader><div className="space-y-4"><select aria-label="Bulk import work group" className="w-full rounded-md border bg-background p-2" value={bulkGroup} onChange={e=>{setBulkGroup(e.target.value);setPreview(null);}}><option value="">Choose CIVIL, FORCE or S/E</option>{groups.map(g=><option key={g.id} value={g.id}>{g.code} — {g.name}</option>)}</select><Input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{setCsv(e.target.files?.[0]??null);setPreview(null);}}/><Button variant="outline" disabled={!csv||!bulkGroup||busy} onClick={()=>void importCsv(false)}>Preview validation</Button>{preview&&<div className="space-y-2 rounded-xl border p-3"><p>{preview.valid} ready, {preview.rejected} rejected</p>{preview.issues.slice(0,20).map(i=><p className="text-sm text-destructive" key={i.row}>Row {i.row}: {i.reason}</p>)}<Button disabled={busy||preview.rejected>0||preview.valid===0} onClick={()=>void importCsv(true)}>Confirm import</Button></div>}</div></DialogContent></Dialog>
     <section className="space-y-3 rounded-xl border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-semibold">Saved deductions ({visible.length} matching / {records.length} loaded)</h2>
@@ -249,18 +265,26 @@ export default function LegacyBankDeductionsPage() {
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Input aria-label="Search records" placeholder="Client, employer, account, branch, creator" value={filter} onChange={e=>setFilter(e.target.value)}/>
         <select aria-label="Filter work group" className="rounded-md border bg-background px-2 py-2" value={groupFilter} onChange={e=>setGroupFilter(e.target.value)}><option value="">All groups</option>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}</select>
-        <select aria-label="Filter employer" className="rounded-md border bg-background px-2 py-2" value={employerFilter} onChange={e=>setEmployerFilter(e.target.value)}><option value="">All employers</option>{employers.map(name=><option key={name} value={name}>{name}</option>)}</select>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">Showing a quick preview. Open the register for advanced filters, sorting and all records.</p><Button variant="outline" onClick={()=>setExpandedTable(true)}><Maximize2 className="mr-2 h-4 w-4"/>Expand table</Button></div>
+      <div className="hidden">      </div>
+      <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[610px] text-left text-sm"><thead className="bg-muted/50"><tr><th className="p-3">Client</th><th className="p-3">Employer</th><th className="p-3">Work group</th><th className="p-3">Bank branch</th><th className="p-3 text-right">Amount</th></tr></thead><tbody>{visible.slice(0,5).map(r=><tr key={r.id} className="border-t"><td className="p-3 font-medium">{r.client_name}</td><td className="p-3">{r.employer}</td><td className="p-3">{r.work_group}</td><td className="p-3 font-mono">{r.branch_code}</td><td className="p-3 text-right tabular-nums">M {Number(r.amount).toFixed(2)}</td></tr>)}</tbody></table>{!visible.length&&<p className="p-6 text-center text-muted-foreground">No matching deductions.</p>}</div>
+      {records.length>=1000&&<p className="text-xs text-amber-700">This screen currently loads at most 1,000 records. Server-side pagination is required for larger registers.</p>}
+    </section>
+    <Dialog open={expandedTable} onOpenChange={setExpandedTable}><DialogContent className="!w-[min(98vw,1600px)] !max-w-none max-h-[94vh] overflow-hidden p-4 sm:p-6"><DialogHeader><DialogTitle>Deduction register</DialogTitle><DialogDescription>{visible.length} matching deductions · M {totalAmount.toLocaleString("en-LS",{minimumFractionDigits:2})}. Advanced filters are available here.</DialogDescription></DialogHeader><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">        <select aria-label="Filter employer" className="rounded-md border bg-background px-2 py-2" value={employerFilter} onChange={e=>setEmployerFilter(e.target.value)}><option value="">All employers</option>{employers.map(name=><option key={name} value={name}>{name}</option>)}</select>
         <select aria-label="Filter branch" className="rounded-md border bg-background px-2 py-2" value={branchFilter} onChange={e=>setBranchFilter(e.target.value)}><option value="">All bank branches</option>{branches.map(code=><option key={code} value={code}>{code}</option>)}</select>
         <select aria-label="Filter captured by" className="rounded-md border bg-background px-2 py-2" value={creatorFilter} onChange={e=>setCreatorFilter(e.target.value)}><option value="">All capturers</option>{creators.map(name=><option key={name} value={name}>{name}</option>)}</select>
         <label className="text-xs text-muted-foreground">From date<Input aria-label="Captured after" type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/></label>
         <label className="text-xs text-muted-foreground">To date<Input aria-label="Captured before" type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}/></label>
         <select aria-label="Sort records" className="rounded-md border bg-background px-2 py-2" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Client A–Z</option><option value="amount_high">Amount high–low</option><option value="amount_low">Amount low–high</option></select>
         <div className="flex gap-2"><select aria-label="Rows per page" className="min-w-0 flex-1 rounded-md border bg-background px-2 py-2" value={pageSize} onChange={e=>setPageSize(Number(e.target.value))}>{[10,25,50,100].map(n=><option key={n} value={n}>{n} per page</option>)}</select><Button variant="outline" onClick={()=>{setFilter("");setGroupFilter("");setBranchFilter("");setEmployerFilter("");setCreatorFilter("");setDateFrom("");setDateTo("");setSortBy("newest");setPage(1);}}>Clear filters</Button></div>
-      </div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead><tr className="border-b"><th className="p-2">Work group</th><th className="p-2">Client</th><th className="p-2">Employer</th><th className="p-2">Account (masked)</th><th className="p-2">Branch</th><th className="p-2 text-right">Amount (LSL)</th><th className="p-2">Captured by</th><th className="p-2">Date</th><th className="p-2">Actions</th></tr></thead><tbody>{pageRows.map(r=><tr key={r.id} className="border-b"><td className="p-2">{r.work_group}</td><td className="p-2">{r.client_name}</td><td className="p-2">{r.employer || "Unassigned"}</td><td className="p-2 font-mono">{r.masked_account}</td><td className="p-2">{r.branch_code}</td><td className="p-2 text-right">{Number(r.amount).toFixed(2)}</td><td className="p-2">{r.created_by_name || "Not recorded"}</td><td className="p-2">{r.created_at ? new Date(r.created_at).toLocaleDateString() : "—"}</td><td className="p-2"><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={()=>startEdit(r)}>Edit</Button><Button size="sm" variant="destructive" disabled={busy} onClick={()=>void remove(r)}>Remove</Button></div></td></tr>)}</tbody></table>{visible.length===0&&<p className="p-4 text-center text-sm text-muted-foreground">No matching records.</p>}</div>
+
+      </div><div className="min-h-0 flex-1 overflow-y-auto">      <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead><tr className="border-b"><th className="p-2">Work group</th><th className="p-2">Client</th><th className="p-2">Employer</th><th className="p-2">Account (masked)</th><th className="p-2">Branch</th><th className="p-2 text-right">Amount (LSL)</th><th className="p-2">Captured by</th><th className="p-2">Date</th><th className="p-2">Actions</th></tr></thead><tbody>{pageRows.map(r=><tr key={r.id} className="border-b"><td className="p-2">{r.work_group}</td><td className="p-2">{r.client_name}</td><td className="p-2">{r.employer || "Unassigned"}</td><td className="p-2 font-mono">{r.masked_account}</td><td className="p-2">{r.branch_code}</td><td className="p-2 text-right">{Number(r.amount).toFixed(2)}</td><td className="p-2">{r.created_by_name || "Not recorded"}</td><td className="p-2">{r.created_at ? new Date(r.created_at).toLocaleDateString() : "—"}</td><td className="p-2"><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={()=>startEdit(r)}>Edit</Button><Button size="sm" variant="destructive" disabled={busy} onClick={()=>setConfirmAction({label:"Remove deduction",description:"Remove "+r.client_name+" from future exports? Management can restore it.",action:()=>remove(r)})}>Remove</Button></div></td></tr>)}</tbody></table>{visible.length===0&&<p className="p-4 text-center text-sm text-muted-foreground">No matching records.</p>}</div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>Page {currentPage} of {totalPages} · {visible.length ? (currentPage-1)*pageSize+1 : 0}–{Math.min(currentPage*pageSize,visible.length)} of {visible.length}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage<=1} onClick={()=>setPage(1)}>First</Button><Button size="sm" variant="outline" disabled={currentPage<=1} onClick={()=>setPage(currentPage-1)}>Previous</Button><Button size="sm" variant="outline" disabled={currentPage>=totalPages} onClick={()=>setPage(currentPage+1)}>Next</Button><Button size="sm" variant="outline" disabled={currentPage>=totalPages} onClick={()=>setPage(totalPages)}>Last</Button></div></div>
-      {records.length>=1000&&<p className="text-xs text-amber-700">This screen currently loads at most 1,000 records. Server-side pagination is required for larger registers.</p>}
-    </section>
-    {showRemoved&&<section className="space-y-2 rounded-xl border bg-card p-4"><h2 className="font-semibold">Recover deleted records (management only)</h2>{removed.map(r=><div key={r.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{r.client_name} · ****{r.account_last4} · M {r.amount}</span><Button size="sm" variant="outline" disabled={busy} onClick={()=>void restore(r.id)}>Restore</Button></div>)}{removed.length===0&&<p className="text-sm">No deleted records.</p>}</section>}
+</div></DialogContent></Dialog>
+
+    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={()=>void loadRemoved()}>Restore records</Button><Button variant="destructive" disabled={busy||records.length===0} onClick={()=>setConfirmAction({label:"Delete all legacy records",description:"This will remove all active legacy deductions from exports. They remain recoverable and current loans are not deleted.",action:deleteAllLegacy})}>Delete all legacy records</Button></div>
+    {showRemoved&&<section className="space-y-2 rounded-xl border bg-card p-4"><h2 className="font-semibold">Recover deleted records (management only)</h2>{removed.map(r=><div key={r.id} className="flex items-center justify-between gap-2 border-b py-2 text-sm"><span>{r.client_name} · ****{r.account_last4} · M {r.amount}</span><Button size="sm" variant="outline" disabled={busy} onClick={()=>setConfirmAction({label:"Restore deduction",description:"Restore this saved deduction to active bank exports?",action:()=>restore(r.id)})}>Restore</Button></div>)}{removed.length===0&&<p className="text-sm">No deleted records.</p>}</section>}
+    <Dialog open={!!confirmAction} onOpenChange={open=>{if(!open)setConfirmAction(null);}}><DialogContent><DialogHeader><DialogTitle>{confirmAction?.label}</DialogTitle><DialogDescription>{confirmAction?.description}</DialogDescription></DialogHeader><div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setConfirmAction(null)}>Cancel</Button><Button variant="destructive" disabled={busy} onClick={()=>{const action=confirmAction?.action;setConfirmAction(null);if(action)void action();}}>Confirm</Button></div></DialogContent></Dialog>
   </main>;
 }
