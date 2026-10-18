@@ -544,7 +544,7 @@ function OriginationWizard() {
   }
 
   async function skipToTopUpOffer() {
-    if (applicationType !== "top_up" || activeRole !== "company_owner") return;
+    if (applicationType !== "top_up" || activeRole !== "company_owner" || (application && application.status !== "draft")) return;
     setWorking(true);
     try {
       // A top-up offer reuses the existing financial profile. The owner need
@@ -614,7 +614,7 @@ function OriginationWizard() {
             <h1 className="mt-2 text-3xl font-black tracking-tight">{application?.application_reference ?? "New credit application"}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{profile?.identity.full_name ?? selectedClient?.full_name ?? "Select an existing company client"} · Step {step + 1} of {steps.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && activeRole === "company_owner" ? (
+          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && activeRole === "company_owner" && (!application || application.status === "draft") ? (
             <LoadingButton loading={working} loadingText="Preparing top-up offer…" onClick={() => void skipToTopUpOffer()}>
               <ArrowRight className="h-4 w-4" />Skip forms & offer top-up
             </LoadingButton>
