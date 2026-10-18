@@ -20,3 +20,9 @@ def test_disbursement_fails_closed_if_settlement_changes():
     assert "abs(settlement_amount - configured_settlement) > MONEY" in section
     assert "LoanTopUpSettlement" in section
     assert "if not existing_settlement:" in section
+
+
+def test_refinancing_requires_same_tenant_borrower_and_balanced_cash():
+    section = SOURCE.split("def disburse_cash_loan(", 1)[1].split("def record_borrower_request_fee(", 1)[0]
+    assert "parent.company_id != loan.company_id or parent.borrower_id != loan.borrower_id" in section
+    assert "money(loan.principal_amount) != money(loan.top_up_settlement_amount) + money(disbursement_amount)" in section
