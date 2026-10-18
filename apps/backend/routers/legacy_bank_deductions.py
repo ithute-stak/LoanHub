@@ -248,7 +248,7 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
         if matched:
             # Stable ID prevents collisions between equal or renamed group names.
             # One instruction can be routed to exactly one custom CSV.
-            record["custom_filename"] = "CUSTOM-" + str(matched[0].id).replace("-", "") + ".csv"
+            record["custom_filename"] = "CUSTOM-" + re.sub(r"[^A-Za-z0-9_-]+", "-", matched[0].title).strip("-")[:45] + "-" + str(matched[0].id).replace("-", "")[:12] + ".csv"
         data.append(record)
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
