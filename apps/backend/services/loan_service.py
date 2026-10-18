@@ -776,7 +776,11 @@ def disburse_cash_loan(
                        f"unearned_interest_rebate={settlement_quote.unearned_interest_rebate}"),
             )
             db.add(settlement)
-            parent.amount_paid = money(parent.total_repayable)
+            # This is a refinancing settlement, not a borrower repayment.
+            # Do not fabricate cash receipts by setting amount_paid to the
+            # original contract's total repayable (including rebated interest).
+            # Preserve posted borrower payments; the internal settlement and
+            # rebate are separately evidenced in LoanTopUpSettlement.
             parent.balance = money(0)
             parent.status = LoanStatus.COMPLETED
 
