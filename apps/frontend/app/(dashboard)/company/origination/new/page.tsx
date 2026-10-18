@@ -35,6 +35,7 @@ import { listLoanProducts } from "@/api/loanProducts";
 import { uploadManagedFile } from "@/api/files";
 import { calculateLoan } from "@/api/loans";
 import { originationApi } from "@/api/origination";
+import { useTenant } from "@/provider/tenantProvider";
 import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
@@ -177,6 +178,7 @@ export default function NewOriginationPage() {
 }
 
 function OriginationWizard() {
+  const { activeRole } = useTenant();
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedBorrowerId = searchParams.get("borrower");
@@ -542,7 +544,7 @@ function OriginationWizard() {
   }
 
   async function skipToTopUpOffer() {
-    if (applicationType !== "top_up") return;
+    if (applicationType !== "top_up" || activeRole !== "company_owner") return;
     setWorking(true);
     try {
       // A top-up offer reuses the existing financial profile. The owner need
@@ -612,7 +614,7 @@ function OriginationWizard() {
             <h1 className="mt-2 text-3xl font-black tracking-tight">{application?.application_reference ?? "New credit application"}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{profile?.identity.full_name ?? selectedClient?.full_name ?? "Select an existing company client"} · Step {step + 1} of {steps.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2">{applicationType === "top_up" ? (
+          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && activeRole === "company_owner" ? (
             <LoadingButton loading={working} loadingText="Preparing top-up offer…" onClick={() => void skipToTopUpOffer()}>
               <ArrowRight className="h-4 w-4" />Skip forms & offer top-up
             </LoadingButton>
