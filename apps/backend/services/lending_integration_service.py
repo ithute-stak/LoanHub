@@ -71,6 +71,25 @@ def application_integration_readiness(
             }
         )
 
+    # A previous positive decision cannot authorize a top-up with revised
+    # installments. Compare the assessment actually made against the
+    # currently proposed repayment, not merely its eligible label.
+    if (
+        application.application_type == "top_up"
+        and assessment is not None
+        and proposed_installment is not None
+        and abs(Decimal(assessment.proposed_installment) - Decimal(proposed_installment)) > Decimal("0.01")
+    ):
+        core_ready = False
+        blockers.append(
+            {
+                "source": "core",
+                "code": "top_up_affordability_outdated",
+                "message": "The top-up installment changed since the affordability assessment. Recalculate affordability before approval.",
+                "action_path": f"/company/origination/new?application={application.id}",
+            }
+        )
+
     bureau_row, bureau_policy = company_experian_policy(db, application.company_id)
     bureau_enabled = bool(bureau_row and bureau_row.is_enabled)
     bureau_environment = str(bureau_policy.get("environment") or "sandbox")
