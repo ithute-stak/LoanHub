@@ -206,17 +206,26 @@ export default function LoanDecisionCentrePage() {
             <CardTitle>Company owner · Quick top-up workflow</CardTitle>
             <CardDescription>Reuse the existing borrower records and finish only the checks still required for this top-up. Approval and payment remain separate authorized actions.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <Button asChild variant="outline"><Link href={`/company/origination/new?application=${application.id}`}>1. Verify terms and assess affordability</Link></Button>
+          <CardContent className="space-y-3">
             {application.status === "draft" ? (
-              <Badge variant="secondary">Draft — submit after assessment</Badge>
+              <>
+                <p className="text-sm text-muted-foreground">Next action: skip repeated borrower forms and prepare an offer using existing verified information. LoanHub will assess affordability and identify any missing requirements.</p>
+                <Button asChild><Link href={`/company/origination/new?application=${application.id}`}>Skip forms &amp; offer top-up</Link></Button>
+                <Badge variant="secondary">Draft — not yet approved or disbursed</Badge>
+              </>
+            ) : ["submitted", "under_review"].includes(application.status) ? (
+              <>
+                <p className="text-sm text-muted-foreground">The offer is awaiting an authorized lending decision. Disbursement is not available until approval and required contract signing.</p>
+                <Button asChild><Link href={`/company/marketplace?workspace=applications&application=${application.id}`}>Review and decide top-up</Link></Button>
+              </>
+            ) : application.status === "approved" && application.loan_id ? (
+              <>
+                <p className="text-sm text-muted-foreground">The replacement loan has been created. Open it to complete contract signing and the authorized cash disbursement; do not pay out directly from this application screen.</p>
+                <Button asChild><Link href="/company/loans">Open approved loan for contract &amp; disbursement</Link></Button>
+              </>
             ) : (
-              <Badge variant="outline">Application: {titleCase(application.status)}</Badge>
+              <p className="text-sm text-muted-foreground">This application is {titleCase(application.status)}. Review its history before attempting another top-up.</p>
             )}
-            <Button asChild><Link href={`/company/marketplace?workspace=applications&application=${application.id}`}>2. Review owner decision</Link></Button>
-            {application.loan_id ? (
-              <Button asChild variant="outline"><Link href={`/company/loans?loan=${application.loan_id}`}>3. Contract and authorized disbursement</Link></Button>
-            ) : <Badge variant="secondary">Disbursement unavailable until loan creation and signing</Badge>}
           </CardContent>
         </Card>
       ) : null}
