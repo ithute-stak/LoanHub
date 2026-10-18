@@ -630,6 +630,19 @@ def disburse_cash_loan(
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
     _require_signed_contract_before_disbursement(db, loan)
+    # Reject an inconsistent approved top-up before any outgoing payment is
+    # recorded. The approved loan row is locked above for payout serialization.
+    if loan.is_top_up:
+        existing_top_up_settlement = (
+            db.query(LoanTopUpSettlement)
+            .filter(LoanTopUpSettlement.new_loan_id == loan.id)
+            .first()
+        )
+        if existing_top_up_settlement is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This top-up has already settled the original loan; reconcile the existing transaction before attempting another disbursement",
+            )
     owner_override_verified = bool(
         owner_override_verified and payment_method == PaymentMethod.CASH
     )
