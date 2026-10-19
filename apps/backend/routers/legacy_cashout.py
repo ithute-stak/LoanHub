@@ -48,9 +48,18 @@ from database.schemas.legacy_cashout import (
     normalise_legacy_capture_status,
 )
 from database.session import get_db
+from services.legacy_bank_routing import BANK_RULES
 
 
 router = APIRouter(prefix="/legacy-cashout-register", tags=["Legacy Cash-out Register"])
+
+@router.get("/bank-policy")
+def get_cashout_bank_policy(context: TenantContext = Depends(get_tenant_context)):
+    """Read-only bank policy supplied by the same resolver as Legacy Bank CSV."""
+    _tenant_company_id(context)
+    return [{"name": name, "code": code, "prefixes": list(prefixes), "branch": "Maseru Central"}
+            for name, code, prefixes in BANK_RULES]
+
 
 _CAPTURE_ROLES = COMPANY_MANAGEMENT_ROLES | LENDING_ROLES
 _POST_ROLES = COMPANY_MANAGEMENT_ROLES
