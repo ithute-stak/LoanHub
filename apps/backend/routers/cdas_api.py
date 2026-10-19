@@ -7,6 +7,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,7 @@ from integrations.cdas_contracts import (
     CdasSettlementPayload,
     cdas_reference_data,
 )
+from services.cdas_history_pdf import build_cdas_history_pdf
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -831,6 +833,28 @@ def get_cdas_transaction_log(
         "items": items[:limit],
         "count": min(len(items), limit),
     }
+
+
+@router.get("/history/transactions.pdf")
+def download_cdas_transaction_history_pdf(
+    limit: int = Query(500, ge=1, le=500),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Export real, scoped LoanHub CDAS ledger events; NOT provider portal history."""
+    history = get_cdas_transaction_log(limit=limit, context=context, db=db)
+    company = context.company
+    if company is None:
+        raise HTTPException(status_code=422, detail="A company must be selected")
+    payload = build_cdas_history_pdf(
+        db=db, company=company, entries=history["items"], environment=history["environment"]
+    )
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="loanhub-cdas-operations-history.pdf"',
+                 "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/history/deductions")
