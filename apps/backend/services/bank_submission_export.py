@@ -96,7 +96,8 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
             if not employer_slug:
                 omitted["missing_employer"] += 1
                 continue
-            bank_slug = re.sub(r"[^A-Z0-9]+", "-", bank.upper()).strip("-")[:40]
+            bank_name = {"STD": "STANDARD-BANK", "PB": "POSTBANK", "NB": "NEDBANK", "FNB": "FNB"}.get(bank, bank)
+            bank_slug = re.sub(r"[^A-Z0-9]+", "-", bank_name.upper()).strip("-")[:40]
             filename = f"{bank_slug}-{branch.zfill(6)}-{group}.csv" if bank == "FNB" else f"{bank_slug}-{branch.zfill(6)}-{group}-{employer_slug}.csv"
         else:
             filename = "FNB-all-groups.csv" if bank == "FNB" else (
