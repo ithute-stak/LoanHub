@@ -774,6 +774,7 @@ export default function CompanyLoansPage() {
             <section className="loanhub-hero flex flex-col justify-between gap-5 p-5 sm:p-6 lg:flex-row lg:items-end">
                 <div>
                     <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Loans and contracts</p>
+                    <Link href="/company/loan-activity" className="inline-flex text-sm font-semibold text-primary underline underline-offset-4">Company loan activity log</Link>
                     <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">One workspace for lending and
                         documents</h1>
                     <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
