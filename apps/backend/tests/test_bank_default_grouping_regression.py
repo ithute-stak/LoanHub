@@ -18,7 +18,7 @@ def test_distinct_branch_group_employer_csvs_and_custom_override():
     assert not summary["excluded"]
     with ZipFile(BytesIO(payload)) as archive:
         assert sorted(archive.namelist()) == sorted([
-            "STD-060667-civil-TEACHER.csv", "PB-500100-civil-TEACHER.csv",
+            "STANDARD-BANK-060667-civil-TEACHER.csv", "POSTBANK-500100-civil-TEACHER.csv",
             "FNB-280061-civil.csv",
         ])
 
@@ -36,7 +36,7 @@ def test_custom_csv_only_when_explicitly_tagged():
     row = {"name": "Jane", "bank": "STD", "account": "9080001845469",
            "branch": "060667", "group": "CIVIL", "employer": "Teacher",
            "installment": 500, "balance": 500}
-    for custom, expected in [(False, "STD-060667-civil-TEACHER.csv"), (True, "CUSTOM-Teachers-abc123.csv")]:
+    for custom, expected in [(False, "STANDARD-BANK-060667-civil-TEACHER.csv"), (True, "CUSTOM-Teachers-abc123.csv")]:
         entry = {**row}
         if custom:
             entry["custom_filename"] = "CUSTOM-Teachers-abc123.csv"
