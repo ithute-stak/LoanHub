@@ -57,6 +57,7 @@ import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog"
 import {CompactTopUpDialog} from "@/components/loans/compact-top-up-dialog";
 import {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";
 import {LoanPortfolioWorkspace} from "@/components/loans/loan-portfolio-workspace";
+import {LoanActivityPanel} from "@/components/loans/loan-activity-panel";
 import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
@@ -1375,6 +1376,7 @@ export default function CompanyLoansPage() {
                             </div>
                         </>
                     ) : null}
+                    {selectedLoan ? <LoanActivityPanel loanId={selectedLoan.id}/> : null}
                     <DialogFooter className="mx-0 mb-0 flex-wrap">
                         <Button variant="outline" onClick={() => setScheduleOpen(false)}>Close</Button>
                         {selectedLoan ? (
