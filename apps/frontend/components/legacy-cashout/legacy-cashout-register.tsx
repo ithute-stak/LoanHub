@@ -362,7 +362,8 @@ export function LegacyCashoutRegister() {
   const bankAccountError = useMemo(() => {
     const value = normalizeBankAccountNumber(form.bank_account_number);
     if (!value) return null;
-    if (!/^\\d+$/.test(value)) return "Bank account number must contain digits only.";
+    if (!bankPolicy.length) return "Banking policy is unavailable; please retry when it has loaded.";
+    if (!/^[0-9]+$/.test(value)) return "Bank account number must contain digits only.";
     const detected = bankPolicy.find((rule) => rule.prefixes.some((prefix) => value.startsWith(prefix)));
     if (!detected) return "Account prefix is not supported by the configured bank policy.";
     if (form.bank_name && detected.name !== form.bank_name) return `Account prefix belongs to ${detected.name}, not ${form.bank_name}.`;
