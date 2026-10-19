@@ -127,7 +127,7 @@ def application_integration_readiness(
         )
     )
     latest_bureau = None
-    if bureau_enabled and application.application_type != "top_up":
+    if bureau_enabled:
         latest_bureau = latest_fresh_experian_enquiry(
             db,
             company_id=application.company_id,
@@ -175,7 +175,7 @@ def application_integration_readiness(
                 "action_path": f"/company/origination/experian?application={application.id}",
             }
         )
-    elif bureau_enabled and application.application_type != "top_up" and not bureau_fresh:
+    elif bureau_enabled and not bureau_fresh:
         warnings.append(
             {
                 "source": "bureau",
@@ -185,7 +185,7 @@ def application_integration_readiness(
             }
         )
 
-    if bureau_enabled and application.application_type != "top_up" and not bureau_platform_ready:
+    if bureau_enabled and not bureau_platform_ready:
         warnings.append(
             {
                 "source": "bureau",
