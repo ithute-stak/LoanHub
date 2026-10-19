@@ -871,14 +871,19 @@ export function LegacyCashoutRegister() {
                       aria-invalid={Boolean(bankAccountError)}
                       placeholder={editingId ? "Enter the account number again" : undefined}
                       value={form.bank_account_number}
-                      onChange={(event) => update("bank_account_number", event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        const normalized = normalizeBankAccountNumber(value);
+                        const detected = bankPolicy.find((rule) => rule.prefixes.some((prefix) => normalized.startsWith(prefix)));
+                        setForm((current) => ({ ...current, bank_account_number: value, ...(detected ? { bank_name: detected.name, bank_branch_name: detected.branch, bank_branch_code: detected.code } : {}) }));
+                      }}
                     />
                     <p className={`text-xs ${bankAccountError ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
                       {bankAccountError ?? bankAccountPrefixHint(form.bank_name)}
                     </p>
                   </div>
                 </Field>
-                <Field label="Branch name"><Input readOnly value={selectedBankDetails?.branch ?? (form.bank_branch_name || DEFAULT_BANK_BRANCH)} className="bg-muted/40" /></Field>
+                <Field label="Branch name"><Input readOnly value={selectedBankDetails?.branch ?? (form.bank_branch_name)} className="bg-muted/40" /></Field>
                 <Field label="Branch code"><Input readOnly value={selectedBankDetails?.code ?? form.bank_branch_code} className="bg-muted/40" /></Field>
                 <Field label="Account type"><Input value={form.bank_account_type} onChange={(event) => update("bank_account_type", event.target.value)} /></Field>
               </div>
