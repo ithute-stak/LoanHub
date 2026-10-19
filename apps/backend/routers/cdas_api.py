@@ -767,16 +767,20 @@ def get_cdas_transaction_log(
         .all()
     )
 
-    payg_rows = (
-        db.query(PlatformCdasTransaction)
-        .filter(
-            PlatformCdasTransaction.company_id == context.company_id,
-            PlatformCdasTransaction.environment == environment,
+    # PAYG transactions have no branch_id. Showing company-wide metering to a
+    # branch-scoped operator would disclose activity outside their branch.
+    payg_rows = []
+    if context.branch_id is None:
+        payg_rows = (
+            db.query(PlatformCdasTransaction)
+            .filter(
+                PlatformCdasTransaction.company_id == context.company_id,
+                PlatformCdasTransaction.environment == environment,
+            )
+            .order_by(PlatformCdasTransaction.accrued_at.desc())
+            .limit(limit)
+            .all()
         )
-        .order_by(PlatformCdasTransaction.accrued_at.desc())
-        .limit(limit)
-        .all()
-    )
 
     items: list[dict[str, Any]] = []
     for row in operations:
