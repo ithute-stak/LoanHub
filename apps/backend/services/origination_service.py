@@ -815,13 +815,16 @@ def calculate_affordability(
     debt_installments = money(totals["existing_debt_installments"])
 
     bureau_policy_row, bureau_policy = company_experian_policy(db, company_id)
-    if not bureau_policy_row or not bureau_policy_row.is_enabled:
+    # Top-ups must not depend on an Experian integration that is not active.
+    # Keep the existing bureau requirements for ordinary loan applications.
+    is_top_up = application.application_type == "top_up"
+    if not is_top_up and (not bureau_policy_row or not bureau_policy_row.is_enabled):
         raise HTTPException(
             status_code=409,
             detail="Credit-bureau integration must be enabled before affordability can be calculated.",
         )
     latest_bureau = None
-    if bureau_policy_row and bureau_policy_row.is_enabled:
+    if not is_top_up and bureau_policy_row and bureau_policy_row.is_enabled:
         latest_bureau = assert_experian_requirement(
             db,
             application=application,
