@@ -35,3 +35,10 @@ export async function postLegacyCashoutCapture(id: string): Promise<LegacyCashou
   const response = await api.post<LegacyCashoutCapture>(ROOT + "/" + id + "/post");
   return response.data;
 }
+
+export type LegacyCashoutBankRule = { name: string; code: string; prefixes: string[]; branch: string };
+
+export async function getLegacyCashoutBankPolicy(): Promise<LegacyCashoutBankRule[]> {
+  const response = await api.get<LegacyCashoutBankRule[]>(ROOT + "/bank-policy");
+  return response.data;
+}
