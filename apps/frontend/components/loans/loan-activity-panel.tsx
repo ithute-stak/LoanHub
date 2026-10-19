@@ -24,6 +24,18 @@ export function LoanActivityPanel({loanId}: {loanId: string}) {
 
   useEffect(() => { setOpen(false); setResult(null); setError(""); }, [loanId]);
 
+  async function acknowledge() {
+    setLoading(true);
+    setError("");
+    try {
+      await api.post(`/loans/${encodeURIComponent(loanId)}/processing-acknowledgement`);
+      await load();
+    } catch {
+      setError("Unable to record processing acknowledgement. Only authorized lending staff can record it.");
+      setOpen(true);
+    } finally { setLoading(false); }
+  }
+
   async function load() {
     setOpen(true);
     setLoading(true);
@@ -44,9 +56,10 @@ export function LoanActivityPanel({loanId}: {loanId: string}) {
         <h3 className="font-semibold">Loan Activity Log</h3>
         <p className="text-xs text-muted-foreground">Recorded actions and verified approval/disbursement actors.</p>
       </div>
+      <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={loading} onClick={() => void acknowledge()}>Acknowledge processing</Button>
       <Button type="button" variant="outline" onClick={() => open ? setOpen(false) : void load()}>
         {open ? "Hide history" : "View activity"}
-      </Button>
+      </Button></div>
     </div>
     {open && (loading ? <p className="text-sm">Loading loan activity…</p> : error ?
       <p role="alert" className="text-sm text-destructive">{error}</p> : result?.items.length ?
