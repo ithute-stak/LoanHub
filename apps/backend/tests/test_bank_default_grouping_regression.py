@@ -14,13 +14,22 @@ def test_distinct_branch_group_employer_csvs_and_custom_override():
     ]
     payload, summary = build_bank_submission_zip(sample, lender_name="Batlokoa", employer_grouping=True)
     assert summary["rows"] == 4
-    assert summary["files"] == 4
+    assert summary["files"] == 3
     assert not summary["excluded"]
     with ZipFile(BytesIO(payload)) as archive:
         assert sorted(archive.namelist()) == sorted([
             "060667-civil-TEACHER.csv", "500100-civil-TEACHER.csv",
-            "280061-civil-HEALTH.csv", "280061-civil-TEACHER.csv",
+            "280061-civil.csv",
         ])
+
+
+def test_fnb_work_groups_remain_distinct():
+    rows = [{"name": "Jane", "bank": "FNB", "account": "62646802208", "branch": "280061", "group": group, "employer": employer, "installment": 500, "balance": 500} for group, employer in [("CIVIL", "Teacher"), ("CIVIL", "Health"), ("FORCE", "Teacher")]]
+    payload, summary = build_bank_submission_zip(rows, lender_name="Batlokoa", employer_grouping=True)
+    assert summary["rows"] == 3
+    assert summary["files"] == 2
+    with ZipFile(BytesIO(payload)) as archive:
+        assert sorted(archive.namelist()) == ["280061-civil.csv", "280061-force.csv"]
 
 
 def test_custom_csv_only_when_explicitly_tagged():
