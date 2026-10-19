@@ -6,12 +6,14 @@ from typing import Final
 
 DEFAULT_BANK_BRANCH: Final[str] = "Maseru Central"
 
+# Single source of truth: Legacy Bank CSV routing policy.
+from services.legacy_bank_routing import BANK_RULES, resolve_legacy_bank
+
 BANKING_POLICY: Final[dict[str, dict[str, object]]] = {
-    "FNB": {"code": "280061", "prefixes": ("6",)},
-    "PB": {"code": "500100", "prefixes": ("10",)},
-    "STD": {"code": "060667", "prefixes": ("90",)},
-    "NB": {"code": "390161", "prefixes": ("11", "12")},
+    name: {"code": branch, "prefixes": prefixes}
+    for name, branch, prefixes in BANK_RULES
 }
+
 
 BANK_NAMES: Final[tuple[str, ...]] = tuple(BANKING_POLICY)
 
@@ -51,6 +53,10 @@ def validate_account_number_for_bank(bank_name: str, account_number: str | None)
         return None
 
     prefixes = bank_prefixes_for(name)
+    detected = resolve_legacy_bank(account)
+    if detected is None or detected[0] != name:
+        if detected is not None:
+            raise ValueError(f"Account prefix belongs to {detected[0]}, not {name}")
     if not account.startswith(prefixes):
         if len(prefixes) == 1:
             expected = prefixes[0]
