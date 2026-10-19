@@ -1,5 +1,5 @@
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -795,6 +795,74 @@ def download_bank_submissions(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.get("/activity/company")
+def get_company_loan_activity(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=100),
+    loan_reference: str | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Management-only loan activity. Never infer unrecorded processors."""
+    if context.role not in COMPANY_MANAGEMENT_ROLES:
+        raise HTTPException(status_code=403, detail="Company management access required")
+    if context.company_id is None:
+        raise HTTPException(status_code=403, detail="Select a company")
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="Start date must not exceed end date")
+    loans = db.query(ClientCompanyLoan.id, ClientCompanyLoan.loan_reference).filter(
+        ClientCompanyLoan.company_id == context.company_id
+    )
+    if context.branch_id is not None:
+        loans = loans.filter(ClientCompanyLoan.branch_id == context.branch_id)
+    if loan_reference:
+        loans = loans.filter(ClientCompanyLoan.loan_reference.ilike(f"%{loan_reference.strip()}%"))
+    loan_rows = loans.all()
+    by_id = {row.id: row.loan_reference for row in loan_rows}
+    if not by_id:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size}
+    query = db.query(AuditLog).options(
+        joinedload(AuditLog.user).joinedload(User.person)
+    ).filter(
+        AuditLog.company_id == context.company_id,
+        AuditLog.record_id.in_(list(by_id)),
+    )
+    if action:
+        query = query.filter(AuditLog.action.ilike(f"%{action.strip()}%"))
+    if start_date:
+        query = query.filter(AuditLog.created_at >= datetime.combine(start_date, time.min))
+    if end_date:
+        query = query.filter(AuditLog.created_at <= datetime.combine(end_date, time.max))
+    if actor:
+        token = f"%{actor.strip()}%"
+        # Match stored users, not snapshots or guessed actor names.
+        query = query.join(User, AuditLog.user_id == User.id).outerjoin(User.person.property.mapper.class_).filter(
+            (User.email.ilike(token)) |
+            (User.phone.ilike(token)) |
+            (User.person.property.mapper.class_.full_name.ilike(token))
+        )
+    total = query.count()
+    events = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+    return {
+        "items": [{
+            "id": str(item.id), "loan_id": str(item.record_id),
+            "loan_reference": by_id[item.record_id], "action": item.action,
+            "actor_name": item.user.person.full_name if item.user and item.user.person else (
+                item.user.email or item.user.phone if item.user else None
+            ),
+            "actor_role": item.actor_role, "occurred_at": item.created_at.isoformat(),
+            "description": item.description, "status": item.status,
+        } for item in events],
+        "total": total, "page": page, "page_size": page_size,
+    }
 
 
 @router.get("/{loan_id}/activity")
