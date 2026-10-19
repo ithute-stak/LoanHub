@@ -824,12 +824,15 @@ def calculate_affordability(
             detail="Credit-bureau integration must be enabled before affordability can be calculated.",
         )
     latest_bureau = None
-    if not is_top_up and bureau_policy_row and bureau_policy_row.is_enabled:
-        latest_bureau = assert_experian_requirement(
-            db,
-            application=application,
-            stage="affordability",
-        )
+    if bureau_policy_row and bureau_policy_row.is_enabled:
+        # Active Experian is useful for top-ups when fresh evidence exists,
+        # but top-ups must never require a bureau report to proceed.
+        if not is_top_up:
+            latest_bureau = assert_experian_requirement(
+                db,
+                application=application,
+                stage="affordability",
+            )
         if not latest_bureau:
             latest_bureau = latest_fresh_experian_enquiry(
                 db,
@@ -839,7 +842,7 @@ def calculate_affordability(
                 max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
                 environment=str(bureau_policy.get("environment") or "sandbox"),
             )
-        if not latest_bureau:
+        if not latest_bureau and not is_top_up:
             raise HTTPException(
                 status_code=409,
                 detail="A fresh credit-bureau report is required before affordability can be calculated.",
