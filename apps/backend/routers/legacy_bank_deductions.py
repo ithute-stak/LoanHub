@@ -187,7 +187,7 @@ def create_legacy(payload: LegacyCreate, context: TenantContext = Depends(get_te
 
 
 @router.get("/export.zip")
-def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
+def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext = Depends(get_tenant_context), db: Session = Depends(get_db)):
     """Export explicitly captured historical rows, never current live loans."""
     _authorized(context)
     rows = (
@@ -203,7 +203,7 @@ def export_legacy_csv_zip(context: TenantContext = Depends(get_tenant_context), 
         CompanyOperatingRecord.module == _CUSTOM_MODULE,
         CompanyOperatingRecord.record_type == _CUSTOM_TYPE,
         CompanyOperatingRecord.is_archived.is_(False),
-    ).order_by(CompanyOperatingRecord.id).all()
+    ).order_by(CompanyOperatingRecord.id).all() if include_custom else []
     configured = []
     for saved in custom_groups:
         config = saved.data or {}
