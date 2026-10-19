@@ -100,12 +100,12 @@ export default function LegacyBankDeductionsPage() {
 
     setBusy(true);try{await api.delete("/legacy-bank-deductions/"+r.id);await refresh();setStatus("Record removed; recoverable by management.");}catch(e){setStatus(explain(e));}finally{setBusy(false);}
   }
-  async function exportZip(combined = false){
+  async function exportZip(combined = false, includeCustom = false){
     setBusy(true);setStatus("");
     try{
-      const response=await api.get<Blob>(combined ? "/legacy-bank-deductions/combined-export.zip" : "/legacy-bank-deductions/export.zip",{responseType:"blob"});
+      const response=await api.get<Blob>(combined ? "/legacy-bank-deductions/combined-export.zip" : (includeCustom ? "/legacy-bank-deductions/export.zip?include_custom=true" : "/legacy-bank-deductions/export.zip"),{responseType:"blob"});
       const url=URL.createObjectURL(response.data);
-      const link=document.createElement("a");link.href=url;link.download=combined?"loanhub-combined-bank-submissions.zip":"loanhub-legacy-bank-submissions.zip";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      const link=document.createElement("a");link.href=url;link.download=combined?"loanhub-combined-bank-submissions.zip":includeCustom?"loanhub-custom-bank-submissions.zip":"loanhub-legacy-bank-submissions.zip";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
       setStatus((combined?"Combined":"Legacy")+" bank ZIP generated. Handle this confidential file securely.");
     }catch(e){
       if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
@@ -246,7 +246,7 @@ export default function LegacyBankDeductionsPage() {
     <header className="rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Bank operations</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Legacy bank deductions</h1><p className="mt-1 text-sm text-muted-foreground">Manage employer groups, capture deductions, and prepare bank submission ZIPs.</p></div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={()=>{setEditing(null);setForm({...empty});setCaptureOpen(true);}}><Plus className="mr-2 h-4 w-4"/>Capture</Button><Button variant="outline" disabled={busy} onClick={()=>setImportOpen(true)}><UploadCloud className="mr-2 h-4 w-4"/>Import CSV</Button><Button disabled={busy||!records.length} onClick={()=>void exportZip()}>Export bank ZIP</Button><Button variant="outline" disabled={busy} onClick={()=>void exportZip(true)}>Legacy + current loans</Button></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={()=>{setEditing(null);setForm({...empty});setCaptureOpen(true);}}><Plus className="mr-2 h-4 w-4"/>Capture</Button><Button variant="outline" disabled={busy} onClick={()=>setImportOpen(true)}><UploadCloud className="mr-2 h-4 w-4"/>Import CSV</Button><Button disabled={busy||!records.length} onClick={()=>void exportZip()}>Export default bank ZIP</Button><Button variant="outline" disabled={busy||!records.length} onClick={()=>void exportZip(false,true)}>Export with custom groups</Button><Button variant="outline" disabled={busy} onClick={()=>void exportZip(true)}>Legacy + current loans</Button></div>
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-muted/50 p-4"><p className="text-xs text-muted-foreground">Active deductions</p><p className="mt-1 text-2xl font-semibold tabular-nums">{records.length}</p></div>
