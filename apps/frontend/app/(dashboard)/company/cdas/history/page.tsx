@@ -152,6 +152,22 @@ export default function CdasHistoryPage() {
         [transactions],
     );
 
+    async function exportBrandedPdf() {
+        try {
+            const response = await api.get("/cdas/history/transactions.pdf?limit=500", { responseType: "blob" });
+            const url = URL.createObjectURL(new Blob([response.data], { type: "application/pdf" }));
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "loanhub-cdas-operations-history.pdf";
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+        } catch {
+            window.alert("Unable to generate the CDAS history PDF. Check permissions and try again.");
+        }
+    }
+
     function exportCsv() {
         const rows = tab === "transactions"
             ? filteredTransactions.map((item) => ({
@@ -264,6 +280,7 @@ export default function CdasHistoryPage() {
                         <option value="all">All transaction states</option>
                         {stateOptions.map((state) => <option key={state} value={state}>{titleCase(state)}</option>)}
                     </select>
+                    {tab === "transactions" ? <Button variant="outline" onClick={() => void exportBrandedPdf()}><Download className="h-4 w-4" /> Branded PDF</Button> : null}
                     <Button variant="outline" onClick={exportCsv} disabled={tab === "transactions" ? filteredTransactions.length === 0 : filteredDeductions.length === 0}>
                         <Download className="h-4 w-4" /> Export CSV
                     </Button>
