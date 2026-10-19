@@ -105,7 +105,8 @@ def application_integration_readiness(
         and environment_test_status(platform_bureau, bureau_environment) == "connected"
     )
     bureau_required_affordability = bool(
-        bureau_enabled
+        application.application_type != "top_up"
+        and bureau_enabled
         and experian_required_for_application(
             bureau_policy,
             application,
@@ -115,7 +116,8 @@ def application_integration_readiness(
         )
     )
     bureau_required_approval = bool(
-        bureau_enabled
+        application.application_type != "top_up"
+        and bureau_enabled
         and experian_required_for_application(
             bureau_policy,
             application,
@@ -125,7 +127,7 @@ def application_integration_readiness(
         )
     )
     latest_bureau = None
-    if bureau_enabled:
+    if bureau_enabled and application.application_type != "top_up":
         latest_bureau = latest_fresh_experian_enquiry(
             db,
             company_id=application.company_id,
@@ -173,7 +175,7 @@ def application_integration_readiness(
                 "action_path": f"/company/origination/experian?application={application.id}",
             }
         )
-    elif bureau_enabled and not bureau_fresh:
+    elif bureau_enabled and application.application_type != "top_up" and not bureau_fresh:
         warnings.append(
             {
                 "source": "bureau",
@@ -183,7 +185,7 @@ def application_integration_readiness(
             }
         )
 
-    if bureau_enabled and not bureau_platform_ready:
+    if bureau_enabled and application.application_type != "top_up" and not bureau_platform_ready:
         warnings.append(
             {
                 "source": "bureau",
