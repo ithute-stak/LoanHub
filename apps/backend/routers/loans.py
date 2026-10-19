@@ -29,6 +29,7 @@ from database.models.file_management import ManagedFile
 from database.models.payment import PaymentTransaction
 from database.models.professional_lending import PaymentReceipt
 from database.models.user import User
+from database.models.person import Person
 from database.schemas.cash import (
     CashDisbursementCreate,
     CashPaymentResult,
@@ -842,10 +843,10 @@ def get_company_loan_activity(
     if actor:
         token = f"%{actor.strip()}%"
         # Match stored users, not snapshots or guessed actor names.
-        query = query.join(User, AuditLog.user_id == User.id).outerjoin(User.person.property.mapper.class_).filter(
+        query = query.join(User, AuditLog.user_id == User.id).outerjoin(Person, User.person_id == Person.id).filter(
             (User.email.ilike(token)) |
             (User.phone.ilike(token)) |
-            (User.person.property.mapper.class_.full_name.ilike(token))
+            (Person.first_name.ilike(token)) | (Person.last_name.ilike(token))
         )
     total = query.count()
     events = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(
