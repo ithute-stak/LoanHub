@@ -798,6 +798,50 @@ def download_bank_submissions(
     )
 
 
+@router.post("/{loan_id}/processing-acknowledgement")
+def acknowledge_loan_processing(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Record which authenticated staff member reviewed/processed a loan.
+
+    This audit acknowledgement never changes loan approval or payment status.
+    """
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    existing = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == loan.company_id,
+            AuditLog.record_id == loan.id,
+            AuditLog.action == "loan.processing_acknowledged",
+            AuditLog.user_id == context.user.id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {"recorded": True, "already_recorded": True, "event_id": str(existing.id)}
+    event = AuditLog(
+        user_id=context.user.id,
+        company_id=loan.company_id,
+        branch_id=loan.branch_id,
+        action="loan.processing_acknowledged",
+        table_name="client_company_loan",
+        entity_type="loan",
+        record_id=loan.id,
+        description="Authenticated staff member acknowledged processing this loan.",
+        actor_role=getattr(context.role, "value", str(context.role)),
+        status="success",
+        severity="info",
+        event_data={"loan_reference": loan.loan_reference},
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return {"recorded": True, "already_recorded": False, "event_id": str(event.id)}
+
+
 @router.get("/activity/company")
 def get_company_loan_activity(
     page: int = Query(1, ge=1),
