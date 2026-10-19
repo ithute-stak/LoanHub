@@ -797,6 +797,52 @@ def download_bank_submissions(
     )
 
 
+@router.get("/{loan_id}/activity")
+def get_loan_activity(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Loan-scoped, non-invented actor timeline from durable audit and workflow fields."""
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    events = (
+        db.query(AuditLog)
+        .options(joinedload(AuditLog.user).joinedload(User.person))
+        .filter(AuditLog.company_id == context.company_id, AuditLog.record_id == loan.id)
+        .order_by(AuditLog.created_at.asc())
+        .limit(500)
+        .all()
+    )
+    items = []
+    for event in events:
+        if event.branch_id is not None and event.branch_id != loan.branch_id:
+            continue
+        actor = None
+        if event.user:
+            actor = event.user.person.full_name if event.user.person else (event.user.email or event.user.phone)
+        items.append({
+            "id": str(event.id), "action": event.action,
+            "description": event.description, "actor_name": actor,
+            "actor_role": event.actor_role, "occurred_at": event.created_at.isoformat() if event.created_at else None,
+            "source": "audit", "status": event.status,
+        })
+    # First-class approval/disbursement columns provide trustworthy fallbacks.
+    for action, at, user in (
+        ("LOAN_APPROVED", loan.approved_at, loan.approved_by),
+        ("LOAN_DISBURSED", loan.disbursed_at, loan.disbursed_by),
+    ):
+        if at and not any(event["action"].lower().replace("_", "") == action.lower().replace("_", "") for event in items):
+            actor = user.person.full_name if user and user.person else (user.email or user.phone if user else None)
+            items.append({
+                "id": action.lower(), "action": action, "description": None,
+                "actor_name": actor, "actor_role": None,
+                "occurred_at": at.isoformat(), "source": "loan_record", "status": "recorded",
+            })
+    items.sort(key=lambda event: event["occurred_at"] or "")
+    return {"loan_id": str(loan.id), "loan_reference": loan.loan_reference, "items": items,
+            "count": len(items), "history_limit": 500}
+
+
 @router.get("/{loan_id}", response_model=LoanRead)
 def get_loan(
     loan_id: UUID,
