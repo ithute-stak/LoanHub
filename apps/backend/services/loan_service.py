@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from database.models.audit_log import AuditLog
 from database.models.cash import CashTransaction
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.cdas_official import CdasOfficialMandateState
@@ -313,6 +314,25 @@ def accept_offer(
     db.add(loan)
     db.flush()
     create_repayment_schedule(db, loan)
+    # The offer's recorded issuer is the approver on this route. This is not
+    # necessarily the staff member who captured or processed the application.
+    db.add(AuditLog(
+        user_id=offer.offered_by_user_id,
+        company_id=loan.company_id,
+        branch_id=loan.branch_id,
+        action="loan.approved_from_accepted_offer",
+        table_name="client_company_loan",
+        entity_type="loan",
+        record_id=loan.id,
+        description="Loan created and approved after acceptance of a recorded offer.",
+        status="success",
+        event_data={
+            "loan_reference": loan.loan_reference,
+            "loan_request_id": str(request.id),
+            "loan_offer_id": str(offer.id),
+            "attribution_source": "offer.offered_by_user_id",
+        },
+    ))
     db.commit()
     db.refresh(loan)
     return loan
