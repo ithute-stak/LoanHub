@@ -20,6 +20,8 @@ import {
 import { calculateLoan } from "@/api/loans";
 import {
   createLegacyCashoutCapture,
+  getLegacyCashoutBankPolicy,
+  type LegacyCashoutBankRule,
   listLegacyCashoutCaptures,
   postLegacyCashoutCapture,
   reviewLegacyCashoutCapture,
@@ -33,12 +35,6 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  BANK_NAMES,
-  DEFAULT_BANK_BRANCH,
-  bankAccountPrefixHint,
-  bankAccountValidationMessage,
-  bankDetails,
-  isBankName,
   normalizeBankAccountNumber,
 } from "@/lib/banking";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
@@ -330,6 +326,7 @@ function statusTone(status: LegacyCashoutCapture["status"]) {
 
 export function LegacyCashoutRegister() {
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [bankPolicy, setBankPolicy] = useState<LegacyCashoutBankRule[]>([]);
   const [records, setRecords] = useState<LegacyCashoutCapture[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -350,11 +347,27 @@ export function LegacyCashoutRegister() {
     () => /^\d+$/.test(form.identity_number.trim()),
     [form.identity_number],
   );
-  const selectedBankDetails = useMemo(() => bankDetails(form.bank_name), [form.bank_name]);
-  const bankAccountError = useMemo(
-    () => bankAccountValidationMessage(form.bank_name, form.bank_account_number),
-    [form.bank_name, form.bank_account_number],
-  );
+  // Policy comes from the backend Legacy Bank CSV resolver: no duplicate prefix table.
+  const BANK_NAMES = bankPolicy.map((rule) => rule.name);
+  const isBankName = (value: string) => bankPolicy.some((rule) => rule.name === value);
+  const bankDetails = (value: string) => {
+    const rule = bankPolicy.find((item) => item.name === value);
+    return rule ? { name: rule.name, code: rule.code, prefixes: rule.prefixes, branch: rule.branch } : null;
+  };
+  const bankAccountPrefixHint = (value: string) => {
+    const rule = bankDetails(value);
+    return rule ? `${rule.name} accounts must start with ${rule.prefixes.join(" or ")}.` : "Select a bank to see the required account prefix.";
+  };
+  const selectedBankDetails = bankDetails(form.bank_name);
+  const bankAccountError = useMemo(() => {
+    const value = normalizeBankAccountNumber(form.bank_account_number);
+    if (!value) return null;
+    if (!/^\\d+$/.test(value)) return "Bank account number must contain digits only.";
+    const detected = bankPolicy.find((rule) => rule.prefixes.some((prefix) => value.startsWith(prefix)));
+    if (!detected) return "Account prefix is not supported by the configured bank policy.";
+    if (form.bank_name && detected.name !== form.bank_name) return `Account prefix belongs to ${detected.name}, not ${form.bank_name}.`;
+    return null;
+  }, [bankPolicy, form.bank_name, form.bank_account_number]);
   const legacyBank = form.bank_name && !isBankName(form.bank_name) ? form.bank_name : null;
   const totalPages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
   const safePage = Math.min(registerPage, totalPages);
@@ -453,6 +466,7 @@ export function LegacyCashoutRegister() {
 
   useEffect(() => {
     void load();
+    void getLegacyCashoutBankPolicy().then(setBankPolicy).catch(() => toast.error("Could not load the central banking policy. Banking capture is unavailable."));
   }, []);
 
   const validateStep = (step: number): boolean => {
