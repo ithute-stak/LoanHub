@@ -175,7 +175,7 @@ def application_integration_readiness(
                 "action_path": f"/company/origination/experian?application={application.id}",
             }
         )
-    elif bureau_enabled and not bureau_fresh:
+    elif bureau_enabled and application.application_type != "top_up" and not bureau_fresh:
         warnings.append(
             {
                 "source": "bureau",
