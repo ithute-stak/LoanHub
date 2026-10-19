@@ -843,7 +843,7 @@ def get_company_loan_activity(
     if actor:
         token = f"%{actor.strip()}%"
         # Match stored users, not snapshots or guessed actor names.
-        query = query.join(User, AuditLog.user_id == User.id).outerjoin(Person, User.person_id == Person.id).filter(
+        query = query.join(User, AuditLog.user_id == User.id).outerjoin(Person, Person.user_id == User.id).filter(
             (User.email.ilike(token)) |
             (User.phone.ilike(token)) |
             (Person.first_name.ilike(token)) | (Person.last_name.ilike(token))
