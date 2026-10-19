@@ -125,7 +125,10 @@ def _finalize_top_up(db: Session, payment: PaymentTransaction) -> None:
         .first()
     )
     if existing:
-        return
+        raise HTTPException(
+            status_code=409,
+            detail="Top-up already has a settlement record; reconcile the payment before replaying gateway success",
+        )
     if not loan.parent_loan_id:
         raise HTTPException(status_code=409, detail="Top-up loan is missing its parent loan")
 
@@ -653,6 +656,13 @@ def apply_gateway_resource(
     if response_id and payment.provider_reference.startswith("LPG-PENDING-"):
         payment.provider_reference = response_id
     status = _gateway_status(str(resource.get("status") or "processing"))
+    # A reversal is a terminal accounting event. An out-of-order gateway
+    # success notification must not recreate a refinanced loan or its payout.
+    if payment.status == PaymentStatus.REVERSED and status == PaymentStatus.SUCCEEDED:
+        raise HTTPException(
+            status_code=409,
+            detail="Reversed gateway payment cannot be finalized again; use a new authorized disbursement",
+        )
     payment.provider_payload = {
         **(payment.provider_payload or {}),
         "gateway_status": resource.get("status"),
