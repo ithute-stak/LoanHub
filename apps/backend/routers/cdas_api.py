@@ -937,6 +937,60 @@ def list_historical_cdas_batch_rows(
     }
 
 
+class CdasHistoricalReviewDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: str = Field(min_length=10, max_length=1000)
+
+
+@router.post("/history/import/batches/{batch_id}/rows/{row_id}/review")
+def review_historical_cdas_row(
+    batch_id: UUID,
+    row_id: UUID,
+    request: CdasHistoricalReviewDecision,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Approve historical evidence for reporting only; never post a payment."""
+    _require_company_manager(context)
+    batch_query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.id == batch_id,
+        CdasHistoricalImportBatch.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        batch_query = batch_query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batch = batch_query.first()
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Historical import batch not found")
+    row_query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.id == row_id,
+        CdasHistoricalImportRow.batch_id == batch.id,
+        CdasHistoricalImportRow.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        row_query = row_query.filter(CdasHistoricalImportRow.branch_id == context.branch_id)
+    row = row_query.with_for_update().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Historical import row not found")
+    if row.reconciliation_status != "pending":
+        raise HTTPException(status_code=409, detail="Historical record has already been reviewed")
+    row.reconciliation_status = request.decision
+    db.add(AuditLog(
+        company_id=context.company_id, branch_id=context.branch_id,
+        user_id=context.user.id, action="cdas.historical_row_reviewed",
+        entity_type="cdas_historical_import_row", record_id=row.id,
+        description="Historical CDAS evidence reviewed for reporting only",
+        before_data={"reconciliation_status": "pending"},
+        after_data={"reconciliation_status": request.decision},
+        event_data={"batch_id": str(batch.id), "reason": request.reason,
+                    "financial_postings": 0},
+        status="success",
+    ))
+    db.commit()
+    return {"row_id": str(row.id), "batch_id": str(batch.id),
+            "reconciliation_status": row.reconciliation_status,
+            "financial_postings": 0}
+
+
 @router.get("/history/transactions")
 def get_cdas_transaction_log(
     limit: int = Query(100, ge=1, le=500),
