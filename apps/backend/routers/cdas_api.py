@@ -40,7 +40,7 @@ from integrations.cdas_contracts import (
     cdas_reference_data,
 )
 from services.cdas_history_pdf import build_cdas_history_pdf
-from services.cdas_historical_import import preview_cdas_history_csv
+from services.cdas_historical_import import preview_cdas_history_csv, reconcile_preview_rows
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -741,6 +741,7 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
 async def preview_historical_cdas_csv(
     file: UploadFile = File(...),
     context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
 ):
     """Review a historical portal CSV without committing or changing any loan."""
     _require_company_manager(context)
@@ -748,9 +749,29 @@ async def preview_historical_cdas_csv(
         raise HTTPException(status_code=422, detail="Upload a UTF-8 CSV exported from CDAS")
     raw = await file.read(2_000_001)
     try:
-        return preview_cdas_history_csv(raw)
+        preview = preview_cdas_history_csv(raw)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Only scoped LoanHub mandates are used. Unknown external provider records
+    # remain unmatched until a separately authorized historical-import process.
+    mandate_query = db.query(CDASDeductionMandate).filter(
+        CDASDeductionMandate.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        mandate_query = mandate_query.filter(CDASDeductionMandate.branch_id == context.branch_id)
+    mandates = mandate_query.all()
+    candidates = [
+        {
+            "id": str(m.id),
+            "employee_no": m.employee_number,
+            "mandate_number": m.mandate_number,
+            "external_reference": m.external_reference,
+            "monthly_amount": str(m.monthly_deduction),
+        }
+        for m in mandates
+    ]
+    return {**preview, "reconciliation": reconcile_preview_rows(preview["rows"], candidates)}
 
 
 @router.get("/history/transactions")
