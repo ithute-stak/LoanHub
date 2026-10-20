@@ -24,7 +24,7 @@ from core.access_control import (
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.early_settlement import LoanEarlySettlement
-from database.models.enums import PaymentMethod, PaymentStatus, UserRole
+from database.models.enums import LoanStatus, PaymentMethod, PaymentStatus, UserRole
 from database.models.audit_log import AuditLog
 from database.models.file_management import ManagedFile
 from database.models.payment import PaymentTransaction
