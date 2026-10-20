@@ -88,6 +88,12 @@ export default function CdasHistoryPage() {
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState("");
     const [stateFilter, setStateFilter] = useState("all");
+    const [typeFilter, setTypeFilter] = useState("all");
+    const [userFilter, setUserFilter] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
+    const [page, setPage] = useState(1);
+    const pageSize = 25;
     const [selected, setSelected] = useState<{ title: string; request: Record<string, unknown>; response: Record<string, unknown> } | null>(null);
 
     const load = useCallback(async () => {
@@ -123,6 +129,10 @@ export default function CdasHistoryPage() {
         const term = query.trim().toLowerCase();
         return transactions.filter((item) => {
             const matchesState = stateFilter === "all" || item.state === stateFilter;
+            const matchesType = typeFilter === "all" || item.operation_type === typeFilter;
+            const matchesUser = !userFilter.trim() || (item.actor_user_id || "").toLowerCase().includes(userFilter.trim().toLowerCase());
+            const occurredDate = item.occurred_at?.slice(0, 10) || "";
+            const matchesDate = (!dateFrom || occurredDate >= dateFrom) && (!dateTo || occurredDate <= dateTo);
             const matchesQuery = !term || [
                 item.operation_type,
                 item.employee_no || "",
@@ -131,9 +141,17 @@ export default function CdasHistoryPage() {
                 item.state,
                 item.transaction_reference || "",
             ].some((value) => value.toLowerCase().includes(term));
-            return matchesState && matchesQuery;
+            return matchesState && matchesType && matchesUser && matchesDate && matchesQuery;
         });
-    }, [query, stateFilter, transactions]);
+    }, [query, stateFilter, typeFilter, userFilter, dateFrom, dateTo, transactions]);
+
+    const typeOptions = useMemo(
+        () => Array.from(new Set(transactions.map((item) => item.operation_type).filter(Boolean))).sort(),
+        [transactions],
+    );
+    const pageCount = Math.max(1, Math.ceil(filteredTransactions.length / pageSize));
+    const currentPage = Math.min(page, pageCount);
+    const paginatedTransactions = filteredTransactions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
     const filteredDeductions = useMemo(() => {
         const term = query.trim().toLowerCase();
@@ -266,7 +284,7 @@ export default function CdasHistoryPage() {
 
 
             <Card>
-                <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_220px_auto]">
+                <CardContent className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
                     <div className="relative">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employee, deduction ID, reference, state or operation" className="pl-9" />
@@ -280,6 +298,16 @@ export default function CdasHistoryPage() {
                         <option value="all">All transaction states</option>
                         {stateOptions.map((state) => <option key={state} value={state}>{titleCase(state)}</option>)}
                     </select>
+                    {tab === "transactions" ? <>
+                        <select aria-label="Transaction type" value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="h-10 rounded-md border bg-background px-3 text-sm">
+                            <option value="all">All operation types</option>
+                            {typeOptions.map((type) => <option key={type} value={type}>{titleCase(type)}</option>)}
+                        </select>
+                        <Input aria-label="Staff user ID" value={userFilter} onChange={(event) => { setUserFilter(event.target.value); setPage(1); }} placeholder="Staff user ID" />
+                        <label className="text-xs font-semibold">From <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label>
+                        <label className="text-xs font-semibold">To <Input type="date" min={dateFrom || undefined} value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label>
+                        <Button variant="outline" onClick={() => { setQuery(""); setStateFilter("all"); setTypeFilter("all"); setUserFilter(""); setDateFrom(""); setDateTo(""); setPage(1); }}>Reset filters</Button>
+                    </> : null}
                     {tab === "transactions" ? <Button variant="outline" onClick={() => void exportBrandedPdf()}><Download className="h-4 w-4" /> Branded PDF</Button> : null}
                     <Button variant="outline" onClick={exportCsv} disabled={tab === "transactions" ? filteredTransactions.length === 0 : filteredDeductions.length === 0}>
                         <Download className="h-4 w-4" /> Export CSV
@@ -294,7 +322,7 @@ export default function CdasHistoryPage() {
                         <CardDescription>Provider mutations and metered CDAS business operations recorded by LoanHub.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3 p-4 md:hidden">
-                        {filteredTransactions.map((item) => (
+                        {paginatedTransactions.map((item) => (
                             <div key={"mobile-" + item.source + "-" + item.id} className="rounded-2xl border p-4">
                                 <div className="flex items-start justify-between gap-3">
                                     <div><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{when(item.occurred_at)}</p></div>
@@ -315,7 +343,7 @@ export default function CdasHistoryPage() {
                                 <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
                             </thead>
                             <tbody>
-                                {filteredTransactions.map((item) => (
+                                {paginatedTransactions.map((item) => (
                                     <tr key={item.source + "-" + item.id} className="border-t">
                                         <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}</td>
                                         <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
@@ -330,6 +358,14 @@ export default function CdasHistoryPage() {
                         </table>
                     </CardContent>
                 </Card>
+                <div className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm text-muted-foreground">
+                    <span>Showing {filteredTransactions.length ? (currentPage - 1) * pageSize + 1 : 0}–{Math.min(currentPage * pageSize, filteredTransactions.length)} of {filteredTransactions.length} loaded transactions</span>
+                    <div className="flex items-center gap-3">
+                        <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+                        <span>Page {currentPage} of {pageCount}</span>
+                        <Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
+                    </div>
+                </div>
             ) : (
                 <Card>
                     <CardHeader>
