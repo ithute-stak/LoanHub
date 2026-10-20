@@ -57,12 +57,14 @@ export default function CdasDocumentsPage() {
     const [loading, setLoading] = useState(false);
     const [reconciling, setReconciling] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorAction, setErrorAction] = useState<string | null>(null);
 
     async function retrieveDocument(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!canManage || loading) return;
         setLoading(true);
         setError(null);
+        setErrorAction(null);
         setDocument(null);
         try {
             const response = await api.post<DocumentResponse>("/cdas/documents", {
@@ -73,6 +75,8 @@ export default function CdasDocumentsPage() {
             setDocument(response.data.document);
         } catch (requestError: unknown) {
             setError(getErrorMessage(requestError, "CDAS document retrieval failed."));
+            const errorData = requestError as { response?: { data?: { detail?: { action?: string; message?: string } } } };
+            setErrorAction(errorData.response?.data?.detail?.action ?? null);
         } finally {
             setLoading(false);
         }
@@ -199,7 +203,7 @@ export default function CdasDocumentsPage() {
                 <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
                     <AlertTitle>CDAS document unavailable</AlertTitle>
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription><p>{error}</p>{errorAction ? <p className="mt-2 font-medium">{errorAction}</p> : null}<p className="mt-2">The CDAS document endpoint is separate from the historical transaction Excel export. For older transaction amounts, use the <Link href="/company/cdas/history/imports" className="underline font-semibold">CDAS historical import page</Link>.</p></AlertDescription>
                 </Alert>
             )}
 
