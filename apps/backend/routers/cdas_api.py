@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -40,6 +40,7 @@ from integrations.cdas_contracts import (
     cdas_reference_data,
 )
 from services.cdas_history_pdf import build_cdas_history_pdf
+from services.cdas_historical_import import preview_cdas_history_csv
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -734,6 +735,22 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
 
 
 
+
+
+@router.post("/history/import/preview")
+async def preview_historical_cdas_csv(
+    file: UploadFile = File(...),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Review a historical portal CSV without committing or changing any loan."""
+    _require_company_manager(context)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="Upload a UTF-8 CSV exported from CDAS")
+    raw = await file.read(2_000_001)
+    try:
+        return preview_cdas_history_csv(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/history/transactions")
