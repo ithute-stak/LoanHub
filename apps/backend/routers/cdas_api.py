@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -860,7 +861,11 @@ async def stage_historical_cdas_csv(
             "financial_postings": 0,
         },
     ))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Historical CSV already staged or import conflicted; review existing batches") from exc
     return {"batch_id": str(batch.id), "status": "staged", "rows": preview["valid_count"],
             "source_sha256": fingerprint, "financial_postings": 0}
 
