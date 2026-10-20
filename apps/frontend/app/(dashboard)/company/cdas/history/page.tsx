@@ -316,6 +316,7 @@ export default function CdasHistoryPage() {
             </Card>
 
             {tab === "transactions" ? (
+                <>
                 <Card>
                     <CardHeader>
                         <CardTitle>Transaction log</CardTitle>
@@ -366,6 +367,7 @@ export default function CdasHistoryPage() {
                         <Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
                     </div>
                 </div>
+                </>
             ) : (
                 <Card>
                     <CardHeader>
