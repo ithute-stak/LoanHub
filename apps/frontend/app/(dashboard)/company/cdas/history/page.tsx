@@ -20,6 +20,7 @@ type TransactionItem = {
     source: "provider_operation" | "metered_transaction" | "historical_import";
     employee_name?: string | null;
     historical_date_unverified?: boolean;
+    history_timestamp_kind?: string;
     id: string;
     occurred_at: string;
     operation_type: string;
@@ -372,7 +373,7 @@ export default function CdasHistoryPage() {
                         {paginatedTransactions.map((item) => (
                             <div key={"mobile-" + item.source + "-" + item.id} className="rounded-2xl border p-4">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{when(item.occurred_at)}</p></div>
+                                    <div><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{when(item.occurred_at)}{item.historical_date_unverified ? " · Imported at (original date unavailable)" : ""}</p></div>
                                     <Badge variant={item.requires_reconciliation ? "destructive" : "outline"}>{titleCase(item.state)}</Badge>
                                 </div>
                                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -392,7 +393,7 @@ export default function CdasHistoryPage() {
                             <tbody>
                                 {paginatedTransactions.map((item) => (
                                     <tr key={item.source + "-" + item.id} className="border-t">
-                                        <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}</td>
+                                        <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}{item.historical_date_unverified ? <span className="block text-xs font-normal text-muted-foreground">Import date, not transaction date</span> : null}</td>
                                         <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "historical_import" ? "Approved imported evidence · import date only" : item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
                                         <td className="px-4 py-4"><p className="font-bold">{item.employee_name ? item.employee_name + " · " : ""}{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
                                         <td className="px-4 py-4">{item.monthly_deduction ?? "—"}</td>
