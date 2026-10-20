@@ -34,6 +34,13 @@ type TransactionItem = {
     amount?: string;
     currency?: string;
     transaction_reference?: string;
+    monthly_deduction?: string | null;
+    principal_amount?: string | null;
+    total_installments?: number | null;
+    starting_month?: string | null;
+    ending_month?: string | null;
+    policy_reference?: string | null;
+    details_source?: string;
 };
 
 type DeductionHistoryItem = {
@@ -198,6 +205,13 @@ export default function CdasHistoryPage() {
                 provider_status_code: item.provider_status_code ?? "",
                 requires_reconciliation: item.requires_reconciliation,
                 error: item.error_message || "",
+                monthly_deduction: item.monthly_deduction ?? "",
+                principal_amount: item.principal_amount ?? "",
+                total_installments: item.total_installments ?? "",
+                starting_month: item.starting_month ?? "",
+                ending_month: item.ending_month ?? "",
+                policy_reference: item.policy_reference ?? "",
+                details_source: item.details_source ?? "",
             }))
             : filteredDeductions.map((item) => ({
                 time: item.occurred_at,
@@ -339,9 +353,9 @@ export default function CdasHistoryPage() {
                         {!loading && filteredTransactions.length === 0 ? <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">No matching CDAS transactions.</div> : null}
                     </CardContent>
                     <CardContent className="hidden overflow-x-auto p-0 md:block">
-                        <table className="w-full min-w-[1050px] text-sm">
+                        <table className="w-full min-w-[1650px] text-sm">
                             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
+                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">Monthly amount</th><th className="px-4 py-4">Principal / total</th><th className="px-4 py-4">Start / end</th><th className="px-4 py-4">Policy reference</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
                             </thead>
                             <tbody>
                                 {paginatedTransactions.map((item) => (
@@ -349,12 +363,16 @@ export default function CdasHistoryPage() {
                                         <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}</td>
                                         <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
                                         <td className="px-4 py-4"><p className="font-bold">{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
+                                        <td className="px-4 py-4">{item.monthly_deduction ?? "—"}</td>
+                                        <td className="px-4 py-4">{item.principal_amount ?? "—"} / {item.total_installments ?? "—"}</td>
+                                        <td className="px-4 py-4">{item.starting_month ?? "—"} / {item.ending_month ?? "—"}</td>
+                                        <td className="px-4 py-4"><p>{item.policy_reference ?? "—"}</p><p className="text-xs text-muted-foreground">{item.details_source === "loanhub_mandate" ? "Verified LoanHub link" : "No verified mandate details"}</p></td>
                                         <td className="px-4 py-4"><Badge variant={item.requires_reconciliation ? "destructive" : "outline"}>{titleCase(item.state)}</Badge>{item.error_message ? <p className="mt-1 max-w-64 text-xs text-destructive">{item.error_message}</p> : null}</td>
                                         <td className="px-4 py-4">{item.provider_status_code ?? "—"}</td>
                                         <td className="px-5 py-4 text-right"><Button size="sm" variant="outline" onClick={() => setSelected({ title: titleCase(item.operation_type), request: item.request_snapshot, response: item.response_snapshot })}>Inspect</Button></td>
                                     </tr>
                                 ))}
-                                {!loading && filteredTransactions.length === 0 ? <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">No CDAS transactions have been recorded yet.</td></tr> : null}
+                                {!loading && filteredTransactions.length === 0 ? <tr><td colSpan={10} className="px-5 py-12 text-center text-muted-foreground">No CDAS transactions have been recorded yet.</td></tr> : null}
                             </tbody>
                         </table>
                     </CardContent>
