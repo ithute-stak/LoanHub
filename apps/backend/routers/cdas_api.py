@@ -1042,7 +1042,6 @@ def get_cdas_transaction_log(
                 PlatformCdasTransaction.environment == environment,
             )
             .order_by(PlatformCdasTransaction.accrued_at.desc())
-            .limit(limit)
             .all()
         )
 
@@ -1133,6 +1132,13 @@ def get_cdas_transaction_log(
         elif len(matches) > 1:
             item["details_source"] = "ambiguous_match"
 
+    # Historical evidence is visible to management only, never to ordinary
+    # lending operators who can access the live provider-operation ledger.
+    if context.role not in COMPANY_MANAGEMENT_ROLES:
+        historical_query_enabled = False
+    else:
+        historical_query_enabled = True
+
     # Approved historical records are reporting evidence, not confirmed payments.
     historical_query = db.query(CdasHistoricalImportRow).filter(
         CdasHistoricalImportRow.company_id == context.company_id,
@@ -1142,7 +1148,7 @@ def get_cdas_transaction_log(
         historical_query = historical_query.filter(
             CdasHistoricalImportRow.branch_id == context.branch_id,
         )
-    for historical in historical_query.all():
+    for historical in (historical_query.all() if historical_query_enabled else []):
         items.append({
             "source": "historical_import",
             "id": str(historical.id),
