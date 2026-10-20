@@ -44,6 +44,7 @@ from integrations.cdas_contracts import (
 )
 from services.cdas_history_pdf import build_cdas_history_pdf
 from services.cdas_historical_import import preview_cdas_history_csv, reconcile_preview_rows
+from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -799,6 +800,69 @@ async def preview_historical_cdas_csv(
     ))
     db.commit()
     return {**preview, "source_sha256": fingerprint, "reconciliation": reconciliation}
+
+
+@router.post("/history/import/stage")
+async def stage_historical_cdas_csv(
+    file: UploadFile = File(...),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Stage pre-integration CDAS rows for review; never post payments."""
+    _require_company_manager(context)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="Expected UTF-8 CDAS CSV export")
+    raw = await file.read(2_000_001)
+    try:
+        preview = preview_cdas_history_csv(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if preview["invalid_count"] or not preview["valid_count"]:
+        raise HTTPException(status_code=422, detail="Fix invalid rows before staging a non-empty export")
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    existing = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+        CdasHistoricalImportBatch.source_sha256 == fingerprint,
+    )
+    if context.branch_id is None:
+        existing = existing.filter(CdasHistoricalImportBatch.branch_id.is_(None))
+    else:
+        existing = existing.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    if existing.first():
+        raise HTTPException(status_code=409, detail="This historical CSV was already staged for this scope")
+    batch = CdasHistoricalImportBatch(
+        company_id=context.company_id, branch_id=context.branch_id,
+        source_sha256=fingerprint, source_filename=(file.filename or "cdas-history.csv")[:255],
+        status="staged", row_count=preview["valid_count"],
+        invalid_count=preview["invalid_count"], duplicate_count=preview["duplicate_count"],
+        imported_by_user_id=context.user.id,
+    )
+    db.add(batch)
+    db.flush()
+    for line_number, record in enumerate(preview["rows"], start=1):
+        db.add(CdasHistoricalImportRow(
+            batch_id=batch.id, company_id=context.company_id, branch_id=context.branch_id,
+            line_number=line_number, employee_no=record["employee_no"],
+            employee_name=record["employee_name"], policy_reference=record["policy_reference"],
+            monthly_amount=Decimal(record["monthly_amount"].replace(",", "")),
+            principal_amount=Decimal(record["principal_amount"].replace(",", "")),
+            total_installments=int(record["total_installment"]),
+            starting_month=record["starting_month"], ending_month=record["ending_month"],
+            reconciliation_status="pending", source_record=record,
+        ))
+    db.add(AuditLog(
+        user_id=context.user.id, company_id=context.company_id, branch_id=context.branch_id,
+        action="cdas.historical_import_staged", entity_type="cdas_historical_import",
+        record_id=batch.id, description="Read-only historical records staged for review",
+        status="success", event_data={
+            "source_sha256": fingerprint, "rows": preview["valid_count"],
+            "duplicates_in_file": preview["duplicate_count"],
+            "financial_postings": 0,
+        },
+    ))
+    db.commit()
+    return {"batch_id": str(batch.id), "status": "staged", "rows": preview["valid_count"],
+            "source_sha256": fingerprint, "financial_postings": 0}
 
 
 @router.get("/history/transactions")
