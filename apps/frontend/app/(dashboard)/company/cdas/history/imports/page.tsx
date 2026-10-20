@@ -23,6 +23,30 @@ export default function CdasHistoricalReviewPage() {
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [uploadFile, setUploadFile] = useState<File | null>(null);
+    const [preview, setPreview] = useState<{valid_count:number; invalid_count:number; duplicate_count:number; source_sha256?:string; reconciliation?:{counts:Record<string,number>}; persisted:boolean} | null>(null);
+    const [staging, setStaging] = useState(false);
+    const [notice, setNotice] = useState<string | null>(null);
+
+    async function submitHistoryFile(mode: "preview" | "stage") {
+        if (!uploadFile || staging) return;
+        setStaging(true);
+        setError(null);
+        setNotice(null);
+        try {
+            const form = new FormData();
+            form.append("file", uploadFile);
+            const response = await api.post(`/cdas/history/import/${mode}`, form);
+            if (mode === "preview") setPreview(response.data);
+            else {
+                setNotice("Historical CSV safely staged for independent review; no financial postings were made.");
+                setPreview(null);
+                setUploadFile(null);
+                await loadBatches();
+            }
+        } catch (e) { setError(getErrorMessage(e, "CDAS historical file processing failed.")); }
+        finally { setStaging(false); }
+    }
 
     const loadBatches = useCallback(async () => {
         if (!canManage) return;
@@ -52,6 +76,15 @@ export default function CdasHistoricalReviewPage() {
         <div><h1 className="text-3xl font-bold">Historical CDAS imports</h1><p className="text-sm text-muted-foreground">Pre-integration portal exports are kept separate from live deductions and financial postings.</p></div>
         {!canManage ? <Card><CardContent className="p-5">Company management permission required.</CardContent></Card> : <>
             {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+            {notice ? <p role="status" className="text-sm font-medium">{notice}</p> : null}
+            <Card><CardHeader><CardTitle>Upload historical CDAS CSV</CardTitle><CardDescription>Preview the exported file first. Staging stores a separate review copy; it never creates a deduction, posts a payment or adjusts an outstanding balance.</CardDescription></CardHeader><CardContent className="space-y-3">
+                <input type="file" accept=".csv,text/csv" aria-label="Historical CDAS CSV" onChange={(event) => { setUploadFile(event.target.files?.[0] ?? null); setPreview(null); }} className="block w-full text-sm" />
+                <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" disabled={!uploadFile || staging} onClick={() => void submitHistoryFile("preview")}>Validate and preview</Button>
+                    <Button disabled={!uploadFile || staging || !preview || preview.valid_count === 0 || preview.invalid_count > 0 || preview.persisted} onClick={() => void submitHistoryFile("stage")}>Confirm staging</Button>
+                </div>
+                {preview ? <div className="rounded-lg border p-3 text-sm"><p>Valid: {preview.valid_count} · Invalid: {preview.invalid_count} · Duplicate: {preview.duplicate_count}</p><p className="mt-1">This preview has not imported financial transactions.</p>{preview.reconciliation ? <p className="mt-1">Reconciliation: {Object.entries(preview.reconciliation.counts).map(([key, count]) => `${key}: ${count}`).join(" · ")}</p> : null}</div> : null}
+            </CardContent></Card>
             <Card><CardHeader><CardTitle>Imported files</CardTitle><CardDescription>Staged records awaiting independent reconciliation; no payments are posted.</CardDescription></CardHeader><CardContent className="space-y-3">
                 <Button variant="outline" disabled={loading} onClick={() => void loadBatches()}><RefreshCw className="h-4 w-4" /> Refresh</Button>
                 {batches.length === 0 && !loading ? <p className="text-sm text-muted-foreground">No historical CDAS files have been staged yet.</p> : null}
