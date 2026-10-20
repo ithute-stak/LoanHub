@@ -27,6 +27,21 @@ export default function CdasHistoricalReviewPage() {
     const [preview, setPreview] = useState<{valid_count:number; invalid_count:number; duplicate_count:number; source_sha256?:string; reconciliation?:{counts:Record<string,number>}; persisted:boolean} | null>(null);
     const [staging, setStaging] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
+    const [reviewReason, setReviewReason] = useState("");
+    const [reviewing, setReviewing] = useState<string | null>(null);
+    async function reviewRow(rowId: string, decision: "approved" | "rejected") {
+        if (!selected || reviewing || reviewReason.trim().length < 10) return;
+        setReviewing(rowId);
+        setError(null);
+        try {
+            await api.post(`/cdas/history/import/batches/${encodeURIComponent(selected)}/rows/${encodeURIComponent(rowId)}/review`, { decision, reason: reviewReason.trim() });
+            const response = await api.get<RowPage>(`/cdas/history/import/batches/${encodeURIComponent(selected)}/rows?page=${page}&limit=50`);
+            setRows(response.data);
+            setReviewReason("");
+            setNotice("Historical evidence reviewed. No financial posting was performed.");
+        } catch (e) { setError(getErrorMessage(e, "Historical row review failed.")); }
+        finally { setReviewing(null); }
+    }
 
     async function submitHistoryFile(mode: "preview" | "stage") {
         if (!uploadFile || staging) return;
@@ -93,7 +108,8 @@ export default function CdasHistoricalReviewPage() {
                 </button>)}</div>
             </CardContent></Card>
             {rows ? <Card><CardHeader><CardTitle>Staged historical records</CardTitle><CardDescription>Read-only review, batch status: {rows.status}</CardDescription></CardHeader><CardContent>
-                <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-sm"><thead><tr className="border-b text-left"><th className="p-2">Employee</th><th className="p-2">Policy reference</th><th className="p-2">Monthly amount</th><th className="p-2">Principal</th><th className="p-2">Installments</th><th className="p-2">Start / end</th><th className="p-2">Review status</th></tr></thead><tbody>{rows.items.map((row) => <tr key={row.id} className="border-b"><td className="p-2">{row.employee_name || "—"}<span className="block text-muted-foreground">{row.employee_no}</span></td><td className="p-2">{row.policy_reference}</td><td className="p-2">{row.monthly_amount}</td><td className="p-2">{row.principal_amount}</td><td className="p-2">{row.total_installments}</td><td className="p-2">{row.starting_month || "—"} / {row.ending_month || "—"}</td><td className="p-2">{row.reconciliation_status}</td></tr>)}</tbody></table></div>
+                <label className="block text-sm font-semibold">Review reason (minimum 10 characters)<input className="mt-1 block w-full rounded-md border bg-background p-2 font-normal" value={reviewReason} maxLength={1000} onChange={(e) => setReviewReason(e.target.value)} placeholder="Document why these historic records should be accepted or rejected" /></label>
+                <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-sm"><thead><tr className="border-b text-left"><th className="p-2">Employee</th><th className="p-2">Policy reference</th><th className="p-2">Monthly amount</th><th className="p-2">Principal</th><th className="p-2">Installments</th><th className="p-2">Start / end</th><th className="p-2">Review status</th><th className="p-2">Decision</th></tr></thead><tbody>{rows.items.map((row) => <tr key={row.id} className="border-b"><td className="p-2">{row.employee_name || "—"}<span className="block text-muted-foreground">{row.employee_no}</span></td><td className="p-2">{row.policy_reference}</td><td className="p-2">{row.monthly_amount}</td><td className="p-2">{row.principal_amount}</td><td className="p-2">{row.total_installments}</td><td className="p-2">{row.starting_month || "—"} / {row.ending_month || "—"}</td><td className="p-2">{row.reconciliation_status}</td><td className="p-2">{row.reconciliation_status === "pending" ? <div className="flex gap-2"><Button size="sm" disabled={reviewing !== null || reviewReason.trim().length < 10} onClick={() => void reviewRow(row.id, "approved")}>Approve</Button><Button size="sm" variant="outline" disabled={reviewing !== null || reviewReason.trim().length < 10} onClick={() => void reviewRow(row.id, "rejected")}>Reject</Button></div> : "Reviewed"}</td></tr>)}</tbody></table></div>
                 <div className="mt-4 flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Page {page} · {rows.total} rows</span><div className="flex gap-2"><Button variant="outline" disabled={page <= 1 || loading} onClick={() => setPage(p => p - 1)}>Previous</Button><Button variant="outline" disabled={page * rows.page_size >= rows.total || loading} onClick={() => setPage(p => p + 1)}>Next</Button></div></div>
             </CardContent></Card> : null}
         </>}
