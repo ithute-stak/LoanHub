@@ -19,6 +19,7 @@ def parse_legacy_csv(data: bytes, *, known_groups: dict[str, str], selected_grou
         raise ValueError("CSV must be UTF-8") from exc
     reader = csv.reader(StringIO(decoded, newline=""))
     valid, issues = [], []
+    review_status_column = False
     for index, cells in enumerate(reader, 1):
         if index > MAX_ROWS:
             raise ValueError("CSV exceeds 5000 rows")
@@ -34,6 +35,8 @@ def parse_legacy_csv(data: bytes, *, known_groups: dict[str, str], selected_grou
             continue
         if selected_group is not None and index == 1 and [x.strip().lower() for x in cells[:4]] == ["client name", "account number", "amount", "employer"]:
             continue
+        if selected_group is not None and review_status_column and len(cells) == 5:
+            cells = cells[:4]  # Review notes are not bank mandate data.
         if selected_group is not None and len(cells) == 4:
             group = selected_group
             name, account, amount, employer = (cell.strip() for cell in cells)
