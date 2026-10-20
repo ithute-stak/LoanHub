@@ -865,6 +865,48 @@ def get_cdas_transaction_log(
             }
         )
 
+    # Enrich only with mandates belonging to this company and accessible branch.
+    # Require both employee number and reference: an employee may have multiple
+    # historical deductions, so employee-only matches are unsafe.
+    mandate_query = db.query(CDASDeductionMandate).filter(
+        CDASDeductionMandate.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        mandate_query = mandate_query.filter(
+            CDASDeductionMandate.branch_id == context.branch_id,
+        )
+    mandates_by_key: dict[tuple[str, str], list[CDASDeductionMandate]] = {}
+    for mandate in mandate_query.all():
+        for reference in (mandate.mandate_number, mandate.external_reference):
+            if reference and mandate.employee_number:
+                key = (str(mandate.employee_number).strip(), str(reference).strip())
+                bucket = mandates_by_key.setdefault(key, [])
+                if all(m.id != mandate.id for m in bucket):
+                    bucket.append(mandate)
+
+    for item in items:
+        item.update({
+            "monthly_deduction": None, "principal_amount": None,
+            "total_installments": None, "starting_month": None,
+            "ending_month": None, "policy_reference": item.get("reference_no"),
+            "details_source": "not_verified",
+        })
+        key = (str(item.get("employee_no") or "").strip(),
+               str(item.get("reference_no") or "").strip())
+        matches = mandates_by_key.get(key, [])
+        if len(matches) == 1:
+            mandate = matches[0]
+            item.update({
+                "monthly_deduction": str(mandate.monthly_deduction),
+                "principal_amount": str(mandate.total_expected),
+                "total_installments": mandate.expected_installments,
+                "starting_month": mandate.start_date.isoformat() if mandate.start_date else None,
+                "ending_month": mandate.end_date.isoformat() if mandate.end_date else None,
+                "details_source": "loanhub_mandate",
+            })
+        elif len(matches) > 1:
+            item["details_source"] = "ambiguous_match"
+
     def sort_key(item: dict[str, Any]):
         value = item.get("occurred_at")
         return value or datetime.min
