@@ -1147,6 +1147,7 @@ def get_cdas_transaction_log(
             "source": "historical_import",
             "id": str(historical.id),
             "occurred_at": historical.created_at,
+            "reported_at": None,
             "operation_type": "historical_record",
             "state": "approved_evidence",
             "employee_no": historical.employee_no,
@@ -1168,6 +1169,7 @@ def get_cdas_transaction_log(
             "details_source": "approved_historical_csv",
             "historical_import_batch_id": str(historical.batch_id),
             "historical_date_unverified": True,
+            "history_timestamp_kind": "imported_at",
         })
 
     def sort_key(item: dict[str, Any]):
@@ -1178,6 +1180,10 @@ def get_cdas_transaction_log(
     filtered = []
     for item in items:
         occurred = item.get("occurred_at")
+        # Historical imports have no verified transaction date: date-range filters
+        # must not mistake import time for the original CDAS operation date.
+        if (date_from or date_to) and item.get("historical_date_unverified"):
+            continue
         if date_from and (not occurred or occurred.date() < date_from):
             continue
         if date_to and (not occurred or occurred.date() > date_to):
@@ -1189,7 +1195,7 @@ def get_cdas_transaction_log(
         if actor_user_id and item.get("actor_user_id") != str(actor_user_id):
             continue
         if term and not any(term in str(item.get(field) or "").casefold() for field in (
-            "employee_no", "reference_no", "deduction_id", "operation_type",
+            "employee_no", "employee_name", "reference_no", "deduction_id", "operation_type",
             "state", "transaction_reference"
         )):
             continue
@@ -1280,11 +1286,11 @@ def download_cdas_transaction_history_csv(
         sort_order=sort_order, context=context, db=db,
     )
     columns = (
-        "occurred_at", "operation_type", "employee_no", "deduction_id",
+        "occurred_at", "history_timestamp_kind", "source", "operation_type", "employee_no", "employee_name", "deduction_id",
         "reference_no", "monthly_deduction", "principal_amount",
         "total_installments", "starting_month", "ending_month",
         "policy_reference", "details_source", "state",
-        "provider_status_code", "requires_reconciliation",
+        "provider_status_code", "requires_reconciliation", "historical_date_unverified",
     )
     output = StringIO()
     writer = csv.writer(output)
