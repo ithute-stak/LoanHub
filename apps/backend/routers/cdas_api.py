@@ -2852,6 +2852,28 @@ async def get_cdas_document(
             document_type=payload.document_type,
         )
     except CdasError as exc:
+        # CDAS sometimes responds with a bare HTTP 400 rather than a
+        # descriptive body. Preserve its status and do not pretend a document
+        # exists or silently retry a metered provider request.
+        if exc.status_code == 400 and exc.message.strip() == "CDAS request failed with status 400":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "provider": "CDAS",
+                    "code": 400,
+                    "provider_error_code": "CDAS_DOCUMENT_REQUEST_REJECTED",
+                    "category": "provider",
+                    "retryable": False,
+                    "message": (
+                        f"CDAS rejected the {payload.year}-{payload.month:02d} "
+                        f"{'output file' if payload.document_type == 1 else 'statement'} request "
+                        "with HTTP 400, without a specific explanation. "
+                        "Confirm the reporting month and document type with CDAS. "
+                        "This does not mean LoanHub retrieved a statement."
+                    ),
+                    "action": "Select a completed reporting month or contact CDAS support with the requested year, month and document type.",
+                },
+            ) from exc
         raise _cdas_http_error(exc) from exc
     _record_cdas_business_operation(
         db,
