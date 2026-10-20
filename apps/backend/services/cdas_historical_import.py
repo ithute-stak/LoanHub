@@ -66,3 +66,48 @@ def preview_cdas_history_csv(raw: bytes) -> dict:
     return {"source": "historical_cdas_csv_preview", "persisted": False,
             "rows": rows, "valid_count": len(rows), "duplicate_count": duplicates,
             "invalid_count": len(invalid), "errors": invalid[:100], "truncated_errors": len(invalid) > 100}
+
+
+def reconcile_preview_rows(rows: list[dict], mandates: list[dict]) -> dict:
+    """Conservative reconciliation: never infer a borrower from names or amounts.
+
+    Mandate candidates must have exact employee and reference identifiers.
+    Ambiguous or mismatched candidates remain for human review.
+    """
+    index: dict[tuple[str, str], list[dict]] = {}
+    employee_index: dict[str, list[dict]] = {}
+    for mandate in mandates:
+        employee = str(mandate.get("employee_no") or "").strip()
+        if not employee:
+            continue
+        employee_index.setdefault(employee, []).append(mandate)
+        for reference in (mandate.get("mandate_number"), mandate.get("external_reference")):
+            ref = str(reference or "").strip()
+            if ref:
+                index.setdefault((employee, ref), []).append(mandate)
+
+    decisions = []
+    counts = {"exact_match": 0, "conflict": 0, "unmatched": 0, "manual_review": 0}
+    for row in rows:
+        employee = row["employee_no"].strip()
+        reference = row["policy_reference"].strip()
+        candidates = list({str(m["id"]): m for m in index.get((employee, reference), [])}.values())
+        if len(candidates) == 1:
+            candidate = candidates[0]
+            if Decimal(str(candidate["monthly_amount"])) != Decimal(row["monthly_amount"].replace(",", "")):
+                status = "conflict"
+                reason = "Exact identifiers match but monthly amounts differ"
+            else:
+                status = "exact_match"
+                reason = "Employee, reference and monthly amount agree; review before accepting"
+            matched_id = str(candidate["id"])
+        elif len(candidates) > 1:
+            status, reason, matched_id = "manual_review", "Multiple mandates match both identifiers", None
+        elif employee in employee_index:
+            status, reason, matched_id = "manual_review", "Employee exists, but policy reference does not match", None
+        else:
+            status, reason, matched_id = "unmatched", "No matching LoanHub employee record", None
+        counts[status] += 1
+        decisions.append({"employee_no": employee, "policy_reference": reference,
+                          "status": status, "reason": reason, "matched_mandate_id": matched_id})
+    return {"persisted": False, "counts": counts, "decisions": decisions}
