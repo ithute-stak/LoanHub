@@ -1704,7 +1704,7 @@ export default function CompanyClientsPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-3 text-sm">
                 <div>
                   <p className="font-semibold">Payday-based repayment dates</p>
-                  <p className="text-muted-foreground">LoanHub pre-fills monthly installments from the borrower's next salary pay date{selectedClient?.next_salary_pay_date ? ` (${selectedClient.next_salary_pay_date})` : selectedClient?.income_day ? ` (day ${selectedClient.income_day})` : ""}. You can still edit each date manually.</p>
+                  <p className="text-muted-foreground">LoanHub pre-fills monthly installments from the borrower&apos;s next salary pay date{selectedClient?.next_salary_pay_date ? ` (${selectedClient.next_salary_pay_date})` : selectedClient?.income_day ? ` (day ${selectedClient.income_day})` : ""}. You can still edit each date manually.</p>
                 </div>
                 <Button type="button" variant="outline" disabled={!selectedClient} onClick={() => selectedClient && updateLoan("installment_due_dates", clientPaydaySchedule(selectedClient, loanForm.term_count))}>Reset to pay dates</Button>
               </div>
