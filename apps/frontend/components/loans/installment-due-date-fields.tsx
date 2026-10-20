@@ -56,7 +56,7 @@ export function generatePaydayInstallmentDueDates(
   today = new Date().toISOString().slice(0, 10),
 ): string[] {
   const size = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
-  const datePattern = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+  const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
   const todayMatch = datePattern.exec(today);
   if (!todayMatch) return resizeInstallmentDueDates([], size);
   const todayYear = Number(todayMatch[1]);
