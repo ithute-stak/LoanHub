@@ -1,5 +1,5 @@
 """Isolated historical CDAS import staging; never a loan or payment ledger."""
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from database.base import Base
 
@@ -8,6 +8,7 @@ class CdasHistoricalImportBatch(Base):
     __tablename__ = "cdas_historical_import_batches"
     __table_args__ = (
         UniqueConstraint("company_id", "branch_id", "source_sha256", name="uq_cdas_history_batch_source"),
+        Index("uq_cdas_history_batch_unbranched_source", "company_id", "source_sha256", unique=True, postgresql_where=text("branch_id IS NULL")),
     )
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="CASCADE"), nullable=False, index=True)
     branch_id = Column(UUID(as_uuid=True), ForeignKey("company_branches.id", ondelete="SET NULL"), nullable=True, index=True)
