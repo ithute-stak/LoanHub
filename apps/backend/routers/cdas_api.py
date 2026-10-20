@@ -776,7 +776,7 @@ async def preview_historical_cdas_csv(
 
 @router.get("/history/transactions")
 def get_cdas_transaction_log(
-    limit: int = Query(25, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     page: int = Query(1, ge=1),
     search: str = Query("", max_length=200),
     state: str = Query("", max_length=80),
