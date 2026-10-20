@@ -64,7 +64,7 @@ import {
   blankExternalDebt,
   monthlyExternalDebtCommitment,
 } from "@/components/clients/external-debt-registration-fields";
-import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
+import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates, generatePaydayInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
 import { DEFAULT_PAYMENT_METHOD_OPTIONS, EMPTY_PAYMENT_EVIDENCE, PaymentMethodFields, type PaymentEvidence } from "@/components/payments/payment-method-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -768,7 +768,13 @@ export default function CompanyClientsPage() {
     key: K,
     value: InternalClientLoanRequestCreate[K],
   ) {
-    setLoanForm((current) => ({ ...current, [key]: value }));
+    setLoanForm((current) => {
+      if (key === "term_count" && selectedClient) {
+        const months = Number(value);
+        return { ...current, term_count: months, installment_due_dates: clientPaydaySchedule(selectedClient, months) };
+      }
+      return { ...current, [key]: value };
+    });
   }
 
   async function submitClient(event: FormEvent<HTMLFormElement>) {
@@ -876,6 +882,11 @@ export default function CompanyClientsPage() {
     }
   }
 
+  function clientPaydaySchedule(client: CompanyClient, count: number): string[] {
+    const fallbackDay = client.income_day ?? (client.salary_date && /^\\d{1,2}$/.test(client.salary_date) ? Number(client.salary_date) : null);
+    return generatePaydayInstallmentDueDates(client.next_salary_pay_date, fallbackDay, count);
+  }
+
   function startInternalLoan(client: CompanyClient) {
     const defaultProduct = products[0] ?? null;
     setSelectedClient(client);
@@ -885,7 +896,7 @@ export default function CompanyClientsPage() {
       product_id: defaultProduct?.id ?? null,
       requested_amount: defaultProduct ? Number(defaultProduct.min_amount) : 0,
       term_count: defaultProduct?.min_term_months ?? 3,
-      installment_due_dates: resizeInstallmentDueDates([], defaultProduct?.min_term_months ?? 3),
+      installment_due_dates: clientPaydaySchedule(client, defaultProduct?.min_term_months ?? 3),
     });
     setCalculation(null);
     setLoanDialog(true);
@@ -1682,6 +1693,7 @@ export default function CompanyClientsPage() {
                       )
                     : current.requested_amount,
                   term_count: product ? Math.min(Math.max(current.term_count, product.min_term_months), product.max_term_months) : current.term_count,
+                  installment_due_dates: selectedClient ? clientPaydaySchedule(selectedClient, product ? Math.min(Math.max(current.term_count, product.min_term_months), product.max_term_months) : current.term_count) : current.installment_due_dates,
                 }));
               }}><SelectTrigger><SelectValue placeholder="Select a loan product" /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · {Number(product.interest_rate_percent)}%</SelectItem>)}</SelectContent></Select></Field>
               {selectedProduct ? <p className="-mt-3 text-xs text-muted-foreground">Allowed amount {formatMoney(selectedProduct.min_amount)}–{formatMoney(selectedProduct.max_amount)} · {selectedProduct.min_term_months}–{selectedProduct.max_term_months} months</p> : null}
@@ -1689,7 +1701,15 @@ export default function CompanyClientsPage() {
                 <Field label="Requested amount"><Input required type="number" min={selectedProduct ? Number(selectedProduct.min_amount) : 1} max={selectedProduct ? Number(selectedProduct.max_amount) : undefined} step="0.01" value={loanForm.requested_amount || ""} onChange={(event) => updateLoan("requested_amount", Number(event.target.value || 0))} /></Field>
                 <Field label="Months"><Input required type="number" min={selectedProduct?.min_term_months ?? 1} max={selectedProduct?.max_term_months ?? 120} value={loanForm.term_count} onChange={(event) => updateLoan("term_count", Number(event.target.value || 1))} /></Field>
               </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-3 text-sm">
+                <div>
+                  <p className="font-semibold">Payday-based repayment dates</p>
+                  <p className="text-muted-foreground">LoanHub pre-fills monthly installments from the borrower's next salary pay date{selectedClient?.next_salary_pay_date ? ` (${selectedClient.next_salary_pay_date})` : selectedClient?.income_day ? ` (day ${selectedClient.income_day})` : ""}. You can still edit each date manually.</p>
+                </div>
+                <Button type="button" variant="outline" disabled={!selectedClient} onClick={() => selectedClient && updateLoan("installment_due_dates", clientPaydaySchedule(selectedClient, loanForm.term_count))}>Reset to pay dates</Button>
+              </div>
               <InstallmentDueDateFields
+                description="Dates automatically follow the borrower's salary pay day. Adjust any installment date manually when the actual pay date differs."
                 count={Number(loanForm.term_count || 0)}
                 value={loanForm.installment_due_dates}
                 onChange={(dates) => updateLoan("installment_due_dates", dates)}
