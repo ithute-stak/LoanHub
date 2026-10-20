@@ -355,7 +355,7 @@ export default function CdasHistoryPage() {
                     <CardContent className="hidden overflow-x-auto p-0 md:block">
                         <table className="w-full min-w-[1650px] text-sm">
                             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">Monthly amount</th><th className="px-4 py-4">Principal / total</th><th className="px-4 py-4">Start / end</th><th className="px-4 py-4">Policy reference</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
+                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">Monthly amount</th><th className="px-4 py-4">Expected total / installments</th><th className="px-4 py-4">Start / end</th><th className="px-4 py-4">Policy reference</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
                             </thead>
                             <tbody>
                                 {paginatedTransactions.map((item) => (
