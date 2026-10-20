@@ -608,6 +608,33 @@ def update_application(
             detail=f"Enter exactly {final_term_count} installment due dates before saving the application",
         )
     if supplied_due_dates is not None:
+        previous_due_dates = list(application.installment_due_dates or [])
+        dates_changed = previous_due_dates != resolved_due_dates
+        if dates_changed and application.application_type == "top_up":
+            if application.status != "draft" or application.loan_id is not None or application.approved_at is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only an unapproved, undisbursed draft top-up may be rescheduled here.",
+                )
+            db.add(AuditLog(
+                user_id=context.user.id,
+                company_id=context.company_id,
+                branch_id=application.branch_id,
+                action="top_up.installments_rescheduled",
+                table_name="direct_loan_application",
+                entity_type="application",
+                record_id=application.id,
+                description="Top-up installment schedule revised before approval and disbursement.",
+                actor_role=context.role.value,
+                status="success",
+                event_data={
+                    "original_due_dates": previous_due_dates,
+                    "revised_due_dates": resolved_due_dates,
+                    "application_reference": application.application_reference,
+                },
+            ))
+            application.affordability_assessment_id = None
+            application.affordability_decision = None
         application.installment_due_dates = resolved_due_dates
         application.first_payment_date = supplied_due_dates[0]
         application.preferred_payment_day = None
