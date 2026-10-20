@@ -870,6 +870,73 @@ async def stage_historical_cdas_csv(
             "source_sha256": fingerprint, "financial_postings": 0}
 
 
+@router.get("/history/import/batches")
+def list_historical_cdas_batches(
+    limit: int = Query(50, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """List isolated historical files for a company's authorized managers."""
+    _require_company_manager(context)
+    query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        query = query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batches = query.order_by(CdasHistoricalImportBatch.created_at.desc()).limit(limit).all()
+    return {"items": [
+        {"id": str(batch.id), "source_filename": batch.source_filename,
+         "source_sha256": batch.source_sha256, "status": batch.status,
+         "row_count": batch.row_count, "invalid_count": batch.invalid_count,
+         "duplicate_count": batch.duplicate_count, "created_at": batch.created_at}
+        for batch in batches
+    ]}
+
+
+@router.get("/history/import/batches/{batch_id}/rows")
+def list_historical_cdas_batch_rows(
+    batch_id: UUID,
+    limit: int = Query(100, ge=1, le=250),
+    page: int = Query(1, ge=1),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read historical staging records; never initiate a CDAS transaction."""
+    _require_company_manager(context)
+    batch_query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+        CdasHistoricalImportBatch.id == batch_id,
+    )
+    if context.branch_id is not None:
+        batch_query = batch_query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batch = batch_query.first()
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Historical import batch not found")
+    query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.company_id == context.company_id,
+        CdasHistoricalImportRow.batch_id == batch.id,
+    )
+    if context.branch_id is not None:
+        query = query.filter(CdasHistoricalImportRow.branch_id == context.branch_id)
+    total = query.count()
+    rows = query.order_by(CdasHistoricalImportRow.line_number).offset((page - 1) * limit).limit(limit).all()
+    return {
+        "batch_id": str(batch.id), "status": batch.status,
+        "total": total, "page": page, "page_size": limit,
+        "items": [{
+            "id": str(row.id), "line_number": row.line_number,
+            "employee_no": row.employee_no, "employee_name": row.employee_name,
+            "policy_reference": row.policy_reference,
+            "monthly_amount": str(row.monthly_amount),
+            "principal_amount": str(row.principal_amount),
+            "total_installments": row.total_installments,
+            "starting_month": row.starting_month, "ending_month": row.ending_month,
+            "reconciliation_status": row.reconciliation_status,
+            "matched_mandate_id": str(row.matched_mandate_id) if row.matched_mandate_id else None,
+        } for row in rows],
+    }
+
+
 @router.get("/history/transactions")
 def get_cdas_transaction_log(
     limit: int = Query(100, ge=1, le=500),
