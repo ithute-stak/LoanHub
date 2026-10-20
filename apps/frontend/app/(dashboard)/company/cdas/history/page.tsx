@@ -295,6 +295,7 @@ export default function CdasHistoryPage() {
             <section className="rounded-3xl border bg-card p-6 shadow-sm">
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">Original CDAS reporting parity</p>
                 <h1 className="mt-2 text-3xl font-black tracking-tight">CDAS transaction & deduction history</h1>
+                <Link href="/company/cdas/history/imports" className="mt-3 inline-flex rounded-md border px-3 py-2 text-sm font-semibold hover:bg-muted">Review historical CDAS imports</Link>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
                     CDAS API v1.5 does not expose portal transaction-log or deduction-history endpoints. LoanHub reconstructs these views from its durable provider-operation ledger, PAYG transaction ledger and append-only official mandate events.
                 </p>
