@@ -373,7 +373,7 @@ export default function CdasHistoryPage() {
                 <Card>
                     <CardHeader>
                         <CardTitle>Transaction log</CardTitle>
-                        <CardDescription>Provider mutations and metered CDAS business operations recorded by LoanHub.</CardDescription>
+                        <CardDescription>Financial records show CDAS monthly and principal amounts when verified historical exports or matched mandates provide them. API affordability/verification calls do not have these amounts. <Link className="underline font-medium" href="/company/cdas/history/imports">Import historical CDAS Excel</Link> to review older deductions.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3 p-4 md:hidden">
                         {paginatedTransactions.map((item) => (
