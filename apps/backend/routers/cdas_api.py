@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 import csv
+import hashlib
 from io import StringIO
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
@@ -773,7 +774,31 @@ async def preview_historical_cdas_csv(
         }
         for m in mandates
     ]
-    return {**preview, "reconciliation": reconcile_preview_rows(preview["rows"], candidates)}
+    reconciliation = reconcile_preview_rows(preview["rows"], candidates)
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    # Audit the review without storing the uploaded file, identity details,
+    # or historical financial rows. Repeated previews remain read-only.
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        action="cdas.historical_import_previewed",
+        table_name="audit_logs",
+        entity_type="cdas_history_import_preview",
+        description="Historical CDAS CSV assessed for future reconciliation (read-only).",
+        actor_role=context.role.value,
+        status="success",
+        event_data={
+            "source_sha256": fingerprint,
+            "valid_count": preview["valid_count"],
+            "invalid_count": preview["invalid_count"],
+            "duplicate_count": preview["duplicate_count"],
+            "reconciliation_counts": reconciliation["counts"],
+            "persisted": False,
+        },
+    ))
+    db.commit()
+    return {**preview, "source_sha256": fingerprint, "reconciliation": reconciliation}
 
 
 @router.get("/history/transactions")
