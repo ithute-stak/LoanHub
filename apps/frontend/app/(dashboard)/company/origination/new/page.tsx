@@ -39,7 +39,7 @@ import { api } from "@/lib/api";
 import { useTenant } from "@/provider/tenantProvider";
 import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
-import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
+import { InstallmentDueDateFields, generateMonthlyInstallmentDueDates, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,6 +212,8 @@ function OriginationWizard() {
   const [termCount, setTermCount] = useState(3);
   const [purpose, setPurpose] = useState("");
   const [installmentDueDates, setInstallmentDueDates] = useState<string[]>(() => resizeInstallmentDueDates([], 3));
+  const [rescheduleStartDate, setRescheduleStartDate] = useState("");
+  const [reschedulePreview, setReschedulePreview] = useState<string[] | null>(null);
   const [cdasCollectionEnabled, setCdasCollectionEnabled] = useState(false);
   const [rate, setRate] = useState(20);
   const [processingFee, setProcessingFee] = useState(0);
@@ -460,6 +462,28 @@ function OriginationWizard() {
     }
   }
 
+  async function confirmTopUpReschedule() {
+    if (!application || application.application_type !== "top_up" || application.status !== "draft") {
+      toast.error("Only draft top-ups awaiting approval can be rescheduled.");
+      return;
+    }
+    if (!reschedulePreview || reschedulePreview.length !== termCount || reschedulePreview.some((date) => !date)) return;
+    setWorking(true);
+    try {
+      const updated = await originationApi.updateApplication(application.id, { installment_due_dates: reschedulePreview });
+      setApplication(updated);
+      setInstallmentDueDates(reschedulePreview);
+      setAssessment(null);
+      setCalculation(null);
+      setReschedulePreview(null);
+      toast.success("Repayment dates updated. Recalculate affordability before approval.");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not reschedule the top-up."));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function ensureApplication(): Promise<OriginationApplication> {
     if (!borrowerId) throw new Error("Select a borrower first");
     if (!productId) throw new Error("Select a loan product");
@@ -667,6 +691,22 @@ function OriginationWizard() {
                     value={installmentDueDates}
                     onChange={setInstallmentDueDates}
                   />
+                  {applicationType === "top_up" && application?.status === "draft" ? (
+                    <div className="sm:col-span-2 space-y-3 rounded-2xl border p-4">
+                      <p className="font-bold">Reschedule delayed top-up</p>
+                      <p className="text-sm text-muted-foreground">For a top-up that has not yet been approved or paid out. Original dates are kept in the audit log. Choose the planned disbursement/interest start date to preview monthly due dates; this does not disburse funds or change the actual interest start date.</p>
+                      <Input type="date" aria-label="Planned disbursement date" value={rescheduleStartDate} onChange={(event) => { setRescheduleStartDate(event.target.value); setReschedulePreview(null); }} />
+                      <Button type="button" variant="outline" disabled={!rescheduleStartDate || working} onClick={() => setReschedulePreview(generateMonthlyInstallmentDueDates(rescheduleStartDate, termCount))}>Preview revised schedule</Button>
+                      {reschedulePreview ? (
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold">Original: {installmentDueDates.join(", ") || "Not set"}</p>
+                          <p className="text-sm font-semibold">Revised: {reschedulePreview.join(", ")}</p>
+                          <p className="text-xs text-muted-foreground">Confirming updates the draft application, preserves an audit trail and requires a fresh affordability calculation. Review financial and contractual changes before approval.</p>
+                          <LoadingButton type="button" loading={working} onClick={() => void confirmTopUpReschedule()}>Confirm rescheduled dates</LoadingButton>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="space-y-2 rounded-3xl border border-primary/20 bg-primary/5 p-4">
                   <Check label="Collect this loan through CDAS payroll deduction" checked={cdasCollectionEnabled} onChange={setCdasCollectionEnabled} />
