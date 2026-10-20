@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import csv
+from io import StringIO
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Literal
@@ -953,14 +955,46 @@ def get_cdas_transaction_log(
     }
 
 
+def _filtered_history_export(
+    *, limit: int, search: str, state: str, operation_type: str,
+    actor_user_id: UUID | None, date_from: date | None, date_to: date | None,
+    sort_order: Literal["asc", "desc"], context: TenantContext, db: Session,
+) -> dict[str, Any]:
+    # The endpoint intentionally caps exports; never silently represent an
+    # incomplete export as the full requested dataset.
+    history = get_cdas_transaction_log(
+        limit=limit, page=1, search=search, state=state,
+        operation_type=operation_type, actor_user_id=actor_user_id,
+        date_from=date_from, date_to=date_to, sort_order=sort_order,
+        context=context, db=db,
+    )
+    if history["total"] > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Export matches {history['total']} rows, above the {limit}-row export cap. Narrow the filters.",
+        )
+    return history
+
+
 @router.get("/history/transactions.pdf")
 def download_cdas_transaction_history_pdf(
     limit: int = Query(500, ge=1, le=500),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Export real, scoped LoanHub CDAS ledger events; NOT provider portal history."""
-    history = get_cdas_transaction_log(limit=limit, context=context, db=db)
+    """Export the same scoped filtered LoanHub ledger, not CDAS portal history."""
+    history = _filtered_history_export(
+        limit=limit, search=search, state=state, operation_type=operation_type,
+        actor_user_id=actor_user_id, date_from=date_from, date_to=date_to,
+        sort_order=sort_order, context=context, db=db,
+    )
     company = context.company
     if company is None:
         raise HTTPException(status_code=422, detail="A company must be selected")
@@ -968,9 +1002,49 @@ def download_cdas_transaction_history_pdf(
         db=db, company=company, entries=history["items"], environment=history["environment"]
     )
     return Response(
-        content=payload,
-        media_type="application/pdf",
+        content=payload, media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="loanhub-cdas-operations-history.pdf"',
+                 "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/history/transactions.csv")
+def download_cdas_transaction_history_csv(
+    limit: int = Query(500, ge=1, le=500),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """CSV export with server filters, fixed column order and formula safety."""
+    history = _filtered_history_export(
+        limit=limit, search=search, state=state, operation_type=operation_type,
+        actor_user_id=actor_user_id, date_from=date_from, date_to=date_to,
+        sort_order=sort_order, context=context, db=db,
+    )
+    columns = (
+        "occurred_at", "operation_type", "employee_no", "deduction_id",
+        "reference_no", "monthly_deduction", "principal_amount",
+        "total_installments", "starting_month", "ending_month",
+        "policy_reference", "details_source", "state",
+        "provider_status_code", "requires_reconciliation",
+    )
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    for item in history["items"]:
+        writer.writerow([
+            "'" + str(item.get(column)) if str(item.get(column) or "").lstrip().startswith(("=", "+", "-", "@")) else str(item.get(column) if item.get(column) is not None else "")
+            for column in columns
+        ])
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="loanhub-cdas-operations-history.csv"',
                  "Cache-Control": "no-store"},
     )
 
