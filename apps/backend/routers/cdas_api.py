@@ -1133,6 +1133,43 @@ def get_cdas_transaction_log(
         elif len(matches) > 1:
             item["details_source"] = "ambiguous_match"
 
+    # Approved historical records are reporting evidence, not confirmed payments.
+    historical_query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.company_id == context.company_id,
+        CdasHistoricalImportRow.reconciliation_status == "approved",
+    )
+    if context.branch_id is not None:
+        historical_query = historical_query.filter(
+            CdasHistoricalImportRow.branch_id == context.branch_id,
+        )
+    for historical in historical_query.all():
+        items.append({
+            "source": "historical_import",
+            "id": str(historical.id),
+            "occurred_at": historical.created_at,
+            "operation_type": "historical_record",
+            "state": "approved_evidence",
+            "employee_no": historical.employee_no,
+            "employee_name": historical.employee_name,
+            "deduction_id": None,
+            "reference_no": historical.policy_reference,
+            "provider_status_code": None,
+            "requires_reconciliation": False,
+            "error_message": None,
+            "actor_user_id": None,
+            "request_snapshot": {},
+            "response_snapshot": {},
+            "monthly_deduction": str(historical.monthly_amount),
+            "principal_amount": str(historical.principal_amount),
+            "total_installments": historical.total_installments,
+            "starting_month": historical.starting_month,
+            "ending_month": historical.ending_month,
+            "policy_reference": historical.policy_reference,
+            "details_source": "approved_historical_csv",
+            "historical_import_batch_id": str(historical.batch_id),
+            "historical_date_unverified": True,
+        })
+
     def sort_key(item: dict[str, Any]):
         value = item.get("occurred_at")
         return value or datetime.min
