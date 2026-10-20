@@ -77,6 +77,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from "@/components/ui/tabs";
 import {createIdempotencyKey, formatDate, formatMoney, titleCase} from "@/lib/format";
 import {INTEREST_METHOD_OPTIONS, interestMethodLabel, interestMethodOption} from "@/lib/interest-methods";
 import {useTenant} from "@/provider/tenantProvider";
+import {api} from "@/lib/api";
 import {CASHIER_ROLES, DIRECT_APPLICATION_ROLES, FINANCE_ROLES, LENDING_ROLES, hasRole} from "@/types/auth";
 import type {CompanyClient} from "@/types/companyClient";
 import type {PaymentMethodOption} from "@/types/expenseManagement";
@@ -157,6 +158,45 @@ export default function CompanyLoansPage() {
 
     const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
     const [scheduleOpen, setScheduleOpen] = useState(false);
+    const [correctionOpen, setCorrectionOpen] = useState(false);
+    const [correctionRate, setCorrectionRate] = useState("20");
+    const [correctionReason, setCorrectionReason] = useState("");
+    const [correctionReference, setCorrectionReference] = useState("");
+    const [correctionQuote, setCorrectionQuote] = useState<{ old_rate: string; new_rate: string; old_total_repayable: string; new_total_repayable: string; old_installment_amounts: string[]; new_installment_amounts: string[] } | null>(null);
+    const [correctionWorking, setCorrectionWorking] = useState(false);
+    const [correctionConfirmed, setCorrectionConfirmed] = useState(false);
+    async function previewInterestCorrection() {
+        if (!selectedLoan) return;
+        setCorrectionWorking(true);
+        setCorrectionQuote(null);
+        try {
+            const response = await api.post<typeof correctionQuote>(`/loans/${selectedLoan.id}/interest-correction/preview?proposed_rate=${encodeURIComponent(correctionRate)}`);
+            setCorrectionQuote(response.data);
+        } catch (error) { toast.error(getErrorMessage(error, "Interest correction cannot be previewed.")); }
+        finally { setCorrectionWorking(false); }
+    }
+    async function applyInterestCorrection() {
+        if (!selectedLoan || !correctionQuote || !correctionConfirmed) return;
+        setCorrectionWorking(true);
+        try {
+            const response = await api.post<Loan>(`/loans/${selectedLoan.id}/interest-correction/apply`, {
+                proposed_rate: correctionRate,
+                expected_current_rate: correctionQuote.old_rate,
+                expected_total_repayable: correctionQuote.old_total_repayable,
+                reason: correctionReason.trim(),
+                signed_amendment_reference: correctionReference.trim(),
+                confirm: true,
+            });
+            setSelectedLoan(response.data);
+            setLoans(rows => rows.map(row => row.id === response.data.id ? response.data : row));
+            setCorrectionOpen(false);
+            setScheduleOpen(true);
+            setCorrectionQuote(null);
+            setCorrectionConfirmed(false);
+            toast.success("Loan pricing corrected and audited; issue the updated repayment agreement.");
+        } catch (error) { toast.error(getErrorMessage(error, "Loan interest correction failed.")); }
+        finally { setCorrectionWorking(false); }
+    }
     const [settlementLoan, setSettlementLoan] = useState<Loan | null>(null);
     const [topUpLoan, setTopUpLoan] = useState<Loan | null>(null);
     const [editingInstallment, setEditingInstallment] = useState<RepaymentInstallment | null>(null);
@@ -1251,6 +1291,31 @@ export default function CompanyLoansPage() {
                 </div>
             </CustomDialog>
 
+            <CustomDialog open={correctionOpen} onOpenChange={setCorrectionOpen} title="Correct loan interest rate" description={selectedLoan ? `${selectedLoan.loan_reference} · Company owner · Written signed amendment required` : undefined} contentClassName="sm:max-w-2xl">
+                <div className="space-y-4 p-5">
+                    <Alert><AlertTitle>Financial correction — not a routine edit</AlertTitle><AlertDescription>This recalculates the entire unpaid schedule. It is blocked when repayments or CDAS mandates exist. Obtain the borrower&apos;s signed amendment and record its reference before applying.</AlertDescription></Alert>
+                    <Label>Correct interest rate (%)</Label>
+                    <Input type="number" min="0.001" max="100" step="0.001" value={correctionRate} onChange={e => { setCorrectionRate(e.target.value); setCorrectionQuote(null); setCorrectionConfirmed(false); }}/>
+                    <Button variant="outline" disabled={correctionWorking} onClick={() => void previewInterestCorrection()}>Preview before / after</Button>
+                    {correctionQuote ? <>
+                        <div className="grid grid-cols-2 gap-3 rounded-lg border p-4 text-sm">
+                            <div>Old rate: <strong>{correctionQuote.old_rate}%</strong></div>
+                            <div>New rate: <strong>{correctionQuote.new_rate}%</strong></div>
+                            <div>Old repayable: <strong>{formatMoney(correctionQuote.old_total_repayable)}</strong></div>
+                            <div>New repayable: <strong>{formatMoney(correctionQuote.new_total_repayable)}</strong></div>
+                        </div>
+                        <div className="text-sm">Recalculated installments: {correctionQuote.new_installment_amounts.map((value, i) => `#${i + 1}: ${formatMoney(value)}`).join(" · ")}</div>
+                        <Label>Reason for correction</Label>
+                        <Textarea value={correctionReason} onChange={e => setCorrectionReason(e.target.value)} placeholder="Explain how the wrong interest rate was entered (minimum 10 characters)"/>
+                        <Label>Signed borrower amendment reference</Label>
+                        <Input value={correctionReference} onChange={e => setCorrectionReference(e.target.value)} placeholder="Signed amendment document/reference"/>
+                        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={correctionConfirmed} onChange={e => setCorrectionConfirmed(e.target.checked)}/> I confirm the borrower signed an amendment and understand the new amounts will replace the existing unpaid schedule.</label>
+                        <Button disabled={correctionWorking || !correctionConfirmed || correctionReason.trim().length < 10 || correctionReference.trim().length < 5} onClick={() => void applyInterestCorrection()}>Apply audited correction</Button>
+                    </> : null}
+                    <Button variant="outline" onClick={() => { setCorrectionOpen(false); setScheduleOpen(true); }}>Cancel</Button>
+                </div>
+            </CustomDialog>
+
             <CustomDialog
                 open={scheduleOpen}
                 onOpenChange={setScheduleOpen}
@@ -1377,6 +1442,7 @@ export default function CompanyLoansPage() {
                             </div>
                         </>
                     ) : null}
+                    {selectedLoan && activeRole === "company_owner" ? <Button type="button" variant="outline" onClick={() => { setScheduleOpen(false); setCorrectionOpen(true); setCorrectionRate(String(selectedLoan.interest_rate)); setCorrectionQuote(null); setCorrectionConfirmed(false); }}>Correct loan interest rate</Button> : null}
                     {selectedLoan ? <LoanActivityPanel loanId={selectedLoan.id}/> : null}
                     <DialogFooter className="mx-0 mb-0 flex-wrap">
                         <Button variant="outline" onClick={() => setScheduleOpen(false)}>Close</Button>

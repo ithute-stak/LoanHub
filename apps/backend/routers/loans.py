@@ -1,6 +1,7 @@
 from io import BytesIO
 from datetime import datetime, date, time
 from decimal import Decimal
+from pydantic import BaseModel, Field
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -23,10 +24,13 @@ from core.access_control import (
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.early_settlement import LoanEarlySettlement
-from database.models.enums import PaymentMethod, PaymentStatus, UserRole
+from database.models.enums import LoanStatus, PaymentMethod, PaymentStatus, UserRole
 from database.models.audit_log import AuditLog
 from database.models.file_management import ManagedFile
 from database.models.payment import PaymentTransaction
+from database.models.lending_operations import CDASDeductionMandate
+from database.models.cdas_official import CdasOfficialMandateState
+from database.models.enums import InstallmentStatus
 from database.models.professional_lending import PaymentReceipt
 from database.models.user import User
 from database.models.person import Person
@@ -385,6 +389,147 @@ def pay_early_settlement(
             "preview": None,
         },
     }
+
+
+class LoanRateCorrectionRequest(BaseModel):
+    proposed_rate: Decimal = Field(gt=0, le=100, max_digits=6, decimal_places=3)
+    expected_current_rate: Decimal = Field(ge=0, le=100)
+    expected_total_repayable: Decimal = Field(gt=0)
+    reason: str = Field(min_length=10, max_length=1000)
+    signed_amendment_reference: str = Field(min_length=5, max_length=200)
+    confirm: bool = False
+
+
+def _loan_rate_correction_quote(db: Session, loan: ClientCompanyLoan, new_rate: Decimal) -> dict:
+    # Repricing already-paid or provider-registered obligations is a separate
+    # reversal/rescheduling workflow, never a direct update.
+    if loan.status not in {LoanStatus.APPROVED, LoanStatus.ACTIVE}:
+        raise HTTPException(status_code=409, detail="Only approved/active loans qualify for this correction")
+    if Decimal(str(loan.amount_paid or 0)) != 0:
+        raise HTTPException(status_code=409, detail="Loan has recorded repayments; use an audited restructuring workflow")
+    if loan.cdas_collection_enabled:
+        raise HTTPException(status_code=409, detail="Loan has CDAS collection enabled; reconcile/amend provider deduction before any repricing")
+    installments = sorted(
+        (item for item in loan.installments if not item.is_superseded),
+        key=lambda item: item.installment_number,
+    )
+    if len(installments) != loan.repayment_period or any(
+        Decimal(str(item.paid_amount or 0)) != 0 or item.status != InstallmentStatus.PENDING
+        or item.allocations for item in installments
+    ):
+        raise HTTPException(status_code=409, detail="Existing installment payments, statuses or schedules prevent direct repricing")
+    if db.query(CDASDeductionMandate.id).filter(CDASDeductionMandate.loan_id == loan.id).first():
+        raise HTTPException(status_code=409, detail="A CDAS mandate exists: reconcile and amend the deduction externally first")
+    if db.query(CdasOfficialMandateState.id).join(
+        CDASDeductionMandate, CdasOfficialMandateState.mandate_id == CDASDeductionMandate.id
+    ).filter(CDASDeductionMandate.loan_id == loan.id).first():
+        raise HTTPException(status_code=409, detail="Official CDAS mandate exists and cannot be directly repriced")
+    breakdown = loan.calculation_breakdown or {}
+    recorded_start = breakdown.get("interest_start_date")
+    try:
+        start_date = date.fromisoformat(str(recorded_start)) if recorded_start else loan.disbursed_at.date()
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=409, detail="Original interest start date is not verifiable") from exc
+    try:
+        _, _, terms = calculate_loan_terms(
+            principal=Decimal(str(loan.principal_amount)),
+            rate_percent=new_rate,
+            term_months=loan.repayment_period,
+            processing_fee=Decimal(str(loan.processing_fee)),
+            interest_method=loan.calculation_method,
+            start_date=start_date,
+            due_dates=[item.due_date for item in installments],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rows = terms["schedule_rows"]
+    if len(rows) != len(installments):
+        raise HTTPException(status_code=409, detail="New calculation does not match the existing schedule")
+    return {
+        "loan_id": str(loan.id), "loan_reference": loan.loan_reference,
+        "old_rate": str(loan.interest_rate), "new_rate": str(new_rate),
+        "old_total_repayable": str(loan.total_repayable),
+        "new_total_repayable": terms["total_repayable"],
+        "old_installment_amounts": [str(item.total_due) for item in installments],
+        "new_installment_amounts": terms["schedule_amounts"],
+        "schedule_rows": rows,
+        "calculation_breakdown": terms,
+    }
+
+
+@router.post("/{loan_id}/interest-correction/preview")
+def preview_loan_interest_correction(
+    loan_id: UUID,
+    proposed_rate: Decimal = Query(..., gt=0, le=100),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER})
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    return _loan_rate_correction_quote(db, loan, proposed_rate)
+
+
+@router.post("/{loan_id}/interest-correction/apply", response_model=LoanRead)
+def apply_loan_interest_correction(
+    loan_id: UUID,
+    payload: LoanRateCorrectionRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER})
+    if not payload.confirm:
+        raise HTTPException(status_code=422, detail="Explicit amendment confirmation is required")
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    db.query(ClientCompanyLoan).filter(ClientCompanyLoan.id == loan.id).with_for_update().one()
+    db.refresh(loan)
+    if Decimal(str(loan.interest_rate)) != payload.expected_current_rate or Decimal(str(loan.total_repayable)) != payload.expected_total_repayable:
+        raise HTTPException(status_code=409, detail="Loan changed since preview; refresh the correction quote")
+    quote = _loan_rate_correction_quote(db, loan, payload.proposed_rate)
+    if payload.proposed_rate == payload.expected_current_rate:
+        raise HTTPException(status_code=422, detail="Choose a different rate")
+    old_values = {
+        "interest_rate": str(loan.interest_rate),
+        "total_repayable": str(loan.total_repayable),
+        "balance": str(loan.balance),
+        "installment_amount": str(loan.installment_amount),
+        "installment_rows": [
+            {"id": str(item.id), "principal_due": str(item.principal_due),
+             "interest_due": str(item.interest_due), "fee_due": str(item.fee_due),
+             "total_due": str(item.total_due)}
+            for item in sorted(loan.installments, key=lambda i: i.installment_number)
+        ],
+    }
+    loan.interest_rate = payload.proposed_rate
+    loan.total_repayable = Decimal(quote["new_total_repayable"])
+    loan.balance = loan.total_repayable
+    loan.installment_amount = Decimal(quote["new_installment_amounts"][0])
+    loan.calculation_breakdown = quote["calculation_breakdown"]
+    for installment, schedule in zip(
+        sorted((i for i in loan.installments if not i.is_superseded), key=lambda i: i.installment_number),
+        quote["schedule_rows"],
+    ):
+        installment.principal_due = Decimal(schedule["principal_due"])
+        installment.interest_due = Decimal(schedule["interest_due"])
+        installment.fee_due = Decimal(schedule["fee_due"])
+        installment.total_due = Decimal(schedule["total_due"])
+    db.add(AuditLog(
+        user_id=context.user.id, company_id=loan.company_id, branch_id=loan.branch_id,
+        action="loan.interest_rate_corrected", table_name="client_company_loan",
+        entity_type="loan", record_id=loan.id, severity="warning",
+        description="Company-owner correction of agreed loan pricing with signed amendment",
+        before_data=old_values,
+        after_data={
+            "interest_rate": str(loan.interest_rate),
+            "total_repayable": str(loan.total_repayable),
+            "balance": str(loan.balance),
+            "installment_amount": str(loan.installment_amount),
+            "schedule": quote["schedule_rows"],
+        },
+        event_data={"reason": payload.reason, "signed_amendment_reference": payload.signed_amendment_reference,
+                    "interest_start_date": quote["calculation_breakdown"]["interest_start_date"]},
+    ))
+    db.commit()
+    return _tenant_loan_or_404(db, context, loan_id)
 
 
 @router.post("/{loan_id}/installments/{installment_id}/payments", response_model=CashPaymentResult)
