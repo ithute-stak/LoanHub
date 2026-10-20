@@ -45,6 +45,52 @@ export function generateMonthlyInstallmentDueDates(startDate: string, count: num
   });
 }
 
+/** First installment falls on the next future salary pay date, then monthly.
+ * Uses UTC calendar arithmetic so 31st paydays clip in February and return
+ * to the 31st in March. Does not assume pay dates when they are unknown.
+ */
+export function generatePaydayInstallmentDueDates(
+  nextPayDate: string | null | undefined,
+  incomeDay: number | null | undefined,
+  count: number,
+  today = new Date().toISOString().slice(0, 10),
+): string[] {
+  const size = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
+  const datePattern = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+  const todayMatch = datePattern.exec(today);
+  if (!todayMatch) return resizeInstallmentDueDates([], size);
+  const todayYear = Number(todayMatch[1]);
+  const todayMonth = Number(todayMatch[2]);
+  const todayDay = Number(todayMatch[3]);
+  let payday = Number(incomeDay);
+  const suppliedPayday = nextPayDate ? datePattern.exec(nextPayDate) : null;
+  const realNextPayDate = suppliedPayday && !Number.isNaN(Date.parse(nextPayDate!))
+    && new Date(nextPayDate!).toISOString().slice(0, 10) === nextPayDate
+    && nextPayDate > today;
+  if (realNextPayDate && suppliedPayday) payday = Number(suppliedPayday[3]);
+  if (!Number.isInteger(payday) || payday < 1 || payday > 31) return resizeInstallmentDueDates([], size);
+
+  let firstYear = todayYear;
+  let firstMonth = todayMonth;
+  if (realNextPayDate && suppliedPayday) {
+    firstYear = Number(suppliedPayday[1]);
+    firstMonth = Number(suppliedPayday[2]);
+  } else {
+    const last = new Date(Date.UTC(firstYear, firstMonth, 0)).getUTCDate();
+    if (Math.min(payday, last) <= todayDay) {
+      firstMonth += 1;
+      if (firstMonth > 12) { firstMonth = 1; firstYear += 1; }
+    }
+  }
+  return Array.from({ length: size }, (_, index) => {
+    const date = new Date(Date.UTC(firstYear, firstMonth - 1 + index, 1));
+    const year = date.getUTCFullYear();
+    const monthIndex = date.getUTCMonth();
+    const last = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(Math.min(payday, last)).padStart(2, "0")}`;
+  });
+}
+
 export function installmentDueDatesComplete(values: string[], count: number): boolean {
   return values.length === count && values.every((value) => Boolean(value));
 }
