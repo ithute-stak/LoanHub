@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -776,7 +776,15 @@ async def preview_historical_cdas_csv(
 
 @router.get("/history/transactions")
 def get_cdas_transaction_log(
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(25, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -789,6 +797,8 @@ def get_cdas_transaction_log(
     _require_lending_user(context)
     assert context.company_id is not None
     environment = _company_cdas_environment(db, context.company_id)
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be on or before date_to")
 
     operation_query = db.query(CdasProviderOperation).filter(
         CdasProviderOperation.company_id == context.company_id,
@@ -801,7 +811,6 @@ def get_cdas_transaction_log(
     operations = (
         operation_query
         .order_by(CdasProviderOperation.created_at.desc())
-        .limit(limit)
         .all()
     )
 
@@ -911,11 +920,36 @@ def get_cdas_transaction_log(
         value = item.get("occurred_at")
         return value or datetime.min
 
-    items.sort(key=sort_key, reverse=True)
+    term = search.strip().casefold()
+    filtered = []
+    for item in items:
+        occurred = item.get("occurred_at")
+        if date_from and (not occurred or occurred.date() < date_from):
+            continue
+        if date_to and (not occurred or occurred.date() > date_to):
+            continue
+        if state and item.get("state") != state:
+            continue
+        if operation_type and item.get("operation_type") != operation_type:
+            continue
+        if actor_user_id and item.get("actor_user_id") != str(actor_user_id):
+            continue
+        if term and not any(term in str(item.get(field) or "").casefold() for field in (
+            "employee_no", "reference_no", "deduction_id", "operation_type",
+            "state", "transaction_reference"
+        )):
+            continue
+        filtered.append(item)
+    filtered.sort(key=sort_key, reverse=sort_order == "desc")
+    total = len(filtered)
+    offset = (page - 1) * limit
     return {
         "environment": environment,
-        "items": items[:limit],
-        "count": min(len(items), limit),
+        "items": filtered[offset:offset + limit],
+        "count": min(max(total - offset, 0), limit),
+        "total": total,
+        "page": page,
+        "page_size": limit,
     }
 
 
