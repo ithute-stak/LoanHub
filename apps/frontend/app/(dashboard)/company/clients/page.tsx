@@ -883,7 +883,7 @@ export default function CompanyClientsPage() {
   }
 
   function clientPaydaySchedule(client: CompanyClient, count: number): string[] {
-    const fallbackDay = client.income_day ?? (client.salary_date && /^\\d{1,2}$/.test(client.salary_date) ? Number(client.salary_date) : null);
+    const fallbackDay = client.income_day ?? (client.salary_date && /^\d{1,2}$/.test(client.salary_date) ? Number(client.salary_date) : null);
     return generatePaydayInstallmentDueDates(client.next_salary_pay_date, fallbackDay, count);
   }
 
