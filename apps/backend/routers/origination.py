@@ -634,7 +634,6 @@ def update_application(
                 },
             ))
             application.affordability_assessment_id = None
-            application.affordability_decision = None
         application.installment_due_dates = resolved_due_dates
         application.first_payment_date = supplied_due_dates[0]
         application.preferred_payment_day = None
