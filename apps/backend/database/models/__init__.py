@@ -294,3 +294,5 @@ from database.models import maturity_model_extensions as _maturity_model_extensi
 from database.models.legacy_bank_deduction import LegacyBankDeduction
 
 from database.models.pad_signing import ContractPadSigningSession, ContractPadCaptureEvidence
+
+from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow

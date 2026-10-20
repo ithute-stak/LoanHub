@@ -17,7 +17,10 @@ import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
 
 type TransactionItem = {
-    source: "provider_operation" | "metered_transaction";
+    source: "provider_operation" | "metered_transaction" | "historical_import";
+    employee_name?: string | null;
+    historical_date_unverified?: boolean;
+    history_timestamp_kind?: string;
     id: string;
     occurred_at: string;
     operation_type: string;
@@ -34,6 +37,13 @@ type TransactionItem = {
     amount?: string;
     currency?: string;
     transaction_reference?: string;
+    monthly_deduction?: string | null;
+    principal_amount?: string | null;
+    total_installments?: number | null;
+    starting_month?: string | null;
+    ending_month?: string | null;
+    policy_reference?: string | null;
+    details_source?: string;
 };
 
 type DeductionHistoryItem = {
@@ -88,6 +98,12 @@ export default function CdasHistoryPage() {
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState("");
     const [stateFilter, setStateFilter] = useState("all");
+    const [typeFilter, setTypeFilter] = useState("all");
+    const [userFilter, setUserFilter] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
+    const [page, setPage] = useState(1);
+    const pageSize = 25;
     const [selected, setSelected] = useState<{ title: string; request: Record<string, unknown>; response: Record<string, unknown> } | null>(null);
 
     const load = useCallback(async () => {
@@ -123,6 +139,10 @@ export default function CdasHistoryPage() {
         const term = query.trim().toLowerCase();
         return transactions.filter((item) => {
             const matchesState = stateFilter === "all" || item.state === stateFilter;
+            const matchesType = typeFilter === "all" || item.operation_type === typeFilter;
+            const matchesUser = !userFilter.trim() || (item.actor_user_id || "").toLowerCase().includes(userFilter.trim().toLowerCase());
+            const occurredDate = item.occurred_at?.slice(0, 10) || "";
+            const matchesDate = (!dateFrom || occurredDate >= dateFrom) && (!dateTo || occurredDate <= dateTo);
             const matchesQuery = !term || [
                 item.operation_type,
                 item.employee_no || "",
@@ -131,9 +151,17 @@ export default function CdasHistoryPage() {
                 item.state,
                 item.transaction_reference || "",
             ].some((value) => value.toLowerCase().includes(term));
-            return matchesState && matchesQuery;
+            return matchesState && matchesType && matchesUser && matchesDate && matchesQuery;
         });
-    }, [query, stateFilter, transactions]);
+    }, [query, stateFilter, typeFilter, userFilter, dateFrom, dateTo, transactions]);
+
+    const typeOptions = useMemo(
+        () => Array.from(new Set(transactions.map((item) => item.operation_type).filter(Boolean))).sort(),
+        [transactions],
+    );
+    const pageCount = Math.max(1, Math.ceil(filteredTransactions.length / pageSize));
+    const currentPage = Math.min(page, pageCount);
+    const paginatedTransactions = filteredTransactions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
     const filteredDeductions = useMemo(() => {
         const term = query.trim().toLowerCase();
@@ -152,9 +180,20 @@ export default function CdasHistoryPage() {
         [transactions],
     );
 
+    function transactionExportFilters() {
+        const params = new URLSearchParams({ limit: "500" });
+        if (query.trim()) params.set("search", query.trim());
+        if (stateFilter !== "all") params.set("state", stateFilter);
+        if (typeFilter !== "all") params.set("operation_type", typeFilter);
+        if (userFilter.trim()) params.set("actor_user_id", userFilter.trim());
+        if (dateFrom) params.set("date_from", dateFrom);
+        if (dateTo) params.set("date_to", dateTo);
+        return params.toString();
+    }
+
     async function exportBrandedPdf() {
         try {
-            const response = await api.get("/cdas/history/transactions.pdf?limit=500", { responseType: "blob" });
+            const response = await api.get("/cdas/history/transactions.pdf?" + transactionExportFilters(), { responseType: "blob" });
             const url = URL.createObjectURL(new Blob([response.data], { type: "application/pdf" }));
             const anchor = document.createElement("a");
             anchor.href = url;
@@ -168,18 +207,43 @@ export default function CdasHistoryPage() {
         }
     }
 
+    async function exportTransactionCsv() {
+        try {
+            const response = await api.get("/cdas/history/transactions.csv?" + transactionExportFilters(), { responseType: "blob" });
+            const url = URL.createObjectURL(new Blob([response.data], { type: "text/csv;charset=utf-8" }));
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "loanhub-cdas-operations-history.csv";
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+        } catch (error: unknown) {
+            window.alert(getErrorMessage(error, "Unable to export CDAS transactions; narrow filters if there are more than 500 matching rows."));
+        }
+    }
+
     function exportCsv() {
         const rows = tab === "transactions"
             ? filteredTransactions.map((item) => ({
                 time: item.occurred_at,
                 operation: item.operation_type,
                 employee_no: item.employee_no || "",
+                employee_name: item.employee_name || "",
+                source: item.source,
                 deduction_id: item.deduction_id ?? "",
                 reference_no: item.reference_no || "",
                 state: item.state,
                 provider_status_code: item.provider_status_code ?? "",
                 requires_reconciliation: item.requires_reconciliation,
                 error: item.error_message || "",
+                monthly_deduction: item.monthly_deduction ?? "",
+                principal_amount: item.principal_amount ?? "",
+                total_installments: item.total_installments ?? "",
+                starting_month: item.starting_month ?? "",
+                ending_month: item.ending_month ?? "",
+                policy_reference: item.policy_reference ?? "",
+                details_source: item.details_source ?? "",
             }))
             : filteredDeductions.map((item) => ({
                 time: item.occurred_at,
@@ -236,8 +300,9 @@ export default function CdasHistoryPage() {
             <section className="rounded-3xl border bg-card p-6 shadow-sm">
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">Original CDAS reporting parity</p>
                 <h1 className="mt-2 text-3xl font-black tracking-tight">CDAS transaction & deduction history</h1>
+                <Link href="/company/cdas/history/imports" className="mt-3 inline-flex rounded-md border px-3 py-2 text-sm font-semibold hover:bg-muted">Review historical CDAS imports</Link>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-                    CDAS API v1.5 does not expose portal transaction-log or deduction-history endpoints. LoanHub reconstructs these views from its durable provider-operation ledger, PAYG transaction ledger and append-only official mandate events.
+                    Approved historical CSV rows are evidence, not proof of a collected payment. Imported rows show their import date rather than an original transaction timestamp. CDAS API v1.5 does not expose portal transaction-log or deduction-history endpoints. LoanHub reconstructs these views from its durable provider-operation ledger, PAYG transaction ledger and append-only official mandate events.
                 </p>
             </section>
 
@@ -266,7 +331,7 @@ export default function CdasHistoryPage() {
 
 
             <Card>
-                <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_220px_auto]">
+                <CardContent className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
                     <div className="relative">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employee, deduction ID, reference, state or operation" className="pl-9" />
@@ -280,28 +345,39 @@ export default function CdasHistoryPage() {
                         <option value="all">All transaction states</option>
                         {stateOptions.map((state) => <option key={state} value={state}>{titleCase(state)}</option>)}
                     </select>
+                    {tab === "transactions" ? <>
+                        <select aria-label="Transaction type" value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="h-10 rounded-md border bg-background px-3 text-sm">
+                            <option value="all">All operation types</option>
+                            {typeOptions.map((type) => <option key={type} value={type}>{titleCase(type)}</option>)}
+                        </select>
+                        <Input aria-label="Staff user ID" value={userFilter} onChange={(event) => { setUserFilter(event.target.value); setPage(1); }} placeholder="Staff user ID" />
+                        <label className="text-xs font-semibold">From <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label>
+                        <label className="text-xs font-semibold">To <Input type="date" min={dateFrom || undefined} value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label>
+                        <Button variant="outline" onClick={() => { setQuery(""); setStateFilter("all"); setTypeFilter("all"); setUserFilter(""); setDateFrom(""); setDateTo(""); setPage(1); }}>Reset filters</Button>
+                    </> : null}
                     {tab === "transactions" ? <Button variant="outline" onClick={() => void exportBrandedPdf()}><Download className="h-4 w-4" /> Branded PDF</Button> : null}
-                    <Button variant="outline" onClick={exportCsv} disabled={tab === "transactions" ? filteredTransactions.length === 0 : filteredDeductions.length === 0}>
+                    <Button variant="outline" onClick={() => { if (tab === "transactions") void exportTransactionCsv(); else exportCsv(); }} disabled={tab === "deductions" && filteredDeductions.length === 0}>
                         <Download className="h-4 w-4" /> Export CSV
                     </Button>
                 </CardContent>
             </Card>
 
             {tab === "transactions" ? (
+                <>
                 <Card>
                     <CardHeader>
                         <CardTitle>Transaction log</CardTitle>
                         <CardDescription>Provider mutations and metered CDAS business operations recorded by LoanHub.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3 p-4 md:hidden">
-                        {filteredTransactions.map((item) => (
+                        {paginatedTransactions.map((item) => (
                             <div key={"mobile-" + item.source + "-" + item.id} className="rounded-2xl border p-4">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{when(item.occurred_at)}</p></div>
+                                    <div><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{when(item.occurred_at)}{item.historical_date_unverified ? " · Imported at (original date unavailable)" : ""}</p></div>
                                     <Badge variant={item.requires_reconciliation ? "destructive" : "outline"}>{titleCase(item.state)}</Badge>
                                 </div>
                                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                                    <div><p className="text-xs text-muted-foreground">Employee</p><p className="font-bold">{item.employee_no || "—"}</p></div>
+                                    <div><p className="text-xs text-muted-foreground">Employee</p><p className="font-bold">{item.employee_name ? item.employee_name + " · " : ""}{item.employee_no || "—"}</p></div>
                                     <div><p className="text-xs text-muted-foreground">Deduction</p><p className="font-bold">{item.deduction_id ? "#" + item.deduction_id : "—"}</p></div>
                                 </div>
                                 <Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => setSelected({ title: titleCase(item.operation_type), request: item.request_snapshot, response: item.response_snapshot })}>Inspect evidence</Button>
@@ -310,26 +386,39 @@ export default function CdasHistoryPage() {
                         {!loading && filteredTransactions.length === 0 ? <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">No matching CDAS transactions.</div> : null}
                     </CardContent>
                     <CardContent className="hidden overflow-x-auto p-0 md:block">
-                        <table className="w-full min-w-[1050px] text-sm">
+                        <table className="w-full min-w-[1650px] text-sm">
                             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
-                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
+                                <tr><th className="px-5 py-4">Time</th><th className="px-4 py-4">Operation</th><th className="px-4 py-4">Employee / deduction</th><th className="px-4 py-4">Monthly amount</th><th className="px-4 py-4">Expected total / installments</th><th className="px-4 py-4">Start / end</th><th className="px-4 py-4">Policy reference</th><th className="px-4 py-4">State</th><th className="px-4 py-4">Provider</th><th className="px-5 py-4 text-right">Details</th></tr>
                             </thead>
                             <tbody>
-                                {filteredTransactions.map((item) => (
+                                {paginatedTransactions.map((item) => (
                                     <tr key={item.source + "-" + item.id} className="border-t">
-                                        <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}</td>
-                                        <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
-                                        <td className="px-4 py-4"><p className="font-bold">{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
+                                        <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}{item.historical_date_unverified ? <span className="block text-xs font-normal text-muted-foreground">Import date, not transaction date</span> : null}</td>
+                                        <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "historical_import" ? "Approved imported evidence · import date only" : item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
+                                        <td className="px-4 py-4"><p className="font-bold">{item.employee_name ? item.employee_name + " · " : ""}{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
+                                        <td className="px-4 py-4">{item.monthly_deduction ?? "—"}</td>
+                                        <td className="px-4 py-4">{item.principal_amount ?? "—"} / {item.total_installments ?? "—"}</td>
+                                        <td className="px-4 py-4">{item.starting_month ?? "—"} / {item.ending_month ?? "—"}</td>
+                                        <td className="px-4 py-4"><p>{item.policy_reference ?? "—"}</p><p className="text-xs text-muted-foreground">{item.details_source === "loanhub_mandate" ? "Verified LoanHub link" : "No verified mandate details"}</p></td>
                                         <td className="px-4 py-4"><Badge variant={item.requires_reconciliation ? "destructive" : "outline"}>{titleCase(item.state)}</Badge>{item.error_message ? <p className="mt-1 max-w-64 text-xs text-destructive">{item.error_message}</p> : null}</td>
                                         <td className="px-4 py-4">{item.provider_status_code ?? "—"}</td>
                                         <td className="px-5 py-4 text-right"><Button size="sm" variant="outline" onClick={() => setSelected({ title: titleCase(item.operation_type), request: item.request_snapshot, response: item.response_snapshot })}>Inspect</Button></td>
                                     </tr>
                                 ))}
-                                {!loading && filteredTransactions.length === 0 ? <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">No CDAS transactions have been recorded yet.</td></tr> : null}
+                                {!loading && filteredTransactions.length === 0 ? <tr><td colSpan={10} className="px-5 py-12 text-center text-muted-foreground">No CDAS transactions have been recorded yet.</td></tr> : null}
                             </tbody>
                         </table>
                     </CardContent>
                 </Card>
+                <div className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm text-muted-foreground">
+                    <span>Showing {filteredTransactions.length ? (currentPage - 1) * pageSize + 1 : 0}–{Math.min(currentPage * pageSize, filteredTransactions.length)} of {filteredTransactions.length} loaded transactions</span>
+                    <div className="flex items-center gap-3">
+                        <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+                        <span>Page {currentPage} of {pageCount}</span>
+                        <Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
+                    </div>
+                </div>
+                </>
             ) : (
                 <Card>
                     <CardHeader>

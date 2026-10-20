@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+import csv
+import hashlib
+from io import StringIO
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -40,6 +44,8 @@ from integrations.cdas_contracts import (
     cdas_reference_data,
 )
 from services.cdas_history_pdf import build_cdas_history_pdf
+from services.cdas_historical_import import preview_cdas_history_csv, reconcile_preview_rows
+from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow
 from services.cdas_config_service import (
     configuration_summary,
     get_company_cdas_client,
@@ -736,9 +742,266 @@ def _first_provider_int(payload: Any, *keys: str) -> int | None:
 
 
 
+@router.post("/history/import/preview")
+async def preview_historical_cdas_csv(
+    file: UploadFile = File(...),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Review a historical portal CSV without committing or changing any loan."""
+    _require_company_manager(context)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="Upload a UTF-8 CSV exported from CDAS")
+    raw = await file.read(2_000_001)
+    try:
+        preview = preview_cdas_history_csv(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Only scoped LoanHub mandates are used. Unknown external provider records
+    # remain unmatched until a separately authorized historical-import process.
+    mandate_query = db.query(CDASDeductionMandate).filter(
+        CDASDeductionMandate.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        mandate_query = mandate_query.filter(CDASDeductionMandate.branch_id == context.branch_id)
+    mandates = mandate_query.all()
+    candidates = [
+        {
+            "id": str(m.id),
+            "employee_no": m.employee_number,
+            "mandate_number": m.mandate_number,
+            "external_reference": m.external_reference,
+            "monthly_amount": str(m.monthly_deduction),
+        }
+        for m in mandates
+    ]
+    reconciliation = reconcile_preview_rows(preview["rows"], candidates)
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    # Audit the review without storing the uploaded file, identity details,
+    # or historical financial rows. Repeated previews remain read-only.
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        action="cdas.historical_import_previewed",
+        table_name="audit_logs",
+        entity_type="cdas_history_import_preview",
+        description="Historical CDAS CSV assessed for future reconciliation (read-only).",
+        actor_role=context.role.value,
+        status="success",
+        event_data={
+            "source_sha256": fingerprint,
+            "valid_count": preview["valid_count"],
+            "invalid_count": preview["invalid_count"],
+            "duplicate_count": preview["duplicate_count"],
+            "reconciliation_counts": reconciliation["counts"],
+            "persisted": False,
+        },
+    ))
+    db.commit()
+    return {**preview, "source_sha256": fingerprint, "reconciliation": reconciliation}
+
+
+@router.post("/history/import/stage")
+async def stage_historical_cdas_csv(
+    file: UploadFile = File(...),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Stage pre-integration CDAS rows for review; never post payments."""
+    _require_company_manager(context)
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="Expected UTF-8 CDAS CSV export")
+    raw = await file.read(2_000_001)
+    try:
+        preview = preview_cdas_history_csv(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if preview["invalid_count"] or not preview["valid_count"]:
+        raise HTTPException(status_code=422, detail="Fix invalid rows before staging a non-empty export")
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    existing = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+        CdasHistoricalImportBatch.source_sha256 == fingerprint,
+    )
+    if context.branch_id is None:
+        existing = existing.filter(CdasHistoricalImportBatch.branch_id.is_(None))
+    else:
+        existing = existing.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    if existing.first():
+        raise HTTPException(status_code=409, detail="This historical CSV was already staged for this scope")
+    batch = CdasHistoricalImportBatch(
+        company_id=context.company_id, branch_id=context.branch_id,
+        source_sha256=fingerprint, source_filename=(file.filename or "cdas-history.csv")[:255],
+        status="staged", row_count=preview["valid_count"],
+        invalid_count=preview["invalid_count"], duplicate_count=preview["duplicate_count"],
+        imported_by_user_id=context.user.id,
+    )
+    db.add(batch)
+    db.flush()
+    for line_number, record in enumerate(preview["rows"], start=1):
+        db.add(CdasHistoricalImportRow(
+            batch_id=batch.id, company_id=context.company_id, branch_id=context.branch_id,
+            line_number=line_number, employee_no=record["employee_no"],
+            employee_name=record["employee_name"], policy_reference=record["policy_reference"],
+            monthly_amount=Decimal(record["monthly_amount"].replace(",", "")),
+            principal_amount=Decimal(record["principal_amount"].replace(",", "")),
+            total_installments=int(record["total_installment"]),
+            starting_month=record["starting_month"], ending_month=record["ending_month"],
+            reconciliation_status="pending", source_record=record,
+        ))
+    db.add(AuditLog(
+        user_id=context.user.id, company_id=context.company_id, branch_id=context.branch_id,
+        action="cdas.historical_import_staged", entity_type="cdas_historical_import",
+        record_id=batch.id, description="Read-only historical records staged for review",
+        status="success", event_data={
+            "source_sha256": fingerprint, "rows": preview["valid_count"],
+            "duplicates_in_file": preview["duplicate_count"],
+            "financial_postings": 0,
+        },
+    ))
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Historical CSV already staged or import conflicted; review existing batches") from exc
+    return {"batch_id": str(batch.id), "status": "staged", "rows": preview["valid_count"],
+            "source_sha256": fingerprint, "financial_postings": 0}
+
+
+@router.get("/history/import/batches")
+def list_historical_cdas_batches(
+    limit: int = Query(50, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """List isolated historical files for a company's authorized managers."""
+    _require_company_manager(context)
+    query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        query = query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batches = query.order_by(CdasHistoricalImportBatch.created_at.desc()).limit(limit).all()
+    return {"items": [
+        {"id": str(batch.id), "source_filename": batch.source_filename,
+         "source_sha256": batch.source_sha256, "status": batch.status,
+         "row_count": batch.row_count, "invalid_count": batch.invalid_count,
+         "duplicate_count": batch.duplicate_count, "created_at": batch.created_at}
+        for batch in batches
+    ]}
+
+
+@router.get("/history/import/batches/{batch_id}/rows")
+def list_historical_cdas_batch_rows(
+    batch_id: UUID,
+    limit: int = Query(100, ge=1, le=250),
+    page: int = Query(1, ge=1),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read historical staging records; never initiate a CDAS transaction."""
+    _require_company_manager(context)
+    batch_query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.company_id == context.company_id,
+        CdasHistoricalImportBatch.id == batch_id,
+    )
+    if context.branch_id is not None:
+        batch_query = batch_query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batch = batch_query.first()
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Historical import batch not found")
+    query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.company_id == context.company_id,
+        CdasHistoricalImportRow.batch_id == batch.id,
+    )
+    if context.branch_id is not None:
+        query = query.filter(CdasHistoricalImportRow.branch_id == context.branch_id)
+    total = query.count()
+    rows = query.order_by(CdasHistoricalImportRow.line_number).offset((page - 1) * limit).limit(limit).all()
+    return {
+        "batch_id": str(batch.id), "status": batch.status,
+        "total": total, "page": page, "page_size": limit,
+        "items": [{
+            "id": str(row.id), "line_number": row.line_number,
+            "employee_no": row.employee_no, "employee_name": row.employee_name,
+            "policy_reference": row.policy_reference,
+            "monthly_amount": str(row.monthly_amount),
+            "principal_amount": str(row.principal_amount),
+            "total_installments": row.total_installments,
+            "starting_month": row.starting_month, "ending_month": row.ending_month,
+            "reconciliation_status": row.reconciliation_status,
+            "matched_mandate_id": str(row.matched_mandate_id) if row.matched_mandate_id else None,
+        } for row in rows],
+    }
+
+
+class CdasHistoricalReviewDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: str = Field(min_length=10, max_length=1000)
+
+
+@router.post("/history/import/batches/{batch_id}/rows/{row_id}/review")
+def review_historical_cdas_row(
+    batch_id: UUID,
+    row_id: UUID,
+    request: CdasHistoricalReviewDecision,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Approve historical evidence for reporting only; never post a payment."""
+    _require_company_manager(context)
+    batch_query = db.query(CdasHistoricalImportBatch).filter(
+        CdasHistoricalImportBatch.id == batch_id,
+        CdasHistoricalImportBatch.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        batch_query = batch_query.filter(CdasHistoricalImportBatch.branch_id == context.branch_id)
+    batch = batch_query.first()
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Historical import batch not found")
+    row_query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.id == row_id,
+        CdasHistoricalImportRow.batch_id == batch.id,
+        CdasHistoricalImportRow.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        row_query = row_query.filter(CdasHistoricalImportRow.branch_id == context.branch_id)
+    row = row_query.with_for_update().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Historical import row not found")
+    if row.reconciliation_status != "pending":
+        raise HTTPException(status_code=409, detail="Historical record has already been reviewed")
+    row.reconciliation_status = request.decision
+    db.add(AuditLog(
+        company_id=context.company_id, branch_id=context.branch_id,
+        user_id=context.user.id, action="cdas.historical_row_reviewed",
+        entity_type="cdas_historical_import_row", record_id=row.id,
+        description="Historical CDAS evidence reviewed for reporting only",
+        before_data={"reconciliation_status": "pending"},
+        after_data={"reconciliation_status": request.decision},
+        event_data={"batch_id": str(batch.id), "reason": request.reason,
+                    "financial_postings": 0},
+        status="success",
+    ))
+    db.commit()
+    return {"row_id": str(row.id), "batch_id": str(batch.id),
+            "reconciliation_status": row.reconciliation_status,
+            "financial_postings": 0}
+
+
 @router.get("/history/transactions")
 def get_cdas_transaction_log(
     limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -751,6 +1014,8 @@ def get_cdas_transaction_log(
     _require_lending_user(context)
     assert context.company_id is not None
     environment = _company_cdas_environment(db, context.company_id)
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be on or before date_to")
 
     operation_query = db.query(CdasProviderOperation).filter(
         CdasProviderOperation.company_id == context.company_id,
@@ -763,7 +1028,6 @@ def get_cdas_transaction_log(
     operations = (
         operation_query
         .order_by(CdasProviderOperation.created_at.desc())
-        .limit(limit)
         .all()
     )
 
@@ -778,7 +1042,6 @@ def get_cdas_transaction_log(
                 PlatformCdasTransaction.environment == environment,
             )
             .order_by(PlatformCdasTransaction.accrued_at.desc())
-            .limit(limit)
             .all()
         )
 
@@ -827,26 +1090,175 @@ def get_cdas_transaction_log(
             }
         )
 
+    # Enrich only with mandates belonging to this company and accessible branch.
+    # Require both employee number and reference: an employee may have multiple
+    # historical deductions, so employee-only matches are unsafe.
+    mandate_query = db.query(CDASDeductionMandate).filter(
+        CDASDeductionMandate.company_id == context.company_id,
+    )
+    if context.branch_id is not None:
+        mandate_query = mandate_query.filter(
+            CDASDeductionMandate.branch_id == context.branch_id,
+        )
+    mandates_by_key: dict[tuple[str, str], list[CDASDeductionMandate]] = {}
+    for mandate in mandate_query.all():
+        for reference in (mandate.mandate_number, mandate.external_reference):
+            if reference and mandate.employee_number:
+                key = (str(mandate.employee_number).strip(), str(reference).strip())
+                bucket = mandates_by_key.setdefault(key, [])
+                if all(m.id != mandate.id for m in bucket):
+                    bucket.append(mandate)
+
+    for item in items:
+        item.update({
+            "monthly_deduction": None, "principal_amount": None,
+            "total_installments": None, "starting_month": None,
+            "ending_month": None, "policy_reference": item.get("reference_no"),
+            "details_source": "not_verified",
+        })
+        key = (str(item.get("employee_no") or "").strip(),
+               str(item.get("reference_no") or "").strip())
+        matches = mandates_by_key.get(key, [])
+        if len(matches) == 1:
+            mandate = matches[0]
+            item.update({
+                "monthly_deduction": str(mandate.monthly_deduction),
+                "principal_amount": str(mandate.total_expected),
+                "total_installments": mandate.expected_installments,
+                "starting_month": mandate.start_date.isoformat() if mandate.start_date else None,
+                "ending_month": mandate.end_date.isoformat() if mandate.end_date else None,
+                "details_source": "loanhub_mandate",
+            })
+        elif len(matches) > 1:
+            item["details_source"] = "ambiguous_match"
+
+    # Historical evidence is visible to management only, never to ordinary
+    # lending operators who can access the live provider-operation ledger.
+    if context.role not in COMPANY_MANAGEMENT_ROLES:
+        historical_query_enabled = False
+    else:
+        historical_query_enabled = True
+
+    # Approved historical records are reporting evidence, not confirmed payments.
+    historical_query = db.query(CdasHistoricalImportRow).filter(
+        CdasHistoricalImportRow.company_id == context.company_id,
+        CdasHistoricalImportRow.reconciliation_status == "approved",
+    )
+    if context.branch_id is not None:
+        historical_query = historical_query.filter(
+            CdasHistoricalImportRow.branch_id == context.branch_id,
+        )
+    for historical in (historical_query.all() if historical_query_enabled else []):
+        items.append({
+            "source": "historical_import",
+            "id": str(historical.id),
+            "occurred_at": historical.created_at,
+            "reported_at": None,
+            "operation_type": "historical_record",
+            "state": "approved_evidence",
+            "employee_no": historical.employee_no,
+            "employee_name": historical.employee_name,
+            "deduction_id": None,
+            "reference_no": historical.policy_reference,
+            "provider_status_code": None,
+            "requires_reconciliation": False,
+            "error_message": None,
+            "actor_user_id": None,
+            "request_snapshot": {},
+            "response_snapshot": {},
+            "monthly_deduction": str(historical.monthly_amount),
+            "principal_amount": str(historical.principal_amount),
+            "total_installments": historical.total_installments,
+            "starting_month": historical.starting_month,
+            "ending_month": historical.ending_month,
+            "policy_reference": historical.policy_reference,
+            "details_source": "approved_historical_csv",
+            "historical_import_batch_id": str(historical.batch_id),
+            "historical_date_unverified": True,
+            "history_timestamp_kind": "imported_at",
+        })
+
     def sort_key(item: dict[str, Any]):
         value = item.get("occurred_at")
         return value or datetime.min
 
-    items.sort(key=sort_key, reverse=True)
+    term = search.strip().casefold()
+    filtered = []
+    for item in items:
+        occurred = item.get("occurred_at")
+        # Historical imports have no verified transaction date: date-range filters
+        # must not mistake import time for the original CDAS operation date.
+        if (date_from or date_to) and item.get("historical_date_unverified"):
+            continue
+        if date_from and (not occurred or occurred.date() < date_from):
+            continue
+        if date_to and (not occurred or occurred.date() > date_to):
+            continue
+        if state and item.get("state") != state:
+            continue
+        if operation_type and item.get("operation_type") != operation_type:
+            continue
+        if actor_user_id and item.get("actor_user_id") != str(actor_user_id):
+            continue
+        if term and not any(term in str(item.get(field) or "").casefold() for field in (
+            "employee_no", "employee_name", "reference_no", "deduction_id", "operation_type",
+            "state", "transaction_reference"
+        )):
+            continue
+        filtered.append(item)
+    filtered.sort(key=sort_key, reverse=sort_order == "desc")
+    total = len(filtered)
+    offset = (page - 1) * limit
     return {
         "environment": environment,
-        "items": items[:limit],
-        "count": min(len(items), limit),
+        "items": filtered[offset:offset + limit],
+        "count": min(max(total - offset, 0), limit),
+        "total": total,
+        "page": page,
+        "page_size": limit,
     }
+
+
+def _filtered_history_export(
+    *, limit: int, search: str, state: str, operation_type: str,
+    actor_user_id: UUID | None, date_from: date | None, date_to: date | None,
+    sort_order: Literal["asc", "desc"], context: TenantContext, db: Session,
+) -> dict[str, Any]:
+    # The endpoint intentionally caps exports; never silently represent an
+    # incomplete export as the full requested dataset.
+    history = get_cdas_transaction_log(
+        limit=limit, page=1, search=search, state=state,
+        operation_type=operation_type, actor_user_id=actor_user_id,
+        date_from=date_from, date_to=date_to, sort_order=sort_order,
+        context=context, db=db,
+    )
+    if history["total"] > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Export matches {history['total']} rows, above the {limit}-row export cap. Narrow the filters.",
+        )
+    return history
 
 
 @router.get("/history/transactions.pdf")
 def download_cdas_transaction_history_pdf(
     limit: int = Query(500, ge=1, le=500),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
-    """Export real, scoped LoanHub CDAS ledger events; NOT provider portal history."""
-    history = get_cdas_transaction_log(limit=limit, context=context, db=db)
+    """Export the same scoped filtered LoanHub ledger, not CDAS portal history."""
+    history = _filtered_history_export(
+        limit=limit, search=search, state=state, operation_type=operation_type,
+        actor_user_id=actor_user_id, date_from=date_from, date_to=date_to,
+        sort_order=sort_order, context=context, db=db,
+    )
     company = context.company
     if company is None:
         raise HTTPException(status_code=422, detail="A company must be selected")
@@ -854,9 +1266,49 @@ def download_cdas_transaction_history_pdf(
         db=db, company=company, entries=history["items"], environment=history["environment"]
     )
     return Response(
-        content=payload,
-        media_type="application/pdf",
+        content=payload, media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="loanhub-cdas-operations-history.pdf"',
+                 "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/history/transactions.csv")
+def download_cdas_transaction_history_csv(
+    limit: int = Query(500, ge=1, le=500),
+    search: str = Query("", max_length=200),
+    state: str = Query("", max_length=80),
+    operation_type: str = Query("", max_length=100),
+    actor_user_id: UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort_order: Literal["asc", "desc"] = "desc",
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """CSV export with server filters, fixed column order and formula safety."""
+    history = _filtered_history_export(
+        limit=limit, search=search, state=state, operation_type=operation_type,
+        actor_user_id=actor_user_id, date_from=date_from, date_to=date_to,
+        sort_order=sort_order, context=context, db=db,
+    )
+    columns = (
+        "occurred_at", "history_timestamp_kind", "source", "operation_type", "employee_no", "employee_name", "deduction_id",
+        "reference_no", "monthly_deduction", "principal_amount",
+        "total_installments", "starting_month", "ending_month",
+        "policy_reference", "details_source", "state",
+        "provider_status_code", "requires_reconciliation", "historical_date_unverified",
+    )
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    for item in history["items"]:
+        writer.writerow([
+            "'" + str(item.get(column)) if str(item.get(column) or "").lstrip().startswith(("=", "+", "-", "@")) else str(item.get(column) if item.get(column) is not None else "")
+            for column in columns
+        ])
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="loanhub-cdas-operations-history.csv"',
                  "Cache-Control": "no-store"},
     )
 
