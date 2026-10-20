@@ -1293,7 +1293,7 @@ export default function CompanyLoansPage() {
 
             <CustomDialog open={correctionOpen} onOpenChange={setCorrectionOpen} title="Correct loan interest rate" description={selectedLoan ? `${selectedLoan.loan_reference} · Company owner · Written signed amendment required` : undefined} contentClassName="sm:max-w-2xl">
                 <div className="space-y-4 p-5">
-                    <Alert><AlertTitle>Financial correction — not a routine edit</AlertTitle><AlertDescription>This recalculates the entire unpaid schedule. It is blocked when repayments or CDAS mandates exist. Obtain the borrower's signed amendment and record its reference before applying.</AlertDescription></Alert>
+                    <Alert><AlertTitle>Financial correction — not a routine edit</AlertTitle><AlertDescription>This recalculates the entire unpaid schedule. It is blocked when repayments or CDAS mandates exist. Obtain the borrower&apos;s signed amendment and record its reference before applying.</AlertDescription></Alert>
                     <Label>Correct interest rate (%)</Label>
                     <Input type="number" min="0.001" max="100" step="0.001" value={correctionRate} onChange={e => { setCorrectionRate(e.target.value); setCorrectionQuote(null); setCorrectionConfirmed(false); }}/>
                     <Button variant="outline" disabled={correctionWorking} onClick={() => void previewInterestCorrection()}>Preview before / after</Button>
