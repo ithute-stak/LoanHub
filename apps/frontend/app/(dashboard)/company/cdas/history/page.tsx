@@ -177,9 +177,20 @@ export default function CdasHistoryPage() {
         [transactions],
     );
 
+    function transactionExportFilters() {
+        const params = new URLSearchParams({ limit: "500" });
+        if (query.trim()) params.set("search", query.trim());
+        if (stateFilter !== "all") params.set("state", stateFilter);
+        if (typeFilter !== "all") params.set("operation_type", typeFilter);
+        if (userFilter.trim()) params.set("actor_user_id", userFilter.trim());
+        if (dateFrom) params.set("date_from", dateFrom);
+        if (dateTo) params.set("date_to", dateTo);
+        return params.toString();
+    }
+
     async function exportBrandedPdf() {
         try {
-            const response = await api.get("/cdas/history/transactions.pdf?limit=500", { responseType: "blob" });
+            const response = await api.get("/cdas/history/transactions.pdf?" + transactionExportFilters(), { responseType: "blob" });
             const url = URL.createObjectURL(new Blob([response.data], { type: "application/pdf" }));
             const anchor = document.createElement("a");
             anchor.href = url;
@@ -190,6 +201,22 @@ export default function CdasHistoryPage() {
             URL.revokeObjectURL(url);
         } catch {
             window.alert("Unable to generate the CDAS history PDF. Check permissions and try again.");
+        }
+    }
+
+    async function exportTransactionCsv() {
+        try {
+            const response = await api.get("/cdas/history/transactions.csv?" + transactionExportFilters(), { responseType: "blob" });
+            const url = URL.createObjectURL(new Blob([response.data], { type: "text/csv;charset=utf-8" }));
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "loanhub-cdas-operations-history.csv";
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+        } catch (error: unknown) {
+            window.alert(getErrorMessage(error, "Unable to export CDAS transactions; narrow filters if there are more than 500 matching rows."));
         }
     }
 
@@ -323,7 +350,7 @@ export default function CdasHistoryPage() {
                         <Button variant="outline" onClick={() => { setQuery(""); setStateFilter("all"); setTypeFilter("all"); setUserFilter(""); setDateFrom(""); setDateTo(""); setPage(1); }}>Reset filters</Button>
                     </> : null}
                     {tab === "transactions" ? <Button variant="outline" onClick={() => void exportBrandedPdf()}><Download className="h-4 w-4" /> Branded PDF</Button> : null}
-                    <Button variant="outline" onClick={exportCsv} disabled={tab === "transactions" ? filteredTransactions.length === 0 : filteredDeductions.length === 0}>
+                    <Button variant="outline" onClick={() => { if (tab === "transactions") void exportTransactionCsv(); else exportCsv(); }} disabled={tab === "deductions" && filteredDeductions.length === 0}>
                         <Download className="h-4 w-4" /> Export CSV
                     </Button>
                 </CardContent>
