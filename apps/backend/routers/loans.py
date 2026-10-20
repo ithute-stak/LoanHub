@@ -407,6 +407,8 @@ def _loan_rate_correction_quote(db: Session, loan: ClientCompanyLoan, new_rate: 
         raise HTTPException(status_code=409, detail="Only approved/active loans qualify for this correction")
     if Decimal(str(loan.amount_paid or 0)) != 0:
         raise HTTPException(status_code=409, detail="Loan has recorded repayments; use an audited restructuring workflow")
+    if loan.cdas_collection_enabled:
+        raise HTTPException(status_code=409, detail="Loan has CDAS collection enabled; reconcile/amend provider deduction before any repricing")
     installments = sorted(
         (item for item in loan.installments if not item.is_superseded),
         key=lambda item: item.installment_number,
@@ -478,6 +480,8 @@ def apply_loan_interest_correction(
     if not payload.confirm:
         raise HTTPException(status_code=422, detail="Explicit amendment confirmation is required")
     loan = _tenant_loan_or_404(db, context, loan_id)
+    db.query(ClientCompanyLoan).filter(ClientCompanyLoan.id == loan.id).with_for_update().one()
+    db.refresh(loan)
     if Decimal(str(loan.interest_rate)) != payload.expected_current_rate or Decimal(str(loan.total_repayable)) != payload.expected_total_repayable:
         raise HTTPException(status_code=409, detail="Loan changed since preview; refresh the correction quote")
     quote = _loan_rate_correction_quote(db, loan, payload.proposed_rate)
