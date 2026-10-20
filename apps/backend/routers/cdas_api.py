@@ -44,7 +44,7 @@ from integrations.cdas_contracts import (
     cdas_reference_data,
 )
 from services.cdas_history_pdf import build_cdas_history_pdf
-from services.cdas_historical_import import preview_cdas_history_csv, reconcile_preview_rows
+from services.cdas_historical_import import preview_cdas_history_csv, preview_cdas_history_file, reconcile_preview_rows
 from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow
 from services.cdas_config_service import (
     configuration_summary,
@@ -750,11 +750,11 @@ async def preview_historical_cdas_csv(
 ):
     """Review a historical portal CSV without committing or changing any loan."""
     _require_company_manager(context)
-    if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(status_code=422, detail="Upload a UTF-8 CSV exported from CDAS")
+    if not (file.filename or "").lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=422, detail="Upload a CDAS CSV or Excel (.xlsx) export")
     raw = await file.read(2_000_001)
     try:
-        preview = preview_cdas_history_csv(raw)
+        preview = preview_cdas_history_file(raw, file.filename or "")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -811,11 +811,11 @@ async def stage_historical_cdas_csv(
 ):
     """Stage pre-integration CDAS rows for review; never post payments."""
     _require_company_manager(context)
-    if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(status_code=422, detail="Expected UTF-8 CDAS CSV export")
+    if not (file.filename or "").lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=422, detail="Expected CDAS CSV or Excel (.xlsx) export")
     raw = await file.read(2_000_001)
     try:
-        preview = preview_cdas_history_csv(raw)
+        preview = preview_cdas_history_file(raw, file.filename or "")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if preview["invalid_count"] or not preview["valid_count"]:
@@ -1115,6 +1115,7 @@ def get_cdas_transaction_log(
             "total_installments": None, "starting_month": None,
             "ending_month": None, "policy_reference": item.get("reference_no"),
             "details_source": "not_verified",
+            "user_name": None, "log_time": None, "acd": None,
         })
         key = (str(item.get("employee_no") or "").strip(),
                str(item.get("reference_no") or "").strip())
@@ -1167,6 +1168,9 @@ def get_cdas_transaction_log(
             "request_snapshot": {},
             "response_snapshot": {},
             "monthly_deduction": str(historical.monthly_amount),
+            "user_name": (historical.source_record or {}).get("user_name"),
+            "log_time": (historical.source_record or {}).get("log_time"),
+            "acd": (historical.source_record or {}).get("acd"),
             "principal_amount": str(historical.principal_amount),
             "total_installments": historical.total_installments,
             "starting_month": historical.starting_month,
@@ -1292,7 +1296,7 @@ def download_cdas_transaction_history_csv(
         sort_order=sort_order, context=context, db=db,
     )
     columns = (
-        "occurred_at", "history_timestamp_kind", "source", "operation_type", "employee_no", "employee_name", "deduction_id",
+        "occurred_at", "history_timestamp_kind", "source", "operation_type", "employee_no", "employee_name", "user_name", "log_time", "acd", "deduction_id",
         "reference_no", "monthly_deduction", "principal_amount",
         "total_installments", "starting_month", "ending_month",
         "policy_reference", "details_source", "state",

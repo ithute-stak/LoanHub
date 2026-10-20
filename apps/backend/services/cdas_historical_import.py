@@ -5,6 +5,7 @@ confirmed collections. The original export remains the source of truth.
 """
 import csv
 import io
+from openpyxl import load_workbook
 from decimal import Decimal, InvalidOperation
 
 MAX_ROWS = 5000
@@ -17,10 +18,13 @@ FIELDS = {
     "starting_month": ("starting month", "starting_month"),
     "ending_month": ("ending month", "ending_month"),
     "policy_reference": ("policy ref. no", "policy ref no", "policy reference", "policy_ref_no"),
+    "user_name": ("user name", "user_name"),
+    "log_time": ("log time", "log_time"),
+    "acd": ("acd", "action"),
 }
 
 
-def preview_cdas_history_csv(raw: bytes) -> dict:
+def preview_cdas_history_csv(raw: bytes, filename: str = "history.csv") -> dict:
     if len(raw) > 2_000_000:
         raise ValueError("Historical CDAS file exceeds 2 MB")
     try:
@@ -28,9 +32,41 @@ def preview_cdas_history_csv(raw: bytes) -> dict:
     except UnicodeDecodeError as exc:
         raise ValueError("CSV must be UTF-8; export again or convert to UTF-8 CSV") from exc
     reader = csv.DictReader(io.StringIO(text))
-    headers = {str(h).strip().lower(): h for h in (reader.fieldnames or []) if h}
+    return _preview_history_rows(reader)
+
+
+def preview_cdas_history_file(raw: bytes, filename: str) -> dict:
+    if len(raw) > 2_000_000:
+        raise ValueError("Historical CDAS file exceeds 2 MB")
+    if filename.lower().endswith(".csv"):
+        return preview_cdas_history_csv(raw, filename)
+    if not filename.lower().endswith(".xlsx"):
+        raise ValueError("Upload a CDAS CSV or Excel (.xlsx) export")
+    try:
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheet = workbook.active
+        if sheet is None:
+            raise ValueError("Excel workbook contains no sheet")
+        values = sheet.iter_rows(values_only=True)
+        headings = next(values, None)
+        if headings is None:
+            raise ValueError("Excel sheet has no column headings")
+        columns = [str(cell or "").strip() for cell in headings]
+        def entries():
+            for values_row in values:
+                yield {key: value for key, value in zip(columns, values_row)}
+        return _preview_history_rows(entries(), columns)
+    except (OSError, ValueError, KeyError) as exc:
+        raise ValueError("Invalid CDAS Excel export: " + str(exc)) from exc
+    finally:
+        if "workbook" in locals():
+            workbook.close()
+
+
+def _preview_history_rows(reader, fieldnames=None) -> dict:
+    headers = {str(h).strip().lower(): h for h in (fieldnames if fieldnames is not None else reader.fieldnames or []) if h}
     mapping = {name: next((headers[h] for h in variants if h in headers), None) for name, variants in FIELDS.items()}
-    missing = [name for name, column in mapping.items() if column is None]
+    missing = [name for name, column in mapping.items() if column is None and name not in ("user_name", "log_time", "acd")]
     if missing:
         raise ValueError("Missing CDAS columns: " + ", ".join(missing))
     rows = []
@@ -43,7 +79,7 @@ def preview_cdas_history_csv(raw: bytes) -> dict:
         if None in row:
             invalid.append({"line": line, "reason": "Malformed CSV row"})
             continue
-        record = {key: str(row[column] or "").strip() for key, column in mapping.items()}
+        record = {key: str(row.get(column) if row.get(column) is not None else "").strip() if column else "" for key, column in mapping.items()}
         if not record["employee_no"] or not record["policy_reference"]:
             invalid.append({"line": line, "reason": "Employee number and policy reference are required"})
             continue
@@ -57,7 +93,7 @@ def preview_cdas_history_csv(raw: bytes) -> dict:
             invalid.append({"line": line, "reason": "Invalid numeric amount or installment count"})
             continue
         key = (record["employee_no"], record["policy_reference"], record["starting_month"],
-               record["ending_month"], record["monthly_amount"], record["principal_amount"])
+               record["ending_month"], record["monthly_amount"], record["principal_amount"], record["log_time"], record["acd"])
         if key in seen:
             duplicates += 1
             continue
