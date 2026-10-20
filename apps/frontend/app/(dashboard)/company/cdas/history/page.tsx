@@ -17,7 +17,9 @@ import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
 
 type TransactionItem = {
-    source: "provider_operation" | "metered_transaction";
+    source: "provider_operation" | "metered_transaction" | "historical_import";
+    employee_name?: string | null;
+    historical_date_unverified?: boolean;
     id: string;
     occurred_at: string;
     operation_type: string;
@@ -226,6 +228,8 @@ export default function CdasHistoryPage() {
                 time: item.occurred_at,
                 operation: item.operation_type,
                 employee_no: item.employee_no || "",
+                employee_name: item.employee_name || "",
+                source: item.source,
                 deduction_id: item.deduction_id ?? "",
                 reference_no: item.reference_no || "",
                 state: item.state,
@@ -297,7 +301,7 @@ export default function CdasHistoryPage() {
                 <h1 className="mt-2 text-3xl font-black tracking-tight">CDAS transaction & deduction history</h1>
                 <Link href="/company/cdas/history/imports" className="mt-3 inline-flex rounded-md border px-3 py-2 text-sm font-semibold hover:bg-muted">Review historical CDAS imports</Link>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-                    CDAS API v1.5 does not expose portal transaction-log or deduction-history endpoints. LoanHub reconstructs these views from its durable provider-operation ledger, PAYG transaction ledger and append-only official mandate events.
+                    Approved historical CSV rows are evidence, not proof of a collected payment. Imported rows show their import date rather than an original transaction timestamp. CDAS API v1.5 does not expose portal transaction-log or deduction-history endpoints. LoanHub reconstructs these views from its durable provider-operation ledger, PAYG transaction ledger and append-only official mandate events.
                 </p>
             </section>
 
@@ -372,7 +376,7 @@ export default function CdasHistoryPage() {
                                     <Badge variant={item.requires_reconciliation ? "destructive" : "outline"}>{titleCase(item.state)}</Badge>
                                 </div>
                                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                                    <div><p className="text-xs text-muted-foreground">Employee</p><p className="font-bold">{item.employee_no || "—"}</p></div>
+                                    <div><p className="text-xs text-muted-foreground">Employee</p><p className="font-bold">{item.employee_name ? item.employee_name + " · " : ""}{item.employee_no || "—"}</p></div>
                                     <div><p className="text-xs text-muted-foreground">Deduction</p><p className="font-bold">{item.deduction_id ? "#" + item.deduction_id : "—"}</p></div>
                                 </div>
                                 <Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => setSelected({ title: titleCase(item.operation_type), request: item.request_snapshot, response: item.response_snapshot })}>Inspect evidence</Button>
@@ -389,8 +393,8 @@ export default function CdasHistoryPage() {
                                 {paginatedTransactions.map((item) => (
                                     <tr key={item.source + "-" + item.id} className="border-t">
                                         <td className="px-5 py-4 font-semibold">{when(item.occurred_at)}</td>
-                                        <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
-                                        <td className="px-4 py-4"><p className="font-bold">{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
+                                        <td className="px-4 py-4"><p className="font-black">{titleCase(item.operation_type)}</p><p className="text-xs text-muted-foreground">{item.source === "historical_import" ? "Approved imported evidence · import date only" : item.source === "provider_operation" ? "Provider operation" : item.transaction_reference || "Metered transaction"}</p></td>
+                                        <td className="px-4 py-4"><p className="font-bold">{item.employee_name ? item.employee_name + " · " : ""}{item.employee_no || "—"}</p><p className="text-xs text-muted-foreground">{item.deduction_id ? "Deduction #" + item.deduction_id : item.reference_no || "No deduction ID"}</p></td>
                                         <td className="px-4 py-4">{item.monthly_deduction ?? "—"}</td>
                                         <td className="px-4 py-4">{item.principal_amount ?? "—"} / {item.total_installments ?? "—"}</td>
                                         <td className="px-4 py-4">{item.starting_month ?? "—"} / {item.ending_month ?? "—"}</td>
