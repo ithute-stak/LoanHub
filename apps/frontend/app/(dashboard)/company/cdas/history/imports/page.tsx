@@ -54,7 +54,7 @@ export default function CdasHistoricalReviewPage() {
             const response = await api.post(`/cdas/history/import/${mode}`, form);
             if (mode === "preview") setPreview(response.data);
             else {
-                setNotice("Historical CSV safely staged for independent review; no financial postings were made.");
+                setNotice("Historical CDAS export safely staged for independent review; no financial postings were made.");
                 setPreview(null);
                 setUploadFile(null);
                 await loadBatches();
@@ -92,8 +92,8 @@ export default function CdasHistoricalReviewPage() {
         {!canManage ? <Card><CardContent className="p-5">Company management permission required.</CardContent></Card> : <>
             {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
             {notice ? <p role="status" className="text-sm font-medium">{notice}</p> : null}
-            <Card><CardHeader><CardTitle>Upload historical CDAS CSV</CardTitle><CardDescription>Preview the exported file first. Staging stores a separate review copy; it never creates a deduction, posts a payment or adjusts an outstanding balance.</CardDescription></CardHeader><CardContent className="space-y-3">
-                <input type="file" accept=".csv,text/csv" aria-label="Historical CDAS CSV" onChange={(event) => { setUploadFile(event.target.files?.[0] ?? null); setPreview(null); }} className="block w-full text-sm" />
+            <Card><CardHeader><CardTitle>Upload historical CDAS Excel or CSV</CardTitle><CardDescription>Preview the exported file first. Staging stores a separate review copy; it never creates a deduction, posts a payment or adjusts an outstanding balance.</CardDescription></CardHeader><CardContent className="space-y-3">
+                <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Historical CDAS Excel or CSV" onChange={(event) => { setUploadFile(event.target.files?.[0] ?? null); setPreview(null); }} className="block w-full text-sm" />
                 <div className="flex flex-wrap gap-2">
                     <Button variant="outline" disabled={!uploadFile || staging} onClick={() => void submitHistoryFile("preview")}>Validate and preview</Button>
                     <Button disabled={!uploadFile || staging || !preview || preview.valid_count === 0 || preview.invalid_count > 0 || preview.persisted} onClick={() => void submitHistoryFile("stage")}>Confirm staging</Button>
