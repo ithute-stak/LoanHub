@@ -74,7 +74,7 @@ function restoreOriginalPlatformSession(): boolean {
     return true;
 }
 
-function refreshAccessToken(): Promise<string> {
+export function refreshAccessToken(): Promise<string> {
     if (refreshPromise) {
         return refreshPromise;
     }
