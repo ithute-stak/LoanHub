@@ -528,6 +528,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         user,
     ]);
 
+    // A mobile pull gesture refreshes provider data without reloading the page
+    // or remounting unfinished registration/payment forms.
+    useEffect(() => {
+        const onPullRefresh = () => {
+            void refreshAllData();
+        };
+        window.addEventListener("loanhub:pull-refresh", onPullRefresh);
+        return () => window.removeEventListener("loanhub:pull-refresh", onPullRefresh);
+    }, [refreshAllData]);
+
     const refreshRealtimeResources = useCallback(
         async (resources: Set<RealtimeResource>) => {
             if (!resources.size || !authInitialized || !user) {
