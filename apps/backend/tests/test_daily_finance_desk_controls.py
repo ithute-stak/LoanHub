@@ -29,7 +29,8 @@ def test_live_ui_uses_real_services_and_branch_scope():
     assert 'api.post("/accounting/legacy-folio-receipts"' in UI
     assert 'api.post("/accounting/daily-cash/open"' in UI
     assert 'branch_id: selectedBranchId' in UI
-    assert 'listJournalEntries({ fromDate: rangeStart, toDate: asOf, branchId: selectedBranchId, limit: 500 })' in UI    assert 'api.get<FinanceReport>("/accounting/daily-finance/report"' in UI
+    assert 'listJournalEntries({ fromDate: rangeStart, toDate: asOf, branchId: selectedBranchId, limit: 500 })' in UI
+    assert 'api.get<FinanceReport>("/accounting/daily-finance/report"' in UI
     assert 'Number(report?.disbursements.amount ?? 0)' in UI
     assert 'Number(report?.repayments.amount ?? 0)' in UI
 
