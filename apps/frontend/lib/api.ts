@@ -74,22 +74,35 @@ function restoreOriginalPlatformSession(): boolean {
     return true;
 }
 
-export function refreshAccessToken(): Promise<string> {
-    if (refreshPromise) {
-        return refreshPromise;
+// The backend rotates refresh cookies, so two tabs must not refresh at once.
+// Web Locks coordinate same-origin tabs; after acquiring the lock, reuse a
+// token another tab may already have refreshed.
+async function rotateRefreshToken(previousToken: string | null): Promise<string> {
+    const performRefresh = async (): Promise<string> => {
+        const currentToken = getStoredValue(StorageKeys.accessToken);
+        if (previousToken && currentToken && currentToken !== previousToken) {
+            return currentToken;
+        }
+        const response = await api.post<RefreshResponse>("/auth/refresh");
+        const token = response.data.access_token;
+        setStoredValue(StorageKeys.accessToken, token);
+        return token;
+    };
+
+    if (typeof navigator !== "undefined" && navigator.locks) {
+        return navigator.locks.request("loanhub-refresh-token", { mode: "exclusive" }, performRefresh);
     }
+    // In browsers without Web Locks, in-tab single-flight remains active.
+    // Multi-tab cookie rotation still needs a compatible coordination fallback.
+    return performRefresh();
+}
 
-    const pending = api
-        .post<RefreshResponse>("/auth/refresh")
-        .then((response) => {
-            const token = response.data.access_token;
-            setStoredValue(StorageKeys.accessToken, token);
-            return token;
-        })
-        .finally(() => {
-            refreshPromise = null;
-        });
+export function refreshAccessToken(previousToken: string | null = getStoredValue(StorageKeys.accessToken)): Promise<string> {
+    if (refreshPromise) return refreshPromise;
 
+    const pending = rotateRefreshToken(previousToken).finally(() => {
+        refreshPromise = null;
+    });
     refreshPromise = pending;
     return pending;
 }
@@ -154,7 +167,9 @@ api.interceptors.response.use(
 
             originalRequest._retry = true;
             try {
-                const token = await refreshAccessToken();
+                const authorization = String(originalRequest.headers.Authorization ?? "");
+                const failedToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
+                const token = await refreshAccessToken(failedToken);
                 originalRequest.headers.Authorization = `Bearer ${token}`;
                 return api(originalRequest);
             } catch (refreshError: unknown) {
