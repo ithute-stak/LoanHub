@@ -1,9 +1,8 @@
 name: LoanHub Release Images
 
 on:
-  workflow_run:
-    workflows: ["LoanHub CI"]
-    types: [completed]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -12,26 +11,48 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 jobs:
   publish:
     name: Publish tested images
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     env:
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      RELEASE_SHA: ${{ github.sha }}
       BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/loanhub-backend
       FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/loanhub-frontend
       GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
 
     steps:
+      - name: Require successful CI for exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Checking LoanHub CI for ${TARGET_SHA}"
+          for attempt in $(seq 1 90); do
+            runs="$(gh api -X GET "repos/${REPOSITORY}/actions/workflows/ci.yml/runs" -f head_sha="${TARGET_SHA}" -f per_page=30 -f event=push 2>/dev/null || true)"
+            conclusion="$(echo "$runs" | jq -r '[.workflow_runs[]? | select(.head_sha == env.TARGET_SHA and .event == "push")] | sort_by(.created_at) | last | .conclusion // empty' 2>/dev/null || true)"
+            case "$conclusion" in
+              success) echo "CI passed for ${TARGET_SHA}"; break ;;
+              failure|cancelled|timed_out|action_required|skipped)
+                echo "CI has not passed for ${TARGET_SHA}: $conclusion" >&2
+                exit 1 ;;
+              *)
+                if [ "$attempt" -eq 90 ]; then
+                  echo "No successful main-branch CI for ${TARGET_SHA} within 30 minutes" >&2
+                  exit 1
+                fi
+                sleep 20 ;;
+            esac
+          done
+
       - name: Checkout tested commit
         uses: actions/checkout@v5
         with:
