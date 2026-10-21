@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   BookOpenCheck,
   Calculator,
@@ -340,6 +340,7 @@ export function LegacyCashoutRegister() {
   const [activeView, setActiveView] = useState<ViewMode>("capture");
   const [currentStep, setCurrentStep] = useState(0);
   const [registerPage, setRegisterPage] = useState(1);
+  const latestIdentity = useRef("");
   const [identityChecking, setIdentityChecking] = useState(false);
   const [identityCheck, setIdentityCheck] = useState<CompanyClientExistingLoanCheck | null>(null);
   const [identityCheckedValue, setIdentityCheckedValue] = useState("");
@@ -516,13 +517,14 @@ export function LegacyCashoutRegister() {
       toast.error("Enter the complete national ID or passport number first.");
       return;
     }
+    latestIdentity.current = identity;
     setIdentityChecking(true);
     setIdentityCheck(null);
     setIdentityCheckedValue("");
     try {
       if (/^\d+$/.test(identity)) {
         const result = await checkCompanyClientExistingLoans(identity);
-        if (form.identity_number.trim() !== identity) return;
+        if (latestIdentity.current !== identity) return;
         setIdentityCheck(result);
         setIdentityCheckedValue(identity);
         if (result.borrower_found) toast.info("Existing LoanHub borrower detected. Review their profile before proceeding.");
@@ -531,9 +533,9 @@ export function LegacyCashoutRegister() {
         setIdentityCheckedValue(identity);
       }
     } catch (error) {
-      toast.error(getErrorMessage(error, "Could not verify this ID. Try again before continuing."));
+      if (latestIdentity.current === identity) toast.error(getErrorMessage(error, "Could not verify this ID. Try again before continuing."));
     } finally {
-      setIdentityChecking(false);
+      if (latestIdentity.current === identity) setIdentityChecking(false);
     }
   };
 
@@ -544,6 +546,7 @@ export function LegacyCashoutRegister() {
   };
 
   const resetEntry = () => {
+    latestIdentity.current = "";
     setIdentityCheck(null);
     setIdentityCheckedValue("");
     setForm(emptyForm);
@@ -658,6 +661,7 @@ export function LegacyCashoutRegister() {
 
   const continueEntry = (record: LegacyCashoutCapture) => {
     setForm(formFromRecord(record));
+    latestIdentity.current = record.identity_number ?? "";
     setIdentityCheck(null);
     setIdentityCheckedValue("");
     setEditingId(record.id);
@@ -833,6 +837,7 @@ export function LegacyCashoutRegister() {
                     <Field label="National ID or passport number" required>
                       <Input autoFocus value={form.identity_number} onChange={(event) => {
                         const value = event.target.value;
+                        latestIdentity.current = value.trim();
                         setIdentityCheck(null);
                         setIdentityCheckedValue("");
                         setForm((current) => ({ ...current, identity_number: value, passport_expiry_date: !value.trim() || /^\\d+$/.test(value.trim()) ? "" : current.passport_expiry_date }));
