@@ -167,7 +167,7 @@ export default function FinanceDeskPage() {
     </div>
     <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
       <div className="space-y-3 rounded-xl bg-muted/30 p-4">
-        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Today's cash session</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Today&apos;s cash session</p>
         <p className="text-xl font-bold">{cashSession ? (cashSession.status === "closed" ? "Closed" : "Open") : "Not opened yet"}</p>
         {cashSession ? <>
           <div className="flex justify-between text-sm"><span>Opening count</span><strong>{formatMoney(Number(cashSession.counted_opening))}</strong></div>
@@ -188,7 +188,7 @@ export default function FinanceDeskPage() {
       </form>
     </CardContent></Card>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-      <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal using LoanHub's existing accounting service. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
+      <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal using LoanHub&apos;s existing accounting service. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
         <CardContent><form className="space-y-4" onSubmit={saveExpense}>
           <div className="space-y-1"><Label htmlFor="expense-category">Category</Label><select id="expense-category" className="h-10 w-full rounded-lg border bg-background px-3" value={category} onChange={e => setCategory(e.target.value)}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
           <div className="space-y-1"><Label htmlFor="expense-amount">Amount (LSL)</Label><Input id="expense-amount" type="number" step="0.01" min="0.01" required value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"/></div>
