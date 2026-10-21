@@ -407,6 +407,72 @@ def create_application(
     return _application_payload(db, application)
 
 
+class HistoricalTopUpOmissionCreate(BaseModel):
+    application: OriginationApplicationCreate
+    original_event_date: date
+    external_reference: str = Field(min_length=5, max_length=160)
+    explanation: str = Field(min_length=15, max_length=1000)
+    evidence_reference: str = Field(min_length=5, max_length=200)
+
+
+@router.post("/applications/top-up/historical-omission")
+def create_historical_top_up_omission(
+    payload: HistoricalTopUpOmissionCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Register an overlooked earlier top-up as a new draft, without backdating money."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    if payload.application.application_type != "top_up" or payload.application.parent_loan_id is None:
+        raise HTTPException(status_code=422, detail="An existing parent loan and top-up application type are required")
+    days_ago = (datetime.now(timezone.utc).date() - payload.original_event_date).days
+    if days_ago < 1 or days_ago > 90:
+        raise HTTPException(status_code=422, detail="Historical top-up event date must be within the last 90 days, before today")
+    external_reference = payload.external_reference.strip()
+    # Prevent repeat historical omissions for the same source reference.
+    marker = f"historical-topup:{context.company_id}:{external_reference.casefold()}"
+    if db.query(AuditLog.id).filter(
+        AuditLog.company_id == context.company_id,
+        AuditLog.action == "top_up.historical_omission_registered",
+        AuditLog.description == marker,
+    ).first():
+        raise HTTPException(status_code=409, detail="This historical top-up reference has already been registered")
+    # Reuse all present-day top-up eligibility, settlement, exposure and draft
+    # underwriting checks. This creates neither a payment nor a disbursement.
+    application_response = create_application(payload=payload.application, db=db, context=context)
+    application_id = UUID(str(application_response["id"]))
+    application = _application(db, context=context, application_id=application_id, lock=True)
+    snapshot = dict(application.top_up_eligibility_snapshot or {})
+    snapshot["historical_omission"] = {
+        "original_event_date": payload.original_event_date.isoformat(),
+        "external_reference": external_reference,
+        "evidence_reference": payload.evidence_reference.strip(),
+        "explanation": payload.explanation.strip(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_by_user_id": str(context.user.id),
+        "financial_backdating": False,
+        "requires_historical_settlement_reconciliation": True,
+    }
+    application.top_up_eligibility_snapshot = snapshot
+    db.add(AuditLog(
+        company_id=context.company_id, branch_id=application.branch_id,
+        user_id=context.user.id, action="top_up.historical_omission_registered",
+        table_name="direct_loan_applications", entity_type="application",
+        record_id=application.id, description=marker, actor_role=context.role.value,
+        status="success",
+        event_data={"application_reference": application.application_reference,
+                    "parent_loan_id": str(payload.application.parent_loan_id),
+                    "original_event_date": payload.original_event_date.isoformat(),
+                    "external_reference": external_reference,
+                    "evidence_reference": payload.evidence_reference.strip(),
+                    "explanation": payload.explanation.strip(),
+                    "financial_backdating": False},
+    ))
+    db.commit()
+    db.refresh(application)
+    return _application_payload(db, application)
+
+
 @router.get("/loans/{loan_id}/top-up-settlement-preview")
 def top_up_settlement_preview(
     loan_id: UUID,
