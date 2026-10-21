@@ -23,6 +23,7 @@ type CashSession = {
   counted_closing: string | null; variance: string | null;
   coverage_note: string;
 };
+type LegacyReceipt = {id: string; receipt_reference: string; description: string; amount: string; entry_date: string; status: string};
 type Period = "day" | "week" | "month" | "year";
 const CATEGORIES = ["Airtime", "Water", "Electricity", "Transport", "Stationery", "Rent", "Maintenance", "Other"];
 function localDate(date: Date) {
@@ -45,6 +46,13 @@ export default function FinanceDeskPage() {
   const [cashNote, setCashNote] = useState("");
   const [cashBusy, setCashBusy] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [legacyReceipts, setLegacyReceipts] = useState<LegacyReceipt[]>([]);
+  const [folio, setFolio] = useState("");
+  const [legacyClient, setLegacyClient] = useState("");
+  const [legacyAmount, setLegacyAmount] = useState("");
+  const [legacyReference, setLegacyReference] = useState("");
+  const [legacyChannel, setLegacyChannel] = useState<"cash" | "bank" | "electronic">("cash");
+  const [legacySaving, setLegacySaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState("Airtime");
@@ -58,14 +66,16 @@ export default function FinanceDeskPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [journal, currentLoans, session] = await Promise.all([
+      const [journal, currentLoans, session, receipts] = await Promise.all([
         listJournalEntries({ fromDate: rangeStart, toDate: asOf, limit: 1000 }),
         listLoans(),
         api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date())}}).then(res => res.data),
+        api.get<LegacyReceipt[]>("/accounting/legacy-folio-receipts", {params: {from_date: rangeStart, to_date: asOf}}).then(res => res.data),
       ]);
       setEntries(journal);
       setLoans(currentLoans);
       setCashSession(session);
+      setLegacyReceipts(receipts);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Could not load daily finance activity"));
     } finally {
@@ -78,7 +88,6 @@ export default function FinanceDeskPage() {
   const expenseTotal = expenses.reduce((total, e) => total + Number(e.total_debit), 0);
   const disbursements = useMemo(() => loans.filter(l => l.disbursed_at && l.disbursed_at.slice(0, 10) >= rangeStart && l.disbursed_at.slice(0, 10) <= asOf), [loans, rangeStart, asOf]);
   const issuedTotal = disbursements.reduce((total, l) => total + Number(l.principal_amount), 0);
-  const journalReceipts = entries.filter(e => e.status === "posted" && ["loan_repayment", "repayment"].includes(e.reference_type ?? ""));
   async function submitCashSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const count = Number(cashSession ? closing : opening);
@@ -99,6 +108,23 @@ export default function FinanceDeskPage() {
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Could not save cash session"));
     } finally { setCashBusy(false); }
+  }
+  async function saveLegacyReceipt(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsed = Number(legacyAmount);
+    if (!Number.isFinite(parsed) || parsed <= 0) { toast.error("Enter a valid legacy payment amount."); return; }
+    setLegacySaving(true);
+    try {
+      await api.post("/accounting/legacy-folio-receipts", {
+        folio_number: folio.trim(), client_name: legacyClient.trim(),
+        amount: parsed, payment_channel: legacyChannel, receipt_reference: legacyReference.trim(),
+      });
+      toast.success("Legacy folio payment recorded for reconciliation");
+      setFolio(""); setLegacyClient(""); setLegacyAmount(""); setLegacyReference("");
+      await reload();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not record legacy folio receipt"));
+    } finally { setLegacySaving(false); }
   }
   async function saveExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,7 +162,7 @@ export default function FinanceDeskPage() {
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Metric icon={<HandCoins className="h-5 w-5"/>} title="Loans issued" amount={issuedTotal} hint={`${disbursements.length} disbursed loans`}/>
       <Metric icon={<ReceiptText className="h-5 w-5"/>} title="Recorded expenses" amount={expenseTotal} hint={`${expenses.length} posted expenses`}/>
-      <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Repayment journals" amount={journalReceipts.reduce((sum, e) => sum + Number(e.total_debit), 0)} hint="Identified journals only; confirm with payment register"/>
+      <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Legacy folio receipts" amount={legacyReceipts.reduce((sum, e) => sum + Number(e.amount), 0)} hint={`${legacyReceipts.length} awaiting folio reconciliation`}/>
       <Metric icon={<Wallet className="h-5 w-5"/>} title="Expected closing cash" amount={cashSession ? Number(cashSession.expected_closing) : null} hint={cashSession ? (cashSession.status === "closed" ? "Closed — see confirmed count below" : "Posted cash movements since opening only") : "Open today’s cash session to begin"}/>
     </div>
     <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
@@ -175,12 +201,27 @@ export default function FinanceDeskPage() {
         {loading ? <p className="text-sm text-muted-foreground">Loading activity…</p> : expenses.length === 0 ? <p className="rounded-xl border p-5 text-sm text-muted-foreground">No posted expenses in the selected period.</p> : expenses.slice(0, 15).map(e => <div key={e.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{e.description}</p><p className="text-xs text-muted-foreground">{e.entry_date} · {e.entry_number}</p></div><strong className="shrink-0">{formatMoney(e.total_debit)}</strong></div>)}
       </CardContent></Card>
     </div>
+    <Card className="rounded-2xl"><CardHeader><CardTitle>Old cash-out / legacy folio payments</CardTitle><p className="text-sm text-muted-foreground">For clients whose cash-out predates LoanHub. A receipt is posted to cash, bank or electronic clearing against the suspense account; it does not silently repay an unrelated loan.</p></CardHeader>
+      <CardContent className="grid gap-5 xl:grid-cols-[1fr_1.2fr]">
+        <form onSubmit={saveLegacyReceipt} className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="legacy-folio">Folio number</Label><Input id="legacy-folio" minLength={2} maxLength={80} required value={folio} onChange={e => setFolio(e.target.value)}/></div>
+          <div className="space-y-1"><Label htmlFor="legacy-reference">Unique receipt reference</Label><Input id="legacy-reference" minLength={4} maxLength={120} required value={legacyReference} onChange={e => setLegacyReference(e.target.value)}/></div></div>
+          <div className="space-y-1"><Label htmlFor="legacy-name">Client name</Label><Input id="legacy-name" minLength={3} required value={legacyClient} onChange={e => setLegacyClient(e.target.value)}/></div>
+          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="legacy-amount">Amount paid (LSL)</Label><Input id="legacy-amount" type="number" min="0.01" step="0.01" required value={legacyAmount} onChange={e => setLegacyAmount(e.target.value)}/></div>
+          <div className="space-y-1"><Label htmlFor="legacy-channel">Payment channel</Label><select id="legacy-channel" value={legacyChannel} onChange={e => setLegacyChannel(e.target.value as typeof legacyChannel)} className="h-10 w-full rounded-lg border bg-background px-3"><option value="cash">Cash</option><option value="bank">Bank</option><option value="electronic">Mpesa / electronic</option></select></div></div>
+          <Button type="submit" className="w-full" disabled={legacySaving || loading}>{legacySaving ? "Recording..." : "Record folio receipt"}</Button>
+        </form>
+        <div className="space-y-2"><p className="text-sm font-semibold">Legacy receipts in selected period</p>
+          {loading ? <p className="text-sm text-muted-foreground">Loading...</p> : legacyReceipts.length === 0 ? <p className="rounded-xl border p-5 text-sm text-muted-foreground">No legacy folio receipts in this period.</p> : legacyReceipts.slice(0, 12).map(receipt => <div key={receipt.id} className="flex items-start justify-between gap-3 rounded-xl border p-3"><div className="min-w-0"><p className="text-sm font-semibold">{receipt.receipt_reference}</p><p className="text-xs text-muted-foreground">{receipt.description}</p><p className="text-xs text-amber-700">Pending reconciliation · {receipt.entry_date}</p></div><strong className="shrink-0">{formatMoney(Number(receipt.amount))}</strong></div>)}
+        </div>
+      </CardContent>
+    </Card>
     <div className="grid gap-3 md:grid-cols-3">
       <Action href="/company/payments" icon={<ArrowDownLeft className="h-5 w-5"/>} title="Record client repayments" description="Use LoanHub's payment register and verified receipt posting."/>
       <Action href="/company/loans" icon={<ArrowUpRight className="h-5 w-5"/>} title="View loans & disbursements" description="Review every client loan and detailed disbursement records."/>
       <Action href="/company/accounting" icon={<BookOpen className="h-5 w-5"/>} title="Financial books" description="Open the full accounting journals, trial balance and statements."/>
     </div>
-    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>The cash close uses posted cash journals after the opening timestamp only. Missing transactions and legacy folio receipts require separate reconciliation; legacy payments are not yet posted here.</div>
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>The cash close uses posted cash journals after opening. Legacy receipts are held in suspense until matched against the original cash-out records; the posting does not reduce a current LoanHub loan balance.</div>
   </div>;
 }
 function Metric({icon,title,amount,hint}:{icon:ReactNode;title:string;amount:number|null;hint:string}) {
