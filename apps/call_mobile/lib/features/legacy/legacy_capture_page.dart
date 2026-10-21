@@ -9,7 +9,6 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 class LegacyCapturePage extends StatefulWidget {
@@ -20,7 +19,6 @@ class LegacyCapturePage extends StatefulWidget {
 }
 
 class _LegacyCapturePageState extends State<LegacyCapturePage> {
-  static const secure = FlutterSecureStorage();
   final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://api.loanhub.co.ls/api/v1'));
   final token = TextEditingController();
   final phone = TextEditingController();
@@ -240,17 +238,20 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   Future<void> _importCsv() async {
     if (selectedGroup == null) { setState(() => error = 'Select CIVIL, FORCE or S/E before importing.'); return; }
-    final item = await FilePicker.pickFile(
+    final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['csv', 'xlsx'],
+      withData: true,
     );
-    if (item == null) return;
-    final size = item.lengthSync() ?? await item.length();
-    if (size == null || size > 2000000) {
+    if (picked == null || picked.files.isEmpty) return;
+    final item = picked.files.single;
+    final size = item.size;
+    if (size > 2000000) {
       setState(() => error = 'CSV/XLSX file must be no larger than 2 MB.');
       return;
     }
-    final bytes = await item.readAsBytes();
+    final bytes = item.bytes ?? (item.path == null ? null : await File(item.path!).readAsBytes());
+    if (bytes == null) { setState(() => error = 'Unable to read the selected file.'); return; }
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
