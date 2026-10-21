@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 jobs:
@@ -18,7 +19,7 @@ jobs:
     name: Publish tested images
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     env:
       RELEASE_SHA: ${{ github.sha }}
       BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/loanhub-backend
@@ -36,7 +37,7 @@ jobs:
           set -euo pipefail
           echo "Checking LoanHub CI for ${TARGET_SHA}"
           for attempt in $(seq 1 90); do
-            runs="$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs" -f head_sha="${TARGET_SHA}" -f per_page=30 -f event=push 2>/dev/null || true)"
+            runs="$(gh api -X GET "repos/${REPOSITORY}/actions/workflows/ci.yml/runs" -f head_sha="${TARGET_SHA}" -f per_page=30 -f event=push 2>/dev/null || true)"
             conclusion="$(echo "$runs" | jq -r '[.workflow_runs[]? | select(.head_sha == env.TARGET_SHA and .event == "push")] | sort_by(.created_at) | last | .conclusion // empty' 2>/dev/null || true)"
             case "$conclusion" in
               success) echo "CI passed for ${TARGET_SHA}"; break ;;
