@@ -67,7 +67,7 @@ export default function FinanceDeskPage() {
     setLoading(true);
     try {
       const [journal, currentLoans, session, receipts] = await Promise.all([
-        listJournalEntries({ fromDate: rangeStart, toDate: asOf, limit: 1000 }),
+        listJournalEntries({ fromDate: rangeStart, toDate: asOf, limit: 500 }),
         listLoans(),
         api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date())}}).then(res => res.data),
         api.get<LegacyReceipt[]>("/accounting/legacy-folio-receipts", {params: {from_date: rangeStart, to_date: asOf}}).then(res => res.data),
