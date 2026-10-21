@@ -3,6 +3,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -139,6 +140,149 @@ from services.financial_books_export_service import (
 
 
 router = APIRouter(prefix="/accounting", tags=["Accounting"])
+
+class DailyCashOpen(BaseModel):
+    business_date: date
+    branch_id: UUID | None = None
+    counted_opening: Decimal = Field(ge=0, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class DailyCashClose(BaseModel):
+    counted_closing: Decimal = Field(ge=0, decimal_places=2)
+    note: str = Field(min_length=5, max_length=500)
+
+
+def _cash_session_payload(session: CompanyOperatingRecord, db: Session) -> dict:
+    cash_data = dict(session.data or {})
+    opening = Decimal(str(cash_data.get("counted_opening", "0")))
+    opening_at = datetime.fromisoformat(cash_data["opened_at"])
+    # Include posted, actual cash-ledger movement only; never infer cash from
+    # principal totals, promises to pay, or unposted journals.
+    rows = (
+        db.query(JournalLine.debit, JournalLine.credit)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(AccountingAccount, AccountingAccount.id == JournalLine.account_id)
+        .filter(
+            JournalEntry.company_id == session.company_id,
+            JournalEntry.branch_id == session.branch_id if session.branch_id else JournalEntry.branch_id.is_(None),
+            JournalEntry.entry_date == date.fromisoformat(cash_data["business_date"]),
+            JournalEntry.status == "posted",
+            JournalEntry.posted_at >= opening_at,
+            AccountingAccount.code == "1000",
+        )
+        .all()
+    )
+    movement = sum((Decimal(str(debit)) - Decimal(str(credit)) for debit, credit in rows), Decimal("0"))
+    expected = opening + movement
+    counted = cash_data.get("counted_closing")
+    return {
+        "id": str(session.id), "branch_id": str(session.branch_id) if session.branch_id else None,
+        "business_date": cash_data["business_date"], "status": session.status,
+        "counted_opening": str(opening), "cash_movement": str(movement),
+        "expected_closing": str(expected),
+        "counted_closing": counted,
+        "variance": str(Decimal(str(counted)) - expected) if counted is not None else None,
+        "opened_by_user_id": cash_data.get("opened_by_user_id"),
+        "opened_at": cash_data.get("opened_at"),
+        "closed_by_user_id": cash_data.get("closed_by_user_id"),
+        "closed_at": cash_data.get("closed_at"),
+        "note": cash_data.get("note"),
+        "closing_note": cash_data.get("closing_note"),
+        "coverage_note": "Reconciles only posted cash-account (1000) journal lines recorded after opening for this branch and date. Unposted, unassigned or missing cash movements must be reconciled separately.",
+    }
+
+
+@router.get("/daily-cash")
+def get_daily_cash_session(
+    business_date: date,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_read(context)
+    company_id = resolve_scope(context, None)
+    selected_branch = resolve_branch_scope(db, context, company_id, branch_id)
+    ref = f"cash-day:{selected_branch or 'company'}:{business_date.isoformat()}"
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.company_id == company_id,
+        CompanyOperatingRecord.module == "cash_control",
+        CompanyOperatingRecord.record_type == "daily_cash_session",
+        CompanyOperatingRecord.reference == ref,
+    ).first()
+    return _cash_session_payload(record, db) if record else None
+
+
+@router.post("/daily-cash/open", status_code=201)
+def open_daily_cash_session(
+    payload: DailyCashOpen,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    company_id = resolve_scope(context, None)
+    branch = resolve_branch_scope(db, context, company_id, payload.branch_id)
+    if payload.business_date != accounting_business_date(db, company_id):
+        raise HTTPException(status_code=422, detail="Cash sessions may only be opened for today's business date")
+    ref = f"cash-day:{branch or 'company'}:{payload.business_date.isoformat()}"
+    now = datetime.now(timezone.utc)
+    record = CompanyOperatingRecord(
+        company_id=company_id, branch_id=branch, module="cash_control",
+        record_type="daily_cash_session", reference=ref,
+        title=f"Cash session {payload.business_date.isoformat()}", status="open",
+        created_by_user_id=context.user.id, currency="LSL",
+        data={
+            "business_date": payload.business_date.isoformat(),
+            "counted_opening": str(payload.counted_opening),
+            "opened_by_user_id": str(context.user.id),
+            "opened_at": now.isoformat(),
+            "note": payload.note,
+        },
+    )
+    db.add(record)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A cash session already exists for this branch and date") from exc
+    db.refresh(record)
+    return _cash_session_payload(record, db)
+
+
+@router.post("/daily-cash/{session_id}/close")
+def close_daily_cash_session(
+    session_id: UUID,
+    payload: DailyCashClose,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_write(context)
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == session_id,
+        CompanyOperatingRecord.company_id == resolve_scope(context, None),
+        CompanyOperatingRecord.module == "cash_control",
+        CompanyOperatingRecord.record_type == "daily_cash_session",
+    ).with_for_update().first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Cash session not found")
+    resolve_branch_scope(db, context, record.company_id, record.branch_id)
+    if record.status != "open":
+        raise HTTPException(status_code=409, detail="The cash day has already been closed")
+    before = _cash_session_payload(record, db)
+    now = datetime.now(timezone.utc)
+    record.status = "closed"
+    record.data = {**(record.data or {}),
+                   "counted_closing": str(payload.counted_closing),
+                   "expected_closing_at_confirmation": before["expected_closing"],
+                   "variance_at_confirmation": str(payload.counted_closing - Decimal(before["expected_closing"])),
+                   "closing_note": payload.note.strip(),
+                   "closed_by_user_id": str(context.user.id),
+                   "closed_at": now.isoformat()}
+    db.commit()
+    db.refresh(record)
+    return _cash_session_payload(record, db)
+
+
 READ_ROLES = FINANCE_ROLES | {UserRole.AUDITOR, UserRole.COMPLIANCE_OFFICER}
 
 
