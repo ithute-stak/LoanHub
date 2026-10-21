@@ -1,3 +1,4 @@
+import axios from "axios";
 import {
     createAsyncThunk,
     createSlice,
@@ -92,12 +93,17 @@ export const bootstrapAuth = createAsyncThunk<
         persistSession(accessToken, meResponse.data);
         return { accessToken, user: meResponse.data };
     } catch (error: unknown) {
-        clearAuthStorage();
+        // Network outages and 5xx errors do not invalidate a logged-in user.
+        // Avoid clearing saved session data during initial hydration.
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (status === 401 || status === 403) {
+            clearAuthStorage();
+        }
         if (!storedToken && !storedUser) {
             return null;
         }
         return thunkApi.rejectWithValue(
-            getErrorMessage(error, "Your session has expired"),
+            getErrorMessage(error, "Could not restore your session"),
         );
     }
 });
