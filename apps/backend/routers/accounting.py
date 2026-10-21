@@ -18,6 +18,7 @@ from core.access_control import (
 )
 from database.models.accounting import AccountingAccount, JournalEntry, JournalLine
 from database.models.branch import CompanyBranch
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company import LoanCompany
 from database.models.company_operating_system import CompanyOperatingRecord
 from database.models.payment import PaymentTransaction
