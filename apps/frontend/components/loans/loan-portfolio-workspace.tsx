@@ -682,7 +682,7 @@ export function LoanPortfolioWorkspace({
                             <Badge variant="secondary" className="rounded-full px-3">{filteredRows.length} matching</Badge>
                             <Badge variant="outline" className="rounded-full px-3">Outstanding {formatMoney(filteredOutstanding)}</Badge>
                             <Badge variant="outline" className="rounded-full px-3">Due 7 days {dueSoonCount}</Badge>
-                            <Badge variant={overdueCount > 0 ? "destructive" : "outline"} className="rounded-full px-3">Overdue {overdueCount}</Badge>
+                            <button type="button" onClick={() => applyQuickFilter("overdue")} aria-label="Show overdue loans" aria-pressed={filters.overdue === "yes"} className="rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 hover:opacity-80" title="Filter portfolio to overdue loans"><Badge variant={overdueCount > 0 ? "destructive" : "outline"} className={`cursor-pointer rounded-full px-3 ${filters.overdue === "yes" ? "ring-2 ring-destructive/50 ring-offset-2" : ""}`}>Overdue {overdueCount}</Badge></button>
                         </div>
                     </div>
                     <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
@@ -734,7 +734,7 @@ export function LoanPortfolioWorkspace({
                                 <Badge variant="secondary" className="rounded-full px-3">{filteredRows.length} loans</Badge>
                                 <Badge variant="outline" className="rounded-full px-3">Outstanding {formatMoney(filteredOutstanding)}</Badge>
                                 <Badge variant="outline" className="rounded-full px-3">Due soon {dueSoonCount}</Badge>
-                                <Badge variant={overdueCount > 0 ? "destructive" : "outline"} className="rounded-full px-3">{overdueCount} overdue</Badge>
+                                <button type="button" onClick={() => applyQuickFilter("overdue")} aria-label="Show overdue loans" aria-pressed={filters.overdue === "yes"} className="rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 hover:opacity-80" title="Filter portfolio to overdue loans"><Badge variant={overdueCount > 0 ? "destructive" : "outline"} className={`cursor-pointer rounded-full px-3 ${filters.overdue === "yes" ? "ring-2 ring-destructive/50 ring-offset-2" : ""}`}>{overdueCount} overdue</Badge></button>
                                 <Badge variant="outline" className="rounded-full px-3">{missingContractCount} missing contracts</Badge>
                             </div>
                         </div>
