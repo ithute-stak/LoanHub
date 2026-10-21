@@ -27,3 +27,12 @@ def test_auth_token_renewal_is_silent():
     assert "refreshAccessToken()" in source
     assert "window.location.reload()" not in source
     assert "router.replace(" not in source
+
+
+def test_mobile_pull_refresh_revalidates_shared_data_without_page_reload():
+    provider = (ROOT / "provider" / "appDataProvider.tsx").read_text(encoding="utf-8")
+    pull = (ROOT / "components" / "system" / "mobile-pull-to-refresh.tsx").read_text(encoding="utf-8")
+    assert 'window.addEventListener("loanhub:pull-refresh", onPullRefresh)' in provider
+    assert "void refreshAllData();" in provider
+    assert 'new CustomEvent("loanhub:pull-refresh"' in pull
+    assert "window.location.reload()" not in pull
