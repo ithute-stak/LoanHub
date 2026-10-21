@@ -148,6 +148,7 @@ export default function CompanyLoansPage() {
     const canDisburse = hasRole(activeRole, FINANCE_ROLES);
     const canSettleEarly = hasRole(activeRole, FINANCE_ROLES);
     const [loans, setLoans] = useState<Loan[]>([]);
+    const portfolioLoadVersion = useRef(0);
     const [clients, setClients] = useState<CompanyClient[]>([]);
     const [contracts, setContracts] = useState<LoanContract[]>([]);
     const [originationPolicy, setOriginationPolicy] = useState<OriginationPolicy | null>(null);
@@ -247,29 +248,31 @@ export default function CompanyLoansPage() {
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
 
     const load = useCallback(async () => {
+        const version = ++portfolioLoadVersion.current;
         setLoading(true);
         // Loan rows own the portfolio loader. Nonessential requests may resolve
         // later without keeping the entire loan table behind a spinner.
         void Promise.allSettled([
-            (canManageContracts ? originationApi.listContracts() : Promise.resolve([])).then(setContracts),
-            expenseManagementApi.paymentMethods().then(setMethods),
-            listCompanyClients().then(setClients),
+            (canManageContracts ? originationApi.listContracts() : Promise.resolve([])).then((data) => { if (version === portfolioLoadVersion.current) setContracts(data); }),
+            expenseManagementApi.paymentMethods().then((data) => { if (version === portfolioLoadVersion.current) setMethods(data); }),
+            listCompanyClients().then((data) => { if (version === portfolioLoadVersion.current) setClients(data); }),
             ((canManageContracts || canDisburse)
                 ? originationApi.getPolicy()
-                : Promise.resolve(null)).then(setOriginationPolicy),
+                : Promise.resolve(null)).then((data) => { if (version === portfolioLoadVersion.current) setOriginationPolicy(data); }),
             ((activeRole === "company_owner" || activeRole === "branch_manager")
                 ? originationApi.listApplications().then((applications) =>
                     applications.filter((application) =>
                         application.application_type === "top_up" &&
                         ["draft", "submitted", "under_review"].includes(application.status)))
-                : Promise.resolve([])).then(setPendingTopUps),
+                : Promise.resolve([])).then((data) => { if (version === portfolioLoadVersion.current) setPendingTopUps(data); }),
         ]);
         try {
-            setLoans(await listLoans());
+            const data = await listLoans();
+            if (version === portfolioLoadVersion.current) setLoans(data);
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Loans could not be loaded."));
+            if (version === portfolioLoadVersion.current) toast.error(getErrorMessage(error, "Loans could not be loaded."));
         } finally {
-            setLoading(false);
+            if (version === portfolioLoadVersion.current) setLoading(false);
         }
     }, [canDisburse, canManageContracts, activeRole]);
 
