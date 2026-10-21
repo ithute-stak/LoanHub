@@ -8,6 +8,7 @@ import { branchApi } from "@/api/branch";
 import { useTenant } from "@/provider/tenantProvider";
 import type { Branch } from "@/types/branch";
 import { listLoans } from "@/api/loans";
+import { listPayments } from "@/api/payments";
 import { api } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { JournalEntry } from "@/types/accounting";
 import type { Loan } from "@/types/loan";
+import type { PaymentTransaction } from "@/types/payment";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
 
@@ -54,6 +56,7 @@ export default function FinanceDeskPage() {
   const [cashNote, setCashNote] = useState("");
   const [cashBusy, setCashBusy] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [legacyReceipts, setLegacyReceipts] = useState<LegacyReceipt[]>([]);
   const [folio, setFolio] = useState("");
   const [legacyClient, setLegacyClient] = useState("");
@@ -74,14 +77,16 @@ export default function FinanceDeskPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [journal, currentLoans, session, receipts] = await Promise.all([
+      const [journal, currentLoans, paymentRows, session, receipts] = await Promise.all([
         listJournalEntries({ fromDate: rangeStart, toDate: asOf, branchId: selectedBranchId, limit: 500 }),
         listLoans(),
+        listPayments(),
         api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date()), branch_id: selectedBranchId || undefined}}).then(res => res.data),
         api.get<LegacyReceipt[]>("/accounting/legacy-folio-receipts", {params: {from_date: rangeStart, to_date: asOf, branch_id: selectedBranchId || undefined}}).then(res => res.data),
       ]);
       setEntries(journal);
       setLoans(currentLoans);
+      setPayments(paymentRows);
       setCashSession(session);
       setLegacyReceipts(receipts);
     } catch (error: unknown) {
@@ -94,8 +99,18 @@ export default function FinanceDeskPage() {
 
   const expenses = useMemo(() => entries.filter(e => e.reference_type === "expense" && e.status === "posted"), [entries]);
   const expenseTotal = expenses.reduce((total, e) => total + Number(e.total_debit), 0);
-  const disbursements = useMemo(() => loans.filter(l => (!selectedBranchId || l.branch_id === selectedBranchId) && l.disbursed_at && l.disbursed_at.slice(0, 10) >= rangeStart && l.disbursed_at.slice(0, 10) <= asOf), [loans, rangeStart, asOf, selectedBranchId]);
-  const issuedTotal = disbursements.reduce((total, l) => total + Number(l.principal_amount), 0);
+  const loanBranch = useMemo(() => new Map(loans.map(loan => [loan.id, loan.branch_id])), [loans]);
+  const successfulPayments = useMemo(() => payments.filter(payment => {
+    if (payment.status !== "succeeded" || !payment.completed_at) return false;
+    const completed = payment.completed_at.slice(0, 10);
+    if (completed < rangeStart || completed > asOf) return false;
+    if (!selectedBranchId) return true;
+    return payment.cash_transaction?.branch_id === selectedBranchId || (payment.loan_id ? loanBranch.get(payment.loan_id) === selectedBranchId : false);
+  }), [payments, rangeStart, asOf, selectedBranchId, loanBranch]);
+  const disbursements = successfulPayments.filter(payment => payment.purpose === "loan_disbursement" && payment.direction === "outbound");
+  const repayments = successfulPayments.filter(payment => payment.purpose === "loan_repayment" && payment.direction === "inbound");
+  const issuedTotal = disbursements.reduce((total, payment) => total + Number(payment.amount), 0);
+  const repaidTotal = repayments.reduce((total, payment) => total + Number(payment.amount), 0);
   async function submitCashSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const count = Number(cashSession ? closing : opening);
@@ -170,9 +185,9 @@ export default function FinanceDeskPage() {
       </div>
     </div>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Metric icon={<HandCoins className="h-5 w-5"/>} title="Loans issued" amount={issuedTotal} hint={`${disbursements.length} disbursed loans`}/>
+      <Metric icon={<HandCoins className="h-5 w-5"/>} title="Money issued to clients" amount={issuedTotal} hint={`${disbursements.length} successful disbursements`}/>
       <Metric icon={<ReceiptText className="h-5 w-5"/>} title="Recorded expenses" amount={expenseTotal} hint={`${expenses.length} posted expenses`}/>
-      <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Legacy folio receipts" amount={legacyReceipts.reduce((sum, e) => sum + Number(e.amount), 0)} hint={`${legacyReceipts.length} awaiting folio reconciliation`}/>
+      <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Client repayments" amount={repaidTotal} hint={`${repayments.length} successful loan repayments`}/>
       <Metric icon={<Wallet className="h-5 w-5"/>} title="Expected closing cash" amount={cashSession ? Number(cashSession.expected_closing) : null} hint={cashSession ? (cashSession.status === "closed" ? "Closed — see confirmed count below" : "Posted cash movements since opening only") : "Open today’s cash session to begin"}/>
     </div>
     <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
