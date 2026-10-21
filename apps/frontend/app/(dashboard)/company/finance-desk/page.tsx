@@ -17,6 +17,12 @@ import type { Loan } from "@/types/loan";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
 
+type CashSession = {
+  id: string; status: "open" | "closed"; business_date: string; branch_id: string | null;
+  counted_opening: string; cash_movement: string; expected_closing: string;
+  counted_closing: string | null; variance: string | null;
+  coverage_note: string;
+};
 type Period = "day" | "week" | "month" | "year";
 const CATEGORIES = ["Airtime", "Water", "Electricity", "Transport", "Stationery", "Rent", "Maintenance", "Other"];
 function localDate(date: Date) {
@@ -33,6 +39,11 @@ export default function FinanceDeskPage() {
   const [period, setPeriod] = useState<Period>("day");
   const [asOf, setAsOf] = useState(() => localDate(new Date()));
   const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [cashSession, setCashSession] = useState<CashSession | null>(null);
+  const [opening, setOpening] = useState("");
+  const [closing, setClosing] = useState("");
+  const [cashNote, setCashNote] = useState("");
+  const [cashBusy, setCashBusy] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -47,12 +58,14 @@ export default function FinanceDeskPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [journal, currentLoans] = await Promise.all([
+      const [journal, currentLoans, session] = await Promise.all([
         listJournalEntries({ fromDate: rangeStart, toDate: asOf, limit: 1000 }),
         listLoans(),
+        api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date())}}).then(res => res.data),
       ]);
       setEntries(journal);
       setLoans(currentLoans);
+      setCashSession(session);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Could not load daily finance activity"));
     } finally {
@@ -66,6 +79,27 @@ export default function FinanceDeskPage() {
   const disbursements = useMemo(() => loans.filter(l => l.disbursed_at && l.disbursed_at.slice(0, 10) >= rangeStart && l.disbursed_at.slice(0, 10) <= asOf), [loans, rangeStart, asOf]);
   const issuedTotal = disbursements.reduce((total, l) => total + Number(l.principal_amount), 0);
   const journalReceipts = entries.filter(e => e.status === "posted" && ["loan_repayment", "repayment"].includes(e.reference_type ?? ""));
+  async function submitCashSession(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const count = Number(cashSession ? closing : opening);
+    if (!Number.isFinite(count) || count < 0) { toast.error("Enter a valid nonnegative cash count."); return; }
+    if (cashSession && cashNote.trim().length < 5) { toast.error("Enter a closing confirmation note."); return; }
+    setCashBusy(true);
+    try {
+      if (cashSession) {
+        if (cashSession.status !== "open") return;
+        await api.post(`/accounting/daily-cash/${cashSession.id}/close`, { counted_closing: count, note: cashNote.trim() });
+        toast.success("Daily closing count confirmed");
+      } else {
+        await api.post("/accounting/daily-cash/open", { business_date: localDate(new Date()), counted_opening: count, note: cashNote.trim() || null });
+        toast.success("Daily opening cash recorded");
+      }
+      setOpening(""); setClosing(""); setCashNote("");
+      await reload();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not save cash session"));
+    } finally { setCashBusy(false); }
+  }
   async function saveExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsed = Number(amount);
@@ -103,8 +137,30 @@ export default function FinanceDeskPage() {
       <Metric icon={<HandCoins className="h-5 w-5"/>} title="Loans issued" amount={issuedTotal} hint={`${disbursements.length} disbursed loans`}/>
       <Metric icon={<ReceiptText className="h-5 w-5"/>} title="Recorded expenses" amount={expenseTotal} hint={`${expenses.length} posted expenses`}/>
       <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Repayment journals" amount={journalReceipts.reduce((sum, e) => sum + Number(e.total_debit), 0)} hint="Identified journals only; confirm with payment register"/>
-      <Metric icon={<Wallet className="h-5 w-5"/>} title="Cash closing" amount={null} hint="Requires verified opening and closing counts"/>
+      <Metric icon={<Wallet className="h-5 w-5"/>} title="Expected closing cash" amount={cashSession ? Number(cashSession.expected_closing) : null} hint={cashSession ? (cashSession.status === "closed" ? "Closed — see confirmed count below" : "Posted cash movements since opening only") : "Open today’s cash session to begin"}/>
     </div>
+    <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+      <div className="space-y-3 rounded-xl bg-muted/30 p-4">
+        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Today's cash session</p>
+        <p className="text-xl font-bold">{cashSession ? (cashSession.status === "closed" ? "Closed" : "Open") : "Not opened yet"}</p>
+        {cashSession ? <>
+          <div className="flex justify-between text-sm"><span>Opening count</span><strong>{formatMoney(Number(cashSession.counted_opening))}</strong></div>
+          <div className="flex justify-between text-sm"><span>Posted net cash movement</span><strong>{formatMoney(Number(cashSession.cash_movement))}</strong></div>
+          <div className="flex justify-between border-t pt-2 text-sm"><span>Expected cash</span><strong>{formatMoney(Number(cashSession.expected_closing))}</strong></div>
+          {cashSession.counted_closing !== null ? <><div className="flex justify-between text-sm"><span>Physical closing count</span><strong>{formatMoney(Number(cashSession.counted_closing))}</strong></div><div className="flex justify-between text-sm"><span>Variance</span><strong>{formatMoney(Number(cashSession.variance))}</strong></div></> : null}
+        </> : null}
+        <p className="text-xs text-muted-foreground">{cashSession?.coverage_note ?? "One session is allowed for the current branch and business date."}</p>
+      </div>
+      <form onSubmit={submitCashSession} className="space-y-3">
+        {cashSession?.status === "closed" ? <p className="rounded-xl border p-4 text-sm">This cash session is closed. A new opening count can be entered on the next business day. Any missing cash movements require separate accounting reconciliation.</p> : <>
+          <Label htmlFor="cash-count">{cashSession ? "Physical closing cash counted (LSL)" : "Physical opening cash counted (LSL)"}</Label>
+          <Input id="cash-count" type="number" min="0" step="0.01" required value={cashSession ? closing : opening} onChange={e => cashSession ? setClosing(e.target.value) : setOpening(e.target.value)} placeholder="0.00"/>
+          <Label htmlFor="cash-note">{cashSession ? "Closing explanation / confirmation" : "Opening note (optional)"}</Label>
+          <Textarea id="cash-note" minLength={cashSession ? 5 : undefined} required={Boolean(cashSession)} value={cashNote} onChange={e => setCashNote(e.target.value)} placeholder={cashSession ? "Confirm physical count and explain any difference" : "Cash counted at opening"}/>
+          <Button disabled={cashBusy || loading} type="submit" className="w-full">{cashBusy ? "Saving..." : cashSession ? "Confirm & close cash day" : "Record opening cash"}</Button>
+        </>}
+      </form>
+    </CardContent></Card>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
       <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal using LoanHub's existing accounting service. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
         <CardContent><form className="space-y-4" onSubmit={saveExpense}>
@@ -124,7 +180,7 @@ export default function FinanceDeskPage() {
       <Action href="/company/loans" icon={<ArrowUpRight className="h-5 w-5"/>} title="View loans & disbursements" description="Review every client loan and detailed disbursement records."/>
       <Action href="/company/accounting" icon={<BookOpen className="h-5 w-5"/>} title="Financial books" description="Open the full accounting journals, trial balance and statements."/>
     </div>
-    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>Cash opening/closing confirmation and legacy folio receipts require a reconciled backend workflow. They are not simulated here or mixed with real cash totals.</div>
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>The cash close uses posted cash journals after the opening timestamp only. Missing transactions and legacy folio receipts require separate reconciliation; legacy payments are not yet posted here.</div>
   </div>;
 }
 function Metric({icon,title,amount,hint}:{icon:ReactNode;title:string;amount:number|null;hint:string}) {
