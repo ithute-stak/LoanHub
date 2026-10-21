@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, BookOpen, CalendarDays, HandCoins, ReceiptText, RefreshCcw, Wallet } from "lucide-react";
 import { listJournalEntries } from "@/api/accounting";
 import { listLoans } from "@/api/loans";
@@ -127,9 +127,9 @@ export default function FinanceDeskPage() {
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>Cash opening/closing confirmation and legacy folio receipts require a reconciled backend workflow. They are not simulated here or mixed with real cash totals.</div>
   </div>;
 }
-function Metric({icon,title,amount,hint}:{icon:React.ReactNode;title:string;amount:number|null;hint:string}) {
+function Metric({icon,title,amount,hint}:{icon:ReactNode;title:string;amount:number|null;hint:string}) {
   return <Card className="rounded-2xl"><CardContent className="space-y-2 p-5"><div className="flex items-center gap-2 text-sm text-muted-foreground">{icon}{title}</div><p className="text-2xl font-black">{amount === null ? "Not yet available" : formatMoney(amount)}</p><p className="text-xs text-muted-foreground">{hint}</p></CardContent></Card>;
 }
-function Action({href,icon,title,description}:{href:string;icon:React.ReactNode;title:string;description:string}) {
+function Action({href,icon,title,description}:{href:string;icon:ReactNode;title:string;description:string}) {
   return <Link href={href} className="flex gap-3 rounded-2xl border p-5 transition hover:border-primary/40 hover:bg-primary/5">{icon}<div><p className="font-bold">{title}</p><p className="mt-1 text-xs text-muted-foreground">{description}</p></div></Link>;
 }
