@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 const REFRESH_THRESHOLD_PX = 72;
 const MAX_INDICATOR_PULL_PX = 44;
@@ -54,6 +55,7 @@ function shouldIgnoreTarget(target: EventTarget | null): boolean {
 }
 
 export default function MobilePullToRefresh() {
+    const router = useRouter();
     const [indicatorPull, setIndicatorPull] = useState(0);
     const [readyToRefresh, setReadyToRefresh] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -155,9 +157,14 @@ export default function MobilePullToRefresh() {
                 detail: { path: window.location.pathname },
             }));
 
-            // A full reload refreshes server components and every client-side data
-            // provider, including screens whose data is loaded outside router.refresh().
-            window.setTimeout(() => window.location.reload(), 120);
+            // Refresh server data without destroying in-progress client forms.
+            // Providers can subscribe to the pull-refresh event above for local data.
+            router.refresh();
+            window.setTimeout(() => {
+                refreshingRef.current = false;
+                setRefreshing(false);
+                setIndicatorPull(0);
+            }, 600);
         };
 
         const onTouchCancel = () => resetGesture();
@@ -173,7 +180,7 @@ export default function MobilePullToRefresh() {
             document.removeEventListener("touchend", onTouchEnd);
             document.removeEventListener("touchcancel", onTouchCancel);
         };
-    }, []);
+    }, [router]);
 
     const visible = refreshing || indicatorPull > 0;
     const label = refreshing
