@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, BookOpen, CalendarDays, HandCoins, ReceiptText, RefreshCcw, Wallet } from "lucide-react";
 import { listJournalEntries } from "@/api/accounting";
+import { branchApi } from "@/api/branch";
+import { useTenant } from "@/provider/tenantProvider";
+import type { Branch } from "@/types/branch";
 import { listLoans } from "@/api/loans";
 import { api } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
@@ -37,6 +40,11 @@ function periodStart(period: Period, today: Date) {
   return localDate(first);
 }
 export default function FinanceDeskPage() {
+  const {activeCompanyId, activeBranchId} = useTenant();
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchSelection, setBranchSelection] = useState("");
+  const selectedBranchId = branchSelection || activeBranchId || null;
+  useEffect(() => { if (!activeCompanyId) return; void branchApi.getByCompany(activeCompanyId).then(res => setBranches(res.data.filter(row => row.is_active))).catch(() => setBranches([])); }, [activeCompanyId]);
   const [period, setPeriod] = useState<Period>("day");
   const [asOf, setAsOf] = useState(() => localDate(new Date()));
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -67,10 +75,10 @@ export default function FinanceDeskPage() {
     setLoading(true);
     try {
       const [journal, currentLoans, session, receipts] = await Promise.all([
-        listJournalEntries({ fromDate: rangeStart, toDate: asOf, limit: 500 }),
+        listJournalEntries({ fromDate: rangeStart, toDate: asOf, branchId: selectedBranchId, limit: 500 }),
         listLoans(),
-        api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date())}}).then(res => res.data),
-        api.get<LegacyReceipt[]>("/accounting/legacy-folio-receipts", {params: {from_date: rangeStart, to_date: asOf}}).then(res => res.data),
+        api.get<CashSession | null>("/accounting/daily-cash", {params: {business_date: localDate(new Date()), branch_id: selectedBranchId || undefined}}).then(res => res.data),
+        api.get<LegacyReceipt[]>("/accounting/legacy-folio-receipts", {params: {from_date: rangeStart, to_date: asOf, branch_id: selectedBranchId || undefined}}).then(res => res.data),
       ]);
       setEntries(journal);
       setLoans(currentLoans);
@@ -81,12 +89,12 @@ export default function FinanceDeskPage() {
     } finally {
       setLoading(false);
     }
-  }, [rangeStart, asOf]);
+  }, [rangeStart, asOf, selectedBranchId]);
   useEffect(() => { void reload(); }, [reload]);
 
   const expenses = useMemo(() => entries.filter(e => e.reference_type === "expense" && e.status === "posted"), [entries]);
   const expenseTotal = expenses.reduce((total, e) => total + Number(e.total_debit), 0);
-  const disbursements = useMemo(() => loans.filter(l => l.disbursed_at && l.disbursed_at.slice(0, 10) >= rangeStart && l.disbursed_at.slice(0, 10) <= asOf), [loans, rangeStart, asOf]);
+  const disbursements = useMemo(() => loans.filter(l => (!selectedBranchId || l.branch_id === selectedBranchId) && l.disbursed_at && l.disbursed_at.slice(0, 10) >= rangeStart && l.disbursed_at.slice(0, 10) <= asOf), [loans, rangeStart, asOf, selectedBranchId]);
   const issuedTotal = disbursements.reduce((total, l) => total + Number(l.principal_amount), 0);
   async function submitCashSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -100,7 +108,7 @@ export default function FinanceDeskPage() {
         await api.post(`/accounting/daily-cash/${cashSession.id}/close`, { counted_closing: count, note: cashNote.trim() });
         toast.success("Daily closing count confirmed");
       } else {
-        await api.post("/accounting/daily-cash/open", { business_date: localDate(new Date()), counted_opening: count, note: cashNote.trim() || null });
+        await api.post("/accounting/daily-cash/open", { business_date: localDate(new Date()), branch_id: selectedBranchId, counted_opening: count, note: cashNote.trim() || null });
         toast.success("Daily opening cash recorded");
       }
       setOpening(""); setClosing(""); setCashNote("");
@@ -117,7 +125,7 @@ export default function FinanceDeskPage() {
     try {
       await api.post("/accounting/legacy-folio-receipts", {
         folio_number: folio.trim(), client_name: legacyClient.trim(),
-        amount: parsed, payment_channel: legacyChannel, receipt_reference: legacyReference.trim(),
+        amount: parsed, payment_channel: legacyChannel, receipt_reference: legacyReference.trim(), branch_id: selectedBranchId,
       });
       toast.success("Legacy folio payment recorded for reconciliation");
       setFolio(""); setLegacyClient(""); setLegacyAmount(""); setLegacyReference("");
@@ -136,6 +144,7 @@ export default function FinanceDeskPage() {
         amount: parsed,
         description: `${category}: ${description.trim()}`,
         expense_account_code: "6500",
+        branch_id: selectedBranchId,
         paid_now: true,
         entry_date: asOf,
         external_reference: reference.trim() || undefined,
@@ -154,6 +163,7 @@ export default function FinanceDeskPage() {
         <Button variant="outline" onClick={() => void reload()} disabled={loading}><RefreshCcw className="mr-2 h-4 w-4"/>Refresh</Button>
       </div>
       <div className="mt-5 flex flex-wrap items-end gap-3">
+        {branches.length ? <div className="space-y-1"><Label htmlFor="finance-branch">Branch</Label><select id="finance-branch" className="h-10 rounded-lg border bg-background px-3" value={selectedBranchId ?? ""} onChange={e => setBranchSelection(e.target.value)}><option value="">All-company / unassigned cash</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div> : null}
         <div className="space-y-1"><Label htmlFor="finance-date">Through date</Label><Input id="finance-date" type="date" value={asOf} onChange={e => setAsOf(e.target.value)} max={localDate(new Date())}/></div>
         <div className="flex flex-wrap gap-1 rounded-xl border p-1">{(["day","week","month","year"] as Period[]).map(p => <Button key={p} type="button" size="sm" variant={period === p ? "default" : "ghost"} onClick={() => setPeriod(p)}>{({day:"Day",week:"Week",month:"Month",year:"Year"})[p]}</Button>)}</div>
         <p className="pb-2 text-xs text-muted-foreground">Showing {rangeStart} to {asOf}</p>
@@ -183,7 +193,7 @@ export default function FinanceDeskPage() {
           <Input id="cash-count" type="number" min="0" step="0.01" required value={cashSession ? closing : opening} onChange={e => cashSession ? setClosing(e.target.value) : setOpening(e.target.value)} placeholder="0.00"/>
           <Label htmlFor="cash-note">{cashSession ? "Closing explanation / confirmation" : "Opening note (optional)"}</Label>
           <Textarea id="cash-note" minLength={cashSession ? 5 : undefined} required={Boolean(cashSession)} value={cashNote} onChange={e => setCashNote(e.target.value)} placeholder={cashSession ? "Confirm physical count and explain any difference" : "Cash counted at opening"}/>
-          <Button disabled={cashBusy || loading} type="submit" className="w-full">{cashBusy ? "Saving..." : cashSession ? "Confirm & close cash day" : "Record opening cash"}</Button>
+          <Button disabled={cashBusy || loading || (branches.length > 0 && !selectedBranchId)} type="submit" className="w-full">{cashBusy ? "Saving..." : cashSession ? "Confirm & close cash day" : "Record opening cash"}</Button>
         </>}
       </form>
     </CardContent></Card>
@@ -194,7 +204,7 @@ export default function FinanceDeskPage() {
           <div className="space-y-1"><Label htmlFor="expense-amount">Amount (LSL)</Label><Input id="expense-amount" type="number" step="0.01" min="0.01" required value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"/></div>
           <div className="space-y-1"><Label htmlFor="expense-description">What was purchased?</Label><Textarea id="expense-description" minLength={2} required value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the expense and supplier"/></div>
           <div className="space-y-1"><Label htmlFor="expense-reference">Receipt / document reference (optional)</Label><Input id="expense-reference" value={reference} onChange={e => setReference(e.target.value)} placeholder="Receipt number"/></div>
-          <Button disabled={saving || loading} type="submit" className="w-full">{saving ? "Recording expense..." : "Post cash expense"}</Button>
+          <Button disabled={saving || loading || (branches.length > 0 && !selectedBranchId)} type="submit" className="w-full">{saving ? "Recording expense..." : "Post cash expense"}</Button>
         </form></CardContent>
       </Card>
       <Card className="rounded-2xl"><CardHeader><CardTitle>Recent expense entries</CardTitle><p className="text-sm text-muted-foreground">Posted entries from the selected period; full audit details remain in Financial Books.</p></CardHeader><CardContent className="space-y-2">
@@ -209,7 +219,7 @@ export default function FinanceDeskPage() {
           <div className="space-y-1"><Label htmlFor="legacy-name">Client name</Label><Input id="legacy-name" minLength={3} required value={legacyClient} onChange={e => setLegacyClient(e.target.value)}/></div>
           <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="legacy-amount">Amount paid (LSL)</Label><Input id="legacy-amount" type="number" min="0.01" step="0.01" required value={legacyAmount} onChange={e => setLegacyAmount(e.target.value)}/></div>
           <div className="space-y-1"><Label htmlFor="legacy-channel">Payment channel</Label><select id="legacy-channel" value={legacyChannel} onChange={e => setLegacyChannel(e.target.value as typeof legacyChannel)} className="h-10 w-full rounded-lg border bg-background px-3"><option value="cash">Cash</option><option value="bank">Bank</option><option value="electronic">Mpesa / electronic</option></select></div></div>
-          <Button type="submit" className="w-full" disabled={legacySaving || loading}>{legacySaving ? "Recording..." : "Record folio receipt"}</Button>
+          <Button type="submit" className="w-full" disabled={legacySaving || loading || (branches.length > 0 && !selectedBranchId)}>{legacySaving ? "Recording..." : "Record folio receipt"}</Button>
         </form>
         <div className="space-y-2"><p className="text-sm font-semibold">Legacy receipts in selected period</p>
           {loading ? <p className="text-sm text-muted-foreground">Loading...</p> : legacyReceipts.length === 0 ? <p className="rounded-xl border p-5 text-sm text-muted-foreground">No legacy folio receipts in this period.</p> : legacyReceipts.slice(0, 12).map(receipt => <div key={receipt.id} className="flex items-start justify-between gap-3 rounded-xl border p-3"><div className="min-w-0"><p className="text-sm font-semibold">{receipt.receipt_reference}</p><p className="text-xs text-muted-foreground">{receipt.description}</p><p className="text-xs text-amber-700">Pending reconciliation · {receipt.entry_date}</p></div><strong className="shrink-0">{formatMoney(Number(receipt.amount))}</strong></div>)}
