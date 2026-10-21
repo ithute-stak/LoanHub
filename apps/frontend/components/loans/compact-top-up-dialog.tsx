@@ -21,6 +21,7 @@ type Props = {
   loan: Loan | null;
   onClose: () => void;
   onCreated: (applicationId: string) => void;
+  canRegisterHistorical?: boolean;
 };
 
 function inheritedDates(loan: Loan): string[] {
@@ -43,7 +44,12 @@ function inheritedDates(loan: Loan): string[] {
   return dates;
 }
 
-export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
+export function CompactTopUpDialog({ loan, onClose, onCreated, canRegisterHistorical = false }: Props) {
+  const [historical, setHistorical] = useState(false);
+  const [originalEventDate, setOriginalEventDate] = useState("");
+  const [externalReference, setExternalReference] = useState("");
+  const [evidenceReference, setEvidenceReference] = useState("");
+  const [historicalReason, setHistoricalReason] = useState("");
   const [cash, setCash] = useState("");
   const [exceptionReason, setExceptionReason] = useState("");
   const [eligibility, setEligibility] = useState<TopUpEligibility | null>(null);
@@ -56,6 +62,11 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
   useEffect(() => {
     setCash("");
     setExceptionReason("");
+    setHistorical(false);
+    setOriginalEventDate("");
+    setExternalReference("");
+    setEvidenceReference("");
+    setHistoricalReason("");
     setEligibility(null);
     setSettlement(null);
     setInstallmentPreview(null);
@@ -109,9 +120,13 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
 
   async function create() {
     if (!canCreate || !loan || !eligibility) return;
+    if (historical && (!canRegisterHistorical || !originalEventDate || externalReference.trim().length < 5 || evidenceReference.trim().length < 5 || historicalReason.trim().length < 15)) {
+      toast.warning("Enter the original top-up date, reference, supporting evidence and reason.");
+      return;
+    }
     setSaving(true);
     try {
-      const created = await originationApi.createCompactTopUp({
+      const application = {
         borrower_id: loan.borrower_id,
         branch_id: loan.branch_id,
         application_type: "top_up",
@@ -122,8 +137,17 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
         term_count: dueDates.length,
         installment_due_dates: dueDates,
         purpose: "Loan top-up on existing loan " + loan.loan_reference,
-      });
-      toast.success("Top-up application created", {
+      };
+      const created = historical
+        ? (await api.post<{id: string}>("/origination/applications/top-up/historical-omission", {
+            application,
+            original_event_date: originalEventDate,
+            external_reference: externalReference.trim(),
+            evidence_reference: evidenceReference.trim(),
+            explanation: historicalReason.trim(),
+          })).data
+        : await originationApi.createCompactTopUp(application);
+      toast.success(historical ? "Historical top-up omission recorded as a draft" : "Top-up application created", {
         description: ownerException ? "Owner exception requested. A company owner must approve it before standard credit assessment and approval." : "Existing borrower details inherited. Assessment and approval are still required.",
       });
       onCreated(created.id);
@@ -141,6 +165,16 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
           <h2 className="text-xl font-bold">Top up existing loan</h2>
           <p className="text-sm text-muted-foreground">Loan {loan.loan_reference} — customer and repayment settings inherited.</p>
         </div>
+        {canRegisterHistorical ? <div className="space-y-3 rounded-xl border p-4">
+          <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={historical} onChange={e => setHistorical(e.target.checked)}/> Record an omitted earlier top-up (manager only)</label>
+          {historical ? <>
+            <p className="text-xs text-muted-foreground">This registers the earlier event for review. LoanHub records the actual entry date and does not backdate funds, interest or disbursement. Historical settlement figures require separate reconciliation.</p>
+            <Label>Original top-up date</Label><Input type="date" value={originalEventDate} onChange={e => setOriginalEventDate(e.target.value)} required/>
+            <Label>Original transaction / external reference</Label><Input value={externalReference} onChange={e => setExternalReference(e.target.value)} minLength={5} required/>
+            <Label>Supporting document reference</Label><Input value={evidenceReference} onChange={e => setEvidenceReference(e.target.value)} minLength={5} required/>
+            <Label>Reason the top-up was omitted</Label><Textarea value={historicalReason} onChange={e => setHistoricalReason(e.target.value)} minLength={15} required/>
+          </> : null}
+        </div> : null}
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-xl border p-3"><p className="text-muted-foreground">Settlement amount</p><strong>{settlement ? formatMoney(balance) : "Calculating..."}</strong></div>
           <div className="rounded-xl border p-3"><p className="text-muted-foreground">Inherited period</p><strong>{dueDates.length} months</strong></div>
