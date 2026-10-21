@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,8 @@ from database.models.accounting import AccountingAccount, JournalEntry, JournalL
 from database.models.branch import CompanyBranch
 from database.models.company import LoanCompany
 from database.models.company_operating_system import CompanyOperatingRecord
-from database.models.enums import UserRole
+from database.models.payment import PaymentTransaction
+from database.models.enums import UserRole, PaymentStatus, PaymentPurpose, PaymentDirection
 from database.models.governance_control import ApprovalRequest, BankStatementLine
 from database.models.reconciliation import ReconciliationBatch
 from database.schemas.accounting import (
@@ -142,6 +143,63 @@ from services.financial_books_export_service import (
 
 
 router = APIRouter(prefix="/accounting", tags=["Accounting"])
+
+@router.get("/daily-finance/report")
+def daily_finance_report(
+    from_date: date,
+    to_date: date,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    if not context.is_platform_admin:
+        require_tenant_roles(context, READ_ROLES | CASHIER_ROLES)
+    company_id = resolve_scope(context, None)
+    branch = resolve_branch_scope(db, context, company_id, branch_id)
+    if from_date > to_date or (to_date - from_date).days > 370:
+        raise HTTPException(status_code=422, detail="Choose a valid reporting period of no more than 371 days")
+
+    def payment_summary(purpose: PaymentPurpose, direction: PaymentDirection):
+        query = db.query(func.coalesce(func.sum(PaymentTransaction.amount), 0), func.count(PaymentTransaction.id)).filter(
+            PaymentTransaction.company_id == company_id,
+            PaymentTransaction.purpose == purpose,
+            PaymentTransaction.direction == direction,
+            PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+            PaymentTransaction.completed_at.isnot(None),
+            func.date(PaymentTransaction.completed_at) >= from_date,
+            func.date(PaymentTransaction.completed_at) <= to_date,
+        )
+        if branch:
+            query = query.filter(or_(
+                PaymentTransaction.loan.has(ClientCompanyLoan.branch_id == branch),
+                PaymentTransaction.cash_transaction.has(branch_id=branch),
+            ))
+        total, count = query.one()
+        return {"amount": str(total), "count": int(count)}
+
+    def journal_summary(reference_type: str):
+        key, _ = scope_key(company_id)
+        query = db.query(func.coalesce(func.sum(JournalEntry.total_debit), 0), func.count(JournalEntry.id)).filter(
+            JournalEntry.scope_key == key,
+            JournalEntry.status == "posted",
+            JournalEntry.reference_type == reference_type,
+            JournalEntry.entry_date >= from_date,
+            JournalEntry.entry_date <= to_date,
+        )
+        if branch:
+            query = query.filter(JournalEntry.branch_id == branch)
+        total, count = query.one()
+        return {"amount": str(total), "count": int(count)}
+    return {
+        "from_date": from_date.isoformat(), "to_date": to_date.isoformat(),
+        "branch_id": str(branch) if branch else None,
+        "disbursements": payment_summary(PaymentPurpose.LOAN_DISBURSEMENT, PaymentDirection.OUTBOUND),
+        "repayments": payment_summary(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND),
+        "expenses": journal_summary("expense"),
+        "legacy_folio_receipts": journal_summary("legacy_folio_receipt"),
+        "basis": "Completed successful payment timestamps and posted journal dates; outstanding pending/unverified items excluded.",
+    }
+
 
 class DailyCashOpen(BaseModel):
     business_date: date
