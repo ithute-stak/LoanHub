@@ -158,12 +158,17 @@ api.interceptors.response.use(
                 originalRequest.headers.Authorization = `Bearer ${token}`;
                 return api(originalRequest);
             } catch (refreshError: unknown) {
-                clearAuthStorage();
-                if (typeof window !== "undefined") {
-                    const onLoginPage = window.location.pathname === "/login";
-                    if (!onLoginPage) {
-                        window.location.assign("/login?reason=session-expired");
-                    }
+                // A timeout, offline connection, or server outage is not proof that
+                // the session is invalid. Keep the page and unsaved form intact.
+                // Only an explicit authentication rejection should end the session.
+                const refreshStatus = axios.isAxiosError(refreshError)
+                    ? refreshError.response?.status
+                    : undefined;
+                if (refreshStatus === 401 || refreshStatus === 403) {
+                    clearAuthStorage();
+                    // Leave the current screen mounted so pending form edits are
+                    // not destroyed by an automatic browser navigation. The next
+                    // authenticated action can prompt for login explicitly.
                 }
                 return Promise.reject(refreshError);
             }
