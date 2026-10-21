@@ -548,6 +548,16 @@ export function LegacyCashoutRegister() {
         setCurrentStep(3);
         return;
       }
+      // The read API deliberately redacts bank account numbers. The update API
+      // requires the full number for encryption, so reopening a draft must
+      // explicitly ask for it rather than submit an empty value and fail 422.
+      if (!normalizeBankAccountNumber(form.bank_account_number)) {
+        toast.error(editingId
+          ? "Re-enter the full bank account number to save this existing cash-out draft securely."
+          : "Enter the full bank account number before saving this cash-out entry.");
+        setCurrentStep(3);
+        return;
+      }
       const banking = bankDetails(form.bank_name);
       if (!banking) {
         toast.error("Select a supported bank before saving this entry.");
