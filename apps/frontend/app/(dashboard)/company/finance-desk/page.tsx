@@ -146,7 +146,7 @@ export default function FinanceDeskPage() {
         expense_account_code: "6500",
         branch_id: selectedBranchId,
         paid_now: true,
-        entry_date: asOf,
+        entry_date: localDate(new Date()),
         external_reference: reference.trim() || undefined,
       });
       toast.success("Expense posted to accounting");
@@ -198,7 +198,7 @@ export default function FinanceDeskPage() {
       </form>
     </CardContent></Card>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-      <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal using LoanHub&apos;s existing accounting service. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
+      <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal for today using LoanHub&apos;s existing accounting service. Report date filters do not change the posting date. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
         <CardContent><form className="space-y-4" onSubmit={saveExpense}>
           <div className="space-y-1"><Label htmlFor="expense-category">Category</Label><select id="expense-category" className="h-10 w-full rounded-lg border bg-background px-3" value={category} onChange={e => setCategory(e.target.value)}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
           <div className="space-y-1"><Label htmlFor="expense-amount">Amount (LSL)</Label><Input id="expense-amount" type="number" step="0.01" min="0.01" required value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"/></div>
