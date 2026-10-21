@@ -21,9 +21,6 @@ class LegacyCapturePage extends StatefulWidget {
 class _LegacyCapturePageState extends State<LegacyCapturePage> {
   final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://api.loanhub.co.ls/api/v1'));
   final token = TextEditingController();
-  final phone = TextEditingController();
-  final password = TextEditingController();
-  final otp = TextEditingController();
   final companyId = TextEditingController();
   List<Map<String, dynamic>> memberships = [];
   Map<String, String> companyNames = {};
@@ -72,60 +69,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         : http.post(uri, headers: headers, body: jsonEncode(body));
   }
 
-  Future<void> _signIn() async {
-    if (!Uri.tryParse(apiUrl.text.trim()).toString().startsWith('https://')) {
-      setState(() => error = 'A secure HTTPS LoanHub API URL is required.');
-      return;
-    }
-    if (phone.text.trim().isEmpty || password.text.isEmpty) {
-      setState(() => error = 'Enter your phone and password.');
-      return;
-    }
-    setState(() { loading = true; error = null; });
-    try {
-      final normalizedPhone = phone.text.trim()
-          .replaceAll(RegExp(r'\s+'), '')
-          .replaceFirst(RegExp(r'^\+?266'), '');
-      final factor = otp.text.trim();
-      final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
-      final response = await http.post(
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'phone': normalizedPhone,
-          'password': password.text.trim(),
-          if (factor.isNotEmpty && isOtp) 'otp': factor,
-          if (factor.isNotEmpty && !isOtp) 'recovery_code': factor,
-          'device_name': 'LoanHub Legacy CSV Flutter',
-        }),
-      );
-      if (response.statusCode != 200) {
-        String detail = 'Sign-in rejected';
-        try {
-          final payload = jsonDecode(response.body);
-          if (payload is Map && payload['detail'] != null) detail = payload['detail'].toString();
-        } catch (_) {}
-        throw Exception('Sign-in failed (HTTP ${response.statusCode}): $detail');
-      }
-      final result = jsonDecode(response.body) as Map<String, dynamic>;
-      token.text = result['access_token']?.toString() ?? '';
-      if (token.text.isEmpty) throw Exception('LoanHub did not return a session.');
-      password.clear();
-      otp.clear();
-      await _resolveCompany();
-    } catch (e) {
-      error = e.toString();
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
-  }
-
   Future<void> _signOut() async {
     await _disconnectRealtime();
     if (mounted) context.read<LegacyBloc>().add(const LegacyReset());
     // Legacy module must not clear the shared LoanHub session.
     token.clear();
-    password.clear();
     groups = [];
     rows = [];
     memberships = [];
@@ -176,6 +124,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _connect() async {
+    if (!mounted) return;
     setState(() { loading = true; error = null; });
     try {
       final answers = await Future.wait([
@@ -720,7 +669,14 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
                   value: m['company_id'].toString(),
                   child: Text(companyNames[m['company_id'].toString()] ?? 'My company',
                     maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: (v) async { if (v != null) { companyId.text = v; await _connect(); } })),
+                onChanged: (v) async { if (v != null && v != companyId.text) {
+                    await _disconnectRealtime();
+                    companyId.text = v;
+                    rows = [];
+                    groups = [];
+                    if (mounted) context.read<LegacyBloc>().add(const LegacyReset());
+                    await _connect();
+                  } })),
           Expanded(child: !configured ? _login() : IndexedStack(index: tab, children: [
             _capture(), _records(), _tools(),
           ])),
@@ -741,7 +697,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     shuttingDown = true;
     realtimeRetry?.cancel();
     unawaited(realtimeSocket?.close() ?? Future<void>.value());
-    for (final c in [apiUrl, token, phone, password, otp, companyId, name, employer, account, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, companyId, name, employer, account, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }
