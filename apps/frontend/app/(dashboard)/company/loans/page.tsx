@@ -248,32 +248,26 @@ export default function CompanyLoansPage() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        try {
-            const [loanRows, contractRows, methodRows, clientRows, policy] = await Promise.all([
-                listLoans(),
-                canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
-                expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-                listCompanyClients().catch(() => []),
-                (canManageContracts || canDisburse) ? originationApi.getPolicy().catch(() => null) : Promise.resolve(null),
-            ]);
-            setLoans(loanRows);
-            setContracts(contractRows);
-            setMethods(methodRows);
-            setClients(clientRows);
-            setOriginationPolicy(policy);
-            if (activeRole === "company_owner" || activeRole === "branch_manager") {
-                try {
-                    const applications = await originationApi.listApplications();
-                    setPendingTopUps(applications.filter((application) =>
+        // Loan rows own the portfolio loader. Nonessential requests may resolve
+        // later without keeping the entire loan table behind a spinner.
+        void Promise.allSettled([
+            (canManageContracts ? originationApi.listContracts() : Promise.resolve([])).then(setContracts),
+            expenseManagementApi.paymentMethods().then(setMethods),
+            listCompanyClients().then(setClients),
+            ((canManageContracts || canDisburse)
+                ? originationApi.getPolicy()
+                : Promise.resolve(null)).then(setOriginationPolicy),
+            ((activeRole === "company_owner" || activeRole === "branch_manager")
+                ? originationApi.listApplications().then((applications) =>
+                    applications.filter((application) =>
                         application.application_type === "top_up" &&
-                        ["draft", "submitted", "under_review"].includes(application.status)
-                    ));
-                } catch {
-                    setPendingTopUps([]);
-                }
-            }
+                        ["draft", "submitted", "under_review"].includes(application.status)))
+                : Promise.resolve([])).then(setPendingTopUps),
+        ]);
+        try {
+            setLoans(await listLoans());
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Loans and contracts could not be loaded."));
+            toast.error(getErrorMessage(error, "Loans could not be loaded."));
         } finally {
             setLoading(false);
         }
