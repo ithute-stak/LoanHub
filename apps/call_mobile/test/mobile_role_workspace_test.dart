@@ -100,7 +100,13 @@ void main() {
       200,
       scrollable: find.byType(Scrollable),
     );
-    await tester.tap(find.text('Loan offers'));
+    await tester.ensureVisible(find.text('Loan offers'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.ancestor(
+      of: find.text('Loan offers'),
+      matching: find.byType(InkWell),
+    ).first);
+    await tester.pump();
     expect(opened, MobileWorkspaceDestination.explore);
     expect(tester.takeException(), isNull);
   });
@@ -134,7 +140,13 @@ void main() {
       200,
       scrollable: find.byType(Scrollable),
     );
-    await tester.tap(find.text('Portable operations'));
+    await tester.ensureVisible(find.text('Portable operations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.ancestor(
+      of: find.text('Portable operations'),
+      matching: find.byType(InkWell),
+    ).first);
+    await tester.pump();
     expect(opened, MobileWorkspaceDestination.operations);
     expect(tester.takeException(), isNull);
   });
