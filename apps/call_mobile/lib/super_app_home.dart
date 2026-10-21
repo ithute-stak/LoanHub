@@ -78,7 +78,19 @@ class _SuperAppHomeState extends State<SuperAppHome> {
     }
   }
 
-  void _openLegacyCapture() {
+  Future<void> _openLegacyCapture() async {
+    const permittedRoles = <String>{
+      'company_owner', 'company_admin', 'owner', 'admin',
+      'branch_manager', 'accountant', 'finance_officer', 'cashier',
+    };
+    final session = await widget.api.sessionInfo();
+    if (!mounted) return;
+    if (!permittedRoles.contains(session['role']?.toString().toLowerCase())) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Legacy bank deductions require company finance or management access.'),
+      ));
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => BlocProvider(
@@ -170,7 +182,7 @@ class _SuperAppHomeState extends State<SuperAppHome> {
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'legacy') {
-                  _openLegacyCapture();
+                  unawaited(_openLegacyCapture());
                 } else if (value == 'channels') {
                   Navigator.of(context).push(
                     MaterialPageRoute(
