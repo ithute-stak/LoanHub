@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   BookOpenCheck,
   Calculator,
@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 
 import { calculateLoan } from "@/api/loans";
+import { checkCompanyClientExistingLoans, getCompanyClientProfile } from "@/api/companyClients";
+import type { CompanyClientExistingLoanCheck } from "@/types/companyClient";
 import {
   createLegacyCashoutCapture,
   getLegacyCashoutBankPolicy,
@@ -101,15 +103,15 @@ const FORM_STEPS: Array<{
   icon: LucideIcon;
 }> = [
   {
-    title: "Cash-out reference",
-    shortTitle: "Reference",
-    description: "Identify the paper record and original loan date.",
+    title: "Identify borrower",
+    shortTitle: "ID check",
+    description: "Check the national ID before capturing any other details.",
     icon: BookOpenCheck,
   },
   {
-    title: "Borrower details",
+    title: "Borrower & reference",
     shortTitle: "Borrower",
-    description: "Capture identity, contact details and addresses.",
+    description: "Capture the borrower, paper reference and original loan date.",
     icon: ShieldCheck,
   },
   {
@@ -338,6 +340,10 @@ export function LegacyCashoutRegister() {
   const [activeView, setActiveView] = useState<ViewMode>("capture");
   const [currentStep, setCurrentStep] = useState(0);
   const [registerPage, setRegisterPage] = useState(1);
+  const latestIdentity = useRef("");
+  const [identityChecking, setIdentityChecking] = useState(false);
+  const [identityCheck, setIdentityCheck] = useState<CompanyClientExistingLoanCheck | null>(null);
+  const [identityCheckedValue, setIdentityCheckedValue] = useState("");
 
   const historicAllocation = useMemo(
     () => allocateHistoricPayment(calculation, asNumber(form.amount_paid)),
@@ -471,7 +477,11 @@ export function LegacyCashoutRegister() {
   }, []);
 
   const validateStep = (step: number): boolean => {
-    if (step === 0 && (!form.folio_number.trim() || !form.loan_date)) {
+    if (step === 0 && (!form.identity_number.trim() || identityChecking || identityCheckedValue !== form.identity_number.trim())) {
+      toast.error("Check the borrower ID before continuing.");
+      return false;
+    }
+    if (step === 1 && (!form.folio_number.trim() || !form.loan_date)) {
       toast.error("Enter the folio number and original loan date before continuing.");
       return false;
     }
@@ -501,6 +511,52 @@ export function LegacyCashoutRegister() {
     return true;
   };
 
+  const checkIdentity = async () => {
+    const identity = form.identity_number.trim();
+    if (identity.length < 4) {
+      toast.error("Enter the complete national ID or passport number first.");
+      return;
+    }
+    latestIdentity.current = identity;
+    setIdentityChecking(true);
+    setIdentityCheck(null);
+    setIdentityCheckedValue("");
+    try {
+      if (/^\d+$/.test(identity)) {
+        const result = await checkCompanyClientExistingLoans(identity);
+        if (latestIdentity.current !== identity) return;
+        if (result.already_company_client && result.company_client_account_id) {
+          // Only use the account profile authorized for the active tenant.
+          const profile = await getCompanyClientProfile(result.company_client_account_id);
+          if (latestIdentity.current !== identity) return;
+          const borrower = profile.client;
+          setForm((current) => ({
+            ...current,
+            first_names: current.first_names || [borrower.first_name, borrower.middle_name].filter(Boolean).join(" "),
+            surname: current.surname || borrower.last_name || "",
+            cell_phone: current.cell_phone || borrower.phone || "",
+            residential_address: current.residential_address || borrower.physical_address || "",
+            employer: current.employer || borrower.employer_name || "",
+            occupation: current.occupation || borrower.job_title || "",
+            net_salary: current.net_salary || (borrower.monthly_income != null ? String(borrower.monthly_income) : ""),
+            bank_name: current.bank_name || borrower.bank_name || "",
+            bank_account_holder: current.bank_account_holder || borrower.bank_account_holder || "",
+          }));
+        }
+        setIdentityCheck(result);
+        setIdentityCheckedValue(identity);
+        if (result.borrower_found) toast.info("Existing LoanHub borrower detected. Review their profile before proceeding.");
+      } else {
+        // The global lookup currently supports national IDs only; never claim to have checked a passport.
+        setIdentityCheckedValue(identity);
+      }
+    } catch (error) {
+      if (latestIdentity.current === identity) toast.error(getErrorMessage(error, "Could not verify this ID. Try again before continuing."));
+    } finally {
+      if (latestIdentity.current === identity) setIdentityChecking(false);
+    }
+  };
+
   const nextStep = () => {
     if (!validateStep(currentStep)) return;
     setCurrentStep((step) => Math.min(FORM_STEPS.length - 1, step + 1));
@@ -508,6 +564,9 @@ export function LegacyCashoutRegister() {
   };
 
   const resetEntry = () => {
+    latestIdentity.current = "";
+    setIdentityCheck(null);
+    setIdentityCheckedValue("");
     setForm(emptyForm);
     setEditingId(null);
     setCalculation(null);
@@ -517,6 +576,10 @@ export function LegacyCashoutRegister() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!validateStep(0)) {
+      setCurrentStep(0);
+      return;
+    }
     setSaving(true);
     try {
       if (!form.folio_number.trim() || !form.loan_date) {
@@ -616,6 +679,9 @@ export function LegacyCashoutRegister() {
 
   const continueEntry = (record: LegacyCashoutCapture) => {
     setForm(formFromRecord(record));
+    latestIdentity.current = record.identity_number ?? "";
+    setIdentityCheck(null);
+    setIdentityCheckedValue("");
     setEditingId(record.id);
     setCalculatorSnapshot(record.calculator_snapshot);
     setCalculation(calculatorResultFrom(record.calculator_snapshot));
@@ -782,36 +848,46 @@ export function LegacyCashoutRegister() {
           </div>
 
           {currentStep === 0 ? (
-            <WizardSection icon={BookOpenCheck} title="Locate the original entry" description="Use the folio and original loan date so the paper source stays easy to trace during review.">
-              <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="Folio number" required>
-                  <Input autoFocus value={form.folio_number} onChange={(event) => update("folio_number", event.target.value)} placeholder="e.g. 00124" />
-                </Field>
-                <Field label="Original loan date" required>
-                  <Input type="date" value={form.loan_date} onChange={(event) => update("loan_date", event.target.value)} />
-                </Field>
+            <WizardSection icon={ShieldCheck} title="Check borrower identity first" description="Enter the national ID to see whether the borrower already exists in LoanHub before you spend time capturing a historical cash-out.">
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="flex-1">
+                    <Field label="National ID or passport number" required>
+                      <Input autoFocus value={form.identity_number} onChange={(event) => {
+                        const value = event.target.value;
+                        latestIdentity.current = value.trim();
+                        setIdentityCheck(null);
+                        setIdentityCheckedValue("");
+                        setForm((current) => ({ ...current, identity_number: value, passport_expiry_date: !value.trim() || /^\\d+$/.test(value.trim()) ? "" : current.passport_expiry_date }));
+                      }} placeholder="Enter borrower ID before continuing" />
+                    </Field>
+                  </div>
+                  <Button type="button" onClick={() => void checkIdentity()} disabled={identityChecking || form.identity_number.trim().length < 4}>
+                    {identityChecking ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                    {identityChecking ? "Checking…" : "Check ID"}
+                  </Button>
+                </div>
+                {identityCheckedValue === form.identity_number.trim() && identityCheck ? (
+                  <div role="status" className={`rounded-xl border p-4 ${identityCheck.borrower_found ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
+                    <p className="font-bold">{identityCheck.borrower_found ? "Existing LoanHub borrower found" : "No registered LoanHub borrower found"}</p>
+                    <p className="mt-1 text-sm">{identityCheck.borrower_found
+                      ? `This ID already exists in LoanHub. Existing loans: ${identityCheck.total_loan_count}; active: ${identityCheck.active_loan_count}. Review any prefilled details from your company account before continuing. Do not register a duplicate.`
+                      : "You can proceed to capture the historic entry. The record will be checked again when posted."}</p>
+                    {identityCheck.borrower_found ? <Link href="/company/clients" className="mt-2 inline-block text-sm font-semibold underline">Open borrower profiles</Link> : null}
+                  </div>
+                ) : null}
+                {identityCheckedValue === form.identity_number.trim() && identityCheckedValue && !identityCheck ? (
+                  <InfoPanel>Passport identity recorded. LoanHub's global duplicate lookup currently supports national IDs only; this passport has not been checked for an existing borrower. The posting checks still apply.</InfoPanel>
+                ) : null}
               </div>
-              <InfoPanel>
-                The folio and date link this digital record back to the cash-out book. No live LoanHub cash transaction is created at this stage.
-              </InfoPanel>
             </WizardSection>
           ) : null}
 
           {currentStep === 1 ? (
-            <WizardSection icon={ShieldCheck} title="Borrower identity and contacts" description="Digits only are treated as a Lesotho national ID. An identity containing letters is treated as a passport and requires an expiry date.">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <WizardSection icon={ShieldCheck} title="Borrower details and paper reference" description="The identity was entered first. Complete the paper record reference, borrower contacts and addresses.">
+              <div className="mb-5 grid gap-4 sm:grid-cols-2">\n                <Field label="Folio number" required><Input value={form.folio_number} onChange={(event) => update("folio_number", event.target.value)} placeholder="e.g. 00124" /></Field>\n                <Field label="Original loan date" required><Input type="date" value={form.loan_date} onChange={(event) => update("loan_date", event.target.value)} /></Field>\n              </div>\n              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label="First names"><Input value={form.first_names} onChange={(event) => update("first_names", event.target.value)} /></Field>
                 <Field label="Surname"><Input value={form.surname} onChange={(event) => update("surname", event.target.value)} /></Field>
-                <Field label="National ID or passport number">
-                  <Input value={form.identity_number} onChange={(event) => {
-                    const value = event.target.value;
-                    setForm((current) => ({
-                      ...current,
-                      identity_number: value,
-                      passport_expiry_date: !value.trim() || /^\d+$/.test(value.trim()) ? "" : current.passport_expiry_date,
-                    }));
-                  }} />
-                </Field>
                 {!isNationalId && form.identity_number.trim() ? (
                   <Field label="Passport expiry date" required><Input type="date" value={form.passport_expiry_date} onChange={(event) => update("passport_expiry_date", event.target.value)} /></Field>
                 ) : null}
