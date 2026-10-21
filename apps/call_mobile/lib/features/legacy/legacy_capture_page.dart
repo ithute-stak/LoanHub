@@ -109,14 +109,15 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       if (memberships.isEmpty) {
         throw Exception('Your account has no active LoanHub company membership.');
       }
-      final saved = companyId.text.trim();
-      final primary = memberships.firstWhere(
-        (m) => m['is_primary'] == true,
-        orElse: () => memberships.first,
-      );
-      final chosen = memberships.any((m) => m['company_id'].toString() == saved)
-          ? saved : primary['company_id'].toString();
-      companyId.text = chosen;
+      final activeCompany = (await widget.api.sessionInfo())['company_id']?.toString();
+      if (activeCompany == null ||
+          activeCompany.isEmpty ||
+          !memberships.any((m) => m['company_id'].toString() == activeCompany)) {
+        throw StateError(
+          'Select an authorised company in the main LoanHub app before opening Legacy CSV.',
+        );
+      }
+      companyId.text = activeCompany;
       final companyResponse = await http.get(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/companies/?limit=500'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
@@ -667,23 +668,16 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           if (loading) const LinearProgressIndicator(minHeight: 3),
           if (error != null) Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-          if (configured && memberships.length > 1)
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: DropdownButtonFormField<String>(
-                isExpanded: true, initialValue: companyId.text,
-                decoration: const InputDecoration(labelText: 'Company'),
-                items: memberships.map((m) => DropdownMenuItem<String>(
-                  value: m['company_id'].toString(),
-                  child: Text(companyNames[m['company_id'].toString()] ?? 'My company',
-                    maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: (v) async { if (v != null && v != companyId.text) {
-                    await _disconnectRealtime();
-                    companyId.text = v;
-                    rows = [];
-                    groups = [];
-                    if (mounted) context.read<LegacyBloc>().add(const LegacyReset());
-                    await _connect();
-                  } })),
+          if (configured)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: ListTile(
+                leading: const Icon(Icons.business_outlined),
+                title: Text(companyNames[companyId.text] ?? 'Active LoanHub company'),
+                subtitle: const Text('Company selection is managed by the main LoanHub app'),
+                dense: true,
+              ),
+            ),
           Expanded(child: !configured ? _login() : IndexedStack(index: tab, children: [
             _capture(), _records(), _tools(),
           ])),
