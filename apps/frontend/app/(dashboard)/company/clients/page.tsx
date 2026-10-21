@@ -334,24 +334,27 @@ export default function CompanyClientsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Keep the directory responsive: supplementary forms and insights must not
+    // block the client table from rendering.
+    const auxiliary = Promise.allSettled([
+      branchApi.getAll().then((response) => {
+        setBranches(response.data.filter((item) => item.is_active));
+      }),
+      listLoanProducts().then((products) => {
+        setProducts(products.filter((item) => item.is_active));
+      }),
+      expenseManagementApi.paymentMethods().then(setPaymentMethods),
+      getCompanyClientPortfolioInsights(14).then(setPortfolioInsights),
+    ]);
     try {
-      const [clientRows, branchResponse, productRows, methodRows, insightRows] = await Promise.all([
-        listCompanyClients({ limit: 1000 }),
-        branchApi.getAll(),
-        listLoanProducts(),
-        expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-        getCompanyClientPortfolioInsights(14).catch(() => null),
-      ]);
+      const clientRows = await listCompanyClients({ limit: 1000 });
       setClients(clientRows);
-      setPortfolioInsights(insightRows);
-      setBranches(branchResponse.data.filter((item) => item.is_active));
-      setProducts(productRows.filter((item) => item.is_active));
-      setPaymentMethods(methodRows);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Company clients could not be loaded."));
     } finally {
       setLoading(false);
     }
+    void auxiliary;
   }, []);
 
   useEffect(() => {
