@@ -514,7 +514,8 @@ def list_entries(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    require_read(context)
+    if not context.is_platform_admin:
+        require_tenant_roles(context, READ_ROLES | CASHIER_ROLES)
     selected_company_id = resolve_scope(context, company_id)
     key, _ = scope_key(selected_company_id)
     selected_branch_id = resolve_branch_scope(db, context, selected_company_id, branch_id)
@@ -652,7 +653,8 @@ def record_expense(
     context: TenantContext = Depends(get_user_context),
 ):
     """Replacement for the old expense module: expenses are accounting entries."""
-    require_write(context)
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES)
     selected_company_id = resolve_scope(context, company_id)
     if not selected_company_id:
         raise HTTPException(status_code=422, detail="Select a company for company expenses")
