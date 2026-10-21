@@ -42,7 +42,8 @@ def test_pull_to_refresh_is_global_mobile_only_and_gesture_safe():
     assert "[role='dialog']" in source
     assert "[data-disable-pull-refresh]" in source
     assert 'new CustomEvent("loanhub:pull-refresh"' in source
-    assert "window.location.reload()" in source
+    assert "router.refresh()" in source
+    assert "window.location.reload()" not in source
     assert "Pull to refresh" in source
     assert "Release to refresh" in source
     assert "Refreshing data…" in source
