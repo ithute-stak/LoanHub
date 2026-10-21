@@ -57,13 +57,21 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
   }
 
-  Future<http.Response> _request(String path, {Map<String, dynamic>? body}) {
-    final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}$path');
-    final headers = <String, String>{
-      'Authorization': 'Bearer ${token.text.trim()}',
+  Future<Map<String, String>> _authHeaders() async {
+    final accessToken = await widget.api.storage.read(key: 'loanhub_access_token');
+    if (accessToken == null || accessToken.isEmpty) {
+      throw StateError('Your LoanHub session is unavailable. Sign in through the main app.');
+    }
+    return <String, String>{
+      'Authorization': 'Bearer $accessToken',
       'X-Company-ID': companyId.text.trim(),
       'Content-Type': 'application/json',
     };
+  }
+
+  Future<http.Response> _request(String path, {Map<String, dynamic>? body}) async {
+    final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}$path');
+    final headers = await _authHeaders();
     return body == null
         ? http.get(uri, headers: headers)
         : http.post(uri, headers: headers, body: jsonEncode(body));
@@ -88,7 +96,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     try {
       final response = await http.get(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/me'),
-        headers: {'Authorization': 'Bearer ${token.text.trim()}'},
+        headers: await _authHeaders(),
       );
       if (response.statusCode != 200) {
         throw Exception('Your session expired. Sign in again through LoanHub.');
@@ -206,8 +214,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         'POST',
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview&work_group_id=${Uri.encodeQueryComponent(selectedGroup!)}'),
       );
-      request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
-      request.headers['X-Company-ID'] = companyId.text.trim();
+      request.headers.addAll(await _authHeaders());
       request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: item.name));
       final response = await http.Response.fromStream(await request.send());
       final decoded = jsonDecode(response.body);
@@ -404,11 +411,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       }
       setState(() { loading = true; error = null; });
       final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/${row['id']}');
-      final headers = {
-        'Authorization': 'Bearer ${token.text.trim()}',
-        'X-Company-ID': companyId.text.trim(),
-        'Content-Type': 'application/json',
-      };
+      final headers = await _authHeaders();
       final response = remove
           ? await http.delete(uri, headers: headers)
           : await http.patch(uri, headers: headers, body: jsonEncode({
@@ -441,7 +444,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _connectRealtime() async {
-    if (!mounted || !configured || token.text.isEmpty || shuttingDown) return;
+    if (!mounted || !configured || shuttingDown) return;
     realtimeRetry?.cancel();
     await realtimeSocket?.close();
     try {
@@ -451,8 +454,10 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         path: '/ws',
         queryParameters: {'company_id': companyId.text.trim()},
       );
+      final accessToken = await widget.api.storage.read(key: 'loanhub_access_token');
+      if (accessToken == null || accessToken.isEmpty) return;
       final socket = await WebSocket.connect(uri.toString(),
-          protocols: ['loanhub.v1', 'loanhub.jwt.${token.text.trim()}']);
+          protocols: ['loanhub.v1', 'loanhub.jwt.$accessToken']);
       if (!mounted || !configured || shuttingDown) { await socket.close(); return; }
       realtimeSocket = socket;
       context.read<LegacyBloc>().add(const LegacyConnectionChanged(true));
