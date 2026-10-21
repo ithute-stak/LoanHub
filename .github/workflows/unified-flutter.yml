@@ -35,8 +35,10 @@ jobs:
       - name: Flutter static analysis
         run: flutter analyze
       - name: Flutter widget and unit tests
+        if: success() || failure()
         run: flutter test
       - name: Build integrated Android debug APK
+        if: success() || failure()
         run: flutter build apk --debug --dart-define=LOANHUB_API_URL=https://api.loanhub.co.ls
       - name: Check Dart formatting
         if: always()
