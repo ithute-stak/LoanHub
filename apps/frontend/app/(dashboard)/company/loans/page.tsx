@@ -155,6 +155,7 @@ export default function CompanyLoansPage() {
     const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState<WorkspaceTab>("portfolio");
+    const [historyBorrowerId, setHistoryBorrowerId] = useState<string | null>(null);
 
     const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
     const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -291,6 +292,9 @@ export default function CompanyLoansPage() {
 
     useEffect(() => {
         const timer = window.setTimeout(() => void load(), 0);
+        const requestedBorrower = new URLSearchParams(window.location.search).get("borrower");
+        setHistoryBorrowerId(requestedBorrower || null);
+        if (requestedBorrower) setTab("portfolio");
         const requestedTab = new URLSearchParams(window.location.search).get("tab");
         if (requestedTab === "contracts" && canManageContracts) {
             setTab("contracts");
@@ -338,6 +342,9 @@ export default function CompanyLoansPage() {
         () => new Map(clients.map((client) => [client.borrower_id, client])),
         [clients],
     );
+
+    const historyLoans = useMemo(() => historyBorrowerId ? loans.filter((loan) => loan.borrower_id === historyBorrowerId) : loans, [loans, historyBorrowerId]);
+    const historyClient = historyBorrowerId ? clientByBorrower.get(historyBorrowerId) : null;
 
     const signedContractRequired = originationPolicy?.require_signed_contract ?? true;
     const ownerOverrideEligible = Boolean(
@@ -856,8 +863,12 @@ export default function CompanyLoansPage() {
                 </TabsList>
 
                 <TabsContent value="portfolio" className="space-y-5">
+                    {historyBorrowerId ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                        <div><p className="text-sm font-black">Loan history — {historyClient?.full_name ?? "Selected borrower"}</p><p className="text-xs text-muted-foreground">{historyLoans.length} recorded loan{historyLoans.length === 1 ? "" : "s"}, including settled and historical loans where available.</p></div>
+                        <Button type="button" variant="outline" onClick={() => { setHistoryBorrowerId(null); router.replace("/company/loans"); }}>Show all company loans</Button>
+                    </div> : null}
                     <LoanPortfolioWorkspace
-                        loans={loans}
+                        loans={historyLoans}
                         clients={clients}
                         contracts={contracts}
                         canDisburse={canDisburse}
