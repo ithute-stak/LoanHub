@@ -239,6 +239,7 @@ def _cash_session_payload(session: CompanyOperatingRecord, db: Session) -> dict:
     counted = cash_data.get("counted_closing")
     if session.status == "closed" and cash_data.get("expected_closing_at_confirmation") is not None:
         expected = Decimal(str(cash_data["expected_closing_at_confirmation"]))
+        movement = Decimal(str(cash_data.get("cash_movement_at_confirmation", movement)))
     return {
         "id": str(session.id), "branch_id": str(session.branch_id) if session.branch_id else None,
         "business_date": cash_data["business_date"], "status": session.status,
@@ -428,6 +429,7 @@ def close_daily_cash_session(
     record.data = {**(record.data or {}),
                    "counted_closing": str(payload.counted_closing),
                    "expected_closing_at_confirmation": before["expected_closing"],
+                   "cash_movement_at_confirmation": before["cash_movement"],
                    "variance_at_confirmation": str(payload.counted_closing - Decimal(before["expected_closing"])),
                    "closing_note": payload.note.strip(),
                    "closed_by_user_id": str(context.user.id),
