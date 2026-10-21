@@ -1503,6 +1503,7 @@ export default function CompanyLoansPage() {
 
             <CompactTopUpDialog
                 loan={topUpLoan}
+                canRegisterHistorical={activeRole === "company_owner" || activeRole === "branch_manager"}
                 onClose={() => setTopUpLoan(null)}
                 onCreated={(applicationId) => {
                     setTopUpLoan(null);
