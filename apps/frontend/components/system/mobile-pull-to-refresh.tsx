@@ -84,7 +84,10 @@ export default function MobilePullToRefresh() {
             Array.from(form.elements).some(element => {
                 if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)) return false;
                 if (element instanceof HTMLInputElement && ["hidden", "submit", "button", "reset"].includes(element.type)) return false;
-                return element instanceof HTMLInputElement ? element.value !== element.defaultValue || (["checkbox", "radio"].includes(element.type) && element.checked !== element.defaultChecked) : element.value !== element.defaultValue;
+                if (element instanceof HTMLInputElement) return element.value !== element.defaultValue || (["checkbox", "radio"].includes(element.type) && element.checked !== element.defaultChecked);
+                if (element instanceof HTMLTextAreaElement) return element.value !== element.defaultValue;
+                const initialOption = Array.from(element.options).find(option => option.defaultSelected);
+                return Boolean(initialOption && element.value !== initialOption.value);
             }),
         );
 
