@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 import { calculateLoan } from "@/api/loans";
-import { checkCompanyClientExistingLoans } from "@/api/companyClients";
+import { checkCompanyClientExistingLoans, getCompanyClientProfile } from "@/api/companyClients";
 import type { CompanyClientExistingLoanCheck } from "@/types/companyClient";
 import {
   createLegacyCashoutCapture,
@@ -525,6 +525,24 @@ export function LegacyCashoutRegister() {
       if (/^\d+$/.test(identity)) {
         const result = await checkCompanyClientExistingLoans(identity);
         if (latestIdentity.current !== identity) return;
+        if (result.already_company_client && result.company_client_account_id) {
+          // Only use the account profile authorized for the active tenant.
+          const profile = await getCompanyClientProfile(result.company_client_account_id);
+          if (latestIdentity.current !== identity) return;
+          const borrower = profile.client;
+          setForm((current) => ({
+            ...current,
+            first_names: current.first_names || [borrower.first_name, borrower.middle_name].filter(Boolean).join(" "),
+            surname: current.surname || borrower.last_name || "",
+            cell_phone: current.cell_phone || borrower.phone || "",
+            residential_address: current.residential_address || borrower.physical_address || "",
+            employer: current.employer || borrower.employer_name || "",
+            occupation: current.occupation || borrower.job_title || "",
+            net_salary: current.net_salary || (borrower.monthly_income != null ? String(borrower.monthly_income) : ""),
+            bank_name: current.bank_name || borrower.bank_name || "",
+            bank_account_holder: current.bank_account_holder || borrower.bank_account_holder || "",
+          }));
+        }
         setIdentityCheck(result);
         setIdentityCheckedValue(identity);
         if (result.borrower_found) toast.info("Existing LoanHub borrower detected. Review their profile before proceeding.");
@@ -853,7 +871,7 @@ export function LegacyCashoutRegister() {
                   <div role="status" className={`rounded-xl border p-4 ${identityCheck.borrower_found ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
                     <p className="font-bold">{identityCheck.borrower_found ? "Existing LoanHub borrower found" : "No registered LoanHub borrower found"}</p>
                     <p className="mt-1 text-sm">{identityCheck.borrower_found
-                      ? `This ID already exists in LoanHub. Existing loans: ${identityCheck.total_loan_count}; active: ${identityCheck.active_loan_count}. Continue with the existing identity—do not register a duplicate.`
+                      ? `This ID already exists in LoanHub. Existing loans: ${identityCheck.total_loan_count}; active: ${identityCheck.active_loan_count}. Review any prefilled details from your company account before continuing. Do not register a duplicate.`
                       : "You can proceed to capture the historic entry. The record will be checked again when posted."}</p>
                     {identityCheck.borrower_found ? <Link href="/company/clients" className="mt-2 inline-block text-sm font-semibold underline">Open borrower profiles</Link> : null}
                   </div>
