@@ -196,20 +196,18 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
 
   Future<void> _importCsv() async {
     if (selectedGroup == null) { setState(() => error = 'Select CIVIL, FORCE or S/E before importing.'); return; }
-    final picked = await FilePicker.platform.pickFiles(
+    final item = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['csv', 'xlsx'],
-      withData: true,
     );
-    if (picked == null || picked.files.isEmpty) return;
-    final item = picked.files.single;
-    final size = item.size;
-    if (size > 2000000) {
+    if (item == null) return;
+    final size = await item.length();
+    if (size == null || size > 2000000) {
       setState(() => error = 'CSV/XLSX file must be no larger than 2 MB.');
       return;
     }
-    final bytes = item.bytes ?? (item.path == null ? null : await File(item.path!).readAsBytes());
-    if (bytes == null) { setState(() => error = 'Unable to read the selected file.'); return; }
+    final bytes = await item.readAsBytes();
+    if (bytes.isEmpty) { setState(() => error = 'Unable to read the selected file.'); return; }
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
