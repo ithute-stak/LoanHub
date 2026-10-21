@@ -8,6 +8,8 @@ import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
 import 'features/explore/explore_page.dart';
 import 'features/money/money_page.dart';
+import 'features/legacy/legacy_capture_page.dart';
+import 'features/legacy/legacy_bloc.dart';
 import 'features/operations/mobile_operations_page.dart';
 import 'features/profile/profile_page.dart';
 import 'layout/loanhub_responsive.dart';
@@ -74,6 +76,17 @@ class _SuperAppHomeState extends State<SuperAppHome> {
         );
         return;
     }
+  }
+
+  void _openLegacyCapture() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => LegacyBloc(),
+          child: LegacyCapturePage(api: widget.api),
+        ),
+      ),
+    );
   }
 
   Future<void> _applyNotificationRoute(String route) async {
@@ -156,7 +169,9 @@ class _SuperAppHomeState extends State<SuperAppHome> {
           actions: [
             PopupMenuButton<String>(
               onSelected: (value) {
-                if (value == 'channels') {
+                if (value == 'legacy') {
+                  _openLegacyCapture();
+                } else if (value == 'channels') {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => ExplorePage(api: widget.api),
@@ -167,6 +182,14 @@ class _SuperAppHomeState extends State<SuperAppHome> {
                 }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'legacy',
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.account_balance_outlined),
+                    title: Text('Legacy bank deductions'),
+                  ),
+                ),
                 PopupMenuItem(
                   value: 'channels',
                   child: ListTile(
