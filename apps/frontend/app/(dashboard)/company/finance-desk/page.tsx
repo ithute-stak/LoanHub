@@ -6,6 +6,7 @@ import { ArrowDownLeft, ArrowUpRight, BookOpen, CalendarDays, HandCoins, Receipt
 import { listJournalEntries } from "@/api/accounting";
 import { branchApi } from "@/api/branch";
 import { useTenant } from "@/provider/tenantProvider";
+import { PlusCircle } from "lucide-react";
 import type { Branch } from "@/types/branch";
 import { api } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
@@ -23,6 +24,7 @@ type CashSession = {
   id: string; status: "open" | "closed"; business_date: string; branch_id: string | null;
   counted_opening: string; cash_movement: string; expected_closing: string;
   counted_closing: string | null; variance: string | null;
+  float_topups: Array<{amount: string; source: string; reference: string; reason: string; recorded_at: string}>;
   coverage_note: string;
 };
 type LegacyReceipt = {id: string; receipt_reference: string; description: string; amount: string; entry_date: string; status: string};
@@ -41,7 +43,7 @@ function periodStart(period: Period, today: Date) {
   return localDate(first);
 }
 export default function FinanceDeskPage() {
-  const {activeCompanyId, activeBranchId} = useTenant();
+  const {activeCompanyId, activeBranchId, activeRole} = useTenant();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchSelection, setBranchSelection] = useState("");
   const selectedBranchId = branchSelection || activeBranchId || null;
@@ -55,6 +57,11 @@ export default function FinanceDeskPage() {
   const [closing, setClosing] = useState("");
   const [cashNote, setCashNote] = useState("");
   const [cashBusy, setCashBusy] = useState(false);
+  const [floatAmount, setFloatAmount] = useState("");
+  const [floatSource, setFloatSource] = useState("owner_float");
+  const [floatReason, setFloatReason] = useState("");
+  const [floatReference, setFloatReference] = useState("");
+  const [floatBusy, setFloatBusy] = useState(false);
   const [report, setReport] = useState<FinanceReport | null>(null);
   const [legacyReceipts, setLegacyReceipts] = useState<LegacyReceipt[]>([]);
   const [folio, setFolio] = useState("");
@@ -119,6 +126,24 @@ export default function FinanceDeskPage() {
       toast.error(getErrorMessage(error, "Could not save cash session"));
     } finally { setCashBusy(false); }
   }
+  async function addCashFloat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!cashSession || cashSession.status !== "open") return;
+    const value = Number(floatAmount);
+    if (!Number.isFinite(value) || value <= 0) { toast.error("Enter a positive float amount."); return; }
+    setFloatBusy(true);
+    try {
+      await api.post(`/accounting/daily-cash/${cashSession.id}/top-up`, {
+        amount: value, source: floatSource, reference: floatReference.trim(),
+        reason: floatReason.trim(),
+      });
+      toast.success("Cash float added and recorded in the ledger");
+      setFloatAmount(""); setFloatReason(""); setFloatReference("");
+      await reload();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Could not add cash float"));
+    } finally { setFloatBusy(false); }
+  }
   async function saveLegacyReceipt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsed = Number(legacyAmount);
@@ -159,12 +184,12 @@ export default function FinanceDeskPage() {
     } finally { setSaving(false); }
   }
   return <div className="mx-auto w-full max-w-[1600px] space-y-6 pb-10">
-    <div className="relative overflow-hidden rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background p-5 shadow-sm sm:p-8">
+    <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div><p className="text-xs font-bold uppercase tracking-widest text-primary">Payments & Finance</p><h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Daily Finance Desk</h1><p className="mt-2 text-sm text-muted-foreground">A focused workspace for daily cash control, expenses, borrower collections and financial reporting.</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-widest text-primary">Payments & Finance</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Daily Finance Desk</h1><p className="mt-2 text-sm text-muted-foreground">A focused workspace for daily cash control, expenses, borrower collections and financial reporting.</p></div>
         <Button variant="outline" onClick={() => void reload()} disabled={loading}><RefreshCcw className="mr-2 h-4 w-4"/>Refresh</Button>
       </div>
-      <div className="mt-6 flex flex-wrap items-end gap-3 rounded-2xl border bg-background/70 p-3 sm:p-4">
+      <div className="mt-4 flex flex-wrap items-end gap-3 border-t pt-4">
         {branches.length ? <div className="space-y-1"><Label htmlFor="finance-branch">Branch</Label><select id="finance-branch" className="h-11 w-full min-w-48 rounded-xl border bg-background px-3 text-sm" value={selectedBranchId ?? ""} onChange={e => setBranchSelection(e.target.value)}><option value="">All-company / unassigned cash</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div> : null}
         <div className="space-y-1"><Label htmlFor="finance-date">Through date</Label><Input className="h-11" id="finance-date" type="date" value={asOf} onChange={e => setAsOf(e.target.value)} max={localDate(new Date())}/></div>
         <div className="flex flex-wrap gap-1 rounded-xl border p-1">{(["day","week","month","year"] as Period[]).map(p => <Button key={p} type="button" size="sm" variant={period === p ? "default" : "ghost"} onClick={() => setPeriod(p)}>{({day:"Day",week:"Week",month:"Month",year:"Year"})[p]}</Button>)}</div>
@@ -179,10 +204,11 @@ export default function FinanceDeskPage() {
     </div>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold tracking-tight">Daily operations</h2><p className="text-xs text-muted-foreground">Choose a task below; your reports and balances stay visible above.</p></div><span className="rounded-full border bg-muted/30 px-3 py-1 text-xs font-semibold text-muted-foreground">{cashSession?.status === "closed" ? "Cash day closed" : cashSession?.status === "open" ? "Cash day open" : "Cash day not opened"}</span></div>
-      <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl border bg-muted/40 p-2 md:grid-cols-4">
-        <TabsTrigger value="cash" className="min-h-12 w-full rounded-xl px-2 text-xs font-semibold sm:px-4 sm:text-sm"><Wallet className="mr-2 h-4 w-4"/>Cash day</TabsTrigger>
+      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-muted/50 p-1.5 md:grid-cols-5">
+        <TabsTrigger value="cash" className="min-h-11 w-full rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><Wallet className="mr-2 h-4 w-4"/>Cash day</TabsTrigger>
         <TabsTrigger value="expenses" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ReceiptText className="mr-2 h-4 w-4"/>Expenses</TabsTrigger>
         <TabsTrigger value="payments" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ArrowDownLeft className="mr-2 h-4 w-4"/>Payments</TabsTrigger>
+        <TabsTrigger value="legacy" className="min-h-11 w-full rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><BookOpen className="mr-2 h-4 w-4"/>Legacy folio</TabsTrigger>
         <TabsTrigger value="reports" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><HandCoins className="mr-2 h-4 w-4"/>Reports & links</TabsTrigger>
       </TabsList>
       <TabsContent value="cash" className="space-y-4">
@@ -208,6 +234,31 @@ export default function FinanceDeskPage() {
         </>}
       </form>
     </CardContent></Card>
+        {cashSession?.status === "open" && (activeRole === "company_owner" || activeRole === "branch_manager") ? (
+          <Card className="rounded-2xl border-primary/20 shadow-sm">
+            <CardHeader><CardTitle className="flex items-center gap-2"><PlusCircle className="h-5 w-5 text-primary"/> Top up opening cash</CardTitle>
+              <p className="text-sm text-muted-foreground">Add physical cash to this branch without changing the original opening count. Every addition is posted to the ledger and included once in expected closing cash.</p>
+            </CardHeader>
+            <CardContent className="grid gap-5 lg:grid-cols-2">
+              <form onSubmit={addCashFloat} className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1"><Label htmlFor="float-amount">Amount (LSL)</Label><Input id="float-amount" type="number" min="0.01" step="0.01" required value={floatAmount} onChange={e => setFloatAmount(e.target.value)}/></div>
+                  <div className="space-y-1"><Label htmlFor="float-source">Source of cash</Label><select id="float-source" value={floatSource} onChange={e => setFloatSource(e.target.value)} className="h-10 w-full rounded-lg border bg-background px-3"><option value="owner_float">Owner capital</option><option value="bank_withdrawal">Bank withdrawal</option><option value="other">Other — suspense</option></select></div>
+                </div>
+                <div className="space-y-1"><Label htmlFor="float-reference">Unique receipt / transfer reference</Label><Input id="float-reference" required minLength={4} maxLength={100} value={floatReference} onChange={e => setFloatReference(e.target.value)}/></div>
+                <div className="space-y-1"><Label htmlFor="float-reason">Reason</Label><Textarea id="float-reason" required minLength={5} value={floatReason} onChange={e => setFloatReason(e.target.value)}/></div>
+                <Button disabled={floatBusy} type="submit"><PlusCircle className="mr-2 h-4 w-4"/>{floatBusy ? "Adding cash..." : "Confirm cash top-up"}</Button>
+              </form>
+              <div className="rounded-xl bg-muted/30 p-4">
+                <p className="mb-3 text-sm font-semibold">Float additions today</p>
+                {(cashSession.float_topups ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No additional float recorded yet.</p> : cashSession.float_topups.map(item => <div key={item.reference} className="mb-2 flex justify-between gap-3 border-b pb-2 text-sm"><div><p className="font-semibold">{item.reference}</p><p className="text-xs text-muted-foreground">{item.reason}</p></div><strong>{formatMoney(Number(item.amount))}</strong></div>)}
+                <div className="mt-4 flex justify-between border-t pt-3 text-sm"><span>Original opening cash</span><strong>{formatMoney(Number(cashSession.counted_opening))}</strong></div>
+                <div className="mt-2 flex justify-between text-sm"><span>Added float</span><strong>{formatMoney((cashSession.float_topups ?? []).reduce((sum, item) => sum + Number(item.amount), 0))}</strong></div>
+                <div className="mt-2 flex justify-between border-t pt-3 font-bold"><span>Opening cash + float</span><span>{formatMoney(Number(cashSession.counted_opening) + (cashSession.float_topups ?? []).reduce((sum, item) => sum + Number(item.amount), 0))}</span></div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
       </TabsContent>
       <TabsContent value="expenses" className="space-y-4">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -227,6 +278,8 @@ export default function FinanceDeskPage() {
       </TabsContent>
       <TabsContent value="payments" className="space-y-4">
         <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p className="font-semibold">LoanHub client payments</p><p className="mt-1 text-muted-foreground">For clients already in LoanHub, use the existing verified repayment process.</p><Button asChild variant="outline" className="mt-3"><Link href="/company/payments">Open LoanHub payments</Link></Button></div>
+      </TabsContent>
+      <TabsContent value="legacy" className="space-y-4">
         <Card className="rounded-2xl"><CardHeader><CardTitle>Old cash-out / legacy folio payments</CardTitle><p className="text-sm text-muted-foreground">For clients whose cash-out predates LoanHub. A receipt is posted to cash, bank or electronic clearing against the suspense account; it does not silently repay an unrelated loan.</p></CardHeader>
       <CardContent className="grid gap-5 xl:grid-cols-[1fr_1.2fr]">
         <form onSubmit={saveLegacyReceipt} className="space-y-3">
@@ -256,7 +309,7 @@ export default function FinanceDeskPage() {
   </div>;
 }
 function Metric({icon,title,amount,hint}:{icon:ReactNode;title:string;amount:number|null;hint:string}) {
-  return <Card className="rounded-2xl border-border/80 bg-card shadow-sm transition-colors hover:border-primary/30"><CardContent className="space-y-3 p-5 sm:p-6"><div className="flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</span>{title}</div><p className="break-words text-2xl font-black tracking-tight sm:text-3xl">{amount === null ? "Not yet available" : formatMoney(amount)}</p><p className="text-xs leading-relaxed text-muted-foreground">{hint}</p></CardContent></Card>;
+  return <Card className="rounded-2xl border-border/80 bg-card shadow-sm transition-colors hover:border-primary/30"><CardContent className="space-y-2 p-4 sm:p-5"><div className="flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</span>{title}</div><p className="break-words text-2xl font-extrabold tracking-tight">{amount === null ? "Not yet available" : formatMoney(amount)}</p><p className="text-xs leading-relaxed text-muted-foreground">{hint}</p></CardContent></Card>;
 }
 function Action({href,icon,title,description}:{href:string;icon:ReactNode;title:string;description:string}) {
   return <Link href={href} className="flex min-h-28 items-start gap-3 rounded-2xl border bg-card p-5 shadow-sm transition hover:border-primary/40 hover:bg-primary/5">{icon}<div><p className="font-bold">{title}</p><p className="mt-1 text-xs text-muted-foreground">{description}</p></div></Link>;

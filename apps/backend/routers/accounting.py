@@ -209,6 +209,70 @@ class DailyCashOpen(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class DailyCashFloatTopUp(BaseModel):
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    source: str = Field(pattern="^(owner_float|bank_withdrawal|other)$")
+    reference: str = Field(min_length=4, max_length=100)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/daily-cash/{session_id}/top-up", status_code=201)
+def top_up_daily_cash(
+    session_id: UUID,
+    payload: DailyCashFloatTopUp,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == session_id,
+        CompanyOperatingRecord.company_id == resolve_scope(context, None),
+        CompanyOperatingRecord.module == "cash_control",
+        CompanyOperatingRecord.record_type == "daily_cash_session",
+    ).with_for_update().first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Cash session not found")
+    if context.branch_id and context.role == UserRole.BRANCH_MANAGER and record.branch_id != context.branch_id:
+        raise HTTPException(status_code=403, detail="This cash session belongs to another branch")
+    if record.status != "open":
+        raise HTTPException(status_code=409, detail="Cash cannot be topped up after closing")
+    if record.data.get("business_date") != accounting_business_date(db, record.company_id).isoformat():
+        raise HTTPException(status_code=409, detail="Only today's open cash session can receive float")
+    reference = payload.reference.strip().upper()
+    key, _ = scope_key(record.company_id)
+    journal_reference = f"cash-float:{reference}"
+    if db.query(JournalEntry.id).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.reference_type == "daily_cash_float",
+        JournalEntry.reference_id == journal_reference,
+    ).first():
+        raise HTTPException(status_code=409, detail="This cash float reference is already recorded")
+    credit_code = {"owner_float": "3000", "bank_withdrawal": "1010", "other": "2990"}[payload.source]
+    entry = post_codes(
+        db, company_id=record.company_id, branch_id=record.branch_id,
+        debit_code="1000", credit_code=credit_code, amount=payload.amount,
+        description=f"Daily cash float | {payload.source} | {payload.reason.strip()}",
+        reference_type="daily_cash_float", reference_id=journal_reference,
+        user_id=context.user.id,
+    )
+    db.flush()
+    record.data = {**record.data, "float_topups": [
+        *(record.data.get("float_topups") or []),
+        {"amount": str(payload.amount), "source": payload.source,
+         "reference": reference, "reason": payload.reason.strip(),
+         "journal_entry_id": str(entry.id),
+         "recorded_by_user_id": str(context.user.id),
+         "recorded_at": datetime.now(timezone.utc).isoformat()},
+    ]}
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Cash float reference already exists") from exc
+    db.refresh(record)
+    return _cash_session_payload(record, db)
+
+
 class DailyCashClose(BaseModel):
     counted_closing: Decimal = Field(ge=0, decimal_places=2)
     note: str = Field(min_length=5, max_length=500)
@@ -244,6 +308,7 @@ def _cash_session_payload(session: CompanyOperatingRecord, db: Session) -> dict:
         "id": str(session.id), "branch_id": str(session.branch_id) if session.branch_id else None,
         "business_date": cash_data["business_date"], "status": session.status,
         "counted_opening": str(opening), "cash_movement": str(movement),
+        "float_topups": cash_data.get("float_topups", []),
         "expected_closing": str(expected),
         "counted_closing": counted,
         "variance": str(Decimal(str(counted)) - expected) if counted is not None else None,
