@@ -90,8 +90,11 @@ export const bootstrapAuth = createAsyncThunk<
         const accessToken = storedToken ?? await refreshAccessToken();
 
         const meResponse = await api.get<AuthUser>("/auth/me");
-        persistSession(accessToken, meResponse.data);
-        return { accessToken, user: meResponse.data };
+        // /auth/me may itself renew an expired token in the response interceptor.
+        // Never overwrite that newer token with the stale startup snapshot.
+        const currentToken = getStoredValue(StorageKeys.accessToken) ?? accessToken;
+        persistSession(currentToken, meResponse.data);
+        return { accessToken: currentToken, user: meResponse.data };
     } catch (error: unknown) {
         // Network outages and 5xx errors do not invalidate a logged-in user.
         // Avoid clearing saved session data during initial hydration.
