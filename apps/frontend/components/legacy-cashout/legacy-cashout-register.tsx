@@ -877,7 +877,7 @@ export function LegacyCashoutRegister() {
                   </div>
                 ) : null}
                 {identityCheckedValue === form.identity_number.trim() && identityCheckedValue && !identityCheck ? (
-                  <InfoPanel>Passport identity recorded. LoanHub's global duplicate lookup currently supports national IDs only; this passport has not been checked for an existing borrower. The posting checks still apply.</InfoPanel>
+                  <InfoPanel>Passport identity recorded. LoanHub&apos;s global duplicate lookup currently supports national IDs only; this passport has not been checked for an existing borrower. The posting checks still apply.</InfoPanel>
                 ) : null}
               </div>
             </WizardSection>
