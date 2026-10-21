@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { JournalEntry } from "@/types/accounting";
 import { toast } from "@/utils/toast";
 import { getErrorMessage } from "@/utils/apiError";
@@ -46,6 +47,7 @@ export default function FinanceDeskPage() {
   const selectedBranchId = branchSelection || activeBranchId || null;
   useEffect(() => { if (!activeCompanyId) return; void branchApi.getByCompany(activeCompanyId).then(res => setBranches(res.data.filter(row => row.is_active))).catch(() => setBranches([])); }, [activeCompanyId]);
   const [period, setPeriod] = useState<Period>("day");
+  const [activeTab, setActiveTab] = useState("cash");
   const [asOf, setAsOf] = useState(() => localDate(new Date()));
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
@@ -175,7 +177,15 @@ export default function FinanceDeskPage() {
       <Metric icon={<ArrowDownLeft className="h-5 w-5"/>} title="Client repayments" amount={repaidTotal} hint={`${report?.repayments.count ?? 0} successful loan repayments`}/>
       <Metric icon={<Wallet className="h-5 w-5"/>} title="Expected closing cash" amount={cashSession ? Number(cashSession.expected_closing) : null} hint={cashSession ? (cashSession.status === "closed" ? "Closed — see confirmed count below" : "Posted cash movements since opening only") : "Open today’s cash session to begin"}/>
     </div>
-    <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+      <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-2xl bg-muted/70 p-2">
+        <TabsTrigger value="cash" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><Wallet className="mr-2 h-4 w-4"/>Cash day</TabsTrigger>
+        <TabsTrigger value="expenses" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ReceiptText className="mr-2 h-4 w-4"/>Expenses</TabsTrigger>
+        <TabsTrigger value="payments" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ArrowDownLeft className="mr-2 h-4 w-4"/>Payments</TabsTrigger>
+        <TabsTrigger value="reports" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><HandCoins className="mr-2 h-4 w-4"/>Reports & links</TabsTrigger>
+      </TabsList>
+      <TabsContent value="cash" className="space-y-4">
+        <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
       <div className="space-y-3 rounded-xl bg-muted/30 p-4">
         <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Today&apos;s cash session</p>
         <p className="text-xl font-bold">{cashSession ? (cashSession.status === "closed" ? "Closed" : "Open") : "Not opened yet"}</p>
@@ -197,7 +207,9 @@ export default function FinanceDeskPage() {
         </>}
       </form>
     </CardContent></Card>
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+      </TabsContent>
+      <TabsContent value="expenses" className="space-y-4">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
       <Card className="rounded-2xl"><CardHeader><CardTitle>Record a daily cash expense</CardTitle><p className="text-sm text-muted-foreground">Creates a posted expense journal for today using LoanHub&apos;s existing accounting service. Report date filters do not change the posting date. Cash expenses only; use the accounting workspace for other payment methods.</p></CardHeader>
         <CardContent><form className="space-y-4" onSubmit={saveExpense}>
           <div className="space-y-1"><Label htmlFor="expense-category">Category</Label><select id="expense-category" className="h-10 w-full rounded-lg border bg-background px-3" value={category} onChange={e => setCategory(e.target.value)}>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
@@ -211,7 +223,10 @@ export default function FinanceDeskPage() {
         {loading ? <p className="text-sm text-muted-foreground">Loading activity…</p> : expenses.length === 0 ? <p className="rounded-xl border p-5 text-sm text-muted-foreground">No posted expenses in the selected period.</p> : expenses.slice(0, 15).map(e => <div key={e.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{e.description}</p><p className="text-xs text-muted-foreground">{e.entry_date} · {e.entry_number}</p></div><strong className="shrink-0">{formatMoney(e.total_debit)}</strong></div>)}
       </CardContent></Card>
     </div>
-    <Card className="rounded-2xl"><CardHeader><CardTitle>Old cash-out / legacy folio payments</CardTitle><p className="text-sm text-muted-foreground">For clients whose cash-out predates LoanHub. A receipt is posted to cash, bank or electronic clearing against the suspense account; it does not silently repay an unrelated loan.</p></CardHeader>
+      </TabsContent>
+      <TabsContent value="payments" className="space-y-4">
+        <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p className="font-semibold">LoanHub client payments</p><p className="mt-1 text-muted-foreground">For clients already in LoanHub, use the existing verified repayment process.</p><Button asChild variant="outline" className="mt-3"><Link href="/company/payments">Open LoanHub payments</Link></Button></div>
+        <Card className="rounded-2xl"><CardHeader><CardTitle>Old cash-out / legacy folio payments</CardTitle><p className="text-sm text-muted-foreground">For clients whose cash-out predates LoanHub. A receipt is posted to cash, bank or electronic clearing against the suspense account; it does not silently repay an unrelated loan.</p></CardHeader>
       <CardContent className="grid gap-5 xl:grid-cols-[1fr_1.2fr]">
         <form onSubmit={saveLegacyReceipt} className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="legacy-folio">Folio number</Label><Input id="legacy-folio" minLength={2} maxLength={80} required value={folio} onChange={e => setFolio(e.target.value)}/></div>
@@ -226,11 +241,16 @@ export default function FinanceDeskPage() {
         </div>
       </CardContent>
     </Card>
-    <div className="grid gap-3 md:grid-cols-3">
-      <Action href="/company/payments" icon={<ArrowDownLeft className="h-5 w-5"/>} title="Record client repayments" description="Use LoanHub's payment register and verified receipt posting."/>
+      </TabsContent>
+      <TabsContent value="reports" className="space-y-4">
+        <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p className="font-semibold">Financial reporting</p><p className="mt-1 text-muted-foreground">Choose the reporting period above. The summary cards remain visible on every tab and use successful payment transactions and posted journal entries.</p></div>
+        <div className="grid gap-3 md:grid-cols-3">
+      <Action href="/company/payments" icon={<ArrowDownLeft className="h-5 w-5"/>} title="Record client repayments" description="Use LoanHub&apos;s payment register and verified receipt posting."/>
       <Action href="/company/loans" icon={<ArrowUpRight className="h-5 w-5"/>} title="View loans & disbursements" description="Review every client loan and detailed disbursement records."/>
       <Action href="/company/accounting" icon={<BookOpen className="h-5 w-5"/>} title="Financial books" description="Open the full accounting journals, trial balance and statements."/>
     </div>
+      </TabsContent>
+    </Tabs>
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><CalendarDays className="mr-2 inline h-4 w-4"/>The cash close uses posted cash journals after opening. Legacy receipts are held in suspense until matched against the original cash-out records; the posting does not reduce a current LoanHub loan balance.</div>
   </div>;
 }
