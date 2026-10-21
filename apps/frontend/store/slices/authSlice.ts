@@ -1,10 +1,11 @@
+import axios from "axios";
 import {
     createAsyncThunk,
     createSlice,
     type PayloadAction,
 } from "@reduxjs/toolkit";
 
-import { api } from "@/lib/api";
+import { api, refreshAccessToken } from "@/lib/api";
 import {
     StorageKeys,
     clearAuthStorage,
@@ -17,7 +18,6 @@ import type {
     AuthUser,
     LoginRequest,
     LoginResponse,
-    RefreshResponse,
     UserRole,
 } from "@/types/auth";
 import { getErrorMessage } from "@/utils/apiError";
@@ -86,24 +86,24 @@ export const bootstrapAuth = createAsyncThunk<
     const storedUser = getStoredJson<AuthUser>(StorageKeys.authUser);
 
     try {
-        const accessToken: string = storedToken ?? (
-            await api.post<RefreshResponse>("/auth/refresh")
-        ).data.access_token;
-
-        if (!storedToken) {
-            setStoredValue(StorageKeys.accessToken, accessToken);
-        }
+        // Share the same single-flight rotation as background and 401 refresh.
+        const accessToken = storedToken ?? await refreshAccessToken();
 
         const meResponse = await api.get<AuthUser>("/auth/me");
         persistSession(accessToken, meResponse.data);
         return { accessToken, user: meResponse.data };
     } catch (error: unknown) {
-        clearAuthStorage();
+        // Network outages and 5xx errors do not invalidate a logged-in user.
+        // Avoid clearing saved session data during initial hydration.
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (status === 401 || status === 403) {
+            clearAuthStorage();
+        }
         if (!storedToken && !storedUser) {
             return null;
         }
         return thunkApi.rejectWithValue(
-            getErrorMessage(error, "Your session has expired"),
+            getErrorMessage(error, "Could not restore your session"),
         );
     }
 });
