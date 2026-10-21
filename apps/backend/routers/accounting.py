@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
     FINANCE_ROLES,
+    CASHIER_ROLES,
     TenantContext,
     get_user_context,
     require_tenant_roles,
@@ -176,6 +177,8 @@ def _cash_session_payload(session: CompanyOperatingRecord, db: Session) -> dict:
     movement = sum((Decimal(str(debit)) - Decimal(str(credit)) for debit, credit in rows), Decimal("0"))
     expected = opening + movement
     counted = cash_data.get("counted_closing")
+    if session.status == "closed" and cash_data.get("expected_closing_at_confirmation") is not None:
+        expected = Decimal(str(cash_data["expected_closing_at_confirmation"]))
     return {
         "id": str(session.id), "branch_id": str(session.branch_id) if session.branch_id else None,
         "business_date": cash_data["business_date"], "status": session.status,
@@ -200,7 +203,8 @@ def get_daily_cash_session(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    require_read(context)
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES | {UserRole.AUDITOR, UserRole.COMPLIANCE_OFFICER})
     company_id = resolve_scope(context, None)
     selected_branch = resolve_branch_scope(db, context, company_id, branch_id)
     ref = f"cash-day:{selected_branch or 'company'}:{business_date.isoformat()}"
@@ -219,7 +223,8 @@ def open_daily_cash_session(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    require_write(context)
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES)
     company_id = resolve_scope(context, None)
     branch = resolve_branch_scope(db, context, company_id, payload.branch_id)
     if payload.business_date != accounting_business_date(db, company_id):
@@ -256,7 +261,8 @@ def close_daily_cash_session(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    require_write(context)
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES)
     record = db.query(CompanyOperatingRecord).filter(
         CompanyOperatingRecord.id == session_id,
         CompanyOperatingRecord.company_id == resolve_scope(context, None),
@@ -265,6 +271,8 @@ def close_daily_cash_session(
     ).with_for_update().first()
     if record is None:
         raise HTTPException(status_code=404, detail="Cash session not found")
+    if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES and record.branch_id != context.branch_id:
+        raise HTTPException(status_code=403, detail="Cash sessions in another branch are not accessible")
     resolve_branch_scope(db, context, record.company_id, record.branch_id)
     if record.status != "open":
         raise HTTPException(status_code=409, detail="The cash day has already been closed")
