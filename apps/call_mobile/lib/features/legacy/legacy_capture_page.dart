@@ -77,21 +77,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         : http.post(uri, headers: headers, body: jsonEncode(body));
   }
 
-  Future<void> _signOut() async {
-    await _disconnectRealtime();
-    if (mounted) context.read<LegacyBloc>().add(const LegacyReset());
-    // Legacy module must not clear the shared LoanHub session.
-    token.clear();
-    groups = [];
-    rows = [];
-    memberships = [];
-    companyNames = {};
-    companyId.clear();
-    // Company selection remains owned by the parent session.
-    selectedGroup = null;
-    if (mounted) setState(() { configured = false; error = null; });
-  }
-
   Future<void> _resolveCompany() async {
     try {
       final response = await http.get(
