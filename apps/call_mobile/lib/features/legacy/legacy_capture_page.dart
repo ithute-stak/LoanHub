@@ -350,6 +350,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+      if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) { error = e.toString(); }
     if (mounted) setState(() => loading = false);
   }
@@ -422,6 +423,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Update saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+      if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) {
       error = e.toString();
     } finally {
