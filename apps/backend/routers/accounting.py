@@ -91,6 +91,7 @@ from services.accounting_service import (
     post_depreciation_adjustment,
     post_doubtful_debt_allowance,
     post_expense,
+    post_codes,
     post_prepayment_adjustment,
     reverse_period_adjustment,
     post_vat_transaction,
@@ -194,6 +195,92 @@ def _cash_session_payload(session: CompanyOperatingRecord, db: Session) -> dict:
         "closing_note": cash_data.get("closing_note"),
         "coverage_note": "Reconciles only posted cash-account (1000) journal lines recorded after opening for this branch and date. Unposted, unassigned or missing cash movements must be reconciled separately.",
     }
+
+
+class LegacyFolioReceiptCreate(BaseModel):
+    folio_number: str = Field(min_length=2, max_length=80)
+    client_name: str = Field(min_length=3, max_length=180)
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    payment_channel: str = Field(default="cash", pattern="^(cash|bank|electronic)$")
+    receipt_reference: str = Field(min_length=4, max_length=120)
+    branch_id: UUID | None = None
+
+
+@router.post("/legacy-folio-receipts", status_code=201)
+def record_legacy_folio_receipt(
+    payload: LegacyFolioReceiptCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES)
+    company_id = resolve_scope(context, None)
+    branch = resolve_branch_scope(db, context, company_id, payload.branch_id)
+    folio = payload.folio_number.strip().upper()
+    receipt = payload.receipt_reference.strip().upper()
+    if len(folio) < 2 or len(receipt) < 4 or len(payload.client_name.strip()) < 3:
+        raise HTTPException(status_code=422, detail="Provide a valid folio, client name and unique receipt reference")
+    # Receipt references are unique across the company; repeated form submits
+    # must not post the same money twice. Folio numbers themselves can recur.
+    key, _ = scope_key(company_id)
+    if db.query(JournalEntry.id).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.reference_type == "legacy_folio_receipt",
+        JournalEntry.reference_id == receipt,
+    ).first():
+        raise HTTPException(status_code=409, detail="This legacy receipt reference has already been recorded")
+    account = {"cash": "1000", "bank": "1010", "electronic": "1020"}[payload.payment_channel]
+    entry = post_codes(
+        db, company_id=company_id, branch_id=branch,
+        debit_code=account, credit_code="2990", amount=payload.amount,
+        description=f"Legacy folio {folio} | {payload.client_name.strip()} | {payload.payment_channel} | pending reconciliation",
+        reference_type="legacy_folio_receipt", reference_id=receipt,
+        user_id=context.user.id,
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Duplicate legacy receipt reference") from exc
+    result = entry_query(db, key).filter(JournalEntry.id == entry.id).first()
+    return {
+        "id": str(result.id), "receipt_reference": receipt,
+        "folio_number": folio, "client_name": payload.client_name.strip(),
+        "amount": str(payload.amount), "payment_channel": payload.payment_channel,
+        "entry_date": result.entry_date.isoformat(), "status": "pending_reconciliation",
+        "journal_entry_id": str(result.id),
+    }
+
+
+@router.get("/legacy-folio-receipts")
+def list_legacy_folio_receipts(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    if not context.is_platform_admin:
+        require_tenant_roles(context, CASHIER_ROLES | {UserRole.AUDITOR, UserRole.COMPLIANCE_OFFICER})
+    company_id = resolve_scope(context, None)
+    branch = resolve_branch_scope(db, context, company_id, branch_id)
+    key, _ = scope_key(company_id)
+    query = db.query(JournalEntry).filter(
+        JournalEntry.scope_key == key,
+        JournalEntry.reference_type == "legacy_folio_receipt",
+        JournalEntry.status == "posted",
+    )
+    if branch is not None:
+        query = query.filter(JournalEntry.branch_id == branch)
+    if from_date:
+        query = query.filter(JournalEntry.entry_date >= from_date)
+    if to_date:
+        query = query.filter(JournalEntry.entry_date <= to_date)
+    rows = query.order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc()).limit(500).all()
+    return [{"id": str(row.id), "receipt_reference": row.reference_id,
+             "description": row.description, "amount": str(row.total_debit),
+             "entry_date": row.entry_date.isoformat(), "status": "pending_reconciliation"}
+            for row in rows]
 
 
 @router.get("/daily-cash")
