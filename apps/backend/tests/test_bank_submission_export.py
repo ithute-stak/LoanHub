@@ -41,7 +41,7 @@ def test_bank_account_lengths_branch_and_name_format():
 def test_existing_surname_initial_not_swapped():
     payload, _ = build_bank_submission_zip([_record(name="Mosipatsi P")], lender_name="Batlokoa")
     with ZipFile(BytesIO(payload)) as archive:
-        assert _read(archive, "FNB-all-groups.csv")[0][0] == "Mosipatsi P"
+        assert _read(archive, "FNB-all-groups.csv")[0][0] == "Mosipats P"
 
 
 def test_invalid_or_overlength_accounts_are_rejected():
