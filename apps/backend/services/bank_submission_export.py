@@ -44,7 +44,7 @@ def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
 
 def _client_name(name: object) -> str:
     """Surname and first initial; keep the initial within 10 characters."""
-    value = re.sub(r"\\s+", " ", str(name or "").strip())
+    value = re.sub(r"\s+", " ", str(name or "").strip())
     value = re.sub(r"[^\w .'-]", "", value, flags=re.UNICODE)
     parts = value.split()
     if not parts:
@@ -102,12 +102,12 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
             continue
         custom_filename = record.get("custom_filename")
         if custom_filename:
-            if not isinstance(custom_filename, str) or not re.fullmatch(r"CUSTOM-[A-Za-z0-9_-]{1,100}\\.csv", custom_filename):
+            if not isinstance(custom_filename, str) or not re.fullmatch(r"CUSTOM-[A-Za-z0-9_-]{1,100}\.csv", custom_filename):
                 omitted["invalid_custom_group"] += 1
                 continue
             filename = custom_filename
         elif employer_grouping:
-            employer = re.sub(r"\\s+", " ", str(record.get("employer") or "").strip())
+            employer = re.sub(r"\s+", " ", str(record.get("employer") or "").strip())
             if not employer or len(employer) > 120:
                 omitted["missing_employer"] += 1
                 continue
