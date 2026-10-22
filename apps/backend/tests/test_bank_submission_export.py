@@ -112,3 +112,14 @@ def test_zip_includes_csv_import_guidance_without_mutating_bank_data():
         assert _read(archive, "FNB-all-groups.csv")[0][1:3] == [
             "60123456789", "280061",
         ]
+
+
+def test_csv_amount_is_unquoted_machine_readable_decimal():
+    payload, _ = build_bank_submission_zip(
+        [_record(name="Lephe N", account="60123456789", installment="125.5",
+                 balance="500")], lender_name="Batlokoa",
+    )
+    with ZipFile(BytesIO(payload)) as archive:
+        raw = archive.read("FNB-all-groups.csv").decode("utf-8").strip()
+        assert raw == "Lephe N,60123456789,280061,125.50,Batlokoa"
+        assert _read(archive, "FNB-all-groups.csv")[0][3] == "125.50"
