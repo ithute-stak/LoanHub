@@ -158,3 +158,19 @@ def test_bank_csv_matches_accepted_windows_samples_without_customer_data(bank, a
         assert sheet["C1"].value == branch and sheet["C1"].data_type == "s"
         assert sheet["D1"].value == 125.5 and sheet["D1"].data_type == "n"
         assert sheet["D1"].number_format == "0.00"
+
+
+def test_comma_separated_source_name_stays_in_column_a():
+    payload, summary = build_bank_submission_zip(
+        [_record(name="Mothea, Matsepo", account="60123456789", installment="450")],
+        lender_name="Batlokoa", include_spreadsheets=True,
+    )
+    assert summary["rows"] == 1
+    with ZipFile(BytesIO(payload)) as archive:
+        raw = archive.read("FNB-all-groups.csv")
+        lines = list(csv.reader(StringIO(raw.decode("utf-8"))))
+        assert lines == [["Mothea M", "60123456789", "280061", "450.00", "Batlokoa"]]
+        assert len(lines[0]) == 5
+        sheet = load_workbook(BytesIO(archive.read("FNB-all-groups.xlsx"))).active
+        assert sheet["A1"].value == "Mothea M"
+        assert sheet["B1"].value == "60123456789"
