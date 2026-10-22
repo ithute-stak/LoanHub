@@ -43,8 +43,19 @@ def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
 
 
 def _client_name(name: object) -> str:
-    """Surname and first initial; keep the initial within 10 characters."""
-    value = re.sub(r"\s+", " ", str(name or "").strip())
+    """One CSV cell: surname and first-name initial, never two CSV columns.
+
+    Accept both 'Given Surname' and 'Surname, Given' source conventions.
+    All punctuation that could be interpreted as a CSV delimiter is removed.
+    """
+    raw = str(name or "").strip()
+    if "," in raw:
+        surname, given = raw.split(",", 1)
+        surname = re.sub(r"[^\w .'-]", "", surname).strip()
+        given = re.sub(r"[^\w .'-]", "", given).strip()
+        if surname and given:
+            return f"{surname[:8]} {given[0].upper()}"[:10]
+    value = re.sub(r"\s+", " ", raw)
     value = re.sub(r"[^\w .'-]", "", value, flags=re.UNICODE)
     parts = value.split()
     if not parts:
@@ -55,7 +66,7 @@ def _client_name(name: object) -> str:
         surname, initial = " ".join(parts[:-1]), parts[-1][0]
     else:
         surname, initial = parts[-1], parts[0][0]
-    return f"{surname[:8]} {initial.upper()}"
+    return f"{surname[:8]} {initial.upper()}"[:10]
 
 
 def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer_grouping: bool = False, include_spreadsheets: bool = False) -> tuple[bytes, dict]:
