@@ -322,6 +322,17 @@ class RedisResponseCache:
 response_cache = RedisResponseCache()
 
 
+# Conservatively scoped reference endpoints independent of payment posting.
+_INDEPENDENT_REFERENCE_PATHS = {"/api/v1/hr/departments", "/api/v1/hr/positions"}
+_PAYMENT_WRITE_PATHS = {"/api/v1/payments"}
+
+
+def _reference_cache_scope(path: str, generation_scope: str) -> str:
+    if path.rstrip("/") in _INDEPENDENT_REFERENCE_PATHS:
+        return f"{generation_scope}:hr-reference"
+    return generation_scope
+
+
 class TenantResponseCacheMiddleware(BaseHTTPMiddleware):
     """Cache safe tenant-scoped JSON reads and invalidate them after writes.
 
@@ -334,7 +345,9 @@ class TenantResponseCacheMiddleware(BaseHTTPMiddleware):
         identity, generation_scope = _request_identity(request)
 
         if _request_is_cacheable(request):
-            generation = await response_cache.generation(generation_scope)
+            generation = await response_cache.generation(
+                _reference_cache_scope(request.url.path, generation_scope)
+            )
             key = response_cache.response_key(
                 request=request,
                 identity=identity,
@@ -381,5 +394,10 @@ class TenantResponseCacheMiddleware(BaseHTTPMiddleware):
             and request.url.path.startswith("/api/v1")
         ):
             await response_cache.bump_generation(generation_scope)
+            # Other writes conservatively invalidate HR reference entries.
+            if request.url.path.rstrip("/") not in _PAYMENT_WRITE_PATHS:
+                await response_cache.bump_generation(
+                    f"{generation_scope}:hr-reference"
+                )
 
         return response
