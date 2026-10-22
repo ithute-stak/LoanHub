@@ -369,13 +369,17 @@ export function installReduxHttpCache(
         policy: CachePolicy,
         path: string,
     ): Promise<AxiosResponse> {
+        const requestRevision = store.getState().httpCache.revision;
         store.dispatch(cacheNetworkRequest());
         const response = await networkAdapter(config);
         const responseHeaders = responseHeadersToAxiosHeaders(response.headers);
         responseHeaders.set("X-LoanHub-Client-Cache", "MISS");
         response.headers = responseHeaders;
 
-        if (cacheableResponse(response)) {
+        if (
+            requestRevision === store.getState().httpCache.revision &&
+            cacheableResponse(response)
+        ) {
             const now = Date.now();
             const explicitTags = config.loanHubCache?.tags ?? [];
             store.dispatch(
@@ -420,6 +424,7 @@ export function installReduxHttpCache(
 
         const state = store.getState();
         const identity = requestKey(state, config);
+        const inflightKey = `${identity.key}:${state.httpCache.revision}`;
         const configured = policyForPath(path);
         const policy: CachePolicy = {
             ttlMs: config.loanHubCache?.ttlMs ?? configured.ttlMs,
@@ -445,7 +450,7 @@ export function installReduxHttpCache(
             policy.staleWhileRevalidateMs > 0
         ) {
             store.dispatch(cacheHit({ key: identity.key, accessedAt: now }));
-            if (!inflightRequests.has(identity.key)) {
+            if (!inflightRequests.has(inflightKey)) {
                 const backgroundConfig = {
                     ...config,
                     signal: undefined,
@@ -456,9 +461,9 @@ export function installReduxHttpCache(
                     policy,
                     path,
                 ).finally(() => {
-                    inflightRequests.delete(identity.key);
+                    inflightRequests.delete(inflightKey);
                 });
-                inflightRequests.set(identity.key, backgroundRequest);
+                inflightRequests.set(inflightKey, backgroundRequest);
                 void backgroundRequest.catch(() => undefined);
             }
             return responseFromEntry(entry, config, "STALE");
@@ -469,7 +474,7 @@ export function installReduxHttpCache(
         }
         store.dispatch(cacheMiss());
 
-        const inflight = inflightRequests.get(identity.key);
+        const inflight = inflightRequests.get(inflightKey);
         if (inflight) {
             store.dispatch(cacheDeduplicated());
             return inflight;

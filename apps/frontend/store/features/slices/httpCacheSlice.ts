@@ -25,6 +25,7 @@ type HttpCacheState = {
     deduplicated: number;
     networkRequests: number;
     invalidations: number;
+    revision: number;
 };
 
 const MAX_CACHE_ENTRIES = 250;
@@ -36,6 +37,7 @@ const initialState: HttpCacheState = {
     deduplicated: 0,
     networkRequests: 0,
     invalidations: 0,
+    revision: 0,
 };
 
 function evictLeastRecentlyUsed(state: HttpCacheState): void {
@@ -106,6 +108,8 @@ const httpCacheSlice = createSlice({
             if (removed > 0) {
                 state.invalidations += 1;
             }
+            // In-flight requests exist even when no entry has been stored yet.
+            state.revision += 1;
         },
         cacheTagsInvalidated(
             state,
@@ -140,6 +144,7 @@ const httpCacheSlice = createSlice({
         cacheCleared(state) {
             state.entries = {};
             state.invalidations += 1;
+            state.revision += 1;
         },
     },
 });
