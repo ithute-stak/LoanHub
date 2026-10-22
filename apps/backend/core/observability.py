@@ -56,6 +56,7 @@ class RequestObservabilityMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 status_code=status_code,
                 duration_ms=duration_ms,
+                cache_status=(response.headers.get('X-LoanHub-Server-Cache') if response is not None else None),
                 client=(request.client.host if request.client else None),
             )
 
