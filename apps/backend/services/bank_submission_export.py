@@ -13,11 +13,7 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
 GROUPS = {"FORCE": "force", "CIVIL": "civil", "SE": "s-e", "S/E": "s-e", "S-E": "s-e"}
-BANK_ACCOUNT_LENGTHS = {
-    # Generic conservative bounds; bank-specific validation belongs to the
-    # bank mandate validator when authoritative rules are supplied.
-    "default": (6, 20),
-}
+BANK_ACCOUNT_LENGTHS = {"PB": 13, "STD": 13, "FNB": 11, "NB": 11}
 
 
 def _group(value: object) -> str | None:
@@ -29,7 +25,14 @@ def _bank(value: object) -> str:
     name = re.sub(r"\s+", " ", str(value or "").strip())
     if re.search(r"\b(FNB|FIRST NATIONAL BANK)\b", name, flags=re.IGNORECASE):
         return "FNB"
-    return name.upper()
+    upper = name.upper()
+    if upper in {"LPB", "PB", "LESOTHO POSTBANK", "POSTBANK"}:
+        return "PB"
+    if upper in {"STD", "STANDARD BANK", "STANDARD LESOTHO BANK"}:
+        return "STD"
+    if upper in {"NB", "NEDBANK", "NEDBANK LESOTHO"}:
+        return "NB"
+    return upper
 
 
 def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
@@ -40,10 +43,19 @@ def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
 
 
 def _client_name(name: object) -> str:
-    # Strictly fewer than 11 characters; never allow spreadsheet formula text.
-    value = re.sub(r"\s+", " ", str(name or "").strip())
-    value = re.sub(r"[^\w .'-]", "", value, flags=re.UNICODE)
-    return value[:10].strip()
+    """Surname and first initial; keep the initial within 10 characters."""
+    value = re.sub(r"\\s+", " ", str(name or "").strip())
+    value = re.sub(r"[^\\w .'-]", "", value, flags=re.UNICODE)
+    parts = value.split()
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0][:10]
+    if len(parts[-1].strip(".")) == 1:
+        surname, initial = " ".join(parts[:-1]), parts[-1][0]
+    else:
+        surname, initial = parts[-1], parts[0][0]
+    return f"{surname[:8]} {initial.upper()}"
 
 
 def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer_grouping: bool = False, include_spreadsheets: bool = False) -> tuple[bytes, dict]:
@@ -55,7 +67,7 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
     """
     grouped: dict[str, list[tuple[str, str, str, str, str]]] = defaultdict(list)
     omitted = defaultdict(int)
-    company = _client_name(str(lender_name or "").split(" ")[0])
+    company = re.sub(r"[^\\w .'-]", "", str(lender_name or "").split(" ")[0])[:10].strip()
     if not company:
         raise ValueError("Lending company name is missing")
     for record in records:
@@ -73,7 +85,10 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
             omitted["unknown_work_group"] += 1
             continue
         bank = _bank(record.get("bank"))
-        account = _digits(record.get("account"), min_length=6, max_length=20)
+        account = _digits(record.get("account"), min_length=1, max_length=20)
+        if account and bank in BANK_ACCOUNT_LENGTHS:
+            required_length = BANK_ACCOUNT_LENGTHS[bank]
+            account = account.zfill(required_length) if len(account) <= required_length else None
         branch = _digits(record.get("branch"), min_length=1, max_length=6)
         name = _client_name(record.get("name"))
         if not bank or not account or not branch or not name:
