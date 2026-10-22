@@ -15,7 +15,6 @@ def test_overdue_pdf_uses_loanhub_document_design_and_renders_rows():
             "loan_reference": "LN-TEST-001",
             "borrower_name": "Example Borrower",
             "contact_phone": "+266 58000000",
-            "contact_email": "borrower@example.com",
             "due_date": "2026-09-22",
             "installment_amount": 700,
             "balance": 2100,
