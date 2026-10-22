@@ -144,10 +144,10 @@ def test_bank_csv_matches_accepted_windows_samples_without_customer_data(bank, a
     with ZipFile(BytesIO(payload)) as archive:
         csv_name = next(name for name in archive.namelist() if name.endswith(".csv"))
         raw = archive.read(csv_name)
-        assert not raw.startswith(b"\\xef\\xbb\\xbf")
-        assert raw.endswith(b"\\r\\n") and raw.count(b"\\n") == 1
+        assert not raw.startswith(b"\xef\xbb\xbf")
+        assert raw.endswith(b"\r\n") and raw.count(b"\n") == 1
         assert b'"' not in raw
-        assert raw == f"Lephe N,{account},{branch},125.50,Batlokoa\\r\\n".encode("utf-8")
+        assert raw == f"Lephe N,{account},{branch},125.50,Batlokoa\r\n".encode("utf-8")
         row = next(csv.reader(StringIO(raw.decode("utf-8"))))
         assert len(row) == 5
         assert len(row[1]) == (11 if bank in {"FNB", "NB"} else 13)
