@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from core.access_control import TenantContext
 from services.pdf_design_system import (
     BORDER, NAVY, DocumentContext, build_document, document_styles,
-    generated_timestamp, hero_block, metric_grid, money_text, section, date_text,
+    generated_timestamp, hero_block, metric_grid, money_text, section,
 )
 
 
