@@ -364,3 +364,14 @@ export async function downloadBankSubmissionsZip(): Promise<Blob> {
   });
   return response.data;
 }
+
+/** Produce a branded report for the precise overdue selection (all filtered pages). */
+export async function downloadOverduePortfolioPdf(loanIds: string[]): Promise<Blob> {
+  if (loanIds.length === 0) throw new Error("Select overdue loans before exporting.");
+  const result = await api.post<Blob>(
+    "/folio-book/overdue-export.pdf",
+    { loan_ids: loanIds },
+    { responseType: "blob" },
+  );
+  return result.data;
+}
