@@ -52,17 +52,14 @@ def validate_account_number_for_bank(bank_name: str, account_number: str | None)
     if account is None:
         return None
 
-    prefixes = bank_prefixes_for(name)
+    required = {"FNB": 11, "NB": 11, "STD": 13, "PB": 13}[name]
+    if len(account) != required:
+        raise ValueError(f"{name} account number must contain exactly {required} digits")
     detected = resolve_legacy_bank(account)
     if detected is None or detected[0] != name:
         if detected is not None:
             raise ValueError(f"Account prefix belongs to {detected[0]}, not {name}")
-    if not account.startswith(prefixes):
-        if len(prefixes) == 1:
-            expected = prefixes[0]
-        else:
-            expected = " or ".join(prefixes)
-        raise ValueError(f"{name} account number must start with {expected}")
+        raise ValueError(f"Invalid {name} account prefix")
     return account
 
 
