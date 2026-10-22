@@ -40,7 +40,7 @@ def build_overdue_portfolio_pdf(
         styles=styles,
     ))
     data: list[list[Any]] = [[
-        "Folio / loan", "Borrower", "Due date", "Installment", "Balance", "Status",
+        "Folio / loan", "Borrower", "First due", "Installment", "Balance", "Status",
     ]]
     for row in rows:
         def paragraph(value: object) -> Paragraph:
