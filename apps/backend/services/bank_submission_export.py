@@ -155,6 +155,25 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
                 spreadsheet = BytesIO()
                 workbook.save(spreadsheet)
                 archive.writestr(filename[:-4] + ".xlsx", spreadsheet.getvalue())
+        if include_spreadsheets and grouped:
+            archive.writestr("READ-ME-FIRST-CSV-AND-EXCEL.txt", (
+                "LOANHUB BANK SUBMISSION FILES\r\n"
+                "\r\n"
+                "The .csv files are the original bank-submission data files.\r\n"
+                "CSV does not store spreadsheet column formatting.\r\n"
+                "Opening a CSV directly in Calc/Excel may hide leading zeros.\r\n"
+                "This does not mean the original CSV digits were removed.\r\n"
+                "\r\n"
+                "To review: open the matching .xlsx file instead.\r\n"
+                "To import CSV in LibreOffice Calc: select columns B and C as TEXT\r\n"
+                "in the Text Import dialog before loading the sheet.\r\n"
+                "Column B = account number; column C = six-digit branch code.\r\n"
+                "Never resave an automatically converted CSV and submit it.\r\n"
+                "Do not add apostrophes or formulas to bank-submission CSV data.\r\n"
+                "\r\n"
+                "Bank widths: FNB 11, Nedbank 11, Standard Bank 13, PostBank 13.\r\n"
+                "Check account identifiers against bank mandates before submission.\r\n"
+            ).encode("utf-8"))
     return out.getvalue(), {
         "files": len(grouped),
         "rows": sum(len(rows) for rows in grouped.values()),

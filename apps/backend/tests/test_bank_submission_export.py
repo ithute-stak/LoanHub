@@ -98,3 +98,17 @@ def test_rejected_indices_track_original_record_order():
     ]
     with ZipFile(BytesIO(payload)) as archive:
         assert len(_read(archive, "FNB-all-groups.csv")) == 2
+
+def test_zip_includes_csv_import_guidance_without_mutating_bank_data():
+    payload, _ = build_bank_submission_zip(
+        [_record(account="60123456789", branch="280061")],
+        lender_name="Batlokoa",
+        include_spreadsheets=True,
+    )
+    with ZipFile(BytesIO(payload)) as archive:
+        assert "READ-ME-FIRST-CSV-AND-EXCEL.txt" in archive.namelist()
+        guide = archive.read("READ-ME-FIRST-CSV-AND-EXCEL.txt").decode("utf-8")
+        assert "columns B and C as TEXT" in guide
+        assert _read(archive, "FNB-all-groups.csv")[0][1:3] == [
+            "60123456789", "280061",
+        ]
