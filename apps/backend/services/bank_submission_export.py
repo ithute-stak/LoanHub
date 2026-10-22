@@ -8,6 +8,10 @@ from io import BytesIO, StringIO
 import re
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
 GROUPS = {"FORCE": "force", "CIVIL": "civil", "SE": "s-e", "S/E": "s-e", "S-E": "s-e"}
 BANK_ACCOUNT_LENGTHS = {
     # Generic conservative bounds; bank-specific validation belongs to the
@@ -42,12 +46,12 @@ def _client_name(name: object) -> str:
     return value[:10].strip()
 
 
-def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer_grouping: bool = False) -> tuple[bytes, dict]:
+def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer_grouping: bool = False, include_spreadsheets: bool = False) -> tuple[bytes, dict]:
     """Return ZIP and non-PII outcome counts, never log or return account numbers.
 
     Bank A/B/C/D/E output is deliberately headerless, matching the bank
-    sample. CSV has no native Excel data types: recipient must import B and C
-    as TEXT to retain leading zeros.
+    sample. CSV has no native cell formats: recipient must import B and C as
+    TEXT. Optional XLSX companions store those values as text and widen columns.
     """
     grouped: dict[str, list[tuple[str, str, str, str, str]]] = defaultdict(list)
     omitted = defaultdict(int)
@@ -111,6 +115,27 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
             writer = csv.writer(stream, lineterminator="\r\n", quoting=csv.QUOTE_ALL)
             writer.writerows(rows)
             archive.writestr(filename, stream.getvalue().encode("utf-8"))
+            if include_spreadsheets:
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "Bank submission"
+                sheet.freeze_panes = "A2"
+                for row in rows:
+                    sheet.append(row)
+                for index, width in enumerate((19, 25, 13, 17, 20), start=1):
+                    sheet.column_dimensions[get_column_letter(index)].width = width
+                for cells in sheet.iter_rows():
+                    for cell in cells:
+                        cell.number_format = "@"  # Never coerce identifiers into numbers.
+                        cell.alignment = Alignment(horizontal="left", vertical="center")
+                        cell.font = Font(name="Aptos", size=11)
+                    # Branch was already normalized to exactly six characters.
+                    assert len(cells[2].value) == 6
+                    sheet.row_dimensions[cells[0].row].height = 19
+                workbook.calculation.fullCalcOnLoad = False
+                spreadsheet = BytesIO()
+                workbook.save(spreadsheet)
+                archive.writestr(filename[:-4] + ".xlsx", spreadsheet.getvalue())
     return out.getvalue(), {
         "files": len(grouped),
         "rows": sum(len(rows) for rows in grouped.values()),
