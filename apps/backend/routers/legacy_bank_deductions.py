@@ -214,6 +214,7 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
             raise HTTPException(422, "A saved custom bank group is incomplete; edit or remove it before exporting")
         configured.append((saved, bank_branch, str(work_id), employers))
     data = []
+    record_refs = []
     for entry, group in rows:
         number = decrypt_credential(entry.account_number_encrypted)
         # The institution-specific prefixes are supplied by the lender.
@@ -250,10 +251,25 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
             # One instruction can be routed to exactly one custom CSV.
             record["custom_filename"] = "CUSTOM-" + re.sub(r"[^A-Za-z0-9_-]+", "-", matched[0].title).strip("-")[:45] + "-" + str(matched[0].id).replace("-", "")[:12] + ".csv"
         data.append(record)
+        record_refs.append(entry)
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True, include_spreadsheets=True)
     if summary["excluded"]:
+        invalid_records = []
+        for entry, record in zip(record_refs, data):
+            _, single = build_bank_submission_zip(
+                [record], lender_name=context.company.name, employer_grouping=True,
+            )
+            if single["excluded"]:
+                invalid_records.append({
+                    "id": str(entry.id),
+                    "client_name": entry.client_name,
+                    "account_last4": entry.account_last4,
+                    "reasons": list(single["excluded"].keys()),
+                })
         raise HTTPException(422, detail={
+            "invalid_records": invalid_records[:100],
+            "invalid_records_truncated": len(invalid_records) > 100,
             "message": "Export blocked: correct invalid or unsupported legacy records first",
             "exportable_rows": summary["rows"],
             "excluded": summary["excluded"],

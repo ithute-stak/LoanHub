@@ -110,11 +110,12 @@ export default function LegacyBankDeductionsPage() {
     }catch(e){
       if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
         try {
-          const result = JSON.parse(await e.response.data.text()) as {detail?: string | {message?: string; excluded?: Record<string,number>}};
+          const result = JSON.parse(await e.response.data.text()) as {detail?: string | {message?: string; excluded?: Record<string,number>; invalid_records?: Array<{id: string; client_name: string; account_last4: string; reasons: string[]}>}};
           const detail = result.detail;
           if (typeof detail === "object" && detail) {
             const counts = Object.entries(detail.excluded ?? {}).map(([key,value]) => key.replaceAll("_"," ") + ": " + value).join(", ");
-            setStatus((detail.message ?? "Export failed") + (counts ? ". " + counts : ""));
+            const offenders = (detail.invalid_records ?? []).map(row => `${row.client_name} (****${row.account_last4}): ${row.reasons.join(", ").replaceAll("_", " ")}`).join("; ");
+            setStatus((detail.message ?? "Export failed") + (counts ? ". " + counts : "") + (offenders ? ". Correct these records using Edit: " + offenders : ""));
           } else setStatus(typeof detail === "string" ? detail : "Bank ZIP export was rejected.");
         } catch {setStatus("Unable to export ZIP. Please check server response and try again.");}
       } else setStatus(explain(e));
