@@ -136,14 +136,16 @@ export default function CdasManagePage() {
     setLoading(true);
     setError(null);
     try {
-      const [response, rosterResponse, kpiResponse] = await Promise.all([
-        api.get<OperationsResponse>("/cdas/loans/operations"),
-        api.get<RosterResponse>("/cdas/roster-intelligence"),
-        api.get<OperationsKpis>("/cdas/operations-kpis"),
+      // The operations register should not wait on optional roster intelligence
+      // or KPI requests before displaying deduction records.
+      void Promise.allSettled([
+        api.get<RosterResponse>("/cdas/roster-intelligence")
+          .then((response) => setRoster(response.data.snapshot)),
+        api.get<OperationsKpis>("/cdas/operations-kpis")
+          .then((response) => setKpis(response.data)),
       ]);
+      const response = await api.get<OperationsResponse>("/cdas/loans/operations");
       setItems(response.data.items);
-      setRoster(rosterResponse.data.snapshot);
-      setKpis(kpiResponse.data);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS operations could not be loaded."));
     } finally {

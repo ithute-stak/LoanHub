@@ -253,21 +253,26 @@ export default function CollectionsPage() {
 
   const load = useCallback(async (showToast = false) => {
     setLoading(true);
+    // First display the existing case register. Sync and auxiliary reports must
+    // not delay first paint of an already available collections workspace.
     try {
-      const syncResult = await collectionsApi.sync();
-      const [workspaceData, reportData, branchResponse] = await Promise.all([
-        collectionsApi.workspace(),
-        collectionsApi.listDailyReports(),
-        branchApi.getAll(),
-      ]);
-      setWorkspace(workspaceData);
-      setReports(reportData);
-      setBranches(branchResponse.data);
-      if (showToast) toast.success(syncResult.message);
+      setWorkspace(await collectionsApi.workspace());
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Collections workspace could not be loaded."));
     } finally {
       setLoading(false);
+    }
+    void Promise.allSettled([
+      collectionsApi.listDailyReports().then(setReports),
+      branchApi.getAll().then((response) => setBranches(response.data)),
+    ]);
+    try {
+      const syncResult = await collectionsApi.sync();
+      // Newly synced cases should be reflected without blocking the initial table.
+      setWorkspace(await collectionsApi.workspace());
+      if (showToast) toast.success(syncResult.message);
+    } catch (error: unknown) {
+      if (showToast) toast.error(getErrorMessage(error, "Collections sync could not be completed."));
     }
   }, []);
 

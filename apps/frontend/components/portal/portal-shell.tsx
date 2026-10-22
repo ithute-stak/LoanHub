@@ -550,20 +550,29 @@ export function PortalShell({ children, mode }: { children: ReactNode; mode: "co
                             const groupId = `sidebar-group-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
                             return (
                                 <div key={item.href} className="space-y-1">
-                                    <button
-                                        type="button"
-                                        aria-expanded={open}
-                                        aria-controls={groupId}
-                                        onClick={() => setExpandedGroups((current) => ({
-                                            ...current,
-                                            [item.href]: !(current[item.href] ?? active),
-                                        }))}
-                                        className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-bold transition ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-                                    >
-                                        <Icon className="h-5 w-5 shrink-0" />
-                                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                                        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-                                    </button>
+                                    <div className={`flex w-full items-center rounded-2xl text-sm font-bold transition ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                                        <Link
+                                            href={item.children?.[0]?.href ?? item.href}
+                                            onClick={() => setMobileOpen(false)}
+                                            className="flex min-w-0 flex-1 items-center gap-3 rounded-l-2xl px-4 py-3 hover:bg-muted/20"
+                                        >
+                                            <Icon className="h-5 w-5 shrink-0" />
+                                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                                        </Link>
+                                        <button
+                                            type="button"
+                                            aria-label={`${open ? "Collapse" : "Expand"} ${item.label} links`}
+                                            aria-expanded={open}
+                                            aria-controls={groupId}
+                                            onClick={() => setExpandedGroups((current) => ({
+                                                ...current,
+                                                [item.href]: !(current[item.href] ?? active),
+                                            }))}
+                                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-r-2xl hover:bg-muted/20"
+                                        >
+                                            <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+                                        </button>
+                                    </div>
                                     {open && (
                                         <div id={groupId} className="ml-5 space-y-1 border-l pl-3">
                                             {item.children?.map((child) => {

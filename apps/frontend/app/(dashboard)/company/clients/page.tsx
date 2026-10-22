@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -243,6 +244,7 @@ function withinWindow(value: string | null | undefined, windowValue: string): bo
 export default function CompanyClientsPage() {
   const router = useRouter();
   const [clients, setClients] = useState<CompanyClient[]>([]);
+  const directoryLoadVersion = useRef(0);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<LoanProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -333,25 +335,33 @@ export default function CompanyClientsPage() {
   }, [applyGlobalBorrowerLookup]);
 
   const load = useCallback(async () => {
+    const version = ++directoryLoadVersion.current;
     setLoading(true);
+    // Keep the directory responsive: supplementary forms and insights must not
+    // block the client table from rendering.
+    const auxiliary = Promise.allSettled([
+      branchApi.getAll().then((response) => {
+        if (version === directoryLoadVersion.current) setBranches(response.data.filter((item) => item.is_active));
+      }),
+      listLoanProducts().then((products) => {
+        if (version === directoryLoadVersion.current) setProducts(products.filter((item) => item.is_active));
+      }),
+      expenseManagementApi.paymentMethods().then((methods) => {
+        if (version === directoryLoadVersion.current) setPaymentMethods(methods);
+      }),
+      getCompanyClientPortfolioInsights(14).then((insights) => {
+        if (version === directoryLoadVersion.current) setPortfolioInsights(insights);
+      }),
+    ]);
     try {
-      const [clientRows, branchResponse, productRows, methodRows, insightRows] = await Promise.all([
-        listCompanyClients({ limit: 1000 }),
-        branchApi.getAll(),
-        listLoanProducts(),
-        expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-        getCompanyClientPortfolioInsights(14).catch(() => null),
-      ]);
-      setClients(clientRows);
-      setPortfolioInsights(insightRows);
-      setBranches(branchResponse.data.filter((item) => item.is_active));
-      setProducts(productRows.filter((item) => item.is_active));
-      setPaymentMethods(methodRows);
+      const clientRows = await listCompanyClients({ limit: 1000 });
+      if (version === directoryLoadVersion.current) setClients(clientRows);
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Company clients could not be loaded."));
+      if (version === directoryLoadVersion.current) toast.error(getErrorMessage(error, "Company clients could not be loaded."));
     } finally {
-      setLoading(false);
+      if (version === directoryLoadVersion.current) setLoading(false);
     }
+    void auxiliary;
   }, []);
 
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {useRouter} from "next/navigation";
-import {useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
 import {
     Banknote,
     Calculator,
@@ -148,6 +148,7 @@ export default function CompanyLoansPage() {
     const canDisburse = hasRole(activeRole, FINANCE_ROLES);
     const canSettleEarly = hasRole(activeRole, FINANCE_ROLES);
     const [loans, setLoans] = useState<Loan[]>([]);
+    const portfolioLoadVersion = useRef(0);
     const [clients, setClients] = useState<CompanyClient[]>([]);
     const [contracts, setContracts] = useState<LoanContract[]>([]);
     const [originationPolicy, setOriginationPolicy] = useState<OriginationPolicy | null>(null);
@@ -247,35 +248,31 @@ export default function CompanyLoansPage() {
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
 
     const load = useCallback(async () => {
+        const version = ++portfolioLoadVersion.current;
         setLoading(true);
-        try {
-            const [loanRows, contractRows, methodRows, clientRows, policy] = await Promise.all([
-                listLoans(),
-                canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
-                expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-                listCompanyClients().catch(() => []),
-                (canManageContracts || canDisburse) ? originationApi.getPolicy().catch(() => null) : Promise.resolve(null),
-            ]);
-            setLoans(loanRows);
-            setContracts(contractRows);
-            setMethods(methodRows);
-            setClients(clientRows);
-            setOriginationPolicy(policy);
-            if (activeRole === "company_owner" || activeRole === "branch_manager") {
-                try {
-                    const applications = await originationApi.listApplications();
-                    setPendingTopUps(applications.filter((application) =>
+        // Loan rows own the portfolio loader. Nonessential requests may resolve
+        // later without keeping the entire loan table behind a spinner.
+        void Promise.allSettled([
+            (canManageContracts ? originationApi.listContracts() : Promise.resolve([])).then((data) => { if (version === portfolioLoadVersion.current) setContracts(data); }),
+            expenseManagementApi.paymentMethods().then((data) => { if (version === portfolioLoadVersion.current) setMethods(data); }),
+            listCompanyClients().then((data) => { if (version === portfolioLoadVersion.current) setClients(data); }),
+            ((canManageContracts || canDisburse)
+                ? originationApi.getPolicy()
+                : Promise.resolve(null)).then((data) => { if (version === portfolioLoadVersion.current) setOriginationPolicy(data); }),
+            ((activeRole === "company_owner" || activeRole === "branch_manager")
+                ? originationApi.listApplications().then((applications) =>
+                    applications.filter((application) =>
                         application.application_type === "top_up" &&
-                        ["draft", "submitted", "under_review"].includes(application.status)
-                    ));
-                } catch {
-                    setPendingTopUps([]);
-                }
-            }
+                        ["draft", "submitted", "under_review"].includes(application.status)))
+                : Promise.resolve([])).then((data) => { if (version === portfolioLoadVersion.current) setPendingTopUps(data); }),
+        ]);
+        try {
+            const data = await listLoans();
+            if (version === portfolioLoadVersion.current) setLoans(data);
         } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Loans and contracts could not be loaded."));
+            if (version === portfolioLoadVersion.current) toast.error(getErrorMessage(error, "Loans could not be loaded."));
         } finally {
-            setLoading(false);
+            if (version === portfolioLoadVersion.current) setLoading(false);
         }
     }, [canDisburse, canManageContracts, activeRole]);
 
