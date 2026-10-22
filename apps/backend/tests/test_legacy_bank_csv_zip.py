@@ -21,7 +21,7 @@ def test_manual_legacy_records_split_by_prefix_and_group():
         }
         fnb = list(csv.reader(StringIO(zip_file.read("FNB-all-groups.csv").decode())))
         assert len(fnb) == 2
-        assert fnb[0] == ["Mosipatsi", "6200000001", "060667", "125.00", "Batlokoa"]
+        assert fnb[0] == ["Mosipats M", "06200000001", "060667", "125.00", "Batlokoa"]
         std = list(csv.reader(StringIO(zip_file.read("STD-force.csv").decode())))
         assert std[0][2] == "000123"
     assert stats["rows"] == 5
