@@ -77,6 +77,9 @@ def export_filtered_overdue_pdf(
     rows = []
     for loan in sorted(loans, key=lambda item: (str(item.folio_number or ""), str(item.loan_reference))):
         row = _row(loan)
+        user = loan.borrower.user if loan.borrower else None
+        row["contact_phone"] = user.phone if user else None
+        row["contact_email"] = user.email if user else None
         row["due_date"] = earliest_due[loan.id].isoformat() if loan.id in earliest_due else "Not available"
         row["installment_amount"] = float(loan.installment_amount or 0)
         rows.append(row)
