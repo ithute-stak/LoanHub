@@ -48,7 +48,7 @@ def build_overdue_portfolio_pdf(
 
         data.append([
             paragraph(row.get("folio_number") or row.get("loan_reference")),
-            Paragraph("<b>" + escape(str(row.get("borrower_name") or "Borrower")) + "</b><br/>Phone: " + escape(str(row.get("contact_phone") or "Not recorded")) + "<br/>Email: " + escape(str(row.get("contact_email") or "Not recorded")), styles["body_small"]),
+            Paragraph("<b>" + escape(str(row.get("borrower_name") or "Borrower")) + "</b><br/>Phone: " + escape(str(row.get("contact_phone") or "Not recorded")), styles["body_small"]),
             paragraph(row.get("due_date_display") or row.get("due_date")),
             money_text(row.get("installment_amount") or 0),
             money_text(row.get("balance") or 0),
