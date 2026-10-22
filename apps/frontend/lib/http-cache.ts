@@ -486,7 +486,7 @@ export function installReduxHttpCache(
             policy,
             path,
         ).finally(() => {
-            inflightRequests.delete(identity.key);
+            inflightRequests.delete(inflightKey);
         });
         inflightRequests.set(identity.key, request);
         return request;
