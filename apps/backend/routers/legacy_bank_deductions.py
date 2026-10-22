@@ -260,18 +260,15 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
     if summary["excluded"]:
         # Derive rejection details once for both the correction report and
         # the all-rejected error. Never add rejected instructions to the ZIP.
-        invalid_records = []
-        for entry, record in zip(record_refs, data):
-            _, single = build_bank_submission_zip(
-                [record], lender_name=context.company.name, employer_grouping=True,
-            )
-            for reason in single["excluded"]:
-                invalid_records.append({
-                    "id": str(entry.id),
-                    "client_name": entry.client_name,
-                    "account_last4": entry.account_last4,
-                    "reason": reason,
-                })
+        invalid_records = [
+            {
+                "id": str(record_refs[item["index"]].id),
+                "client_name": record_refs[item["index"]].client_name,
+                "account_last4": record_refs[item["index"]].account_last4,
+                "reason": item["reason"],
+            }
+            for item in summary["rejected_indices"]
+        ]
         if not summary["rows"]:
             raise HTTPException(422, detail={
                 "message": "No valid bank instructions; correct rejected records",

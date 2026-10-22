@@ -82,3 +82,19 @@ def test_formatted_spreadsheet_companion_preserves_identifiers():
         assert sheet.column_dimensions["C"].width >= 12
     assert stats["rows"] == 1
     assert stats["files"] == 1
+
+def test_rejected_indices_track_original_record_order():
+    payload, stats = build_bank_submission_zip(
+        [
+            _record(name="Valid Client", account="60123456789"),
+            _record(name="Invalid Client", account="*****"),
+            _record(name="Valid Other", account="60123456788"),
+        ],
+        lender_name="Batlokoa",
+    )
+    assert stats["rows"] == 2
+    assert stats["rejected_indices"] == [
+        {"index": 1, "reason": "missing_or_invalid_bank_details"},
+    ]
+    with ZipFile(BytesIO(payload)) as archive:
+        assert len(_read(archive, "FNB-all-groups.csv")) == 2
