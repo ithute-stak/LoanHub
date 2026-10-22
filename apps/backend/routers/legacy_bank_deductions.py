@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import csv
+from io import StringIO
+from zipfile import ZipFile, ZIP_DEFLATED
 from datetime import datetime, timezone
 from io import BytesIO
 from fastapi.responses import StreamingResponse
@@ -254,7 +257,24 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
         record_refs.append(entry)
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True, include_spreadsheets=True)
-    if summary["excluded"]:
+    if summary["excluded"] and summary["rows"]:
+        # Keep accepted instructions downloadable. Rejected records are excluded
+        # from bank files and listed separately for correction.
+        report = StringIO(newline="")
+        writer = csv.writer(report)
+        writer.writerow(["Client", "Account last four", "Issue", "Status"])
+        for entry, record in zip(record_refs, data):
+            _, one = build_bank_submission_zip([record], lender_name=context.company.name, employer_grouping=True)
+            for reason in one["excluded"]:
+                writer.writerow([entry.client_name, entry.account_last4, reason.replace("_", " "), "NOT EXPORTED"])
+        original = BytesIO(payload)
+        revised = BytesIO()
+        with ZipFile(original, "r") as source, ZipFile(revised, "w", compression=ZIP_DEFLATED) as target_zip:
+            for member in source.infolist():
+                target_zip.writestr(member, source.read(member.filename))
+            target_zip.writestr("REJECTED-RECORDS-CORRECT-BEFORE-SUBMISSION.csv", report.getvalue().encode("utf-8-sig"))
+        payload = revised.getvalue()
+    if summary["excluded"] and not summary["rows"]:
         invalid_records = []
         for entry, record in zip(record_refs, data):
             _, single = build_bank_submission_zip(
