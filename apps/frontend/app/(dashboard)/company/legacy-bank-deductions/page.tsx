@@ -104,7 +104,7 @@ export default function LegacyBankDeductionsPage() {
   async function exportZip(combined = false, includeCustom = false){
     setBusy(true);setDownloading(true);setStatus("Preparing bank ZIP download…");
     try{
-      const response=await api.get<Blob>(combined ? "/legacy-bank-deductions/combined-export.zip" : (includeCustom ? "/legacy-bank-deductions/export.zip?include_custom=true" : "/legacy-bank-deductions/export.zip"),{responseType:"blob"});
+      const response=await api.get<Blob>(combined ? "/legacy-bank-deductions/combined-export.zip" : (includeCustom ? "/legacy-bank-deductions/export.zip?include_custom=true" : "/legacy-bank-deductions/export.zip"),{responseType:"blob",timeout:45000});
       const url=URL.createObjectURL(response.data);
       const link=document.createElement("a");link.href=url;link.download=combined?"loanhub-combined-bank-submissions.zip":includeCustom?"loanhub-custom-bank-submissions.zip":"loanhub-legacy-bank-submissions.zip";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
       const excluded = Number(response.headers["x-excluded-rows"] ?? 0);
@@ -120,6 +120,8 @@ export default function LegacyBankDeductionsPage() {
             setStatus((detail.message ?? "Export failed") + (counts ? ". " + counts : "") + (offenders ? ". Correct these records using Edit: " + offenders : ""));
           } else setStatus(typeof detail === "string" ? detail : "Bank ZIP export was rejected.");
         } catch {setStatus("Unable to export ZIP. Please check server response and try again.");}
+      } else if (axios.isAxiosError(e) && (e.code === "ECONNABORTED" || e.code === "ETIMEDOUT")) {
+        setStatus("Bank ZIP preparation timed out after 45 seconds. No file was downloaded. Please retry or ask an administrator to check the export server logs.");
       } else setStatus(explain(e));
     }finally{setDownloading(false);setBusy(false);}
   }
