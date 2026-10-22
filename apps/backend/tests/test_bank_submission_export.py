@@ -59,3 +59,31 @@ def test_bank_submission_excludes_settled_and_incomplete_mandates():
             ["cmd", "0001234567", "060667", "1000.00", "Batlokoa"]
         ]
     assert sum(stats["excluded"].values()) == 5
+
+
+def test_formatted_spreadsheet_companion_preserves_identifiers():
+    from openpyxl import load_workbook
+
+    account = "09080011400058"
+    payload, stats = build_bank_submission_zip(
+        [_record(account=account, branch="60667")],
+        lender_name="Batlokoa",
+        include_spreadsheets=True,
+    )
+    with ZipFile(BytesIO(payload)) as archive:
+        csv_rows = _read(archive, "FNB-all-groups.csv")
+        assert csv_rows[0][1:3] == [account, "060667"]
+        workbook = load_workbook(
+            BytesIO(archive.read("FNB-all-groups.xlsx")), read_only=False
+        )
+        sheet = workbook.active
+        assert sheet["B1"].value == account
+        assert sheet["C1"].value == "060667"
+        assert sheet["B1"].data_type == "s"
+        assert sheet["C1"].data_type == "s"
+        assert sheet["B1"].number_format == "@"
+        assert sheet["C1"].number_format == "@"
+        assert sheet.column_dimensions["B"].width >= 20
+        assert sheet.column_dimensions["C"].width >= 12
+    assert stats["rows"] == 1
+    assert stats["files"] == 1
