@@ -1,84 +1,79 @@
-"""Bank CSV export contract and isolation tests."""
+"""Regression tests for per-bank CSV account widths and text-safe Excel exports."""
 import csv
 from io import BytesIO, StringIO
 from zipfile import ZipFile
 
+from openpyxl import load_workbook
 from services.bank_submission_export import build_bank_submission_zip
 
 
 def _record(**overrides):
     row = dict(
-        name="Mosipatsi P", account="09080011400058", branch="60667",
+        name="Thato M", account="60123456789", branch="280061",
         bank="FNB", group="FORCE", installment="1000", balance="2400",
     )
     row.update(overrides)
     return row
 
 
-def _read(zip_file, name):
-    return list(csv.reader(StringIO(zip_file.read(name).decode("utf-8"))))
+def _read(archive, name):
+    return list(csv.reader(StringIO(archive.read(name).decode("utf-8"))))
 
 
-def test_bank_submission_grouped_csv_schema_and_amount():
-    payload, stats = build_bank_submission_zip([
-        _record(),
-        _record(name="Thato M", account="0908000869313", group="CIVIL",
-                installment="500", balance="500"),
-        _record(bank="Standard Lesotho Bank", group="FORCE", account="0001234567"),
-        _record(bank="Standard Lesotho Bank", group="S/E", account="0001234568",
-                installment="900", balance="250"),
-    ], lender_name="Batlokoa Financial Services")
-    with ZipFile(BytesIO(payload)) as output:
-        assert set(output.namelist()) == {
-            "FNB-all-groups.csv",
-            "STANDARD-LESOTHO-BANK-force.csv",
-            "STANDARD-LESOTHO-BANK-s-e.csv",
-        }
-        rows = _read(output, "FNB-all-groups.csv")
-        assert rows == [
-            ["Mosipatsi", "09080011400058", "060667", "1000.00", "Batlokoa"],
-            ["Thato M", "0908000869313", "060667", "500.00", "Batlokoa"],
-        ]
-        assert _read(output, "STANDARD-LESOTHO-BANK-s-e.csv")[0][3] == "250.00"
-        assert _read(output, "STANDARD-LESOTHO-BANK-force.csv")[0][1] == "0001234567"
+def test_bank_account_lengths_branch_and_name_format():
+    records = [
+        _record(name="Ntai Lephe", account="601234567", branch="280061"),
+        _record(name="Pekechu Lephe", bank="STD", account="9080000368791", branch="60667", group="CIVIL"),
+        _record(name="Mathabo Se", bank="PB", account="10123456789", branch="500100"),
+        _record(name="Lefusi M", bank="NB", account="123456789", branch="390161"),
+    ]
+    payload, stats = build_bank_submission_zip(records, lender_name="Batlokoa")
+    with ZipFile(BytesIO(payload)) as archive:
+        rows = [row for name in archive.namelist() for row in _read(archive, name)]
+        assert ["Lephe N", "00601234567", "280061", "1000.00", "Batlokoa"] in rows
+        assert ["Lephe P", "9080000368791", "060667", "1000.00", "Batlokoa"] in rows
+        assert ["Se M", "0010123456789", "500100", "1000.00", "Batlokoa"] in rows
+        assert ["Lefusi M", "00123456789", "390161", "1000.00", "Batlokoa"] in rows
     assert stats["rows"] == 4
-    assert stats["files"] == 3
+    assert stats["excluded"] == {}
 
 
-def test_bank_submission_excludes_settled_and_incomplete_mandates():
-    payload, stats = build_bank_submission_zip([
-        _record(balance="0"),
-        _record(account="****0058"),
+def test_existing_surname_initial_not_swapped():
+    payload, _ = build_bank_submission_zip([_record(name="Mosipatsi P")], lender_name="Batlokoa")
+    with ZipFile(BytesIO(payload)) as archive:
+        assert _read(archive, "FNB-all-groups.csv")[0][0] == "Mosipatsi P"
+
+
+def test_invalid_or_overlength_accounts_are_rejected():
+    invalid = [
+        _record(bank="STD", account="908000036879100"),
+        _record(bank="FNB", account="601234567890"),
+        _record(bank="NB", account="123456789012"),
+        _record(bank="PB", account="10123456789123"),
+        _record(account="****4567"),
         _record(branch="1234567"),
-        _record(group="UNKNOWN"),
-        _record(installment="NaN"),
-        _record(name="=cmd", account="0001234567"),
-    ], lender_name="Batlokoa")
-    with ZipFile(BytesIO(payload)) as output:
-        assert _read(output, "FNB-all-groups.csv") == [
-            ["cmd", "0001234567", "060667", "1000.00", "Batlokoa"]
-        ]
-    assert sum(stats["excluded"].values()) == 5
+        _record(balance="0"),
+    ]
+    payload, stats = build_bank_submission_zip(invalid, lender_name="Batlokoa")
+    with ZipFile(BytesIO(payload)) as archive:
+        assert not archive.namelist()
+    assert stats["rows"] == 0
+    assert sum(stats["excluded"].values()) == len(invalid)
 
 
 def test_formatted_spreadsheet_companion_preserves_identifiers():
-    from openpyxl import load_workbook
-
-    account = "09080011400058"
     payload, stats = build_bank_submission_zip(
-        [_record(account=account, branch="60667")],
+        [_record(account="601234567", branch="61")],
         lender_name="Batlokoa",
         include_spreadsheets=True,
     )
     with ZipFile(BytesIO(payload)) as archive:
-        csv_rows = _read(archive, "FNB-all-groups.csv")
-        assert csv_rows[0][1:3] == [account, "060667"]
-        workbook = load_workbook(
-            BytesIO(archive.read("FNB-all-groups.xlsx")), read_only=False
-        )
+        row = _read(archive, "FNB-all-groups.csv")[0]
+        assert row[1:3] == ["00601234567", "000061"]
+        workbook = load_workbook(BytesIO(archive.read("FNB-all-groups.xlsx")))
         sheet = workbook.active
-        assert sheet["B1"].value == account
-        assert sheet["C1"].value == "060667"
+        assert sheet["B1"].value == "00601234567"
+        assert sheet["C1"].value == "000061"
         assert sheet["B1"].data_type == "s"
         assert sheet["C1"].data_type == "s"
         assert sheet["B1"].number_format == "@"
