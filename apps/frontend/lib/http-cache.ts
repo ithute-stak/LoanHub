@@ -190,7 +190,13 @@ function requestKey(
     config: InternalAxiosRequestConfig,
 ): { key: string; scope: string; requestUrl: string } {
     const scope = requestScope(state, config);
-    const requestUrl = axios.getUri(config);
+    const rawUrl = axios.getUri(config);
+    const separator = rawUrl.indexOf("?");
+    const requestUrl = separator === -1 ? rawUrl : (() => {
+        const params = new URLSearchParams(rawUrl.slice(separator + 1));
+        params.sort();
+        return rawUrl.slice(0, separator) + "?" + params.toString();
+    })();
     return {
         key: `http:${scope}|${requestUrl}`,
         scope,
