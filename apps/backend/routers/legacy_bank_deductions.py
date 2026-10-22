@@ -251,7 +251,7 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
             record["custom_filename"] = "CUSTOM-" + re.sub(r"[^A-Za-z0-9_-]+", "-", matched[0].title).strip("-")[:45] + "-" + str(matched[0].id).replace("-", "")[:12] + ".csv"
         data.append(record)
     # The legacy dataset must never be silently confused with current loan exports.
-    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
+    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True, include_spreadsheets=True)
     if summary["excluded"]:
         raise HTTPException(422, detail={
             "message": "Export blocked: correct invalid or unsupported legacy records first",
@@ -729,7 +729,7 @@ def export_custom_group(record_id: UUID, context: TenantContext = Depends(get_te
         })
     if not data:
         raise HTTPException(422, "No active matching deductions remain in this custom group")
-    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True)
+    payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True, include_spreadsheets=True)
     if summary["excluded"]:
         raise HTTPException(422, detail={
             "message": "Custom group export blocked: correct invalid bank deductions first",
