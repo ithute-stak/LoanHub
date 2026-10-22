@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 import {branchApi} from "@/api/branch";
-import {downloadBankSubmissionsZip} from "@/api/loans";
+import {downloadBankSubmissionsZip, downloadOverduePortfolioPdf} from "@/api/loans";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
@@ -372,6 +372,7 @@ export function LoanPortfolioWorkspace({
     const [search, setSearch] = useState(folioFromUrl);
     const [expanded, setExpanded] = useState(false);
     const [exportingBankZip, setExportingBankZip] = useState(false);
+    const [exportingOverduePdf, setExportingOverduePdf] = useState(false);
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
     const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
     const [page, setPage] = useState(1);
@@ -645,6 +646,28 @@ export function LoanPortfolioWorkspace({
         }
     }
 
+    async function downloadOverdueReport() {
+        const ids = filteredRows.filter((row) => row.loan.is_overdue).map((row) => row.loan.id);
+        if (ids.length === 0) return;
+        setExportingOverduePdf(true);
+        try {
+            const blob = await downloadOverduePortfolioPdf(ids);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `loanhub-overdue-debts-${new Date().toISOString().slice(0, 10)}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+            console.error("Overdue report generation failed", error);
+            window.alert("Could not generate the overdue report. Refresh your overdue selection and try again.");
+        } finally {
+            setExportingOverduePdf(false);
+        }
+    }
+
     // Legacy search contract: placeholder="Loan, folio, borrower, ID, phone, employer, branch, contract..."
     const searchControl = <SuggestionSearch
         value={search}
@@ -687,6 +710,9 @@ export function LoanPortfolioWorkspace({
                     </div>
                     <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
                         {searchControl}
+                        <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingOverduePdf || !filteredRows.some((row) => row.loan.is_overdue)} onClick={() => void downloadOverdueReport()}>
+                            <FileText className="size-4"/>{exportingOverduePdf ? "Generating PDF..." : "Overdue PDF"}
+                        </Button>
                         <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingBankZip} onClick={() => void downloadBankZip()}>
                             <Download className="size-4"/>{exportingBankZip ? "Generating..." : "Bank CSV ZIP"}
                         </Button>
@@ -742,6 +768,9 @@ export function LoanPortfolioWorkspace({
                         <div className="w-full space-y-2 xl:w-[42rem]">
                             {searchControl}
                             <div className="flex flex-wrap items-center gap-2">
+                                <Button size="sm" variant="outline" disabled={exportingOverduePdf || !filteredRows.some((row) => row.loan.is_overdue)} onClick={() => void downloadOverdueReport()}>
+                                    <FileText className="size-4"/>{exportingOverduePdf ? "Generating PDF..." : "Overdue PDF"}
+                                </Button>
                                 <Button size="sm" variant="secondary" className="rounded-lg" onClick={() => applyQuickFilter("active")}>Active</Button>
                                 <Button size="sm" variant="outline" className="rounded-lg" onClick={() => applyQuickFilter("overdue")}>Overdue</Button>
                                 <Button size="sm" variant="outline" className="rounded-lg" onClick={() => applyQuickFilter("due7")}>Due 7 days</Button>
