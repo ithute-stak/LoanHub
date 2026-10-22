@@ -257,43 +257,43 @@ def export_legacy_csv_zip(include_custom: bool = False, context: TenantContext =
         record_refs.append(entry)
     # The legacy dataset must never be silently confused with current loan exports.
     payload, summary = build_bank_submission_zip(data, lender_name=context.company.name, employer_grouping=True, include_spreadsheets=True)
-    if summary["excluded"] and summary["rows"]:
-        # Keep accepted instructions downloadable. Rejected records are excluded
-        # from bank files and listed separately for correction.
-        report = StringIO(newline="")
-        writer = csv.writer(report)
-        writer.writerow(["Client", "Account last four", "Issue", "Status"])
-        for entry, record in zip(record_refs, data):
-            _, one = build_bank_submission_zip([record], lender_name=context.company.name, employer_grouping=True)
-            for reason in one["excluded"]:
-                writer.writerow([entry.client_name, entry.account_last4, reason.replace("_", " "), "NOT EXPORTED"])
-        original = BytesIO(payload)
-        revised = BytesIO()
-        with ZipFile(original, "r") as source, ZipFile(revised, "w", compression=ZIP_DEFLATED) as target_zip:
-            for member in source.infolist():
-                target_zip.writestr(member, source.read(member.filename))
-            target_zip.writestr("REJECTED-RECORDS-CORRECT-BEFORE-SUBMISSION.csv", report.getvalue().encode("utf-8-sig"))
-        payload = revised.getvalue()
-    if summary["excluded"] and not summary["rows"]:
+    if summary["excluded"]:
+        # Derive rejection details once for both the correction report and
+        # the all-rejected error. Never add rejected instructions to the ZIP.
         invalid_records = []
         for entry, record in zip(record_refs, data):
             _, single = build_bank_submission_zip(
                 [record], lender_name=context.company.name, employer_grouping=True,
             )
-            if single["excluded"]:
+            for reason in single["excluded"]:
                 invalid_records.append({
                     "id": str(entry.id),
                     "client_name": entry.client_name,
                     "account_last4": entry.account_last4,
-                    "reasons": list(single["excluded"].keys()),
+                    "reason": reason,
                 })
-        raise HTTPException(422, detail={
-            "invalid_records": invalid_records[:100],
-            "invalid_records_truncated": len(invalid_records) > 100,
-            "message": "Export blocked: correct invalid or unsupported legacy records first",
-            "exportable_rows": summary["rows"],
-            "excluded": summary["excluded"],
-        })
+        if not summary["rows"]:
+            raise HTTPException(422, detail={
+                "message": "No valid bank instructions; correct rejected records",
+                "excluded": summary["excluded"],
+                "invalid_records": [
+                    {**item, "reasons": [item["reason"]]}
+                    for item in invalid_records[:100]
+                ],
+            })
+        report = StringIO(newline="")
+        writer = csv.writer(report)
+        writer.writerow(["Client", "Account last four", "Issue", "Status"])
+        for item in invalid_records:
+            writer.writerow([item["client_name"], item["account_last4"],
+                             item["reason"].replace("_", " "), "NOT EXPORTED"])
+        revised = BytesIO()
+        with ZipFile(BytesIO(payload), "r") as source, ZipFile(revised, "w", compression=ZIP_DEFLATED) as target_zip:
+            for member in source.infolist():
+                target_zip.writestr(member, source.read(member.filename))
+            target_zip.writestr("REJECTED-RECORDS-CORRECT-BEFORE-SUBMISSION.csv",
+                                report.getvalue().encode("utf-8-sig"))
+        payload = revised.getvalue()
     if not summary["rows"]:
         raise HTTPException(422, detail="No valid legacy records available for bank export")
     return StreamingResponse(
