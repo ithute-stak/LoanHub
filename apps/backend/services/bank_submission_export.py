@@ -45,7 +45,7 @@ def _digits(value: object, *, min_length: int, max_length: int) -> str | None:
 def _client_name(name: object) -> str:
     """Surname and first initial; keep the initial within 10 characters."""
     value = re.sub(r"\\s+", " ", str(name or "").strip())
-    value = re.sub(r"[^\\w .'-]", "", value, flags=re.UNICODE)
+    value = re.sub(r"[^\w .'-]", "", value, flags=re.UNICODE)
     parts = value.split()
     if not parts:
         return ""
@@ -67,7 +67,7 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
     """
     grouped: dict[str, list[tuple[str, str, str, str, str]]] = defaultdict(list)
     omitted = defaultdict(int)
-    company = re.sub(r"[^\\w .'-]", "", str(lender_name or "").split(" ")[0])[:10].strip()
+    company = re.sub(r"[^\w .'-]", "", str(lender_name or "").split(" ")[0])[:10].strip()
     if not company:
         raise ValueError("Lending company name is missing")
     for record in records:
