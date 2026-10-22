@@ -14,11 +14,11 @@ from utils.banking import (
 @pytest.mark.parametrize(
     ("bank_name", "code", "account_number"),
     [
-        ("FNB", "280061", "6123456789"),
-        ("PB", "500100", "1012345678"),
-        ("STD", "060667", "9012345678"),
-        ("NB", "390161", "1112345678"),
-        ("NB", "390161", "1212345678"),
+        ("FNB", "280061", "61234567890"),
+        ("PB", "500100", "1012345678901"),
+        ("STD", "060667", "9012345678901"),
+        ("NB", "390161", "11123456789"),
+        ("NB", "390161", "23123456789"),
     ],
 )
 def test_supported_banks_have_fixed_codes_and_prefixes(bank_name, code, account_number):
@@ -27,8 +27,8 @@ def test_supported_banks_have_fixed_codes_and_prefixes(bank_name, code, account_
 
 
 def test_account_number_must_match_selected_bank():
-    with pytest.raises(ValueError, match="FNB account number must start with 6"):
-        validate_account_number_for_bank("FNB", "9012345678")
+    with pytest.raises(ValueError, match="exactly 11 digits"):
+        validate_account_number_for_bank("FNB", "9012345678901")
 
     with pytest.raises(ValueError, match="digits only"):
         validate_account_number_for_bank("PB", "10ABC123")
@@ -40,13 +40,13 @@ def test_origination_bank_account_is_normalized_to_fixed_branch_and_code():
         bank_name="fnb",
         branch_name="User supplied branch",
         branch_code="999999",
-        account_number="6 1234 56789",
+        account_number="6 1234 567890",
     )
 
     assert account.bank_name == "FNB"
     assert account.branch_name == DEFAULT_BANK_BRANCH
     assert account.branch_code == "280061"
-    assert account.account_number == "6123456789"
+    assert account.account_number == "61234567890"
 
 
 def test_origination_rejects_unsupported_bank():
@@ -64,7 +64,7 @@ def test_client_profile_bank_change_requires_matching_new_account_number():
 
     update = CompanyClientBankAccountUpdate(
         bank_name="STD",
-        account_number="9012345678",
+        account_number="9012345678901",
         branch_name="Wrong branch",
         branch_code="999999",
     )
@@ -85,10 +85,10 @@ def test_employee_payroll_bank_account_uses_same_policy():
         employee_number="EMP-001",
         bank_name="nb",
         bank_account_name="Payroll Employee",
-        bank_account_number="12 1234 5678",
+        bank_account_number="12 1234 56789",
     )
     assert profile.bank_name == "NB"
-    assert profile.bank_account_number == "1212345678"
+    assert profile.bank_account_number == "12123456789"
 
 
 def test_employee_bank_account_requires_supported_bank_and_matching_prefix():
@@ -98,7 +98,7 @@ def test_employee_bank_account_requires_supported_bank_and_matching_prefix():
             bank_account_number="6123456789",
         )
 
-    with pytest.raises(ValidationError, match="PB account number must start with 10"):
+    with pytest.raises(ValidationError, match="exactly 13 digits"):
         EmployeeProfileUpdate(
             employee_number="EMP-003",
             bank_name="PB",
@@ -129,3 +129,13 @@ def test_employee_can_explicitly_clear_bank_pair_without_partial_inconsistency()
     update = profile.model_dump(exclude_unset=True)
     assert update["bank_name"] is None
     assert update["bank_account_number"] is None
+
+def test_nedbank_fallback_accepts_unreserved_prefix_and_rejects_other_banks():
+    assert validate_account_number_for_bank("NB", "23123456789") == "23123456789"
+    with pytest.raises(ValueError, match="prefix belongs to FNB"):
+        validate_account_number_for_bank("NB", "61234567890")
+
+
+def test_registration_rejects_short_account_instead_of_changing_identifier():
+    with pytest.raises(ValueError, match="exactly 13 digits"):
+        validate_account_number_for_bank("STD", "9012345678")
