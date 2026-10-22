@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from core.access_control import TenantContext
 from services.pdf_design_system import (
     BORDER, NAVY, DocumentContext, build_document, document_styles,
-    generated_timestamp, hero_block, metric_grid, money_text, section,
+    generated_timestamp, hero_block, metric_grid, money_text, section, date_text,
 )
 
 
@@ -26,7 +26,7 @@ def build_overdue_portfolio_pdf(
         "Overdue Debt Register",
         "Filtered overdue loan portfolio for authorised collections and management use. "
         "Figures are a snapshot at generation time; verify balances before collection.",
-        "LoanHub | Overdue debt report",
+        "LoanHub Document Library | Portfolio report",
         status="Attention required", styles=styles,
     ))
     story.append(metric_grid([
@@ -49,7 +49,7 @@ def build_overdue_portfolio_pdf(
         data.append([
             paragraph(row.get("folio_number") or row.get("loan_reference")),
             paragraph(row.get("borrower_name")),
-            paragraph(row.get("due_date")),
+            paragraph(row.get("due_date_display") or row.get("due_date")),
             money_text(row.get("installment_amount") or 0),
             money_text(row.get("balance") or 0),
             paragraph("Overdue"),
@@ -75,7 +75,7 @@ def build_overdue_portfolio_pdf(
     story.append(table)
     story.append(Spacer(1, 5 * mm))
     story.append(Paragraph(
-        "Confidential. For internal authorised debt management only. "
+        "LoanHub document library | Confidential internal report. "
         "Amounts should be reconciled with repayments and charges before sending demands.",
         styles["body_small"],
     ))
