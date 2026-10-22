@@ -40,7 +40,7 @@ def build_overdue_portfolio_pdf(
         styles=styles,
     ))
     data: list[list[Any]] = [[
-        "Folio / loan", "Borrower", "Overdue since", "Installment", "Balance", "Status",
+        "Folio / loan", "Borrower / contact", "Overdue since", "Installment", "Balance", "Status",
     ]]
     for row in rows:
         def paragraph(value: object) -> Paragraph:
@@ -48,14 +48,14 @@ def build_overdue_portfolio_pdf(
 
         data.append([
             paragraph(row.get("folio_number") or row.get("loan_reference")),
-            paragraph(row.get("borrower_name")),
+            Paragraph("<b>" + escape(str(row.get("borrower_name") or "Borrower")) + "</b><br/>Phone: " + escape(str(row.get("contact_phone") or "Not recorded")) + "<br/>Email: " + escape(str(row.get("contact_email") or "Not recorded")), styles["body_small"]),
             paragraph(row.get("due_date_display") or row.get("due_date")),
             money_text(row.get("installment_amount") or 0),
             money_text(row.get("balance") or 0),
             paragraph("Overdue"),
         ])
     table = Table(
-        data, colWidths=[38 * mm, 43 * mm, 25 * mm, 25 * mm, 27 * mm, 16 * mm],
+        data, colWidths=[32 * mm, 55 * mm, 25 * mm, 23 * mm, 25 * mm, 14 * mm],
         repeatRows=1, hAlign="LEFT",
     )
     table.setStyle(TableStyle([
