@@ -1,3 +1,4 @@
+import pytest
 """Regression tests for per-bank CSV account widths and text-safe Excel exports."""
 import csv
 from io import BytesIO, StringIO
@@ -123,3 +124,37 @@ def test_csv_amount_is_unquoted_machine_readable_decimal():
         raw = archive.read("FNB-all-groups.csv").decode("utf-8").strip()
         assert raw == "Lephe N,60123456789,280061,125.50,Batlokoa"
         assert _read(archive, "FNB-all-groups.csv")[0][3] == "125.50"
+
+
+@pytest.mark.parametrize("bank,account,branch", [
+    ("FNB", "60123456789", "280061"),
+    ("STD", "9012345678901", "060667"),
+    ("PB", "1012345678901", "500100"),
+    ("NB", "12345678901", "390161"),
+])
+def test_bank_csv_matches_accepted_windows_samples_without_customer_data(bank, account, branch):
+    # Structural properties measured from seven recipient-accepted CSV files:
+    # five fields, no header/BOM/quotes, CRLF, 6-digit branch, two decimal places.
+    payload, result = build_bank_submission_zip(
+        [_record(name="Lephe N", bank=bank, account=account,
+                 branch=branch, installment="125.5", balance="500")],
+        lender_name="Batlokoa", include_spreadsheets=True,
+    )
+    assert result["rows"] == 1
+    with ZipFile(BytesIO(payload)) as archive:
+        csv_name = next(name for name in archive.namelist() if name.endswith(".csv"))
+        raw = archive.read(csv_name)
+        assert not raw.startswith(b"\\xef\\xbb\\xbf")
+        assert raw.endswith(b"\\r\\n") and raw.count(b"\\n") == 1
+        assert b'"' not in raw
+        assert raw == f"Lephe N,{account},{branch},125.50,Batlokoa\\r\\n".encode("utf-8")
+        row = next(csv.reader(StringIO(raw.decode("utf-8"))))
+        assert len(row) == 5
+        assert len(row[1]) == (11 if bank in {"FNB", "NB"} else 13)
+        assert len(row[2]) == 6
+        workbook = load_workbook(BytesIO(archive.read(csv_name[:-4] + ".xlsx")))
+        sheet = workbook.active
+        assert sheet["B1"].value == account and sheet["B1"].data_type == "s"
+        assert sheet["C1"].value == branch and sheet["C1"].data_type == "s"
+        assert sheet["D1"].value == 125.5 and sheet["D1"].data_type == "n"
+        assert sheet["D1"].number_format == "0.00"
