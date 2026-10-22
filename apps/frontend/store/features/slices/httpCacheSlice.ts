@@ -107,8 +107,9 @@ const httpCacheSlice = createSlice({
             }
             if (removed > 0) {
                 state.invalidations += 1;
-                state.revision += 1;
             }
+            // In-flight requests exist even when no entry has been stored yet.
+            state.revision += 1;
         },
         cacheTagsInvalidated(
             state,
