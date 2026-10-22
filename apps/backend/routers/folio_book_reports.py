@@ -5,6 +5,8 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from uuid import UUID
+from datetime import date
+from database.models.repayment import RepaymentInstallment
 
 from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.client_loan_company import ClientCompanyLoan
@@ -63,10 +65,19 @@ def export_filtered_overdue_pdf(
         for loan in loans
     ):
         raise HTTPException(status_code=400, detail="Selection contains loans that are no longer overdue. Refresh the portfolio.")
+    installments = db.query(RepaymentInstallment).filter(
+        RepaymentInstallment.loan_id.in_(ids),
+        RepaymentInstallment.is_superseded.is_(False),
+        RepaymentInstallment.due_date < date.today(),
+        RepaymentInstallment.total_due > RepaymentInstallment.paid_amount,
+    ).order_by(RepaymentInstallment.due_date.asc()).all()
+    earliest_due = {}
+    for installment in installments:
+        earliest_due.setdefault(installment.loan_id, installment.due_date)
     rows = []
     for loan in sorted(loans, key=lambda item: (str(item.folio_number or ""), str(item.loan_reference))):
         row = _row(loan)
-        row["due_date"] = loan.first_payment_due.isoformat() if loan.first_payment_due else "-"
+        row["due_date"] = earliest_due[loan.id].isoformat() if loan.id in earliest_due else "Not available"
         row["installment_amount"] = float(loan.installment_amount or 0)
         rows.append(row)
     pdf = build_overdue_portfolio_pdf(db=db, context=context, rows=rows)
