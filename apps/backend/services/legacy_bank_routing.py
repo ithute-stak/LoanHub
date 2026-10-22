@@ -9,7 +9,6 @@ BANK_RULES = (
     ("FNB", "280061", ("6",)),
     ("STD", "060667", ("90",)),
     ("PB", "500100", ("10",)),
-    ("NB", "390161", ("11", "12")),
 )
 
 
@@ -19,4 +18,6 @@ def resolve_legacy_bank(account_number: str) -> tuple[str, str] | None:
     for bank, clearing_branch, prefixes in BANK_RULES:
         if any(account_number.startswith(prefix) for prefix in prefixes):
             return bank, clearing_branch
-    return None
+    # Nedbank may start with any digit except prefixes reserved above.
+    # Unknown longer accounts must not be silently assigned to Nedbank.
+    return ("NB", "390161") if len(account_number) <= 11 else None
