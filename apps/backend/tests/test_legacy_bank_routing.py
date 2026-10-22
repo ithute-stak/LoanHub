@@ -10,7 +10,9 @@ def test_configured_bank_prefix_rules():
     assert resolve_legacy_bank("10000012345") == ("PB", "500100")
     assert resolve_legacy_bank("11000012345") == ("NB", "390161")
     assert resolve_legacy_bank("12000012345") == ("NB", "390161")
-    assert resolve_legacy_bank("99900012345") is None
+    assert resolve_legacy_bank("99900012345") == ("NB", "390161")
+    assert resolve_legacy_bank("23000012345") == ("NB", "390161")
+    assert resolve_legacy_bank("9990001234567") is None
 
 
 def test_legacy_zip_accepts_configured_branch_without_guessing():
