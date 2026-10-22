@@ -141,12 +141,14 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
                 sheet.title = "Bank submission"
                 sheet.freeze_panes = "A2"
                 for row in rows:
-                    sheet.append(row)
+                    # B and C are identifiers; D is a real numeric amount.
+                    sheet.append((row[0], row[1], row[2], Decimal(row[3]), row[4]))
                 for index, width in enumerate((19, 25, 13, 17, 20), start=1):
                     sheet.column_dimensions[get_column_letter(index)].width = width
                 for cells in sheet.iter_rows():
                     for cell in cells:
-                        cell.number_format = "@"  # Never coerce identifiers into numbers.
+                        cell.number_format = "0.00" if cell.column == 4 else "@"
+                        # Account and branch identifiers must remain literal text.
                         cell.alignment = Alignment(horizontal="left", vertical="center")
                         cell.font = Font(name="Aptos", size=11)
                     # Branch was already normalized to exactly six characters.
