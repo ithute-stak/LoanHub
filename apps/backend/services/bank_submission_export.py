@@ -131,7 +131,7 @@ def build_bank_submission_zip(records: list[dict], *, lender_name: str, employer
     with ZipFile(out, "w", compression=ZIP_DEFLATED) as archive:
         for filename, rows in sorted(grouped.items()):
             stream = StringIO(newline="")
-            writer = csv.writer(stream, lineterminator="\r\n", quoting=csv.QUOTE_ALL)
+            # Quote only fields requiring CSV escaping; D remains an unquoted decimal.\n            writer = csv.writer(stream, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
             writer.writerows(rows)
             archive.writestr(filename, stream.getvalue().encode("utf-8"))
             if include_spreadsheets:
