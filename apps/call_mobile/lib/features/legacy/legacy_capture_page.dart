@@ -419,14 +419,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
   }
 
-  Future<void> _disconnectRealtime() async {
-    realtimeRetry?.cancel();
-    final previous = realtimeSocket;
-    realtimeSocket = null;
-    if (mounted) context.read<LegacyBloc>().add(const LegacyConnectionChanged(false));
-    await previous?.close();
-  }
-
   Future<void> _connectRealtime() async {
     if (!mounted || !configured || shuttingDown) return;
     realtimeRetry?.cancel();
