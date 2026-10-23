@@ -340,6 +340,8 @@ export function LegacyCashoutRegister() {
   const [activeView, setActiveView] = useState<ViewMode>("capture");
   const [currentStep, setCurrentStep] = useState(0);
   const [registerPage, setRegisterPage] = useState(1);
+  const [registerSearch, setRegisterSearch] = useState("");
+  const [registerStatus, setRegisterStatus] = useState("all");
   const latestIdentity = useRef("");
   const [identityChecking, setIdentityChecking] = useState(false);
   const [identityCheck, setIdentityCheck] = useState<CompanyClientExistingLoanCheck | null>(null);
@@ -376,10 +378,22 @@ export function LegacyCashoutRegister() {
     return null;
   }, [bankPolicy, form.bank_name, form.bank_account_number]);
   const legacyBank = form.bank_name && !isBankName(form.bank_name) ? form.bank_name : null;
-  const totalPages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
+  const filteredRecords = useMemo(() => {
+    const search = registerSearch.trim().toLocaleLowerCase();
+    return records.filter((record) => {
+      if (registerStatus !== "all" && record.status !== registerStatus) return false;
+      if (!search) return true;
+      return [
+        record.folio_number, record.cashout_book_number, record.page_number,
+        record.entry_number, record.borrower_name, record.first_names, record.surname,
+        record.identity_number, record.cell_phone, record.employer, record.loan_reference,
+      ].some((value) => String(value ?? "").toLocaleLowerCase().includes(search));
+    });
+  }, [records, registerSearch, registerStatus]);
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
   const safePage = Math.min(registerPage, totalPages);
   const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageRecords = records.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageRecords = filteredRecords.slice(pageStart, pageStart + PAGE_SIZE);
   const visiblePageStart = Math.max(1, Math.min(safePage - 2, Math.max(1, totalPages - 4)));
   const visiblePages = Array.from(
     { length: Math.min(5, totalPages) },
@@ -1106,6 +1120,27 @@ export function LegacyCashoutRegister() {
                   <Button onClick={startNewEntry}><Plus className="h-4 w-4" />New entry</Button>
                 </div>
               </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Input
+                  aria-label="Search legacy cash-out register"
+                  placeholder="Search folio, borrower, national ID, phone, employer or loan reference…"
+                  value={registerSearch}
+                  onChange={(event) => { setRegisterSearch(event.target.value); setRegisterPage(1); }}
+                  className="w-full sm:flex-1"
+                />
+                <select aria-label="Filter legacy cash-out status" value={registerStatus}
+                  onChange={(event) => { setRegisterStatus(event.target.value); setRegisterPage(1); }}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:w-44">
+                  <option value="all">All statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="returned">Returned</option>
+                  <option value="reviewed">Approved</option>
+                  <option value="posted">Posted</option>
+                </select>
+                {(registerSearch || registerStatus !== "all") ? (
+                  <Button type="button" variant="outline" onClick={() => { setRegisterSearch(""); setRegisterStatus("all"); setRegisterPage(1); }}>Clear filters</Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {loading ? <div className="flex items-center gap-3 p-8 text-sm text-muted-foreground"><LoaderCircle className="h-5 w-5 animate-spin" />Loading legacy entries…</div> : null}
@@ -1117,7 +1152,10 @@ export function LegacyCashoutRegister() {
                   <Button className="mt-4" onClick={startNewEntry}><Plus className="h-4 w-4" />Capture first entry</Button>
                 </div>
               ) : null}
-              {!loading && records.length > 0 ? (
+              {!loading && filteredRecords.length === 0 && records.length > 0 ? (
+                <p role="status" className="p-8 text-center text-sm text-muted-foreground">No legacy cash-out entries match your search or status filter.</p>
+              ) : null}
+              {!loading && filteredRecords.length > 0 ? (
                 <>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[980px] text-sm">
@@ -1160,7 +1198,7 @@ export function LegacyCashoutRegister() {
 
                   <div className="flex flex-col gap-3 border-t bg-muted/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                     <p className="text-xs font-semibold text-muted-foreground">
-                      Showing <span className="font-black text-foreground">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, records.length)}</span> of <span className="font-black text-foreground">{records.length}</span> entries
+                      Showing <span className="font-black text-foreground">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredRecords.length)}</span> of <span className="font-black text-foreground">{filteredRecords.length}</span> matching entries <span className="font-normal">({records.length} total)</span>
                     </p>
                     <div className="flex flex-wrap items-center gap-1.5" aria-label="Register pagination">
                       <Button type="button" size="sm" variant="outline" disabled={safePage === 1} onClick={() => setRegisterPage((page) => Math.max(1, page - 1))}>
