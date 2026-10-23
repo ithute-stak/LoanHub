@@ -370,8 +370,6 @@ def pay_early_settlement(
         agreement_reference=payload.agreement_reference,
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
-        owner_override_verified=owner_override_verified,
-        owner_override_reason=override_reason,
     )
     db.refresh(quote)
     receipt_number, receipt_file = payment_receipt_payload(db, payment.id)
