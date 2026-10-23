@@ -70,6 +70,9 @@ def test_transport_failure_is_ambiguous_but_provider_response_is_not() -> None:
     assert is_ambiguous_write_error(_ambiguous_error()) is True
     assert is_ambiguous_write_error(CdasError(419, "Inactive session")) is False
     assert is_ambiguous_write_error(CdasError(500, "Provider rejected the request")) is False
+    assert is_ambiguous_write_error(CdasError(502, "CDAS acknowledgement employee number does not match the request")) is True
+    assert is_ambiguous_write_error(CdasError(502, "CDAS deduction lifecycle request returned an invalid response")) is True
+    assert is_ambiguous_write_error(CdasError(502, "CDAS upstream gateway error")) is False
 
 
 def test_unresolved_states_block_duplicate_mutations() -> None:
