@@ -163,6 +163,7 @@ export type AssistedCompanyClientCreate = {
 export type CompanyClientExistingLoanCheck = {
     national_id: string;
     borrower_found: boolean;
+    legacy_capture_count: number;
     already_company_client: boolean;
     company_client_account_id: string | null;
     has_existing_loans: boolean;
