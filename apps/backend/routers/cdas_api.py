@@ -24,6 +24,8 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.audit_log import AuditLog
+from database.models.company_staff import CompanyStaff
+from database.models.person import Person
 from database.models.cdas_official import (
     CdasOfficialMandateEvent,
     CdasOfficialMandateState,
@@ -2311,7 +2313,28 @@ def list_cdas_operations(
     if state:
         query = query.filter(CdasProviderOperation.state == state.strip().lower())
     rows = query.order_by(CdasProviderOperation.created_at.desc()).limit(limit).all()
-    return {"items": [operation_summary(row) for row in rows], "count": len(rows)}
+    actor_ids = {row.actor_user_id for row in rows if row.actor_user_id is not None}
+    staff_names: dict[UUID, str] = {}
+    if actor_ids:
+        staff = (
+            db.query(CompanyStaff.user_id, Person.first_name, Person.last_name)
+            .join(Person, Person.user_id == CompanyStaff.user_id)
+            .filter(
+                CompanyStaff.company_id == context.company_id,
+                CompanyStaff.user_id.in_(actor_ids),
+            )
+            .all()
+        )
+        staff_names = {
+            user_id: " ".join(part for part in (first_name, last_name) if part).strip()
+            for user_id, first_name, last_name in staff
+        }
+    items = []
+    for row in rows:
+        item = operation_summary(row)
+        item["actor_name"] = staff_names.get(row.actor_user_id) or None
+        items.append(item)
+    return {"items": items, "count": len(items)}
 
 
 @router.get("/operations/{operation_id}")
