@@ -336,12 +336,20 @@ def _operation_target_deduction_id(operation: CdasProviderOperation) -> int | No
 
 
 def _deduction_matches(operation: CdasProviderOperation, record: dict[str, Any]) -> bool:
+    """Require the same employee and deduction; never fall back on an ID mismatch."""
     request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
+    expected_employee = _normalized_text(operation.employee_no or request.get("EmployeeNo"))
+    returned_employee = _normalized_text(_first_value(record, "EmployeeNo", "employeeNo", "employee_no"))
+    if expected_employee and returned_employee and expected_employee != returned_employee:
+        return False
+
     target_id = _operation_target_deduction_id(operation)
     record_id = _first_value(record, "DeductionID", "deductionId", "deduction_id")
-    if target_id is not None and record_id not in (None, ""):
+    if target_id is not None:
+        # Do not confirm a financial mutation from just a matching item code or
+        # reference when the provider omitted or changed the deduction identity.
         try:
-            return int(record_id) == target_id
+            return record_id not in (None, "") and int(record_id) == target_id
         except (TypeError, ValueError):
             return False
 
