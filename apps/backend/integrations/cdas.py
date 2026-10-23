@@ -463,7 +463,7 @@ class CdasClient:
         )
         try:
             result = validate_deduction_write(payload)
-            return self._verify_mutation_identity(result, request_payload, require_existing_id=False)
+            return self._verify_mutation_identity(result, request_payload, require_existing_id=int(request_payload.get("RequestType") or 0) != 1)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload) from exc
 
