@@ -50,7 +50,11 @@ CDAS_PROVIDER_ERROR_CATALOG: dict[int, dict[str, Any]] = {
 }
 
 
-def cdas_error_semantics(status_code: int) -> dict[str, Any]:
+def cdas_error_semantics(status_code: int, payload: Any = None, *, path: str | None = None) -> dict[str, Any]:
+    message = CdasClient._message(payload, "").casefold()
+    if status_code == 406 and (path == CdasClient.DOCUMENT_PATH or "report" in message) and ("not ready" in message or "not available" in message):
+        return {"code": "CDAS_DOCUMENT_NOT_READY", "category": "document", "retryable": False, "action": "The CDAS report is not ready; check availability later without repeated authentication attempts."}
+
     return dict(CDAS_PROVIDER_ERROR_CATALOG.get(
         int(status_code),
         {
