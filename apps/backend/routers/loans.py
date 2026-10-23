@@ -80,6 +80,42 @@ from utils.payment_dates import current_payment_date, resolve_payment_date
 
 router = APIRouter(prefix="/loans", tags=["Company Loans and Recorded Payments"])
 
+
+class LastPaymentReversalRequest(BaseModel):
+    payment_id: UUID
+    reason: str = Field(min_length=12, max_length=500)
+
+
+@router.get("/{loan_id}/repayments/last")
+def get_last_repayment_for_reversal(
+    loan_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    loan = loan_or_404(db, loan_id)
+    assert_tenant_loan(context, loan)
+    from services.loan_last_payment_reversal import latest_repayment
+    return latest_repayment(db, loan)
+
+
+@router.post("/{loan_id}/repayments/last/reverse")
+def reverse_last_loan_payment(
+    loan_id: UUID,
+    payload: LastPaymentReversalRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    loan = loan_or_404(db, loan_id)
+    assert_tenant_loan(context, loan)
+    from services.loan_last_payment_reversal import reverse_latest_cash_repayment
+    return reverse_latest_cash_repayment(
+        db, loan_id=loan_id, company_id=context.company_id,
+        payment_id=payload.payment_id, user_id=context.user.id,
+        actor_role=context.role.value, reason=payload.reason,
+    )
+
 # Repayment schedule row payments may be posted by lending or cashier roles.
 INSTALLMENT_PAYMENT_ROLES = CASHIER_ROLES | LENDING_ROLES
 
