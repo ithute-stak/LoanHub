@@ -297,6 +297,14 @@ export default function CdasManagePage() {
         </div>
       </section>
 
+      {reconciliationFeedback && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>CDAS reconciliation result</AlertTitle>
+          <AlertDescription>{reconciliationFeedback}</AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card><CardHeader className="pb-2"><CardDescription>CDAS loans</CardDescription><CardTitle>{totals.total}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Ready to add</CardDescription><CardTitle>{totals.add}</CardTitle></CardHeader></Card>
