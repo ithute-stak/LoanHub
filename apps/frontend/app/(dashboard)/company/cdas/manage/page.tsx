@@ -35,6 +35,19 @@ type CdasOperationalLoan = {
 };
 
 type OperationsResponse = { items: CdasOperationalLoan[]; count: number };
+type CdasLedgerOperation = {
+  id: string;
+  operation_type: string;
+  state: string;
+  employee_no: string | null;
+  deduction_id: number | null;
+  reference_no: string | null;
+  actor_user_id: string | null;
+  requires_reconciliation: boolean;
+  created_at: string | null;
+  error_message: string | null;
+};
+type CdasLedgerResponse = { items: CdasLedgerOperation[]; count: number };
 type RosterSnapshot = {
   environment: string;
   captured_at: string;
@@ -121,6 +134,9 @@ export default function CdasManagePage() {
   const { activeRole } = useTenant();
   const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
   const [items, setItems] = useState<CdasOperationalLoan[]>([]);
+  const [ledgerItems, setLedgerItems] = useState<CdasLedgerOperation[]>([]);
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [ledgerFilter, setLedgerFilter] = useState<"all" | "unresolved">("unresolved");
   const [reconciliationFeedback, setReconciliationFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [workingLoanId, setWorkingLoanId] = useState<string | null>(null);
@@ -137,12 +153,14 @@ export default function CdasManagePage() {
     setLoading(true);
     setError(null);
     try {
-      const [response, rosterResponse, kpiResponse] = await Promise.all([
+      const [response, rosterResponse, kpiResponse, ledgerResponse] = await Promise.all([
         api.get<OperationsResponse>("/cdas/loans/operations"),
         api.get<RosterResponse>("/cdas/roster-intelligence"),
         api.get<OperationsKpis>("/cdas/operations-kpis"),
+        api.get<CdasLedgerResponse>("/cdas/operations?limit=200"),
       ]);
       setItems(response.data.items);
+      setLedgerItems(ledgerResponse.data.items);
       setRoster(rosterResponse.data.snapshot);
       setKpis(kpiResponse.data);
     } catch (requestError: unknown) {
@@ -164,6 +182,17 @@ export default function CdasManagePage() {
         .some((value) => value.toLowerCase().includes(term)),
     );
   }, [items, search]);
+
+  const visibleLedger = useMemo(() => {
+    const searchTerm = ledgerSearch.trim().toLowerCase();
+    return ledgerItems.filter((item) => {
+      if (ledgerFilter === "unresolved" && !item.requires_reconciliation) return false;
+      if (!searchTerm) return true;
+      return [item.employee_no, item.reference_no, item.operation_type, item.state,
+        item.actor_user_id, item.deduction_id?.toString(), item.id]
+        .some((value) => (value || "").toLowerCase().includes(searchTerm));
+    });
+  }, [ledgerItems, ledgerFilter, ledgerSearch]);
 
   const totals = useMemo(() => ({
     total: items.length,
@@ -304,6 +333,36 @@ export default function CdasManagePage() {
           <AlertDescription>{reconciliationFeedback}</AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>CDAS provider operation ledger</CardTitle>
+          <CardDescription>Recent 200 company operations. Search by employee, deduction ID, reference, status or staff user ID. This is a local record and does not contact CDAS.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Input aria-label="Search CDAS operation ledger" placeholder="Search employee, reference, staff ID…" value={ledgerSearch}
+              onChange={(event) => setLedgerSearch(event.target.value)} className="min-w-52 flex-1" />
+            <Button type="button" variant={ledgerFilter === "unresolved" ? "default" : "outline"} onClick={() => setLedgerFilter("unresolved")}>Needs attention</Button>
+            <Button type="button" variant={ledgerFilter === "all" ? "default" : "outline"} onClick={() => setLedgerFilter("all")}>All operations</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Showing {visibleLedger.length} of {ledgerItems.length} recently loaded operations. Staff are shown by their audit user ID.</p>
+          <div className="max-h-96 space-y-2 overflow-y-auto">
+            {visibleLedger.length === 0 && <p className="rounded-xl border p-4 text-sm text-muted-foreground">No matching operations in the loaded records.</p>}
+            {visibleLedger.map((item) => (
+              <div key={item.id} className="rounded-xl border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">{item.operation_type.replaceAll(".", " · ")}</span>
+                  <Badge variant={item.requires_reconciliation ? "destructive" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge>
+                </div>
+                <p className="mt-1 text-muted-foreground">Employee {item.employee_no || "—"} · Deduction {item.deduction_id ?? "—"} · Reference {item.reference_no || "—"}</p>
+                <p className="mt-1 break-all text-xs text-muted-foreground">Staff user ID: {item.actor_user_id || "Unavailable"} · {item.created_at ? new Date(item.created_at).toLocaleString() : "Date unavailable"}</p>
+                {item.error_message && <p className="mt-1 text-xs text-destructive">{item.error_message}</p>}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card><CardHeader className="pb-2"><CardDescription>CDAS loans</CardDescription><CardTitle>{totals.total}</CardTitle></CardHeader></Card>
