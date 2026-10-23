@@ -918,6 +918,24 @@ export default function CompanyClientsPage() {
     setLoanDialog(true);
   }
 
+  useEffect(() => {
+    if (loading || !clients.length) return;
+    const requestedClient = new URLSearchParams(window.location.search).get("request_loan");
+    if (!requestedClient) return;
+    const matched = clients.find((client) => client.id === requestedClient);
+    // Consume the link before opening the modal to avoid reopening it on refresh.
+    window.history.replaceState(null, "", window.location.pathname);
+    if (!matched) {
+      toast.error("Borrower account not found in the active company's clients.");
+      return;
+    }
+    if (matched.status !== "active") {
+      toast.error("Only active borrower accounts can request a new loan.");
+      return;
+    }
+    startInternalLoan(matched);
+  }, [clients, loading, products]);
+
   async function submitInternalLoan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedClient || !selectedProduct || !calculation) return;
