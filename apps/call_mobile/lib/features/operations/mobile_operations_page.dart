@@ -244,7 +244,7 @@ class _Overview extends StatelessWidget {
           title: 'Collections follow-up',
           subtitle: overdue == 0
               ? 'No overdue loans are currently shown.'
-              : overdue.toString() + ' overdue loan(s) need attention.',
+              : '$overdue overdue loan(s) need attention.',
           onTap: () => onChoose('Follow-up'),
         ),
         _ActionCard(
@@ -258,7 +258,7 @@ class _Overview extends StatelessWidget {
           title: 'Call activity',
           subtitle: calls.isEmpty
               ? 'No recent calls yet.'
-              : calls.length.toString() + ' recent controlled call(s).',
+              : '${calls.length} recent controlled call(s).',
           onTap: () => onChoose('Calls'),
         ),
         const SizedBox(height: 12),
@@ -311,7 +311,7 @@ class _Portfolio extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          items.length.toString() + ' borrower profile(s)',
+          '${items.length} borrower profile(s)',
           style: const TextStyle(
             color: LoanHubColors.muted,
             fontWeight: FontWeight.w600,
@@ -408,7 +408,7 @@ class _Team extends StatelessWidget {
                 subtitle: Text(_teamSubtitle(person)),
                 trailing: _text(person['extension']).isEmpty
                     ? null
-                    : Chip(label: Text('Ext. ' + _text(person['extension']))),
+                    : Chip(label: Text('Ext. ${_text(person['extension'])}')),
               ),
             ),
           )
@@ -484,9 +484,9 @@ class _BorrowerCard extends StatelessWidget {
               spacing: 7,
               runSpacing: 6,
               children: [
-                Chip(label: Text(loans.length.toString() + ' loan(s)')),
-                if (balance > 0) Chip(label: Text(_money(balance) + ' balance')),
-                Chip(label: Text(contacts.length.toString() + ' contact(s)')),
+                Chip(label: Text('${loans.length} loan(s)')),
+                if (balance > 0) Chip(label: Text('${_money(balance)} balance')),
+                Chip(label: Text('${contacts.length} contact(s)')),
               ],
             ),
             const SizedBox(height: 6),
@@ -527,7 +527,7 @@ class _LoanCard extends StatelessWidget {
       child: ListTile(
         leading: _Avatar(name: name),
         title: Text(name),
-        subtitle: Text(reference + '\n' + status + ' · ' + _money(balance) + ' balance'),
+        subtitle: Text(reference + '\n' + status + ' · ' + '${_money(balance)} balance'),
         isThreeLine: true,
         trailing: IconButton(
           tooltip: 'Open borrower calls',
@@ -562,7 +562,7 @@ class _CallCard extends StatelessWidget {
         ? 'Recording ready'
         : recordingStatus.isEmpty
         ? 'No recording'
-        : 'Recording ' + recordingStatus;
+        : 'Recording $recordingStatus';
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
@@ -575,8 +575,7 @@ class _CallCard extends StatelessWidget {
         ),
         title: Text(name),
         subtitle: Text(
-          status + ' · ' + (seconds ~/ 60).toString() + 'm ' +
-              (seconds % 60).toString() + 's · ' + recording,
+          '$status · ${seconds ~/ 60}m ${seconds % 60}s · $recording',
         ),
         trailing: const Icon(Icons.chevron_right),
       ),
@@ -681,8 +680,7 @@ class _Hero extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             Text(
-              borrowers.toString() + ' borrowers · ' + overdue.toString() +
-                  ' follow-up · ' + _money(outstanding) + ' outstanding',
+              '$borrowers borrowers · $overdue follow-up · ${_money(outstanding)} outstanding',
               style: const TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 12),
@@ -866,7 +864,7 @@ List<Map<String, dynamic>> _maps(Object? value) {
       .toList();
 }
 
-String _money(double value) => 'LSL ' + value.toStringAsFixed(2);
+String _money(double value) => 'LSL ${value.toStringAsFixed(2)}';
 
 String _teamSubtitle(Map<String, dynamic> person) {
   final details = <String>[
