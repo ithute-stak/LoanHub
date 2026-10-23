@@ -399,7 +399,10 @@ class CdasClient:
             header_name="Token",
         )
         try:
-            return parse_money(payload)
+            amount = parse_money(payload)
+            if not amount.is_finite() or amount < 0:
+                raise ValueError("CDAS affordability must be a finite, non-negative amount")
+            return amount
         except ValueError as exc:
             raise CdasError(502, "CDAS affordability check returned an invalid response", payload) from exc
 
