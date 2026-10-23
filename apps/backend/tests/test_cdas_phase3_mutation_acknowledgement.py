@@ -53,3 +53,22 @@ async def test_registration_accepts_provider_assigned_deduction_id():
     )
     result = await service.add_update_deduction({"EmployeeNo": "EMP-1", "DeductionID": 0})
     assert result["DeductionID"] == 52
+
+
+@pytest.mark.asyncio
+async def test_non_registration_lifecycle_requires_same_existing_deduction_id():
+    async def handler(request):
+        if request.url.path == "/api/security/login":
+            return httpx.Response(200, json={"Authorization": "token"})
+        return httpx.Response(200, json={"DeductionID": 99, "EmployeeNo": "EMP-1"})
+
+    service = CdasClient(
+        base_url="https://cdas.test", username="user", password="password",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(CdasError) as error:
+        await service.add_update_deduction({
+            "EmployeeNo": "EMP-1", "DeductionID": 52, "RequestType": 4,
+        })
+    assert error.value.status_code == 502
+    assert "deduction ID" in error.value.message
