@@ -21,7 +21,7 @@ import {
 
 import { listCompanyClients } from "@/api/companyClients";
 import { expenseManagementApi } from "@/api/expenseManagement";
-import { adjustInstallmentDueDate, collectRepayment, getLoanByReference, listLoans, previewRepayment } from "@/api/loans";
+import { adjustInstallmentDueDate, collectRepayment, getLastLoanRepayment, reverseLastLoanRepayment, getLoanByReference, listLoans, previewRepayment } from "@/api/loans";
 import { downloadPaymentReceiptPdf, printPaymentReceiptPdf } from "@/api/paymentReceipts";
 import { EarlySettlementDialog } from "@/components/loans/early-settlement-dialog";
 import {
@@ -52,6 +52,7 @@ import { FINANCE_ROLES, LENDING_ROLES, hasRole } from "@/types/auth";
 import type { CompanyClient } from "@/types/companyClient";
 import type { PaymentMethodOption } from "@/types/expenseManagement";
 import type { CashPaymentResult, CashRepaymentPreview, Loan, OverpaymentAction, RepaymentInstallment } from "@/types/loan";
+import type { LastLoanRepayment } from "@/api/loans";
 import { toast } from "@/utils/toast";
 
 function dayAfterIsoDate(value: string): string {
@@ -77,6 +78,7 @@ export default function CompanyCashierPage() {
   const canAdjustDueDates = hasRole(activeRole, LENDING_ROLES);
   const canSettleEarly = hasRole(activeRole, FINANCE_ROLES);
   const canBackdatePayments = activeRole === "company_owner";
+  const canReversePayment = activeRole === "company_owner" || activeRole === "company_admin";
 
   const [loanReference, setLoanReference] = useState("");
   const [loan, setLoan] = useState<Loan | null>(null);
@@ -95,11 +97,46 @@ export default function CompanyCashierPage() {
   const [settlementOpen, setSettlementOpen] = useState(false);
   const [receipt, setReceipt] = useState<CashPaymentResult | null>(null);
   const [receiptAction, setReceiptAction] = useState<"download" | "print" | null>(null);
+  const [latestPayment, setLatestPayment] = useState<LastLoanRepayment | null>(null);
+  const [reversalOpen, setReversalOpen] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversing, setReversing] = useState(false);
   const [editingInstallment, setEditingInstallment] = useState<RepaymentInstallment | null>(null);
   const [extendedDueDate, setExtendedDueDate] = useState("");
   const [extensionNote, setExtensionNote] = useState("");
   const [extensionReference, setExtensionReference] = useState("");
   const [extendingDueDate, setExtendingDueDate] = useState(false);
+
+  useEffect(() => {
+    if (!canReversePayment || !loan?.id) { setLatestPayment(null); return; }
+    let cancelled = false;
+    void getLastLoanRepayment(loan.id).then((payment) => {
+      if (!cancelled) setLatestPayment(payment);
+    }).catch(() => { if (!cancelled) setLatestPayment(null); });
+    return () => { cancelled = true; };
+  }, [canReversePayment, loan?.id, loan?.amount_paid]);
+
+  async function reverseLastPayment() {
+    if (!loan || !latestPayment || reversing || reversalReason.trim().length < 12) return;
+    setReversing(true);
+    try {
+      await reverseLastLoanRepayment(loan.id, {
+        payment_id: latestPayment.payment_id, reason: reversalReason.trim(),
+      });
+      setReversalOpen(false);
+      setReversalReason("");
+      setLatestPayment(null);
+      setPreview(null);
+      setReceipt(null);
+      setLoan(await getLoanByReference(loan.loan_reference));
+      toast.success("Last cash payment reversed", { description: "Loan balance, instalments, accounting and branch treasury were updated. The original receipt remains in the audit history." });
+    } catch (error) {
+      toast.error(error, { description: "Reversal was not completed. Check the loan and treasury day status." });
+    } finally {
+      setReversing(false);
+    }
+  }
+
 
   useEffect(() => {
     let cancelled = false;
@@ -522,6 +559,15 @@ export default function CompanyCashierPage() {
               </CardHeader>
               <CardContent className="space-y-5 p-5 sm:p-6">
                 <div className="grid gap-3 sm:grid-cols-4"><Value label="Principal" value={formatMoney(loan.principal_amount)} /><Value label="Total repayable" value={formatMoney(loan.total_repayable)} /><Value label="Paid" value={formatMoney(loan.amount_paid)} /><Value label="Outstanding" value={formatMoney(loan.balance)} emphasis /></div>
+                {canReversePayment && latestPayment ? (
+                  <div className="rounded-2xl border border-amber-400/40 bg-amber-50/50 p-3 dark:bg-amber-950/15">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-sm"><b>Last loan payment</b><p className="text-xs text-muted-foreground">{latestPayment.reference ?? latestPayment.payment_id} · {formatMoney(Number(latestPayment.amount))}</p></div>
+                      <Button type="button" size="sm" variant="outline" disabled={!latestPayment.reversible} onClick={() => setReversalOpen(true)}><Undo2 className="h-4 w-4" />Reverse last payment</Button>
+                    </div>
+                    {!latestPayment.reversible ? <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">{latestPayment.restriction}</p> : null}
+                  </div>
+                ) : null}
                 <div><div className="mb-2 flex justify-between text-xs font-bold"><span>Loan repayment progress</span><span>{repaymentProgress.toFixed(1)}%</span></div><Progress value={repaymentProgress} className="h-2.5" /></div>
                 {selectedInstallment ? <Alert><CircleAlert className="h-4 w-4" /><AlertTitle>Current instalment {selectedInstallment.installment_number}</AlertTitle><AlertDescription>Due {formatDate(selectedInstallment.due_date)} · Expected {formatMoney(selectedInstallment.total_due)} · Paid {formatMoney(selectedInstallment.paid_amount)} · Remaining {formatMoney(Number(selectedInstallment.total_due) - Number(selectedInstallment.paid_amount))}</AlertDescription></Alert> : <Alert><CheckCircle2 className="h-4 w-4" /><AlertTitle>No unpaid instalment</AlertTitle><AlertDescription>This loan has no outstanding scheduled instalment.</AlertDescription></Alert>}
               </CardContent>
@@ -741,6 +787,15 @@ export default function CompanyCashierPage() {
               Save adjusted date
             </LoadingButton>
           </DialogFooter>
+        </div>
+      </CustomDialog>
+
+      <CustomDialog open={reversalOpen} onOpenChange={(open) => !reversing && setReversalOpen(open)} title="Reverse the last cash payment" description="This audited correction restores the loan balance and instalment allocation, reverses its accounting entries and voids its treasury entry. It does not delete the payment or return cash automatically." contentClassName="sm:max-w-lg">
+        <div className="space-y-4 p-6">
+          <Alert variant="destructive"><CircleAlert className="h-4 w-4" /><AlertTitle>Financial correction</AlertTitle><AlertDescription>Only use this to correct a mistaken cash posting. The original payment receipt will remain in the audit trail. If the treasury day is locked, the reversal will be refused.</AlertDescription></Alert>
+          <p className="text-sm"><b>Loan:</b> {loan?.loan_reference} <span className="mx-2">·</span><b>Amount:</b> {formatMoney(Number(latestPayment?.amount ?? 0))}</p>
+          <div className="space-y-2"><Label htmlFor="reversal-reason">Required reason (at least 12 characters)</Label><Textarea id="reversal-reason" value={reversalReason} onChange={(event) => setReversalReason(event.target.value)} placeholder="Explain the incorrect payment and supporting evidence" maxLength={500} /></div>
+          <DialogFooter><Button variant="outline" disabled={reversing} onClick={() => setReversalOpen(false)}>Cancel</Button><LoadingButton variant="destructive" loading={reversing} disabled={!latestPayment?.reversible || reversalReason.trim().length < 12} onClick={() => void reverseLastPayment()}><Undo2 className="h-4 w-4" />Confirm reversal</LoadingButton></DialogFooter>
         </div>
       </CustomDialog>
 
