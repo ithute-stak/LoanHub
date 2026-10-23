@@ -2605,7 +2605,6 @@ async def get_employee_registration_context(
     client = get_company_cdas_client(db, context.company_id)
     try:
         employee = await client.get_employee_details(employee_no)
-        affordability = await client.check_affordability(employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -2615,6 +2614,11 @@ async def get_employee_registration_context(
             status_code=502,
             detail="CDAS returned a different employee number than the one requested",
         )
+
+    try:
+        affordability = await client.check_affordability(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
 
     _record_cdas_business_operation(
         db,
