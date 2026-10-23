@@ -2605,7 +2605,6 @@ async def get_employee_registration_context(
     client = get_company_cdas_client(db, context.company_id)
     try:
         employee = await client.get_employee_details(employee_no)
-        affordability = await client.check_affordability(employee_no)
     except CdasError as exc:
         raise _cdas_http_error(exc) from exc
 
@@ -2615,6 +2614,12 @@ async def get_employee_registration_context(
             status_code=502,
             detail="CDAS returned a different employee number than the one requested",
         )
+
+    try:
+        affordability = await client.check_affordability(employee_no)
+        existing_deductions = await client.view_all_deductions(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
 
     _record_cdas_business_operation(
         db,
@@ -2628,6 +2633,14 @@ async def get_employee_registration_context(
         context=context,
         environment=environment,
         operation_type="affordability",
+        source_reference=employee_no,
+    )
+
+    _record_cdas_business_operation(
+        db,
+        context=context,
+        environment=environment,
+        operation_type="deduction_lookup",
         source_reference=employee_no,
     )
 
@@ -2663,6 +2676,8 @@ async def get_employee_registration_context(
         "ok": True,
         "employee": employee,
         "affordability": affordability,
+        "existing_deductions": existing_deductions,
+        "existing_deduction_count": len(existing_deductions),
         "payroll_profile_found": profile is not None,
         "matched_loan": matched_loan,
         "can_register": can_register,

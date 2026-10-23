@@ -45,7 +45,7 @@ type CdasEmployee = {
 };
 
 type ProviderRecord = Record<string, unknown>;
-type LoadingAction = "employee" | "affordability" | "all" | "own" | "active" | null;
+type LoadingAction = "employee" | "affordability" | "all" | "own" | "active" | "assessment" | null;
 
 type EmployeeLookupResponse = {
     ok: boolean;
@@ -55,6 +55,23 @@ type EmployeeLookupResponse = {
     payroll_profile?: { id: string; employee_number: string; verified: boolean; verified_at: string | null; department: string | null };
 };
 type AffordabilityResponse = { ok: boolean; affordability: number };
+type CdasRegistrationAssessment = {
+    ok: boolean;
+    employee: CdasEmployee;
+    affordability: number;
+    existing_deductions: ProviderRecord[];
+    existing_deduction_count: number;
+    payroll_profile_found: boolean;
+    matched_loan: {
+        loan_reference: string | null;
+        monthly_installment: string;
+        balance: string;
+        cdas_enabled: boolean;
+        status: string;
+    } | null;
+    can_register: boolean;
+    reason: string | null;
+};
 type DeductionsResponse = { ok: boolean; deductions: ProviderRecord[] };
 type ActiveDeductionResponse = { ok: boolean; deduction: ProviderRecord };
 type ReadFeedbackKind = "employee" | "affordability" | "deductions" | "record";
@@ -506,6 +523,7 @@ export default function CdasWorkspacePage() {
     const [deductionStatus, setDeductionStatus] = useState(5);
     const [employee, setEmployee] = useState<CdasEmployee | null>(null);
     const [affordability, setAffordability] = useState<number | null>(null);
+    const [registrationAssessment, setRegistrationAssessment] = useState<CdasRegistrationAssessment | null>(null);
     const [allDeductions, setAllDeductions] = useState<ProviderRecord[] | null>(null);
     const [ownDeductions, setOwnDeductions] = useState<ProviderRecord[] | null>(null);
     const [activeDeduction, setActiveDeduction] = useState<ProviderRecord | null>(null);
@@ -522,6 +540,7 @@ export default function CdasWorkspacePage() {
         setEmployee(null);
         setLinkedPayrollProfile(null);
         setAffordability(null);
+        setRegistrationAssessment(null);
         setAllDeductions(null);
         setOwnDeductions(null);
         setActiveDeduction(null);
@@ -592,6 +611,27 @@ export default function CdasWorkspacePage() {
             setError(getErrorMessage(requestError, "CDAS employee verification failed."));
         } finally {
             setLoadingAction(null);
+        }
+    }
+
+    async function assessEmployeeRegistration() {
+        if (!normalizedEmployeeNo || busy || !canManage) return;
+        setLoadingAction("assessment");
+        setError(null);
+        setRegistrationAssessment(null);
+        try {
+            const response = await api.post<CdasRegistrationAssessment>("/cdas/employees/registration-context", {
+                employee_no: normalizedEmployeeNo,
+            });
+            setRegistrationAssessment(response.data);
+            setEmployee(response.data.employee);
+            setAffordability(response.data.affordability);
+            setAllDeductions(response.data.existing_deductions);
+        } catch (requestError: unknown) {
+            setError(getErrorMessage(requestError, "CDAS registration assessment failed."));
+        } finally {
+            setLoadingAction(null);
+            void refreshRequestBudget();
         }
     }
 
@@ -940,6 +980,50 @@ export default function CdasWorkspacePage() {
                     ) : null}
                 </CardContent>
             </Card>
+
+            {canManage && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <ListChecks className="h-5 w-5" /> CDAS registration assessment
+                        </CardTitle>
+                        <CardDescription>
+                            Verify the employee number, check current affordability and retrieve existing third-party deductions in one read-only assessment. This does not register a deduction.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <Button type="button" onClick={() => void assessEmployeeRegistration()} disabled={busy || !normalizedEmployeeNo}>
+                            {loadingAction === "assessment" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                            Assess employee for CDAS
+                        </Button>
+                        {registrationAssessment && (
+                            <div className="space-y-3 rounded-xl border bg-muted/20 p-4" role="status">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="font-bold">{registrationAssessment.employee.Name} {registrationAssessment.employee.Surname} · {registrationAssessment.employee.EmployeeNo}</p>
+                                    <Badge variant={registrationAssessment.can_register ? "secondary" : "destructive"}>
+                                        {registrationAssessment.can_register ? "Eligible for registration review" : "Registration blocked"}
+                                    </Badge>
+                                </div>
+                                <div className="grid gap-3 sm:grid-cols-3">
+                                    <div><p className="text-xs text-muted-foreground">CDAS available affordability</p><p className="font-bold">M {Number(registrationAssessment.affordability).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p></div>
+                                    <div><p className="text-xs text-muted-foreground">Third-party deductions</p><p className="font-bold">{registrationAssessment.existing_deduction_count}</p></div>
+                                    <div><p className="text-xs text-muted-foreground">Verified payroll profile</p><p className="font-bold">{registrationAssessment.payroll_profile_found ? "Found" : "Not found"}</p></div>
+                                </div>
+                                {registrationAssessment.matched_loan && (
+                                    <p className="text-sm">Matched loan: <span className="font-semibold">{registrationAssessment.matched_loan.loan_reference || "Reference unavailable"}</span> · Balance M {registrationAssessment.matched_loan.balance} · {registrationAssessment.matched_loan.status}</p>
+                                )}
+                                {registrationAssessment.reason && <p className="text-sm text-muted-foreground">{registrationAssessment.reason}</p>}
+                                {registrationAssessment.existing_deductions.length > 0 && (
+                                    <Button type="button" variant="outline" size="sm" onClick={() => openDeductionResults("Existing CDAS deductions", "Current third-party commitments reported by CDAS.", registrationAssessment.existing_deductions)}>
+                                        View existing deductions
+                                    </Button>
+                                )}
+                                <p className="text-xs text-muted-foreground">CDAS affordability is provider-reported and is not reduced a second time by the listed deductions. Final authorization and loan review remain required.</p>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             {error && (
                 <Alert variant="destructive">
