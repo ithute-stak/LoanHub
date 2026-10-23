@@ -209,6 +209,22 @@ def validate_deduction(payload: Any) -> dict[str, Any]:
     return dict(payload)
 
 
+def validate_deduction_write(payload: Any) -> dict[str, Any]:
+    """Require provider acknowledgement identifiers for financial state changes.
+
+    Read-side records may legitimately be partial; write acknowledgements must
+    identify the deduction before LoanHub treats the operation as confirmed.
+    """
+    record = validate_deduction(payload)
+    deduction_id = record.get("DeductionID")
+    employee_no = record.get("EmployeeNo")
+    if isinstance(deduction_id, bool) or not isinstance(deduction_id, int) or deduction_id <= 0:
+        raise ValueError("CDAS write acknowledgement is missing a valid DeductionID")
+    if not isinstance(employee_no, str) or not employee_no.strip():
+        raise ValueError("CDAS write acknowledgement is missing EmployeeNo")
+    return record
+
+
 def validate_deductions(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise ValueError("CDAS deductions response is not a list")
