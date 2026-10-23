@@ -130,6 +130,19 @@ const capabilities = [
     },
 ];
 
+const capabilityReadiness = [
+    { name: "Client registration & management", score: 9, note: "Established workflows" },
+    { name: "Loan applications & processing", score: 8, note: "Established workflows" },
+    { name: "Repayment & collections management", score: 9, note: "Established workflows" },
+    { name: "Reporting & PDF generation", score: 9, note: "Established workflows" },
+    { name: "Banking & API integrations", score: 5, note: "Further validation required" },
+    { name: "Credit scoring & automation", score: 4, note: "Further development required" },
+    { name: "Enterprise loan product configuration", score: 4, note: "Further development required" },
+    { name: "Security & regulatory compliance", score: 3, note: "Formal evidence required" },
+    { name: "Scalability & disaster recovery", score: 5, note: "Load and recovery tests required" },
+    { name: "Tender documentation & eligibility", score: 3, note: "Independent eligibility verification required" },
+];
+
 const borrowerJourney = [
     ["01", "Create your account", "Register once, secure your identity and build the borrower profile used across LoanHub."],
     ["02", "Complete your assessment", "Add employment, income, expenses, bank accounts, supporting documents and the consents you choose to give."],
@@ -344,6 +357,55 @@ export default function LoanHubLandingPage() {
                                     </div>
                                 </article>
                             ))}
+                        </div>
+                    </div>
+                </section>
+
+                <section id="readiness" aria-labelledby="readiness-heading" className="scroll-mt-24 bg-white py-20 dark:bg-slate-950 sm:py-24">
+                    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                        <div className="grid gap-8 lg:grid-cols-[.78fr_1.22fr] lg:items-start">
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-300">Current capability snapshot</p>
+                                <h2 id="readiness-heading" className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Built for everyday lending. Growing toward enterprise banking.</h2>
+                                <p className="mt-4 leading-7 text-slate-600 dark:text-slate-300">
+                                    LoanHub already supports core lending operations, while specialist banking integrations, advanced automation and independent compliance evidence remain development priorities.
+                                </p>
+                                <div className="mt-7 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-900 dark:bg-emerald-950/30">
+                                    <p className="text-xs font-black uppercase tracking-widest text-emerald-800 dark:text-emerald-200">Provisional technical readiness</p>
+                                    <p className="mt-2 text-5xl font-black tabular-nums text-slate-950 dark:text-white">5.5<span className="text-xl text-slate-500">/10</span></p>
+                                    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                                        Indicative internal assessment against a demanding enterprise banking tender—not an audited performance score, certification or statement of tender eligibility.
+                                    </p>
+                                </div>
+                                <Link href="/manual" className="mt-6 inline-flex items-center gap-2 font-bold text-emerald-700 hover:underline dark:text-emerald-300">
+                                    Explore LoanHub documentation <ArrowRight className="h-4 w-4" />
+                                </Link>
+                            </div>
+                            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                <div className="border-b border-slate-200 px-5 py-5 dark:border-slate-800 sm:px-7">
+                                    <h3 className="text-lg font-black">Capability by area</h3>
+                                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Indicative scores; features and compliance require project-specific verification.</p>
+                                </div>
+                                <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                                    {capabilityReadiness.map(({ name, score, note }) => (
+                                        <div key={name} className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_130px] sm:items-center sm:px-7">
+                                            <div>
+                                                <p className="text-sm font-bold">{name}</p>
+                                                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{note}</p>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700" role="meter" aria-label={name + " provisional score"} aria-valuemin={0} aria-valuemax={10} aria-valuenow={score}>
+                                                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${score * 10}%` }} />
+                                                </div>
+                                                <span className="w-10 text-right text-sm font-black tabular-nums">{score}/10</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="border-t border-slate-200 px-5 py-4 text-xs leading-5 text-slate-500 dark:border-slate-800 dark:text-slate-400 sm:px-7">
+                                    Scores are provisional estimates, not live measurements. They do not establish PCI DSS, ISO 27001, bank deployment, performance or tender compliance.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </section>
