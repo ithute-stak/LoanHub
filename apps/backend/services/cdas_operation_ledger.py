@@ -243,7 +243,15 @@ def is_ambiguous_write_error(error: CdasError) -> bool:
     # produces a local 502 after CDAS may already have applied the mutation.
     # This outcome must be reconciled by read-only lookup, never treated as a
     # definitive rejection that permits submitting the same financial write.
-    return isinstance(error.__cause__, httpx.RequestError) or error.status_code == 502
+    return isinstance(error.__cause__, httpx.RequestError) or (
+        error.status_code == 502
+        and error.message.startswith((
+            "CDAS acknowledgement ",
+            "CDAS deduction lifecycle request returned an invalid response",
+            "CDAS active deduction modification returned an invalid response",
+            "CDAS deduction settlement returned an invalid response",
+        ))
+    )
 
 
 async def execute_provider_operation(
