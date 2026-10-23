@@ -375,3 +375,27 @@ export async function downloadOverduePortfolioPdf(loanIds: string[]): Promise<Bl
   );
   return result.data;
 }
+
+export type LastLoanRepayment = {
+  payment_id: string;
+  loan_id: string;
+  reference: string | null;
+  amount: string;
+  completed_at: string | null;
+  payment_method: string;
+  reversible: boolean;
+  restriction: string | null;
+};
+
+export async function getLastLoanRepayment(loanId: string): Promise<LastLoanRepayment | null> {
+  return (await api.get<LastLoanRepayment | null>(`/loans/${loanId}/repayments/last`)).data;
+}
+
+export async function reverseLastLoanRepayment(
+  loanId: string,
+  payload: { payment_id: string; reason: string },
+): Promise<{ payment_id: string; status: string; loan_balance: string }> {
+  return (await api.post<{ payment_id: string; status: string; loan_balance: string }>(
+    `/loans/${loanId}/repayments/last/reverse`, payload,
+  )).data;
+}
