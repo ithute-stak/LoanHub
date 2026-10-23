@@ -14,6 +14,7 @@ import {
     FileText,
     FilterX,
     HandCoins,
+    Plus,
     Maximize2,
     PanelLeftClose,
     PanelLeftOpen,
@@ -1041,6 +1042,7 @@ function LoanTable({
                 </TableRow> : rows.map((row) => {
                     const {loan, client, contract, branch, progress, nextDueDate, nextDueAmount} = row;
                     const canPay = Number(loan.balance) > 0 && ["active", "defaulted"].includes(loan.status);
+                    const canRequestAnotherLoan = loan.status === "completed" && Number(loan.balance) <= 0 && client?.status === "active";
                     const canPayout = canDisburse && loan.status === "approved" && (!signedContractRequired || contract?.status === "signed");
                     const blockedPayout = canDisburse && loan.status === "approved" && signedContractRequired && contract?.status !== "signed";
                     const safeProgress = Math.max(0, Math.min(100, progress));
@@ -1127,6 +1129,11 @@ function LoanTable({
                                 <Button size="icon-sm" variant="ghost" className="rounded-lg" onClick={() => onStartCall(loan)} title={`Call borrower for ${operationalReference}`} aria-label={`Call borrower for ${operationalReference}`}>
                                     <Phone className="size-4"/>
                                 </Button>
+                                {canRequestAnotherLoan ? <Button size="sm" variant="outline" className="h-8 gap-1 rounded-lg px-2 text-[10px] font-semibold" asChild>
+                                    <Link href={`/company/clients?request_loan=${encodeURIComponent(client!.id)}`} title={`New loan request for ${client!.full_name}`} aria-label={`New loan request for ${client!.full_name}`}>
+                                        <Plus className="size-3.5"/> New loan
+                                    </Link>
+                                </Button> : null}
                                 {canPay ? <Button size="icon-sm" className="rounded-lg" asChild>
                                     <Link href={`/company/cashier?loan=${encodeURIComponent(loan.loan_reference)}`} title={`Receive payment for ${operationalReference}`} aria-label={`Receive payment for ${operationalReference}`}>
                                         <HandCoins className="size-4"/>
