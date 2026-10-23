@@ -4,8 +4,17 @@ import type { LegacyCashoutCapture, LegacyCashoutCaptureInput } from "@/types/le
 const ROOT = "/legacy-cashout-register";
 
 export async function listLegacyCashoutCaptures(): Promise<LegacyCashoutCapture[]> {
-  const response = await api.get<LegacyCashoutCapture[]>(ROOT);
-  return response.data;
+  const pageSize = 500;
+  const records: LegacyCashoutCapture[] = [];
+  let offset = 0;
+  while (true) {
+    const response = await api.get<LegacyCashoutCapture[]>(ROOT, {
+      params: { limit: pageSize, offset },
+    });
+    records.push(...response.data);
+    if (response.data.length < pageSize) return records;
+    offset += response.data.length;
+  }
 }
 
 export async function createLegacyCashoutCapture(
