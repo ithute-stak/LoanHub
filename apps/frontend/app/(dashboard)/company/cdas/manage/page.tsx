@@ -121,6 +121,7 @@ export default function CdasManagePage() {
   const { activeRole } = useTenant();
   const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
   const [items, setItems] = useState<CdasOperationalLoan[]>([]);
+  const [reconciliationFeedback, setReconciliationFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [workingLoanId, setWorkingLoanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -241,8 +242,12 @@ export default function CdasManagePage() {
   async function reconcile(loanId: string) {
     setWorkingLoanId(loanId);
     setError(null);
+    setReconciliationFeedback(null);
     try {
-      await api.post("/cdas/loans/" + loanId + "/reconcile");
+      const response = await api.post<{ reconciled: boolean; message?: string; lifecycle_status?: string }>("/cdas/loans/" + loanId + "/reconcile");
+      setReconciliationFeedback(response.data.reconciled
+        ? "CDAS provider reconciliation confirmed" + (response.data.lifecycle_status ? ": " + response.data.lifecycle_status : "") + "."
+        : "CDAS has not confirmed this deduction yet. Keep the operation unresolved and do not resubmit it.");
       await load();
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS reconciliation failed."));
@@ -291,6 +296,14 @@ export default function CdasManagePage() {
           </div>
         </div>
       </section>
+
+      {reconciliationFeedback && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>CDAS reconciliation result</AlertTitle>
+          <AlertDescription>{reconciliationFeedback}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card><CardHeader className="pb-2"><CardDescription>CDAS loans</CardDescription><CardTitle>{totals.total}</CardTitle></CardHeader></Card>
