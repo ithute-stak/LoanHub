@@ -91,3 +91,20 @@ def test_existing_loan_check_response_reports_legacy_captures_without_registered
     )
     assert response.legacy_capture_count == 2
     assert response.borrower_found is False
+
+
+def test_client_registration_requires_current_national_id_lookup():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "app"
+        / "(dashboard)"
+        / "company"
+        / "clients"
+        / "page.tsx"
+    ).read_text(encoding="utf-8")
+    assert 'existingLoanCheck?.national_id.trim() !== nationalId' in source
+    assert 'existingLoanCheck?.national_id.trim() !== submittedNationalId' in source
+    assert 'setClientStep(0);' in source
