@@ -14,6 +14,7 @@ from integrations.cdas_contracts import (
     parse_money,
     provider_money,
     validate_deduction,
+    validate_deduction_write,
     validate_deductions,
     validate_document,
     validate_employee,
@@ -439,7 +440,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload) from exc
 
@@ -467,7 +468,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload) from exc
 
@@ -479,7 +480,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload) from exc
 
