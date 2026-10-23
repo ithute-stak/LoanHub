@@ -1915,6 +1915,10 @@ function ExistingLoanCheckPanel({
     );
   }
 
+  if (!result?.borrower_found && (result?.legacy_capture_count ?? 0) > 0) {
+    return <div id={id} role="status" className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p className="font-bold">Historical cash-out records found</p><p className="mt-1 text-xs text-muted-foreground">{result!.legacy_capture_count} legacy cash-out capture(s) match this national ID in your company. Review the legacy register before creating a new account. These captures may not yet be posted as live loans.</p></div>;
+  }
+
   if (!result?.borrower_found) {
     return <div id={id} role="status" className="flex items-start gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm"><ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-600" /><div><p className="font-bold">No existing LoanHub borrower record found</p><p className="text-xs text-muted-foreground">The loan fields remain editable so staff can record debts declared from outside LoanHub.</p></div></div>;
   }
@@ -1928,6 +1932,7 @@ function ExistingLoanCheckPanel({
           <p className="mt-1 text-xs text-muted-foreground">{result.already_company_client ? "Open the existing client record instead of creating another company account." : "The borrower identity and tracked obligations can be linked after the date of birth and surname are verified."}</p>
         </div>
       </div>
+      {result.legacy_capture_count > 0 ? <p className="mt-3 text-xs font-semibold text-amber-700">{result.legacy_capture_count} historical cash-out capture(s) also match this ID in your company. Review the legacy register to avoid duplicates.</p> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border bg-background/70 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-muted-foreground">Open LoanHub loans</p><p className="mt-1 text-lg font-black">{result.active_loan_count}</p></div>
         <div className="rounded-xl border bg-background/70 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-muted-foreground">LoanHub outstanding</p><p className="mt-1 text-lg font-black">{formatMoney(result.loanhub_outstanding_total)}</p></div>
