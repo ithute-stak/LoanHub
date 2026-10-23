@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from integrations.cdas import CdasClient, CdasError
-from integrations.cdas_contracts import validate_deduction, validate_document
+from integrations.cdas_contracts import validate_deduction, validate_deduction_write, validate_document
 
 
 def client(handler):
@@ -117,3 +117,35 @@ def test_document_accepts_documented_typo_and_content():
 def test_deduction_response_currently_allows_sparse_object_audit_gap():
     # Documents an observed lenient contract; should become endpoint-specific.
     assert validate_deduction({}) == {}
+
+
+@pytest.mark.parametrize("payload", [{}, {"DeductionID": 0, "EmployeeNo": "EMP-1"}, {"DeductionID": 42}, {"DeductionID": True, "EmployeeNo": "EMP-1"}])
+def test_write_confirmation_rejects_missing_deduction_identity(payload):
+    with pytest.raises(ValueError):
+        validate_deduction_write(payload)
+
+
+def test_write_confirmation_preserves_valid_response():
+    payload = {"DeductionID": 42, "EmployeeNo": "EMP-1", "DeductionStatus": 3}
+    assert validate_deduction_write(payload) == payload
+
+
+@pytest.mark.asyncio
+async def test_write_success_without_deduction_identity_fails_safely_without_retry():
+    writes = 0
+
+    async def handler(request):
+        nonlocal writes
+        if request.url.path == "/api/security/login":
+            return httpx.Response(200, json={"Authorization": "token"})
+        writes += 1
+        return httpx.Response(200, json={})
+
+    with pytest.raises(CdasError) as raised:
+        await client(handler).settle_deduction({
+            "ItemCode": "LOAN", "DeductionID": 42,
+            "EmployeeNo": "EMP-1", "EffectiveDate": "2026-10-23",
+            "SettlementReason": 2,
+        })
+    assert raised.value.status_code == 502
+    assert writes == 1
