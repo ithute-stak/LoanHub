@@ -527,7 +527,7 @@ class _LoanCard extends StatelessWidget {
       child: ListTile(
         leading: _Avatar(name: name),
         title: Text(name),
-        subtitle: Text(reference + '\n' + status + ' · ' + '${_money(balance)} balance'),
+        subtitle: Text('$reference\n$status · ${_money(balance)} balance'),
         isThreeLine: true,
         trailing: IconButton(
           tooltip: 'Open borrower calls',
