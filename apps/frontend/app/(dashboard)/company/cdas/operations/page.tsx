@@ -178,6 +178,7 @@ export default function CdasOperationsPage() {
     const [variableDeductionConsent, setVariableDeductionConsent] = useState(false);
     const [variableDeductionMaximum, setVariableDeductionMaximum] = useState<number>(0);
     const [linkedState, setLinkedState] = useState<LinkedCdasState | null>(null);
+    const linkedOperationBlocked = Boolean(selectedLoanId && linkedState?.requires_reconciliation);
 
     const [lifecycle, setLifecycle] = useState({
         request_type: initialLifecycleType,
@@ -339,6 +340,10 @@ export default function CdasOperationsPage() {
             setError("Choose an amount within verified CDAS affordability. The initial schedule may collect only part of the balance and must not exceed 600 months.");
             return;
         }
+        if (linkedOperationBlocked) {
+            setError("This linked CDAS deduction requires reconciliation. Review the unresolved operation before submitting another change.");
+            return;
+        }
         if (!canManage || loading || !lifecycle.confirmed) return;
         setLoading("lifecycle");
         setError(null);
@@ -376,6 +381,10 @@ export default function CdasOperationsPage() {
 
     async function submitModify(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        if (linkedOperationBlocked) {
+            setError("This linked CDAS deduction requires reconciliation. Review the unresolved operation before submitting another change.");
+            return;
+        }
         if (!canManage || loading || !modify.confirmed) return;
         setLoading("modify");
         setError(null);
@@ -403,6 +412,10 @@ export default function CdasOperationsPage() {
 
     async function submitSettlement(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        if (linkedOperationBlocked) {
+            setError("This linked CDAS deduction requires reconciliation. Review the unresolved operation before submitting another change.");
+            return;
+        }
         if (!canManage || loading || !settle.confirmed) return;
         setLoading("settle");
         setError(null);
@@ -484,6 +497,17 @@ export default function CdasOperationsPage() {
                     Use the read-only CDAS workspace first to verify the employee, affordability and current deduction. Provider errors such as affordability overflow or disallowed active/approved modification are returned without being hidden.
                 </AlertDescription>
             </Alert>
+
+            {linkedOperationBlocked && (
+                <Alert variant="destructive">
+                    <ShieldAlert className="h-4 w-4" />
+                    <AlertTitle>CDAS reconciliation required</AlertTitle>
+                    <AlertDescription>
+                        This linked loan has an unresolved CDAS operation. Do not submit another deduction change until its provider status has been reconciled.
+                        <Link href="/company/cdas/manage" className="ml-2 underline underline-offset-2">Review CDAS management</Link>
+                    </AlertDescription>
+                </Alert>
+            )}
 
             {error && (
                 <Alert variant="destructive">
