@@ -2,41 +2,25 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'legacy_bloc.dart';
+import '../../api/loanhub_api.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-void main() => runApp(BlocProvider(create: (_) => LegacyBloc(), child: const LoanHubLegacyApp()));
-
-class LoanHubLegacyApp extends StatelessWidget {
-  const LoanHubLegacyApp({super.key});
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'LoanHub • Legacy CSV',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff155aa4)), scaffoldBackgroundColor: const Color(0xfff4f7fb), inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder())),
-    home: const LegacyCapturePage(),
-  );
-}
-
 class LegacyCapturePage extends StatefulWidget {
-  const LegacyCapturePage({super.key});
+  const LegacyCapturePage({required this.api, super.key});
+  final LoanHubApi api;
   @override
   State<LegacyCapturePage> createState() => _LegacyCapturePageState();
 }
 
 class _LegacyCapturePageState extends State<LegacyCapturePage> {
-  static const secure = FlutterSecureStorage();
   final apiUrl = TextEditingController(text: const String.fromEnvironment('LOANHUB_API_URL', defaultValue: 'https://api.loanhub.co.ls/api/v1'));
   final token = TextEditingController();
-  final phone = TextEditingController();
-  final password = TextEditingController();
-  final otp = TextEditingController();
   final companyId = TextEditingController();
   List<Map<String, dynamic>> memberships = [];
   Map<String, String> companyNames = {};
@@ -65,98 +49,42 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _restore() async {
-    token.text = await secure.read(key: 'token') ?? '';
-    companyId.text = await secure.read(key: 'company') ?? '';
+    token.text = await widget.api.storage.read(key: 'loanhub_access_token') ?? '';
+    companyId.text = await widget.api.storage.read(key: 'loanhub_company_id') ?? '';
+    apiUrl.text = '${await widget.api.baseUrl()}/api/v1';
     if (token.text.isNotEmpty) {
       await _resolveCompany();
     }
   }
 
-  Future<http.Response> _request(String path, {Map<String, dynamic>? body}) {
-    final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}$path');
-    final headers = <String, String>{
-      'Authorization': 'Bearer ${token.text.trim()}',
+  Future<Map<String, String>> _authHeaders() async {
+    final accessToken = await widget.api.storage.read(key: 'loanhub_access_token');
+    if (accessToken == null || accessToken.isEmpty) {
+      throw StateError('Your LoanHub session is unavailable. Sign in through the main app.');
+    }
+    return <String, String>{
+      'Authorization': 'Bearer $accessToken',
       'X-Company-ID': companyId.text.trim(),
       'Content-Type': 'application/json',
     };
+  }
+
+  Future<http.Response> _request(String path, {Map<String, dynamic>? body}) async {
+    final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}$path');
+    final headers = await _authHeaders();
     return body == null
         ? http.get(uri, headers: headers)
         : http.post(uri, headers: headers, body: jsonEncode(body));
-  }
-
-  Future<void> _signIn() async {
-    if (!Uri.tryParse(apiUrl.text.trim()).toString().startsWith('https://')) {
-      setState(() => error = 'A secure HTTPS LoanHub API URL is required.');
-      return;
-    }
-    if (phone.text.trim().isEmpty || password.text.isEmpty) {
-      setState(() => error = 'Enter your phone and password.');
-      return;
-    }
-    setState(() { loading = true; error = null; });
-    try {
-      final normalizedPhone = phone.text.trim()
-          .replaceAll(RegExp(r'\s+'), '')
-          .replaceFirst(RegExp(r'^\+?266'), '');
-      final factor = otp.text.trim();
-      final isOtp = RegExp(r'^\d{6}$').hasMatch(factor);
-      final response = await http.post(
-        Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'phone': normalizedPhone,
-          'password': password.text.trim(),
-          if (factor.isNotEmpty && isOtp) 'otp': factor,
-          if (factor.isNotEmpty && !isOtp) 'recovery_code': factor,
-          'device_name': 'LoanHub Legacy CSV Flutter',
-        }),
-      );
-      if (response.statusCode != 200) {
-        String detail = 'Sign-in rejected';
-        try {
-          final payload = jsonDecode(response.body);
-          if (payload is Map && payload['detail'] != null) detail = payload['detail'].toString();
-        } catch (_) {}
-        throw Exception('Sign-in failed (HTTP ${response.statusCode}): $detail');
-      }
-      final result = jsonDecode(response.body) as Map<String, dynamic>;
-      token.text = result['access_token']?.toString() ?? '';
-      if (token.text.isEmpty) throw Exception('LoanHub did not return a session.');
-      password.clear();
-      otp.clear();
-      await _resolveCompany();
-    } catch (e) {
-      error = e.toString();
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
-  }
-
-  Future<void> _signOut() async {
-    await _disconnectRealtime();
-    if (mounted) context.read<LegacyBloc>().add(const LegacyReset());
-    await secure.delete(key: 'token');
-    token.clear();
-    password.clear();
-    groups = [];
-    rows = [];
-    memberships = [];
-    companyNames = {};
-    companyId.clear();
-    await secure.delete(key: 'company');
-    selectedGroup = null;
-    if (mounted) setState(() { configured = false; error = null; });
   }
 
   Future<void> _resolveCompany() async {
     try {
       final response = await http.get(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/auth/me'),
-        headers: {'Authorization': 'Bearer ${token.text.trim()}'},
+        headers: await _authHeaders(),
       );
       if (response.statusCode != 200) {
-        await _signOut();
-        throw Exception('Your session expired. Please sign in again.');
+        throw Exception('Your session expired. Sign in again through LoanHub.');
       }
       final profile = jsonDecode(response.body) as Map<String, dynamic>;
       memberships = ((profile['memberships'] as List?) ?? [])
@@ -166,14 +94,15 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       if (memberships.isEmpty) {
         throw Exception('Your account has no active LoanHub company membership.');
       }
-      final saved = companyId.text.trim();
-      final primary = memberships.firstWhere(
-        (m) => m['is_primary'] == true,
-        orElse: () => memberships.first,
-      );
-      final chosen = memberships.any((m) => m['company_id'].toString() == saved)
-          ? saved : primary['company_id'].toString();
-      companyId.text = chosen;
+      final activeCompany = (await widget.api.sessionInfo())['company_id']?.toString();
+      if (activeCompany == null ||
+          activeCompany.isEmpty ||
+          !memberships.any((m) => m['company_id'].toString() == activeCompany)) {
+        throw StateError(
+          'Select an authorised company in the main LoanHub app before opening Legacy CSV.',
+        );
+      }
+      companyId.text = activeCompany;
       final companyResponse = await http.get(
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/companies/?limit=500'),
         headers: {'Authorization': 'Bearer ${token.text.trim()}'},
@@ -189,6 +118,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
   }
 
   Future<void> _connect() async {
+    if (!mounted) return;
     setState(() { loading = true; error = null; });
     try {
       final answers = await Future.wait([
@@ -202,8 +132,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         employerOptions = (jsonDecode(answers[2].body) as List).map((entry) => entry.toString()).toList();
       }
       rows = (jsonDecode(answers[1].body) as List).cast<Map<String, dynamic>>();
-      await secure.write(key: 'token', value: token.text.trim());
-      await secure.write(key: 'company', value: companyId.text.trim());
+      // Session ownership remains with the parent LoanHub application.
       configured = true;
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
       if (realtimeSocket == null) unawaited(_connectRealtime());
@@ -257,19 +186,19 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       allowedExtensions: ['csv', 'xlsx'],
     );
     if (item == null) return;
-    final size = item.lengthSync() ?? await item.length();
+    final size = await item.length();
     if (size == null || size > 2000000) {
       setState(() => error = 'CSV/XLSX file must be no larger than 2 MB.');
       return;
     }
     final bytes = await item.readAsBytes();
+    if (bytes.isEmpty) { setState(() => error = 'Unable to read the selected file.'); return; }
     Future<Map<String, dynamic>> submit(bool preview) async {
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/import-csv?preview=$preview&work_group_id=${Uri.encodeQueryComponent(selectedGroup!)}'),
       );
-      request.headers['Authorization'] = 'Bearer ${token.text.trim()}';
-      request.headers['X-Company-ID'] = companyId.text.trim();
+      request.headers.addAll(await _authHeaders());
       request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: item.name));
       final response = await http.Response.fromStream(await request.send());
       final decoded = jsonDecode(response.body);
@@ -306,7 +235,6 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         if (listing.statusCode != 200) throw Exception('Import saved, but refresh failed.');
         rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
-        if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Imported ${result['saved']} legacy deductions.')),
@@ -413,6 +341,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+      if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) { error = e.toString(); }
     if (mounted) setState(() => loading = false);
   }
@@ -466,11 +395,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       }
       setState(() { loading = true; error = null; });
       final uri = Uri.parse('${apiUrl.text.replaceAll(RegExp(r"/+$"), "")}/legacy-bank-deductions/${row['id']}');
-      final headers = {
-        'Authorization': 'Bearer ${token.text.trim()}',
-        'X-Company-ID': companyId.text.trim(),
-        'Content-Type': 'application/json',
-      };
+      final headers = await _authHeaders();
       final response = remove
           ? await http.delete(uri, headers: headers)
           : await http.patch(uri, headers: headers, body: jsonEncode({
@@ -485,6 +410,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final listing = await _request('/legacy-bank-deductions/');
       if (listing.statusCode != 200) throw Exception('Update saved, but refresh failed');
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
+      if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) {
       error = e.toString();
     } finally {
@@ -493,16 +419,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     }
   }
 
-  Future<void> _disconnectRealtime() async {
-    realtimeRetry?.cancel();
-    final previous = realtimeSocket;
-    realtimeSocket = null;
-    if (mounted) context.read<LegacyBloc>().add(const LegacyConnectionChanged(false));
-    await previous?.close();
-  }
-
   Future<void> _connectRealtime() async {
-    if (!mounted || !configured || token.text.isEmpty || shuttingDown) return;
+    if (!mounted || !configured || shuttingDown) return;
     realtimeRetry?.cancel();
     await realtimeSocket?.close();
     try {
@@ -512,8 +430,10 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         path: '/ws',
         queryParameters: {'company_id': companyId.text.trim()},
       );
+      final accessToken = await widget.api.storage.read(key: 'loanhub_access_token');
+      if (accessToken == null || accessToken.isEmpty) return;
       final socket = await WebSocket.connect(uri.toString(),
-          protocols: ['loanhub.v1', 'loanhub.jwt.${token.text.trim()}']);
+          protocols: ['loanhub.v1', 'loanhub.jwt.$accessToken']);
       if (!mounted || !configured || shuttingDown) { await socket.close(); return; }
       realtimeSocket = socket;
       context.read<LegacyBloc>().add(const LegacyConnectionChanged(true));
@@ -705,21 +625,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     const Text('Use only authorised recipients when sharing bank submission ZIP files.'),
   ]);
 
-  Widget _login() => ListView(padding: const EdgeInsets.all(16), children: [
-    Text('Sign in to LoanHub', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-    const SizedBox(height: 8),
-    const Text('Sign in with the same phone number and password used on the LoanHub website.'),
-    const SizedBox(height: 14),
-    Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      field('LoanHub API URL', apiUrl), const SizedBox(height: 12),
-      field('Phone number', phone), const SizedBox(height: 12),
-      TextField(controller: password, obscureText: true, enableSuggestions: false,
-        decoration: const InputDecoration(labelText: 'Password')), const SizedBox(height: 12),
-      TextField(controller: otp, decoration: const InputDecoration(labelText: 'Authenticator / recovery code (optional)')),
-      const SizedBox(height: 16),
-      FilledButton.icon(onPressed: loading ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in')),
-    ]))),
-  ]);
+  Widget _login() => const Center(child: Padding(padding: EdgeInsets.all(24),
+    child: Text('Your LoanHub session is unavailable. Return to the main app and sign in again.')));
 
   @override
   Widget build(BuildContext context) => BlocBuilder<LegacyBloc, LegacyState>(
@@ -730,22 +637,22 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           title: const Text('LoanHub', overflow: TextOverflow.ellipsis),
           actions: [if (configured) IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh),
             onPressed: loading ? null : _connect),
-            if (configured) IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: _signOut)],
+            const SizedBox.shrink()],
         ),
         body: Column(children: [
           if (loading) const LinearProgressIndicator(minHeight: 3),
           if (error != null) Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-          if (configured && memberships.length > 1)
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: DropdownButtonFormField<String>(
-                isExpanded: true, initialValue: companyId.text,
-                decoration: const InputDecoration(labelText: 'Company'),
-                items: memberships.map((m) => DropdownMenuItem<String>(
-                  value: m['company_id'].toString(),
-                  child: Text(companyNames[m['company_id'].toString()] ?? 'My company',
-                    maxLines: 1, overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: (v) async { if (v != null) { companyId.text = v; await _connect(); } })),
+          if (configured)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: ListTile(
+                leading: const Icon(Icons.business_outlined),
+                title: Text(companyNames[companyId.text] ?? 'Active LoanHub company'),
+                subtitle: const Text('Company selection is managed by the main LoanHub app'),
+                dense: true,
+              ),
+            ),
           Expanded(child: !configured ? _login() : IndexedStack(index: tab, children: [
             _capture(), _records(), _tools(),
           ])),
@@ -766,7 +673,7 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     shuttingDown = true;
     realtimeRetry?.cancel();
     unawaited(realtimeSocket?.close() ?? Future<void>.value());
-    for (final c in [apiUrl, token, phone, password, otp, companyId, name, employer, account, amount, search]) { c.dispose(); }
+    for (final c in [apiUrl, token, companyId, name, employer, account, amount, search]) { c.dispose(); }
     super.dispose();
   }
 }

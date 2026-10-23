@@ -1,0 +1,53 @@
+name: LoanHub Unified Flutter Validation
+
+on:
+  pull_request:
+    paths:
+      - 'apps/call_mobile/**'
+      - '.github/workflows/unified-flutter.yml'
+  push:
+    branches:
+      - 'feat/unify-loanhub-flutter-legacy'
+      - main
+    paths:
+      - 'apps/call_mobile/**'
+      - '.github/workflows/unified-flutter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/call_mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+      - name: Flutter static analysis
+        run: flutter analyze
+      - name: Flutter widget and unit tests
+        if: success() || failure()
+        run: flutter test
+      - name: Build integrated Android debug APK
+        if: success() || failure()
+        run: flutter build apk --debug --dart-define=LOANHUB_API_URL=https://api.loanhub.co.ls
+      - name: Check Dart formatting
+        if: always()
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Upload integrated test APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loanhub-unified-flutter-debug
+          path: apps/call_mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: warn
+          retention-days: 7

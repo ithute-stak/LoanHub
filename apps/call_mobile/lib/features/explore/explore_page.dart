@@ -77,7 +77,7 @@ class _ChannelCard extends StatelessWidget {
     child: ExpansionTile(
       leading: CircleAvatar(child: Text(_initials(name))),
       title: Text(name, style: const TextStyle(fontWeight: FontWeight.w900)),
-      subtitle: Text(posts.length.toString() + ' published offer' + (posts.length == 1 ? '' : 's')),
+      subtitle: Text('${posts.length} published offer${posts.length == 1 ? '' : 's'}'),
       children: posts.map((post) => ListTile(
         leading: const Icon(Icons.campaign_outlined),
         title: Text(post['title']?.toString() ?? 'Loan offer'),

@@ -30,7 +30,7 @@ class _BorrowerCallProfilePageState extends State<BorrowerCallProfilePage> {
       context: context, showDragHandle: true,
       builder: (context) => ListView(shrinkWrap: true, children: loans.map((loan) => ListTile(
         title: Text(loan['loan_reference']?.toString() ?? 'Loan'),
-        subtitle: Text('Balance M' + (loan['balance']?.toString() ?? '0')),
+        subtitle: Text('Balance M${loan['balance']?.toString() ?? '0'}'),
         onTap: () => Navigator.pop(context, loan),
       )).toList()),
     );
@@ -54,7 +54,7 @@ class _BorrowerCallProfilePageState extends State<BorrowerCallProfilePage> {
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
           FilledButton(
             onPressed: () async {
-              if (name.text.trim().isEmpty || relationship.text.trim().isEmpty || phone.text.trim().isEmpty) return;
+              if (name.text.trim().isEmpty || relationship.text.trim().isEmpty || phone.text.trim().isEmpty) { return; }
               await widget.api.addBorrowerCallContact(widget.borrowerId, fullName: name.text, relationship: relationship.text, phone: phone.text);
               if (context.mounted) Navigator.pop(context, true);
             },
@@ -92,19 +92,19 @@ class _BorrowerCallProfilePageState extends State<BorrowerCallProfilePage> {
           ? const [ListTile(title: Text('No contact recorded'))] : contacts.map((contact) => ListTile(
             leading: CircleAvatar(child: Icon(contact['is_primary'] == true ? Icons.person : Icons.people_alt_outlined)),
             title: Text(contact['name']?.toString() ?? 'Contact'),
-            subtitle: Text((contact['relationship']?.toString() ?? 'Contact') + ' · ' + (contact['phone']?.toString() ?? '')),
+            subtitle: Text('${contact['relationship']?.toString() ?? 'Contact'} · ${contact['phone']?.toString() ?? ''}'),
             trailing: IconButton(icon: const Icon(Icons.call), onPressed: contact['is_call_permitted'] == true && loans.isNotEmpty ? () => _call(contact, loans) : null),
           )).toList()),
         _Section(title: 'Loans', subtitle: 'Loans linked to your active company only.', children: loans.isEmpty
           ? const [ListTile(title: Text('No company loan found'))] : loans.map((loan) => ListTile(
             leading: const Icon(Icons.account_balance_wallet_outlined),
             title: Text(loan['loan_reference']?.toString() ?? 'Loan'),
-            subtitle: Text(_sentence(loan['status']) + ' · Balance M' + (loan['balance']?.toString() ?? '0')),
+            subtitle: Text('${_sentence(loan['status'])} · Balance M${loan['balance']?.toString() ?? '0'}'),
           )).toList()),
         _Section(title: 'Recent calls', subtitle: 'Controlled calls and recording status.', children: calls.isEmpty
           ? const [ListTile(title: Text('No calls logged yet'))] : calls.map((call) => ListTile(
             leading: Icon(call['direction'] == 'incoming' ? Icons.call_received : Icons.call_made),
-            title: Text(_sentence(call['status']) + ' · ' + (call['phone_number']?.toString() ?? '')),
+            title: Text('${_sentence(call['status'])} · ${call['phone_number']?.toString() ?? ''}'),
             subtitle: Text(call['recording_status'] == 'available' ? 'Recording available to authorised reviewers' : 'No recording available'),
           )).toList()),
       ],
@@ -130,5 +130,5 @@ String _initials(String value) {
 }
 String _sentence(dynamic value) {
   final text = value?.toString().replaceAll('_', ' ') ?? 'Unknown';
-  return text.isEmpty ? 'Unknown' : text[0].toUpperCase() + text.substring(1);
+  return text.isEmpty ? 'Unknown' : '${text[0].toUpperCase()}${text.substring(1)}';
 }
