@@ -24,3 +24,15 @@ def test_registration_context_remains_company_scoped_and_needs_verified_profile(
     assert "_require_company_manager(context)" in method
     assert "company_id=context.company_id" in method
     assert "_employee_cdas_registration_decision(" in method
+
+
+def test_registration_context_includes_existing_cdas_deductions_without_recalculating_capacity():
+    source = ROUTER.read_text(encoding="utf-8")
+    start = source.index("async def get_employee_registration_context(")
+    end = source.index('@router.post("/deductions/all")', start)
+    method = source[start:end]
+    assert method.index("await client.check_affordability(employee_no)") < method.index("await client.view_all_deductions(employee_no)")
+    assert '"existing_deductions": existing_deductions' in method
+    assert '"existing_deduction_count": len(existing_deductions)' in method
+    assert 'operation_type="deduction_lookup"' in method
+    assert "affordability=affordability" in method
