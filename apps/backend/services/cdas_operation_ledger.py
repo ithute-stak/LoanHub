@@ -363,6 +363,18 @@ def _deduction_matches(operation: CdasProviderOperation, record: dict[str, Any])
     return bool(item_code and record_item and item_code == record_item)
 
 
+
+def _provider_status_matches(record: dict[str, Any], expected_status: int) -> bool:
+    """A matching identity is insufficient without matching provider state."""
+    status = _first_value(record, "DeductionStatus", "deductionStatus", "deduction_status")
+    if isinstance(status, bool):
+        return False
+    try:
+        return int(status) == expected_status
+    except (TypeError, ValueError):
+        return False
+
+
 def _modified_values_match(operation: CdasProviderOperation, record: dict[str, Any]) -> bool:
     request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
     if not _deduction_matches(operation, record):
@@ -425,7 +437,7 @@ async def reconcile_provider_operation(
                 raise ValueError(f"Unsupported CDAS operation type {operation.operation_type!r}")
 
             records = await client.view_own_deductions(operation.employee_no, expected_status)
-            record = next((item for item in records if _deduction_matches(operation, item)), None)
+            record = next((item for item in records if _deduction_matches(operation, item) and _provider_status_matches(item, expected_status)), None)
             matched = record is not None
             reconciliation_snapshot = record if record is not None else records
     except CdasError as exc:
