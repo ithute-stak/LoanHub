@@ -48,7 +48,7 @@ async def test_lifecycle_write_uses_documented_path_token_and_payload() -> None:
         observed["path"] = request.url.path
         observed["token"] = request.headers.get("Token")
         observed["body"] = json.loads(request.read().decode())
-        return httpx.Response(200, json={**request_payload, "DeductionStatus": 1})
+        return httpx.Response(200, json={**request_payload, "DeductionID": 800, "DeductionStatus": 1})
 
     result = await make_client(handler).add_update_deduction(request_payload)
 

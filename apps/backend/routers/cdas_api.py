@@ -179,7 +179,7 @@ def _require_confirmed(confirmed: bool) -> None:
 
 def _cdas_http_error(exc: CdasError, *, operation: CdasProviderOperation | None = None) -> HTTPException:
     status = exc.status_code if 400 <= exc.status_code <= 599 else 502
-    semantics = cdas_error_semantics(exc.status_code)
+    semantics = cdas_error_semantics(exc.status_code, exc.details if exc.details is not None else exc.message)
     detail: dict[str, Any] = {
         "provider": "CDAS",
         "code": exc.status_code,

@@ -14,6 +14,7 @@ from integrations.cdas_contracts import (
     parse_money,
     provider_money,
     validate_deduction,
+    validate_deduction_write,
     validate_deductions,
     validate_document,
     validate_employee,
@@ -49,7 +50,11 @@ CDAS_PROVIDER_ERROR_CATALOG: dict[int, dict[str, Any]] = {
 }
 
 
-def cdas_error_semantics(status_code: int) -> dict[str, Any]:
+def cdas_error_semantics(status_code: int, payload: Any = None, *, path: str | None = None) -> dict[str, Any]:
+    message = CdasClient._message(payload, "").casefold()
+    if status_code == 406 and (path == CdasClient.DOCUMENT_PATH or "report" in message) and ("not ready" in message or "not available" in message):
+        return {"code": "CDAS_DOCUMENT_NOT_READY", "category": "document", "retryable": False, "action": "The CDAS report is not ready; check availability later without repeated authentication attempts."}
+
     return dict(CDAS_PROVIDER_ERROR_CATALOG.get(
         int(status_code),
         {
@@ -439,7 +444,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload) from exc
 
@@ -467,7 +472,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload) from exc
 
@@ -479,7 +484,7 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction(payload)
+            return validate_deduction_write(payload)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload) from exc
 

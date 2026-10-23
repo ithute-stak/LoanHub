@@ -141,7 +141,7 @@ async def test_state_changing_request_is_not_replayed_after_inactive_session() -
         writes += 1
         if writes == 1:
             return httpx.Response(419, json={"message": "Inactive session"})
-        return httpx.Response(200, json={**request_payload, "DeductionStatus": 1})
+        return httpx.Response(200, json={**request_payload, "DeductionID": 800, "DeductionStatus": 1})
 
     client = make_client(handler)
 

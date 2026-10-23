@@ -34,7 +34,8 @@ class CdasCompatibleClient(CdasClient):
     @classmethod
     def _is_auth_format_failure(cls, status_code: int, payload: Any) -> bool:
         if status_code in cls._FORMAT_FAILURE_STATUSES:
-            return True
+            message = cls._message(payload, "").strip().casefold()
+            return any(marker in message for marker in cls._FORMAT_FAILURE_MARKERS)
         if status_code < 400:
             return False
         message = cls._message(payload, "").strip().casefold()
