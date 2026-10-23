@@ -647,7 +647,7 @@ export default function CompanyClientsPage() {
       // Verify an entered national ID before collecting the rest of the profile.
       // Passport-only borrowers continue through the existing identity step.
       if (nationalId && nationalId.length < 8) errors.push("The national ID must contain at least 8 characters.");
-      if (nationalId && existingLoanCheckStatus !== "ready") {
+      if (nationalId && (existingLoanCheckStatus !== "ready" || existingLoanCheck?.national_id.trim() !== nationalId)) {
         errors.push(existingLoanCheckStatus === "error"
           ? "Retry the national-ID check before continuing."
           : "Wait for the national-ID check to complete before continuing.");
@@ -807,8 +807,15 @@ export default function CompanyClientsPage() {
       return;
     }
 
-    if (existingLoanCheckStatus === "checking") {
-      toast.warning("Please wait for the existing-loan check to finish.");
+    // Do not submit using an earlier lookup for a different ID, even if
+    // the user changed identity while the wizard was open.
+    const submittedNationalId = String(clientForm.national_id ?? "").trim();
+    if (submittedNationalId && (
+      existingLoanCheckStatus !== "ready"
+      || existingLoanCheck?.national_id.trim() !== submittedNationalId
+    )) {
+      setClientStep(0);
+      toast.error("Verify this national ID before submitting the registration.");
       return;
     }
     if (borrowerAlreadyLinked) {
