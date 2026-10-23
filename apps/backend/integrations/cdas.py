@@ -439,6 +439,21 @@ class CdasClient:
         except ValueError as exc:
             raise CdasError(502, str(exc), payload) from exc
 
+    @staticmethod
+    def _verify_mutation_identity(response: dict[str, Any], request: dict[str, Any], *, require_existing_id: bool) -> dict[str, Any]:
+        requested_employee = str(request.get("EmployeeNo") or "").strip()
+        returned_employee = str(response.get("EmployeeNo") or "").strip()
+        if not requested_employee or returned_employee.casefold() != requested_employee.casefold():
+            raise CdasError(502, "CDAS acknowledgement employee number does not match the request", response)
+        if require_existing_id:
+            try:
+                requested_id = int(request["DeductionID"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CdasError(422, "A valid existing CDAS DeductionID is required", request) from exc
+            if requested_id <= 0 or response.get("DeductionID") != requested_id:
+                raise CdasError(502, "CDAS acknowledgement deduction ID does not match the request", response)
+        return response
+
     async def add_update_deduction(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         payload = await self._post_authenticated(
             self.ADD_UPDATE_DEDUCTION_PATH,
@@ -447,7 +462,8 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction_write(payload)
+            result = validate_deduction_write(payload)
+            return self._verify_mutation_identity(result, request_payload, require_existing_id=False)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction lifecycle request returned an invalid response", payload) from exc
 
@@ -475,7 +491,8 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction_write(payload)
+            result = validate_deduction_write(payload)
+            return self._verify_mutation_identity(result, request_payload, require_existing_id=True)
         except ValueError as exc:
             raise CdasError(502, "CDAS active deduction modification returned an invalid response", payload) from exc
 
@@ -487,7 +504,8 @@ class CdasClient:
             retry_expired_session=False,
         )
         try:
-            return validate_deduction_write(payload)
+            result = validate_deduction_write(payload)
+            return self._verify_mutation_identity(result, request_payload, require_existing_id=True)
         except ValueError as exc:
             raise CdasError(502, "CDAS deduction settlement returned an invalid response", payload) from exc
 
