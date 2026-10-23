@@ -35,6 +35,7 @@ from database.models.file_management import ManagedFile
 from database.models.loan_product import LoanProduct
 from database.models.enums import InstallmentStatus, LoanStatus, PaymentProvider, PaymentPurpose, PaymentStatus, UserRole
 from database.models.person import Person
+from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.payment import PaymentTransaction
 from database.models.professional_lending import DirectLoanApplication
 from database.models.origination import (
@@ -1076,9 +1077,20 @@ def check_company_client_existing_loans(
         borrower=borrower,
         company_id=context.company_id,
     )
+    # A paper-book capture can exist before its borrower is registered or
+    # linked to a live loan. Limit this lookup to the active company.
+    legacy_capture_count = (
+        db.query(func.count(LegacyLoanCapture.id))
+        .filter(
+            LegacyLoanCapture.company_id == context.company_id,
+            func.lower(func.trim(LegacyLoanCapture.national_id)) == cleaned_national_id.lower(),
+        )
+        .scalar()
+    ) or 0
     return CompanyClientExistingLoanCheckRead(
         national_id=cleaned_national_id,
         checked_at=datetime.now(timezone.utc),
+        legacy_capture_count=int(legacy_capture_count),
         **exposure,
     )
 

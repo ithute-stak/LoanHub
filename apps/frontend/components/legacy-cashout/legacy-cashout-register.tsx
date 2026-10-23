@@ -868,11 +868,11 @@ export function LegacyCashoutRegister() {
                   </Button>
                 </div>
                 {identityCheckedValue === form.identity_number.trim() && identityCheck ? (
-                  <div role="status" className={`rounded-xl border p-4 ${identityCheck.borrower_found ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
-                    <p className="font-bold">{identityCheck.borrower_found ? "Existing LoanHub borrower found" : "No registered LoanHub borrower found"}</p>
+                  <div role="status" className={`rounded-xl border p-4 ${identityCheck.borrower_found || identityCheck.legacy_capture_count > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
+                    <p className="font-bold">{identityCheck.borrower_found ? "Existing LoanHub borrower found" : identityCheck.legacy_capture_count > 0 ? "Existing historical cash-out capture found" : "No registered LoanHub borrower or legacy capture found"}</p>
                     <p className="mt-1 text-sm">{identityCheck.borrower_found
                       ? `This ID already exists in LoanHub. Existing loans: ${identityCheck.total_loan_count}; active: ${identityCheck.active_loan_count}. Review any prefilled details from your company account before continuing. Do not register a duplicate.`
-                      : "You can proceed to capture the historic entry. The record will be checked again when posted."}</p>
+                      : identityCheck.legacy_capture_count > 0 ? `There are ${identityCheck.legacy_capture_count} historical cash-out captures for this national ID in your company. Check existing entries to avoid duplicate records before proceeding.` : "You can proceed to capture the historic entry. The record will be checked again when posted."}</p>
                     {identityCheck.borrower_found ? <Link href="/company/clients" className="mt-2 inline-block text-sm font-semibold underline">Open borrower profiles</Link> : null}
                   </div>
                 ) : null}

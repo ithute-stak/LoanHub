@@ -644,6 +644,15 @@ export default function CompanyClientsPage() {
     const passport = String(clientForm.passport_number ?? "").trim();
 
     if (step === 0) {
+      // Verify an entered national ID before collecting the rest of the profile.
+      // Passport-only borrowers continue through the existing identity step.
+      if (nationalId && nationalId.length < 8) errors.push("The national ID must contain at least 8 characters.");
+      if (nationalId && (existingLoanCheckStatus !== "ready" || existingLoanCheck?.national_id.trim() !== nationalId)) {
+        errors.push(existingLoanCheckStatus === "error"
+          ? "Retry the national-ID check before continuing."
+          : "Wait for the national-ID check to complete before continuing.");
+      }
+      if (borrowerAlreadyLinked) errors.push("This borrower is already linked to the active company.");
       if (!clientForm.first_name.trim()) errors.push("Enter the borrower’s first name.");
       if (!clientForm.last_name.trim()) errors.push("Enter the borrower’s last name.");
       if (!clientForm.phone.trim()) errors.push("Enter a phone number the borrower can access.");
@@ -798,8 +807,15 @@ export default function CompanyClientsPage() {
       return;
     }
 
-    if (existingLoanCheckStatus === "checking") {
-      toast.warning("Please wait for the existing-loan check to finish.");
+    // Do not submit using an earlier lookup for a different ID, even if
+    // the user changed identity while the wizard was open.
+    const submittedNationalId = String(clientForm.national_id ?? "").trim();
+    if (submittedNationalId && (
+      existingLoanCheckStatus !== "ready"
+      || existingLoanCheck?.national_id.trim() !== submittedNationalId
+    )) {
+      setClientStep(0);
+      toast.error("Verify this national ID before submitting the registration.");
       return;
     }
     if (borrowerAlreadyLinked) {
@@ -1333,6 +1349,22 @@ export default function CompanyClientsPage() {
                       title="Personal and contact details"
                       description="Capture the borrower’s legal name, contact channels and secure account access."
                     >
+                      <div className="space-y-3">
+                        <Field label="Check national ID first" description="Enter the national ID before capturing personal details. LoanHub checks existing borrower and loan records automatically.">
+                          <div className="relative">
+                            <Input className="h-11 pr-10" autoFocus autoComplete="off" value={clientForm.national_id ?? ""} aria-describedby="national-id-first-check" onChange={(event) => updateClient("national_id", event.target.value)} />
+                            {existingLoanCheckStatus === "checking" ? <LoaderCircle className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-primary" /> : existingLoanCheckStatus === "ready" ? <CircleCheckBig className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600" /> : null}
+                          </div>
+                        </Field>
+                        <ExistingLoanCheckPanel
+                          id="national-id-first-check"
+                          status={existingLoanCheckStatus}
+                          result={existingLoanCheck}
+                          error={existingLoanCheckError}
+                          onRetry={() => setExistingLoanCheckNonce((value) => value + 1)}
+                        />
+                        <p className="text-xs text-muted-foreground">Borrowers without a national ID can continue using a passport in the next step.</p>
+                      </div>
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         <Field label="First name" required>
                           <Input className="h-11" required autoFocus autoComplete="given-name" value={clientForm.first_name} onChange={(event) => updateClient("first_name", event.target.value)} />
@@ -1890,6 +1922,10 @@ function ExistingLoanCheckPanel({
     );
   }
 
+  if (!result?.borrower_found && (result?.legacy_capture_count ?? 0) > 0) {
+    return <div id={id} role="status" className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p className="font-bold">Historical cash-out records found</p><p className="mt-1 text-xs text-muted-foreground">{result!.legacy_capture_count} legacy cash-out capture(s) match this national ID in your company. Review the legacy register before creating a new account. These captures may not yet be posted as live loans.</p></div>;
+  }
+
   if (!result?.borrower_found) {
     return <div id={id} role="status" className="flex items-start gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm"><ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-600" /><div><p className="font-bold">No existing LoanHub borrower record found</p><p className="text-xs text-muted-foreground">The loan fields remain editable so staff can record debts declared from outside LoanHub.</p></div></div>;
   }
@@ -1903,6 +1939,7 @@ function ExistingLoanCheckPanel({
           <p className="mt-1 text-xs text-muted-foreground">{result.already_company_client ? "Open the existing client record instead of creating another company account." : "The borrower identity and tracked obligations can be linked after the date of birth and surname are verified."}</p>
         </div>
       </div>
+      {result.legacy_capture_count > 0 ? <p className="mt-3 text-xs font-semibold text-amber-700">{result.legacy_capture_count} historical cash-out capture(s) also match this ID in your company. Review the legacy register to avoid duplicates.</p> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border bg-background/70 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-muted-foreground">Open LoanHub loans</p><p className="mt-1 text-lg font-black">{result.active_loan_count}</p></div>
         <div className="rounded-xl border bg-background/70 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-muted-foreground">LoanHub outstanding</p><p className="mt-1 text-lg font-black">{formatMoney(result.loanhub_outstanding_total)}</p></div>

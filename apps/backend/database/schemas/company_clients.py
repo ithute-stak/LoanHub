@@ -177,6 +177,7 @@ class AssistedCompanyClientCreate(BaseModel):
 class CompanyClientExistingLoanCheckRead(BaseModel):
     national_id: str
     borrower_found: bool
+    legacy_capture_count: int = Field(default=0, ge=0)
     already_company_client: bool
     company_client_account_id: UUID | None = None
     has_existing_loans: bool
