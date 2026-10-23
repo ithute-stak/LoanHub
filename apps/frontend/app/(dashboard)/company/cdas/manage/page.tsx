@@ -43,6 +43,7 @@ type CdasLedgerOperation = {
   deduction_id: number | null;
   reference_no: string | null;
   actor_user_id: string | null;
+  actor_name: string | null;
   requires_reconciliation: boolean;
   created_at: string | null;
   error_message: string | null;
@@ -189,7 +190,7 @@ export default function CdasManagePage() {
       if (ledgerFilter === "unresolved" && !item.requires_reconciliation) return false;
       if (!searchTerm) return true;
       return [item.employee_no, item.reference_no, item.operation_type, item.state,
-        item.actor_user_id, item.deduction_id?.toString(), item.id]
+        item.actor_user_id, item.actor_name, item.deduction_id?.toString(), item.id]
         .some((value) => (value || "").toLowerCase().includes(searchTerm));
     });
   }, [ledgerItems, ledgerFilter, ledgerSearch]);
@@ -356,7 +357,7 @@ export default function CdasManagePage() {
                   <Badge variant={item.requires_reconciliation ? "destructive" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge>
                 </div>
                 <p className="mt-1 text-muted-foreground">Employee {item.employee_no || "—"} · Deduction {item.deduction_id ?? "—"} · Reference {item.reference_no || "—"}</p>
-                <p className="mt-1 break-all text-xs text-muted-foreground">Staff user ID: {item.actor_user_id || "Unavailable"} · {item.created_at ? new Date(item.created_at).toLocaleString() : "Date unavailable"}</p>
+                <p className="mt-1 break-all text-xs text-muted-foreground">Staff: {item.actor_name || "Name unavailable"} · User ID: {item.actor_user_id || "Unavailable"} · {item.created_at ? new Date(item.created_at).toLocaleString() : "Date unavailable"}</p>
                 {item.error_message && <p className="mt-1 text-xs text-destructive">{item.error_message}</p>}
               </div>
             ))}
