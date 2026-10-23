@@ -10,7 +10,8 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from integrations.cdas import CdasClient, CdasError
+from integrations.cdas import CdasClient, CdasError, cdas_error_semantics
+from integrations.cdas_compatible import CdasCompatibleClient
 from integrations.cdas_contracts import validate_deduction, validate_deduction_write, validate_document
 
 
@@ -149,3 +150,34 @@ async def test_write_success_without_deduction_identity_fails_safely_without_ret
         })
     assert raised.value.status_code == 502
     assert writes == 1
+
+
+def test_406_document_not_ready_error_semantics_are_not_authentication():
+    error = cdas_error_semantics(406, {"message": "Reports not ready yet"})
+    assert error["code"] == "CDAS_DOCUMENT_NOT_READY"
+    assert error["category"] == "document"
+    assert cdas_error_semantics(406, {"message": "Invalid authorization token format"})["category"] == "authentication"
+
+
+@pytest.mark.asyncio
+async def test_compatible_client_does_not_probe_headers_for_406_report_not_ready():
+    login_count = 0
+    document_count = 0
+
+    async def handler(request):
+        nonlocal login_count, document_count
+        if request.url.path == "/api/security/login":
+            login_count += 1
+            return httpx.Response(200, json={"Authorization": "token"})
+        document_count += 1
+        return httpx.Response(406, json={"message": "Reports not ready yet"})
+
+    service = CdasCompatibleClient(
+        base_url="https://cdas.test", username="test-user",
+        password="test-password", transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(CdasError) as raised:
+        await service.get_document(year=2026, month=10, document_type=2)
+    assert raised.value.status_code == 406
+    assert document_count == 1
+    assert login_count == 1
