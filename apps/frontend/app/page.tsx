@@ -38,9 +38,9 @@ import {
 } from "@/components/marketing/public-site-shell";
 
 export const metadata: Metadata = {
-    title: "LoanHub | Lending marketplace and financial operating system for Lesotho",
+    title: "LoanHub | Smart Loan Management for Modern Lenders",
     description:
-        "Discover LoanHub: borrower marketplace, loan servicing, collections, payments, accounting, reporting, HR, communication, files and multi-branch operations for Lesotho.",
+        "LoanHub brings loan origination, borrower management, repayments, collections, reporting and day-to-day financial operations together on one connected platform.",
 };
 
 const capabilities = [
@@ -128,6 +128,19 @@ const capabilities = [
             "Coordinate branches, staff roles, client cases, APIs, webhooks, institution governance, company websites and workspace tools from one tenant-aware platform.",
         points: ["Multi-branch tenancy", "API & webhooks", "Client casework", "Workspace tools"],
     },
+];
+
+const capabilityReadiness = [
+    { name: "Client registration & management", score: 9, note: "Established workflows" },
+    { name: "Loan applications & processing", score: 8, note: "Established workflows" },
+    { name: "Repayment & collections management", score: 9, note: "Established workflows" },
+    { name: "Reporting & PDF generation", score: 9, note: "Established workflows" },
+    { name: "Banking & API integrations", score: 5, note: "Further validation required" },
+    { name: "Credit scoring & automation", score: 4, note: "Further development required" },
+    { name: "Enterprise loan product configuration", score: 4, note: "Further development required" },
+    { name: "Security & regulatory compliance", score: 3, note: "Formal evidence required" },
+    { name: "Scalability & disaster recovery", score: 5, note: "Load and recovery tests required" },
+    { name: "Tender documentation & eligibility", score: 3, note: "Independent eligibility verification required" },
 ];
 
 const borrowerJourney = [
@@ -225,17 +238,17 @@ export default function LoanHubLandingPage() {
                         <div className="absolute bottom-[-8rem] left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-violet-500/10 blur-3xl" />
                     </div>
 
-                    <div className="relative mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:px-8 lg:py-28">
+                    <div className="relative mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:gap-14 lg:px-8 lg:py-28">
                         <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-black uppercase tracking-[0.18em] text-emerald-300">
                                 <Sparkles className="h-4 w-4" />
                                 Lending infrastructure for Lesotho
                             </div>
                             <h1 className="mt-6 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.04em] sm:text-6xl lg:text-7xl">
-                                One connected system for the entire lending journey.
+                                <span className="block">Lending made</span><span className="block bg-gradient-to-r from-emerald-300 via-teal-200 to-sky-300 bg-clip-text text-transparent">clearer, faster, smarter.</span>
                             </h1>
                             <p className="mt-6 max-w-2xl text-base leading-7 text-slate-300 sm:text-xl sm:leading-8">
-                                LoanHub connects borrowers, lenders, branches and professional financial teams through a secure marketplace and a complete loan operating system—from first request to final repayment, reporting and recovery.
+                                From the first borrower registration to the final repayment, LoanHub helps lenders manage applications, collections, financial operations and reporting in one connected workspace.
                             </p>
 
                             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -246,15 +259,15 @@ export default function LoanHubLandingPage() {
                                     Start with LoanHub <ArrowRight className="h-4 w-4" />
                                 </Link>
                                 <Link
-                                    href="/manual"
+                                    href="#platform"
                                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-3.5 text-sm font-black text-white transition hover:bg-white/10"
                                 >
-                                    <BookOpen className="h-4 w-4" /> Read the user manual
+                                    <BookOpen className="h-4 w-4" /> Explore the platform
                                 </Link>
                             </div>
 
                             <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-slate-300">
-                                {["Borrower marketplace", "Multi-branch operations", "Accounting & reports", "Realtime collaboration"].map((item) => (
+                                {["Borrower management", "Loan servicing", "Collections", "Finance & reporting"].map((item) => (
                                     <span key={item} className="inline-flex items-center gap-2">
                                         <CheckCircle2 className="h-4 w-4 text-emerald-400" /> {item}
                                     </span>
@@ -268,7 +281,7 @@ export default function LoanHubLandingPage() {
                                 <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
                                     <div>
                                         <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-300">LoanHub operating map</p>
-                                        <p className="mt-1 text-lg font-black">From opportunity to evidence</p>
+                                        <p className="mt-1 text-lg font-black">Your lending operations at a glance</p>
                                     </div>
                                     <span className="rounded-xl bg-emerald-400/10 p-2.5 text-emerald-300">
                                         <LayoutDashboard className="h-5 w-5" />
@@ -277,9 +290,9 @@ export default function LoanHubLandingPage() {
 
                                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                                     {[
-                                        ["Marketplace", "Requests → offers", HandCoins],
+                                        ["Origination", "Register → approve", HandCoins],
                                         ["Servicing", "Disburse → repay", Workflow],
-                                        ["Finance", "Post → reconcile", ReceiptText],
+                                        ["Collections", "Monitor → recover", ClipboardCheck],
                                         ["Reporting", "Measure → improve", BarChart3],
                                     ].map(([title, text, Icon]) => {
                                         const IconComponent = Icon as typeof HandCoins;
@@ -308,6 +321,20 @@ export default function LoanHubLandingPage() {
                         </div>
                     </div>
 
+                    <div className="relative mx-auto grid max-w-7xl gap-3 px-4 pb-7 sm:grid-cols-3 sm:px-6 lg:px-8">
+                        {[
+                            { title: "I want to borrow", description: "Create your profile and explore loan requests.", href: "/borrower-registration", icon: Users },
+                            { title: "I manage a lender", description: "Set up your institution and operating teams.", href: "/register-company-admin", icon: Building2 },
+                            { title: "I already use LoanHub", description: "Sign in to continue your work.", href: "/login", icon: LockKeyhole },
+                        ].map(({ title, description, href, icon: Icon }) => (
+                            <Link key={href} href={href} className="group flex items-start gap-3 rounded-2xl border border-white/15 bg-white/[0.07] p-4 backdrop-blur transition hover:border-emerald-300/60 hover:bg-white/[0.12] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300">
+                                <span className="rounded-xl bg-emerald-400/15 p-2 text-emerald-300"><Icon className="h-5 w-5" /></span>
+                                <span className="min-w-0 flex-1"><span className="block font-black">{title}</span><span className="mt-1 block text-xs leading-5 text-slate-300">{description}</span></span>
+                                <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-emerald-300 transition group-hover:translate-x-1" />
+                            </Link>
+                        ))}
+                    </div>
+
                     <div className="relative mx-auto max-w-7xl px-4 pb-14 sm:px-6 lg:px-8">
                         <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 backdrop-blur sm:p-6 [&_article]:border-white/10 [&_article]:bg-white/[0.04] [&_article_p]:text-white [&_article_p+_p]:text-slate-400 [&_article_span]:bg-white/5">
                             <LivePlatformStats compact />
@@ -315,12 +342,28 @@ export default function LoanHubLandingPage() {
                     </div>
                 </section>
 
+                <nav aria-label="Explore LoanHub" className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                    <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-4 sm:px-6 lg:px-8">
+                        {[
+                            ["Features", "#platform"],
+                            ["Capability snapshot", "#readiness"],
+                            ["For borrowers", "#borrowers"],
+                            ["For institutions", "#institutions"],
+                            ["Security", "#security"],
+                        ].map(([label, href]) => (
+                            <a key={href} href={href} className="shrink-0 rounded-full border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-emerald-950">
+                                {label}
+                            </a>
+                        ))}
+                    </div>
+                </nav>
+
                 <section id="platform" className="scroll-mt-24 bg-slate-50 py-20 dark:bg-slate-900/40 sm:py-24">
                     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
                         <PublicSectionHeading
-                            eyebrow="One platform, many operating teams"
-                            title="LoanHub is more than a loan register."
-                            description="It combines marketplace acquisition, lending operations and the surrounding work a professional financial institution needs to run with control and visibility."
+                            eyebrow="Everything your lending team needs"
+                            title="Built around the way lenders actually work."
+                            description="From onboarding and repayments to finance, staff collaboration and audit trails, explore the capabilities that bring your operations into one place."
                             align="center"
                         />
 
@@ -328,7 +371,7 @@ export default function LoanHubLandingPage() {
                             {capabilities.map(({ icon: Icon, title, description, points }) => (
                                 <article
                                     key={title}
-                                    className="group rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:border-emerald-300 hover:shadow-xl hover:shadow-slate-200/60 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800 dark:hover:shadow-black/20"
+                                    className="group relative overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-xl hover:shadow-slate-200/60 focus-within:ring-2 focus-within:ring-emerald-400 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800 dark:hover:shadow-black/20"
                                 >
                                     <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 transition group-hover:bg-emerald-500 group-hover:text-white dark:bg-emerald-950/60 dark:text-emerald-300">
                                         <Icon className="h-5 w-5" />
@@ -344,6 +387,55 @@ export default function LoanHubLandingPage() {
                                     </div>
                                 </article>
                             ))}
+                        </div>
+                    </div>
+                </section>
+
+                <section id="readiness" aria-labelledby="readiness-heading" className="scroll-mt-24 bg-white py-20 dark:bg-slate-950 sm:py-24">
+                    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                        <div className="grid gap-8 lg:grid-cols-[.78fr_1.22fr] lg:items-start">
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-300">Current capability snapshot</p>
+                                <h2 id="readiness-heading" className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Built for everyday lending. Growing toward enterprise banking.</h2>
+                                <p className="mt-4 leading-7 text-slate-600 dark:text-slate-300">
+                                    LoanHub already supports core lending operations, while specialist banking integrations, advanced automation and independent compliance evidence remain development priorities.
+                                </p>
+                                <div className="mt-7 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-900 dark:bg-emerald-950/30">
+                                    <p className="text-xs font-black uppercase tracking-widest text-emerald-800 dark:text-emerald-200">Provisional technical readiness</p>
+                                    <p className="mt-2 text-5xl font-black tabular-nums text-slate-950 dark:text-white">5.5<span className="text-xl text-slate-500">/10</span></p>
+                                    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                                        Indicative internal assessment against a demanding enterprise banking tender—not an audited performance score, certification or statement of tender eligibility.
+                                    </p>
+                                </div>
+                                <Link href="/manual" className="mt-6 inline-flex items-center gap-2 font-bold text-emerald-700 hover:underline dark:text-emerald-300">
+                                    Explore LoanHub documentation <ArrowRight className="h-4 w-4" />
+                                </Link>
+                            </div>
+                            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                <div className="border-b border-slate-200 px-5 py-5 dark:border-slate-800 sm:px-7">
+                                    <h3 className="text-lg font-black">Capability by area</h3>
+                                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Indicative scores; features and compliance require project-specific verification.</p>
+                                </div>
+                                <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                                    {capabilityReadiness.map(({ name, score, note }) => (
+                                        <div key={name} className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_130px] sm:items-center sm:px-7">
+                                            <div>
+                                                <p className="text-sm font-bold">{name}</p>
+                                                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{note}</p>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700" role="meter" aria-label={name + " provisional score"} aria-valuemin={0} aria-valuemax={10} aria-valuenow={score}>
+                                                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${score * 10}%` }} />
+                                                </div>
+                                                <span className="w-10 text-right text-sm font-black tabular-nums">{score}/10</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="border-t border-slate-200 px-5 py-4 text-xs leading-5 text-slate-500 dark:border-slate-800 dark:text-slate-400 sm:px-7">
+                                    Scores are provisional estimates, not live measurements. They do not establish PCI DSS, ISO 27001, bank deployment, performance or tender compliance.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </section>
