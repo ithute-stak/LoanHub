@@ -7,7 +7,6 @@ periods require a separate reconciliation process.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -31,7 +30,7 @@ def _last_payment_query(db: Session, loan: ClientCompanyLoan):
             PaymentTransaction.loan_id == loan.id,
             PaymentTransaction.direction == PaymentDirection.INBOUND,
             PaymentTransaction.purpose.in_([PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT]),
-            PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+            PaymentTransaction.status.in_([PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED]),
         )
         .order_by(PaymentTransaction.completed_at.desc(), PaymentTransaction.created_at.desc(), PaymentTransaction.id.desc())
     )
@@ -42,7 +41,7 @@ def latest_repayment(db: Session, loan: ClientCompanyLoan) -> dict | None:
     if payment is None:
         return None
     payload = payment.provider_payload or {}
-    is_cash = payment.payment_method == PaymentMethod.CASH
+    is_cash = payment.payment_method == PaymentMethod.CASH and payment.status == PaymentStatus.SUCCEEDED
     is_ordinary = payment.purpose == PaymentPurpose.LOAN_REPAYMENT and not payload.get("early_settlement_id")
     return {
         "payment_id": str(payment.id),
@@ -131,8 +130,10 @@ def reverse_latest_cash_repayment(
         # Refuses reversal of allocations belonging to superseded renewal cycles.
         reverse_loan_payment(db, payment)
         void_treasury_entry(db, treasury_entry, user_id=user_id, reason=reason)
-        record_reversal_accounting(db, payment)
         payment.status = PaymentStatus.REVERSED
+        accounting_reversal = record_reversal_accounting(db, payment)
+        if accounting_reversal is None:
+            raise HTTPException(status_code=409, detail="Original payment journal is missing; manual financial reconciliation required")
         payment.provider_payload = {
             **(payment.provider_payload or {}),
             "reversal": {
