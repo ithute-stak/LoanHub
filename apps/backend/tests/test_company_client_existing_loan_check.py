@@ -54,6 +54,7 @@ def test_existing_loan_check_response_preserves_totals():
         latest_loan_at=datetime.now(timezone.utc),
         checked_at=datetime.now(timezone.utc),
     )
+    assert response.legacy_capture_count == 0
     assert response.total_loan_count == 5
     assert response.active_loan_count == 2
     assert response.completed_loan_count == 2
@@ -73,3 +74,20 @@ def test_missing_borrower_history_returns_complete_zero_summary():
     assert result["total_loan_count"] == 0
     assert result["defaulted_loan_count"] == 0
     assert result["lifetime_principal_total"] == Decimal("0.00")
+
+
+def test_existing_loan_check_response_reports_legacy_captures_without_registered_borrower():
+    response = CompanyClientExistingLoanCheckRead(
+        national_id="900101123456",
+        borrower_found=False,
+        legacy_capture_count=2,
+        already_company_client=False,
+        has_existing_loans=False,
+        active_loan_count=0,
+        loanhub_outstanding_total=Decimal("0"),
+        declared_existing_loan_total=Decimal("0"),
+        existing_loan_total=Decimal("0"),
+        checked_at=datetime.now(timezone.utc),
+    )
+    assert response.legacy_capture_count == 2
+    assert response.borrower_found is False
