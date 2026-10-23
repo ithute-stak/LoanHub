@@ -622,6 +622,7 @@ def _create_historical_schedule(
 def list_legacy_cashout_entries(
     status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -630,7 +631,7 @@ def list_legacy_cashout_entries(
     query = db.query(LegacyLoanCapture).filter(LegacyLoanCapture.company_id == company_id)
     if status_filter:
         query = query.filter(LegacyLoanCapture.status == status_filter.strip().lower())
-    rows = query.order_by(LegacyLoanCapture.created_at.desc()).limit(limit).all()
+    rows = query.order_by(LegacyLoanCapture.created_at.desc(), LegacyLoanCapture.id.desc()).offset(offset).limit(limit).all()
     loans = {
         loan.id: loan
         for loan in db.query(ClientCompanyLoan)
