@@ -66,7 +66,7 @@ jobs:
           retention-days: 7
 
   apply-format:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/unify-loanhub-flutter-legacy'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/feat/unify-loanhub-flutter-legacy') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/unify-loanhub-flutter-legacy')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -76,6 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: feat/unify-loanhub-flutter-legacy
           persist-credentials: true
       - uses: subosito/flutter-action@v2
         with:
