@@ -123,6 +123,12 @@ services:
       DB_USER: ${DB_RUNTIME_USER:-loanhub_app}
       DB_PASSWORD: ${DB_RUNTIME_PASSWORD:?Set DB_RUNTIME_PASSWORD in .env.production}
     command: ["python", "docker/maintenance.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; p='/tmp/loanhub-maintenance-heartbeat'; assert os.path.isfile(p) and time.time()-os.path.getmtime(p) < 900, 'Maintenance heartbeat is missing or stale'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
     depends_on:
       backend:
         condition: service_healthy
