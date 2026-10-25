@@ -70,9 +70,11 @@ class _BorrowerCallProfilePageState extends State<BorrowerCallProfilePage> {
   @override Widget build(BuildContext context) {
     final data = profile;
     final name = data?['name']?.toString() ?? widget.summary['name']?.toString() ?? 'Borrower profile';
-    if (data == null) return Scaffold(appBar: AppBar(title: Text(name)), body: Center(
-      child: error == null ? const CircularProgressIndicator() : FilledButton.icon(
-        onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('RETRY'))));
+    if (data == null) {
+      return Scaffold(appBar: AppBar(title: Text(name)), body: Center(
+        child: error == null ? const CircularProgressIndicator() : FilledButton.icon(
+          onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('RETRY'))));
+    }
     final contacts = (data['contacts'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
     final loans = (data['loans'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
     final calls = (data['recent_calls'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
