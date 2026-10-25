@@ -340,7 +340,9 @@ def _deduction_matches(operation: CdasProviderOperation, record: dict[str, Any])
     request = operation.request_snapshot if isinstance(operation.request_snapshot, dict) else {}
     expected_employee = _normalized_text(operation.employee_no or request.get("EmployeeNo"))
     returned_employee = _normalized_text(_first_value(record, "EmployeeNo", "employeeNo", "employee_no"))
-    if expected_employee and returned_employee and expected_employee != returned_employee:
+    # Financial reconciliation must fail closed if either employee identity is
+    # absent. A matching deduction ID/reference is not sufficient on its own.
+    if not expected_employee or not returned_employee or expected_employee != returned_employee:
         return False
 
     target_id = _operation_target_deduction_id(operation)
