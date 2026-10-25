@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -67,6 +68,7 @@ def main() -> None:
         try:
             result = run_maintenance(db)
             logger.info("Maintenance completed: %s", result.to_dict())
+            Path("/tmp/loanhub-maintenance-heartbeat").touch()
         except Exception:
             db.rollback()
             logger.exception("Maintenance run failed")
