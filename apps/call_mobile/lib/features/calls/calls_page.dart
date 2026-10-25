@@ -51,9 +51,8 @@ class _CallsPageState extends State<CallsPage> {
         Text(
           callingEnabled! ? 'LoanHub Business Calls' : 'Call LoanHub',
           textAlign: TextAlign.center,
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          style: Theme.of(context).textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 8),
         Text(
@@ -65,9 +64,8 @@ class _CallsPageState extends State<CallsPage> {
         const SizedBox(height: 24),
         if (callingEnabled!)
           FilledButton.icon(
-            onPressed: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: widget.businessCallsBuilder)),
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: widget.businessCallsBuilder)),
             icon: const Icon(Icons.phone_in_talk),
             label: const Text('OPEN BUSINESS CALLS'),
           )

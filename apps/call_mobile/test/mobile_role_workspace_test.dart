@@ -31,7 +31,10 @@ void main() {
       statusCode: 500,
     ).toString();
 
-    expect(error, 'LoanHub is temporarily unavailable. Please try again shortly.');
+    expect(
+      error,
+      'LoanHub is temporarily unavailable. Please try again shortly.',
+    );
     expect(error, isNot(contains('psycopg')));
     expect(error, isNot(contains('123e4567')));
   });
@@ -85,10 +88,7 @@ void main() {
         theme: LoanHubTheme.light(),
         home: MobileRoleWorkspace(
           api: LoanHubApi(),
-          initialSession: const {
-            'display_name': 'Mpho',
-            'role': 'borrower',
-          },
+          initialSession: const {'display_name': 'Mpho', 'role': 'borrower'},
           onNavigate: (destination) => opened = destination,
         ),
       ),
@@ -102,10 +102,14 @@ void main() {
     );
     await tester.ensureVisible(find.text('Loan offers'));
     await tester.pumpAndSettle();
-    await tester.tap(find.ancestor(
-      of: find.text('Loan offers'),
-      matching: find.byType(InkWell),
-    ).first);
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('Loan offers'),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
     await tester.pump();
     expect(opened, MobileWorkspaceDestination.explore);
     expect(tester.takeException(), isNull);
@@ -142,13 +146,16 @@ void main() {
     );
     await tester.ensureVisible(find.text('Portable operations'));
     await tester.pumpAndSettle();
-    await tester.tap(find.ancestor(
-      of: find.text('Portable operations'),
-      matching: find.byType(InkWell),
-    ).first);
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('Portable operations'),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
     await tester.pump();
     expect(opened, MobileWorkspaceDestination.operations);
     expect(tester.takeException(), isNull);
   });
-
 }

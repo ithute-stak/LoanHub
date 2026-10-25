@@ -161,11 +161,10 @@ class LoanHubRealtimeRepository {
     });
   }
 
-  Future<Uri> _socketUri({
-    required String clientId,
-    String? companyId,
-  }) async {
-    final root = Uri.parse((await api.baseUrl()).replaceFirst(RegExp(r'/+$'), ''));
+  Future<Uri> _socketUri({required String clientId, String? companyId}) async {
+    final root = Uri.parse(
+      (await api.baseUrl()).replaceFirst(RegExp(r'/+$'), ''),
+    );
     final query = <String, String>{'client_id': clientId};
     if (companyId != null && companyId.isNotEmpty) {
       query['company_id'] = companyId;
@@ -225,7 +224,8 @@ class LoanHubRealtimeRepository {
     final companyId = await api.storage.read(key: 'loanhub_company_id');
     final role = await api.storage.read(key: 'loanhub_active_role');
     final root = (await api.baseUrl()).replaceFirst(RegExp(r'/+$'), '');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.openUrl(
         method,
@@ -240,10 +240,14 @@ class LoanHubRealtimeRepository {
         request.headers.set('X-Active-Role', role!);
       }
       if (body != null) request.add(utf8.encode(jsonEncode(body)));
-      final response = await request.close().timeout(const Duration(seconds: 30));
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
       await response.drain<void>();
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('LoanHub realtime registration failed (${response.statusCode}).');
+        throw HttpException(
+          'LoanHub realtime registration failed (${response.statusCode}).',
+        );
       }
     } finally {
       client.close(force: true);

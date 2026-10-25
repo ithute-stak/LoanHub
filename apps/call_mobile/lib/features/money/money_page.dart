@@ -33,7 +33,8 @@ class MoneyPage extends StatelessWidget {
     if (state.error != null && config.isEmpty) {
       return _MoneyInlineError(
         message: state.error!,
-        onRetry: () => context.read<MoneyBloc>().add(const MoneyRefreshRequested()),
+        onRetry: () =>
+            context.read<MoneyBloc>().add(const MoneyRefreshRequested()),
       );
     }
     final providerReady = config['provider_enabled'] == true;
@@ -111,9 +112,8 @@ class MoneyPage extends StatelessWidget {
           const SizedBox(height: 18),
           Text(
             'Move money',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(context).textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
           GridView.count(
@@ -156,14 +156,14 @@ class MoneyPage extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Recent activity',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               IconButton(
-                onPressed: () =>
-                    context.read<MoneyBloc>().add(const MoneyRefreshRequested()),
+                onPressed: () => context.read<MoneyBloc>().add(
+                  const MoneyRefreshRequested(),
+                ),
                 icon: const Icon(Icons.refresh),
               ),
             ],
@@ -301,9 +301,8 @@ class _MoneyTransferPageState extends State<MoneyTransferPage> {
         children: [
           Text(
             'LoanHub Money · $label',
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -410,7 +409,10 @@ class _MoneyAction extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
               Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             ],
@@ -453,8 +455,8 @@ class _MoneyInlineError extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            minHeight: constraints.hasBoundedHeight &&
-                    constraints.maxHeight > 48
+            minHeight:
+                constraints.hasBoundedHeight && constraints.maxHeight > 48
                 ? constraints.maxHeight - 48
                 : 0,
           ),

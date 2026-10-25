@@ -7,7 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// idempotency key when a queued request is retried.
 class OfflineStore {
   OfflineStore({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? const FlutterSecureStorage();
 
   static const _key = 'loanhub_pending_mobile_calls';
   final FlutterSecureStorage _storage;
@@ -17,16 +17,16 @@ class OfflineStore {
     if (saved == null || saved.isEmpty) return <PendingCall>[];
     final entries = jsonDecode(saved);
     if (entries is! List) return <PendingCall>[];
-    return entries.whereType<Map>().map((row) {
-      final payload = Map<String, dynamic>.from(row['payload'] as Map);
-      return PendingCall(row['id'].toString(), payload);
-    }).toList(growable: false);
+    return entries
+        .whereType<Map>()
+        .map((row) {
+          final payload = Map<String, dynamic>.from(row['payload'] as Map);
+          return PendingCall(row['id'].toString(), payload);
+        })
+        .toList(growable: false);
   }
 
-  Future<void> savePendingCall(
-    String id,
-    Map<String, dynamic> payload,
-  ) async {
+  Future<void> savePendingCall(String id, Map<String, dynamic> payload) async {
     final current = await pendingCalls();
     final next = <PendingCall>[
       ...current.where((call) => call.id != id),
@@ -44,8 +44,7 @@ class OfflineStore {
     await _storage.write(
       key: _key,
       value: jsonEncode([
-        for (final call in calls)
-          {'id': call.id, 'payload': call.payload},
+        for (final call in calls) {'id': call.id, 'payload': call.payload},
       ]),
     );
   }

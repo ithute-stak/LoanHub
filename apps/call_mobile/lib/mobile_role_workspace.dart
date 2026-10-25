@@ -6,7 +6,14 @@ import 'theme/loanhub_theme.dart';
 
 /// Destinations exposed by the mobile shell. The server remains responsible for
 /// authorisation; this mapping only keeps each role's phone workspace focused.
-enum MobileWorkspaceDestination { chats, calls, money, explore, operations, profile }
+enum MobileWorkspaceDestination {
+  chats,
+  calls,
+  money,
+  explore,
+  operations,
+  profile,
+}
 
 class MobileRoleWorkspace extends StatefulWidget {
   const MobileRoleWorkspace({
@@ -63,10 +70,13 @@ class _MobileRoleWorkspaceState extends State<MobileRoleWorkspace> {
     final definition = MobileRoleDefinition.forRole(role);
     final width = MediaQuery.sizeOf(context).width;
     final padding = LoanHubBreakpoints.pagePadding(width);
-    final columns = width < 390 ? 1 : width < 700 ? 2 : 3;
+    final columns = width < 390
+        ? 1
+        : width < 700
+        ? 2
+        : 3;
     final contentWidth = (width - (padding * 2)).clamp(0.0, 920.0).toDouble();
-    final cardWidth =
-        (contentWidth - (12 * (columns - 1))) / columns;
+    final cardWidth = (contentWidth - (12 * (columns - 1))) / columns;
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -83,9 +93,8 @@ class _MobileRoleWorkspaceState extends State<MobileRoleWorkspace> {
                   const SizedBox(height: 18),
                   Text(
                     'Your mobile workspace',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -104,7 +113,8 @@ class _MobileRoleWorkspaceState extends State<MobileRoleWorkspace> {
                             width: cardWidth,
                             child: _RoleActionCard(
                               action: action,
-                              onTap: () => widget.onNavigate(action.destination),
+                              onTap: () =>
+                                  widget.onNavigate(action.destination),
                             ),
                           ),
                         )
@@ -327,18 +337,18 @@ class MobileRoleDefinition {
 
   static MobileRoleDefinition forRole(String value) {
     final role = value.trim().toLowerCase();
-    if (const {'company_owner', 'owner', 'company_admin', 'admin'}
-        .contains(role)) {
+    if (const {
+      'company_owner',
+      'owner',
+      'company_admin',
+      'admin',
+    }.contains(role)) {
       return const MobileRoleDefinition(
         title: 'Company leadership',
-        description:
-            'See the company pulse, reach clients securely and act on approved operational work from your phone.',
-        mobileSummary:
-            'Client communication, money activity, company channels and your protected account are available here.',
-        accessNote:
-            'Sensitive company configuration, retention controls and deletions remain protected by role and server policy.',
-        desktopNote:
-            'Use the LoanHub web workspace for detailed reporting, company setup and larger approval queues.',
+        description: 'See the company pulse, reach clients securely and act on approved operational work from your phone.',
+        mobileSummary: 'Client communication, money activity, company channels and your protected account are available here.',
+        accessNote: 'Sensitive company configuration, retention controls and deletions remain protected by role and server policy.',
+        desktopNote: 'Use the LoanHub web workspace for detailed reporting, company setup and larger approval queues.',
         icon: Icons.business_center_outlined,
         actions: [
           MobileRoleAction(
@@ -349,7 +359,8 @@ class MobileRoleDefinition {
           ),
           MobileRoleAction(
             title: 'Money activity',
-            subtitle: 'View or create provider-confirmed transfer instructions.',
+            subtitle:
+                'View or create provider-confirmed transfer instructions.',
             icon: Icons.account_balance_wallet_outlined,
             destination: MobileWorkspaceDestination.money,
           ),
@@ -371,14 +382,10 @@ class MobileRoleDefinition {
     if (role == 'branch_manager') {
       return const MobileRoleDefinition(
         title: 'Branch management',
-        description:
-            'Run the day-to-day branch view: client contact, team communication and controlled money work.',
-        mobileSummary:
-            'Use this phone workspace for urgent branch actions without exposing the full desktop back office.',
-        accessNote:
-            'LoanHub checks your branch, company and role before every data request or action.',
-        desktopNote:
-            'Use web LoanHub for wide portfolio review, staff administration and detailed branch reporting.',
+        description: 'Run the day-to-day branch view: client contact, team communication and controlled money work.',
+        mobileSummary: 'Use this phone workspace for urgent branch actions without exposing the full desktop back office.',
+        accessNote: 'LoanHub checks your branch, company and role before every data request or action.',
+        desktopNote: 'Use web LoanHub for wide portfolio review, staff administration and detailed branch reporting.',
         icon: Icons.account_tree_outlined,
         actions: [
           MobileRoleAction(
@@ -409,13 +416,12 @@ class MobileRoleDefinition {
         description: collections
             ? 'Work borrower follow-ups, permitted contacts and controlled call notes while away from the branch.'
             : 'Work borrower relationships, loan-linked contact and secure follow-up from your phone.',
-        mobileSummary:
-            'The mobile workspace focuses on the next client conversation and the information you need before it.',
-        accessNote:
-            'Calls only use permitted contacts; LoanHub records the employee, borrower and related loan.',
-        desktopNote:
-            'Use web LoanHub for full application capture, calculators, approval packs and portfolio analysis.',
-        icon: collections ? Icons.assignment_late_outlined : Icons.badge_outlined,
+        mobileSummary: 'The mobile workspace focuses on the next client conversation and the information you need before it.',
+        accessNote: 'Calls only use permitted contacts; LoanHub records the employee, borrower and related loan.',
+        desktopNote: 'Use web LoanHub for full application capture, calculators, approval packs and portfolio analysis.',
+        icon: collections
+            ? Icons.assignment_late_outlined
+            : Icons.badge_outlined,
         actions: [
           const MobileRoleAction(
             title: 'Borrower calls',
@@ -441,14 +447,10 @@ class MobileRoleDefinition {
     if (const {'cashier', 'accountant', 'finance_officer'}.contains(role)) {
       return const MobileRoleDefinition(
         title: 'Finance workspace',
-        description:
-            'Keep payment communication and provider-confirmed money activity close while you are away from the desk.',
-        mobileSummary:
-            'Your mobile view prioritises settlement status, secure conversations and account safety.',
-        accessNote:
-            'Money actions remain provider-confirmed, audited and limited to permissions granted by the company.',
-        desktopNote:
-            'Use web LoanHub for reconciliation, accounting, expenses, registers and full reports.',
+        description: 'Keep payment communication and provider-confirmed money activity close while you are away from the desk.',
+        mobileSummary: 'Your mobile view prioritises settlement status, secure conversations and account safety.',
+        accessNote: 'Money actions remain provider-confirmed, audited and limited to permissions granted by the company.',
+        desktopNote: 'Use web LoanHub for reconciliation, accounting, expenses, registers and full reports.',
         icon: Icons.account_balance_outlined,
         actions: [
           MobileRoleAction(
@@ -475,14 +477,10 @@ class MobileRoleDefinition {
     if (const {'customer_support', 'operations_officer'}.contains(role)) {
       return const MobileRoleDefinition(
         title: 'Operations & support',
-        description:
-            'Respond to LoanHub people, keep communications moving and use controlled calling where the company enables it.',
-        mobileSummary:
-            'This view brings secure conversations, permitted calls and public company information together.',
-        accessNote:
-            'You only see records and contacts the active company and your role permit.',
-        desktopNote:
-            'Use web LoanHub for workflow configuration, reports, escalations and administration.',
+        description: 'Respond to LoanHub people, keep communications moving and use controlled calling where the company enables it.',
+        mobileSummary: 'This view brings secure conversations, permitted calls and public company information together.',
+        accessNote: 'You only see records and contacts the active company and your role permit.',
+        desktopNote: 'Use web LoanHub for workflow configuration, reports, escalations and administration.',
         icon: Icons.support_agent_outlined,
         actions: [
           MobileRoleAction(
@@ -506,18 +504,17 @@ class MobileRoleDefinition {
         ],
       );
     }
-    if (const {'platform_owner', 'platform_admin', 'super_admin'}
-        .contains(role)) {
+    if (const {
+      'platform_owner',
+      'platform_admin',
+      'super_admin',
+    }.contains(role)) {
       return const MobileRoleDefinition(
         title: 'LoanHub platform workspace',
-        description:
-            'Keep an executive mobile view of customer communication, platform money activity and account protection.',
-        mobileSummary:
-            'The mobile view is intentionally concise; tenancy, configuration and operational controls remain server governed.',
-        accessNote:
-            'No company data is granted by the phone UI. LoanHub checks the active role and tenant on every request.',
-        desktopNote:
-            'Use web LoanHub for platform administration, audit review, service configuration and detailed analytics.',
+        description: 'Keep an executive mobile view of customer communication, platform money activity and account protection.',
+        mobileSummary: 'The mobile view is intentionally concise; tenancy, configuration and operational controls remain server governed.',
+        accessNote: 'No company data is granted by the phone UI. LoanHub checks the active role and tenant on every request.',
+        desktopNote: 'Use web LoanHub for platform administration, audit review, service configuration and detailed analytics.',
         icon: Icons.admin_panel_settings_outlined,
         actions: [
           MobileRoleAction(
@@ -543,14 +540,10 @@ class MobileRoleDefinition {
     }
     return const MobileRoleDefinition(
       title: 'Borrower workspace',
-      description:
-          'Follow your LoanHub relationship: communicate securely, discover verified offers and manage available money activity.',
-      mobileSummary:
-          'The mobile experience keeps your personal actions clear and never exposes another company’s private records.',
-      accessNote:
-          'LoanHub only shows you the companies, offers, conversations and money actions your account is authorised to use.',
-      desktopNote:
-          'Use web LoanHub when you need a larger screen for applications, documents and detailed repayment information.',
+      description: 'Follow your LoanHub relationship: communicate securely, discover verified offers and manage available money activity.',
+      mobileSummary: 'The mobile experience keeps your personal actions clear and never exposes another company’s private records.',
+      accessNote: 'LoanHub only shows you the companies, offers, conversations and money actions your account is authorised to use.',
+      desktopNote: 'Use web LoanHub when you need a larger screen for applications, documents and detailed repayment information.',
       icon: Icons.person_outline,
       actions: [
         MobileRoleAction(
@@ -581,7 +574,6 @@ class MobileRoleDefinition {
     );
   }
 }
-
 
 bool _hasPortableOperations(String role) {
   return const {
