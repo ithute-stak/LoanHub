@@ -82,10 +82,13 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Apply canonical Dart formatter on integration branch
+      - name: Apply Dart analyzer quick fixes and canonical formatting
         working-directory: apps/call_mobile
-        run: dart format lib test
-      - name: Commit formatting-only changes
+        run: |
+          flutter pub get
+          dart fix --apply --code=curly_braces_in_flow_control_structures
+          dart format lib test
+      - name: Commit analyzer and formatting fixes
         run: |
           set -euo pipefail
           git add -- apps/call_mobile/lib apps/call_mobile/test
@@ -95,5 +98,5 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'style(flutter): apply canonical Dart formatting'
+          git commit -m 'style(flutter): apply analyzer quick fixes and canonical formatting'
           git push origin HEAD:feat/unify-loanhub-flutter-legacy
