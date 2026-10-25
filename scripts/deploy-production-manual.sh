@@ -244,6 +244,46 @@ write_release_marker() {
   mv -f "$temp" "$path"
 }
 
+sync_production_image_tag() {
+  local release="$1"
+  LOANHUB_SYNC_IMAGE_RELEASE="$release" python3 - <<'PY'
+import os
+import re
+import tempfile
+from pathlib import Path
+
+path = Path(".env.production")
+release = os.environ["LOANHUB_SYNC_IMAGE_RELEASE"]
+if re.fullmatch(r"[0-9a-f]{40}", release) is None:
+    raise SystemExit("Invalid release image tag")
+lines = path.read_text().splitlines(keepends=True)
+updated = []
+found = False
+for line in lines:
+    if re.match(r"^LOANHUB_IMAGE_TAG=", line):
+        if not found:
+            updated.append(f"LOANHUB_IMAGE_TAG={release}\n")
+            found = True
+    else:
+        updated.append(line)
+if not found:
+    if updated and not updated[-1].endswith("\n"):
+        updated.append("\n")
+    updated.append(f"LOANHUB_IMAGE_TAG={release}\n")
+fd, temp_name = tempfile.mkstemp(prefix=".env.production.tag.", dir=str(path.parent))
+try:
+    with os.fdopen(fd, "w") as output:
+        output.writelines(updated)
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(temp_name, 0o600)
+    os.replace(temp_name, path)
+finally:
+    if os.path.exists(temp_name):
+        os.unlink(temp_name)
+PY
+}
+
 ensure_rollback_image() {
   local image="$1"
   local release="$2"
@@ -327,6 +367,7 @@ handle_deployment_failure() {
 
   if [ "$rollback_ok" -eq 1 ]; then
     write_release_marker releases/current.sha "$rollback_release" || rollback_ok=0
+    sync_production_image_tag "$rollback_release" || rollback_ok=0
   fi
 
   if [ "$rollback_ok" -eq 1 ]; then
@@ -446,6 +487,7 @@ if [ -n "$current_release" ] && [ "$current_release" != "$RELEASE_SHA" ]; then
   write_release_marker releases/previous.sha "$current_release"
 fi
 write_release_marker releases/current.sha "$RELEASE_SHA"
+sync_production_image_tag "$RELEASE_SHA"
 rm -f releases/deploying.sha
 rollback_armed=0
 trap - ERR HUP INT TERM
