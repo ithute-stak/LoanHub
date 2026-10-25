@@ -171,6 +171,19 @@ def put_cdas_profile(
     return profile_payload(row)
 
 
+def _connection_test_error_detail(error: CdasError) -> str:
+    """Return actionable diagnostics without forwarding provider response text."""
+    if error.status_code in (401, 403):
+        return "CDAS authentication rejected the configured credentials or permissions."
+    if error.status_code == 429:
+        return "CDAS request allowance exceeded. Retry after the provider limit resets."
+    if error.status_code in (408, 504):
+        return "CDAS connection timed out. Check provider availability and network access."
+    if error.status_code == 503:
+        return "CDAS connection unavailable. Check configuration, network and session services."
+    return "CDAS connection test failed. Check the provider configuration and server diagnostics."
+
+
 @router.post("/companies/{company_id}/profiles/{environment}/test")
 async def test_cdas_profile(
     company_id: UUID,
@@ -196,7 +209,7 @@ async def test_cdas_profile(
         profile.last_test_status = "failed"
         profile.last_tested_at = datetime.now(timezone.utc)
         db.commit()
-        raise HTTPException(status_code=502, detail=exc.message) from exc
+        raise HTTPException(status_code=502, detail=_connection_test_error_detail(exc)) from exc
     profile.last_test_status = "connected"
     profile.last_tested_at = datetime.now(timezone.utc)
     db.commit()
