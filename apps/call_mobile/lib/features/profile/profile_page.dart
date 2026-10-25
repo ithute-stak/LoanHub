@@ -50,8 +50,9 @@ class _ProfilePageState extends State<ProfilePage> {
         Text(
           name,
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleLarge
-              ?.copyWith(fontWeight: FontWeight.w900),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
         ),
         Text(
           session?['role']?.toString().replaceAll('_', ' ') ?? '',

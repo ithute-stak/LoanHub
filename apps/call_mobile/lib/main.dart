@@ -167,19 +167,22 @@ class LandingPage extends StatelessWidget {
                     const _LandingFeature(
                       icon: Icons.chat_bubble_outline,
                       title: 'LoanHub Chats',
-                      subtitle: 'Private and group conversations, files, voice-note support and business communication.',
+                      subtitle:
+                          'Private and group conversations, files, voice-note support and business communication.',
                     ),
                     const SizedBox(height: 10),
                     const _LandingFeature(
                       icon: Icons.call_outlined,
                       title: 'Business Calls',
-                      subtitle: 'Controlled client calls, transfers and company recording policies for authorised staff.',
+                      subtitle:
+                          'Controlled client calls, transfers and company recording policies for authorised staff.',
                     ),
                     const SizedBox(height: 10),
                     const _LandingFeature(
                       icon: Icons.account_balance_wallet_outlined,
                       title: 'LoanHub Money',
-                      subtitle: 'Traceable C2C, C2B, B2C and B2B transfer workflows backed by approved payment providers.',
+                      subtitle:
+                          'Traceable C2C, C2B, B2C and B2B transfer workflows backed by approved payment providers.',
                     ),
                     const SizedBox(height: 26),
                     FilledButton.icon(
@@ -531,8 +534,9 @@ class _InterestedClientSignupState extends State<InterestedClientSignup> {
                   Text(
                     'Interested in LoanHub?',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w900),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   const Text(

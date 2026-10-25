@@ -289,8 +289,9 @@ class _SummaryCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               '$value',
-              style: Theme.of(context).textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w900),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
             ),
             Text(label),
           ],
@@ -367,7 +368,8 @@ class _ActiveBusinessCallPageState extends State<ActiveBusinessCallPage> {
       if (call['offline'] == true) {
         if (mounted) {
           setState(() {
-            stage = 'Saved offline — Internet access is required for a controlled call.';
+            stage =
+                'Saved offline — Internet access is required for a controlled call.';
             completed = true;
           });
         }
@@ -403,7 +405,8 @@ class _ActiveBusinessCallPageState extends State<ActiveBusinessCallPage> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => error = 'Could not start the controlled call. Check your connection and company calling setup.',
+          () => error =
+              'Could not start the controlled call. Check your connection and company calling setup.',
         );
       }
     }
@@ -484,7 +487,8 @@ class _ActiveBusinessCallPageState extends State<ActiveBusinessCallPage> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => error = 'Could not transfer the call. Please try again or use another configured colleague.',
+          () => error =
+              'Could not transfer the call. Please try again or use another configured colleague.',
         );
       }
     }
@@ -532,8 +536,9 @@ class _ActiveBusinessCallPageState extends State<ActiveBusinessCallPage> {
           children: [
             Text(
               widget.client['name']?.toString() ?? 'Client',
-              style: Theme.of(context).textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w900),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
             ),
             Text(widget.client['phone']?.toString() ?? ''),
             Text('Duration: $timerLabel'),

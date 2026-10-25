@@ -23,11 +23,12 @@ class _ExplorePageState extends State<ExplorePage> {
   }
 
   Future<void> _load() async {
-    if (mounted)
+    if (mounted) {
       setState(() {
         loading = true;
         error = null;
       });
+    }
     try {
       final items = await widget.api.companyChannelPosts();
       if (mounted) setState(() => posts = items);
@@ -54,8 +55,9 @@ class _ExplorePageState extends State<ExplorePage> {
         children: [
           Text(
             'Company channels',
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -135,9 +137,10 @@ String _initials(String value) {
       .where((item) => item.isNotEmpty)
       .toList();
   if (words.isEmpty) return 'LH';
-  if (words.length == 1)
+  if (words.length == 1) {
     return words.first
         .substring(0, words.first.length > 1 ? 2 : 1)
         .toUpperCase();
+  }
   return (words.first[0] + words.last[0]).toUpperCase();
 }

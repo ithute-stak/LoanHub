@@ -112,8 +112,9 @@ class MoneyPage extends StatelessWidget {
           const SizedBox(height: 18),
           Text(
             'Move money',
-            style: Theme.of(context).textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
           GridView.count(
@@ -156,8 +157,9 @@ class MoneyPage extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Recent activity',
-                  style: Theme.of(context).textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               IconButton(
@@ -301,8 +303,9 @@ class _MoneyTransferPageState extends State<MoneyTransferPage> {
         children: [
           Text(
             'LoanHub Money · $label',
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
           const Text(

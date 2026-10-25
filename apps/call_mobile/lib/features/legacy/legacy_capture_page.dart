@@ -143,11 +143,12 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       }
       await _connect();
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           configured = false;
           error = e.toString();
         });
+      }
     }
   }
 
@@ -163,10 +164,11 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         _request('/legacy-bank-deductions/'),
         _request('/legacy-bank-deductions/employers'),
       ]);
-      if (answers.any((r) => r.statusCode >= 400))
+      if (answers.any((r) => r.statusCode >= 400)) {
         throw Exception(
           'Connection or permission denied. Check your company and sign-in.',
         );
+      }
       groups = (jsonDecode(answers[0].body) as List)
           .cast<Map<String, dynamic>>();
       if (answers[2].statusCode == 200) {
@@ -195,8 +197,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       if (response.statusCode == 403) {
         throw Exception('Only company management can restore records.');
       }
-      if (response.statusCode != 200)
+      if (response.statusCode != 200) {
         throw Exception('Could not load removed records.');
+      }
       final deleted = (jsonDecode(response.body) as List)
           .cast<Map<String, dynamic>>();
       if (!mounted) return;
@@ -238,11 +241,13 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         '/legacy-bank-deductions/$selected/restore',
         body: {},
       );
-      if (result.statusCode != 200)
+      if (result.statusCode != 200) {
         throw Exception('Unable to restore record.');
+      }
       final refreshed = await _request('/legacy-bank-deductions/');
-      if (refreshed.statusCode != 200)
+      if (refreshed.statusCode != 200) {
         throw Exception('Restored but table refresh failed.');
+      }
       rows = (jsonDecode(refreshed.body) as List).cast<Map<String, dynamic>>();
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) {
@@ -333,11 +338,13 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       if (confirmed == true) {
         final result = await submit(false);
         final listing = await _request('/legacy-bank-deductions/');
-        if (listing.statusCode != 200)
+        if (listing.statusCode != 200) {
           throw Exception('Import saved, but refresh failed.');
+        }
         rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
-        if (mounted)
+        if (mounted) {
           context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -376,7 +383,8 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         ShareParams(
           files: [XFile(archive.path, mimeType: 'application/zip')],
           subject: 'LoanHub legacy bank deductions',
-          text: 'Confidential bank submission. Share only with an authorised recipient.',
+          text:
+              'Confidential bank submission. Share only with an authorised recipient.',
         ),
       );
     } catch (e) {
@@ -394,21 +402,24 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
       final preview = await _request(
         '/legacy-bank-deductions/bulk-delete/preview',
       );
-      if (preview.statusCode == 403)
+      if (preview.statusCode == 403) {
         throw Exception(
           'Only company management can delete all legacy records.',
         );
-      if (preview.statusCode != 200)
+      }
+      if (preview.statusCode != 200) {
         throw Exception('Unable to check deletion permissions.');
+      }
       final count =
           (jsonDecode(preview.body) as Map<String, dynamic>)['count'] as int;
       if (count == 0) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('No active legacy records to delete.'),
             ),
           );
+        }
         return;
       }
       if (!mounted) return;
@@ -466,8 +477,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           'expected_count': count,
         },
       );
-      if (result.statusCode != 200)
+      if (result.statusCode != 200) {
         throw Exception('Bulk deletion failed: ${result.body}');
+      }
       await _connect();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -509,15 +521,17 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
           'amount': amount.text.trim(),
         },
       );
-      if (response.statusCode != 201)
+      if (response.statusCode != 201) {
         throw Exception('Could not save record: ${response.body}');
+      }
       name.clear();
       employer.clear();
       account.clear();
       amount.clear();
       final listing = await _request('/legacy-bank-deductions/');
-      if (listing.statusCode != 200)
+      if (listing.statusCode != 200) {
         throw Exception('Saved, but refresh failed');
+      }
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) {
@@ -667,8 +681,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
         throw Exception('Could not update record: ${response.statusCode}');
       }
       final listing = await _request('/legacy-bank-deductions/');
-      if (listing.statusCode != 200)
+      if (listing.statusCode != 200) {
         throw Exception('Update saved, but refresh failed');
+      }
       rows = (jsonDecode(listing.body) as List).cast<Map<String, dynamic>>();
       if (mounted) context.read<LegacyBloc>().add(LegacyRecordsReceived(rows));
     } catch (e) {
@@ -766,8 +781,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     children: [
       Text(
         'New deduction',
-        style: Theme.of(context).textTheme.headlineSmall
-            ?.copyWith(fontWeight: FontWeight.w700),
+        style: Theme.of(
+          context,
+        ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
       const Text(
@@ -896,8 +912,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     children: [
       Text(
         'Saved deductions',
-        style: Theme.of(context).textTheme.headlineSmall
-            ?.copyWith(fontWeight: FontWeight.w700),
+        style: Theme.of(
+          context,
+        ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 12),
       TextField(
@@ -1029,8 +1046,9 @@ class _LegacyCapturePageState extends State<LegacyCapturePage> {
     children: [
       Text(
         'Import & export',
-        style: Theme.of(context).textTheme.headlineSmall
-            ?.copyWith(fontWeight: FontWeight.w700),
+        style: Theme.of(
+          context,
+        ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
       const Text(

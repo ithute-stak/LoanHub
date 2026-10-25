@@ -19,8 +19,9 @@ void main() {
       'Borrower workspace',
     );
     expect(
-      MobileRoleDefinition.forRole('company_admin').actions
-          .map((action) => action.destination),
+      MobileRoleDefinition.forRole(
+        'company_admin',
+      ).actions.map((action) => action.destination),
       contains(MobileWorkspaceDestination.calls),
     );
   });

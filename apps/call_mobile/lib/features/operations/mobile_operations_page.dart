@@ -345,7 +345,8 @@ class _Portfolio extends StatelessWidget {
           const _Empty(
             icon: Icons.person_search_outlined,
             title: 'No borrower matched your search',
-            detail: 'Try a borrower name, permitted phone number or loan reference.',
+            detail:
+                'Try a borrower name, permitted phone number or loan reference.',
           ),
         ...items
             .take(40)
@@ -394,7 +395,8 @@ class _FollowUp extends StatelessWidget {
           const _Empty(
             icon: Icons.task_alt_outlined,
             title: 'No follow-up loans found',
-            detail: 'There are no overdue or flagged loans in the available mobile data.',
+            detail:
+                'There are no overdue or flagged loans in the available mobile data.',
           ),
         ...loans.map(
           (item) => _LoanCard(

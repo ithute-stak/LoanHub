@@ -35,8 +35,9 @@ class _BorrowerCallProfilePageState extends State<BorrowerCallProfilePage> {
       final result = await widget.api.borrowerCallProfile(widget.borrowerId);
       if (mounted) setState(() => profile = result);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() => error = 'Could not load this borrower profile.');
+      }
     }
   }
 
@@ -295,10 +296,11 @@ String _initials(String value) {
       .where((item) => item.isNotEmpty)
       .toList();
   if (words.isEmpty) return 'LH';
-  if (words.length == 1)
+  if (words.length == 1) {
     return words.first
         .substring(0, words.first.length > 1 ? 2 : 1)
         .toUpperCase();
+  }
   return (words.first[0] + words.last[0]).toUpperCase();
 }
 
