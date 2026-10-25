@@ -64,3 +64,35 @@ jobs:
           path: apps/call_mobile/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: warn
           retention-days: 7
+
+  apply-format:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/unify-loanhub-flutter-legacy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: unified-flutter-format-branch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Apply canonical Dart formatter on integration branch
+        working-directory: apps/call_mobile
+        run: dart format lib test
+      - name: Commit formatting-only changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/call_mobile/lib apps/call_mobile/test; then
+            echo 'Dart formatting already clean.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- apps/call_mobile/lib apps/call_mobile/test
+          git commit -m 'style(flutter): apply canonical Dart formatting'
+          git push origin HEAD:feat/unify-loanhub-flutter-legacy
