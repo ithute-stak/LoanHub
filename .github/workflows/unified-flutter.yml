@@ -88,12 +88,12 @@ jobs:
       - name: Commit formatting-only changes
         run: |
           set -euo pipefail
-          if git diff --quiet -- apps/call_mobile/lib apps/call_mobile/test; then
-            echo 'Dart formatting already clean.'
+          git add -- apps/call_mobile/lib apps/call_mobile/test
+          if git diff --cached --quiet; then
+            echo 'Dart formatting already clean; nothing staged.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- apps/call_mobile/lib apps/call_mobile/test
           git commit -m 'style(flutter): apply canonical Dart formatting'
           git push origin HEAD:feat/unify-loanhub-flutter-legacy
