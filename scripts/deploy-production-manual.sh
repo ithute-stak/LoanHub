@@ -262,14 +262,14 @@ found = False
 for line in lines:
     if re.match(r"^LOANHUB_IMAGE_TAG=", line):
         if not found:
-            updated.append(f"LOANHUB_IMAGE_TAG={release}\\n")
+            updated.append(f"LOANHUB_IMAGE_TAG={release}\n")
             found = True
     else:
         updated.append(line)
 if not found:
-    if updated and not updated[-1].endswith("\\n"):
-        updated.append("\\n")
-    updated.append(f"LOANHUB_IMAGE_TAG={release}\\n")
+    if updated and not updated[-1].endswith("\n"):
+        updated.append("\n")
+    updated.append(f"LOANHUB_IMAGE_TAG={release}\n")
 fd, temp_name = tempfile.mkstemp(prefix=".env.production.tag.", dir=str(path.parent))
 try:
     with os.fdopen(fd, "w") as output:
