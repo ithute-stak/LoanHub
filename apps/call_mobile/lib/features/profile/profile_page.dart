@@ -6,11 +6,7 @@ import '../../layout/loanhub_responsive.dart';
 import '../../realtime/realtime_repository.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({
-    required this.api,
-    required this.onSignedOut,
-    super.key,
-  });
+  const ProfilePage({required this.api, required this.onSignedOut, super.key});
 
   final LoanHubApi api;
   final Future<void> Function() onSignedOut;
@@ -102,7 +98,9 @@ class _ProfilePageState extends State<ProfilePage> {
         OutlinedButton.icon(
           onPressed: () async {
             try {
-              await context.read<LoanHubRealtimeRepository>().revokePushDevice();
+              await context
+                  .read<LoanHubRealtimeRepository>()
+                  .revokePushDevice();
             } catch (_) {
               // If the device is offline, a later account registration also
               // revokes this installation from the old account server-side.

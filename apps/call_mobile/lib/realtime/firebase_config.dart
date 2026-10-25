@@ -3,7 +3,9 @@ import 'package:firebase_core/firebase_core.dart';
 class LoanHubFirebaseConfig {
   LoanHubFirebaseConfig._();
 
-  static const projectId = String.fromEnvironment('LOANHUB_FIREBASE_PROJECT_ID');
+  static const projectId = String.fromEnvironment(
+    'LOANHUB_FIREBASE_PROJECT_ID',
+  );
   static const appId = String.fromEnvironment('LOANHUB_FIREBASE_APP_ID');
   static const apiKey = String.fromEnvironment('LOANHUB_FIREBASE_API_KEY');
   static const messagingSenderId = String.fromEnvironment(

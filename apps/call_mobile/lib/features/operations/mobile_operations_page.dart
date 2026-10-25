@@ -70,7 +70,8 @@ class _MobileOperationsPageState extends State<MobileOperationsPage> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'LoanHub could not refresh this workspace. Please check your '
+        _error =
+            'LoanHub could not refresh this workspace. Please check your '
             'connection and try again.';
       });
     }
@@ -96,74 +97,73 @@ class _MobileOperationsPageState extends State<MobileOperationsPage> {
           child: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
-                  ? _Failure(message: _error!, onRetry: _reload)
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-                      children: [
-                        const Text(
-                          'Portable company workspace',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: LoanHubColors.brandNavy,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        const Text(
-                          'Key work, borrower follow-up and controlled calls '
-                          'without desktop-sized tables.',
-                          style: TextStyle(color: LoanHubColors.muted),
-                        ),
-                        const SizedBox(height: 14),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: _sections
-                                .map(
-                                  (value) => Padding(
-                                    padding: const EdgeInsets.only(right: 8),
-                                    child: ChoiceChip(
-                                      label: Text(value),
-                                      selected: _section == value,
-                                      onSelected: (_) {
-                                        setState(() => _section = value);
-                                      },
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        if (_section == 'Overview')
-                          _Overview(
-                            dashboard: _dashboard,
-                            clients: _clients,
-                            calls: _calls,
-                            onChoose: (section) {
-                              setState(() => _section = section);
-                            },
-                            width: width,
-                          ),
-                        if (_section == 'Portfolio')
-                          _Portfolio(
-                            clients: _clients,
-                            query: _query,
-                            onQueryChanged: (value) {
-                              setState(() => _query = value);
-                            },
-                            onOpenCalls: widget.onOpenCalls,
-                          ),
-                        if (_section == 'Follow-up')
-                          _FollowUp(
-                            clients: _clients,
-                            onOpenCalls: widget.onOpenCalls,
-                          ),
-                        if (_section == 'Team')
-                          _Team(team: _team),
-                        if (_section == 'Calls') _CallHistory(calls: _calls),
-                      ],
+              ? _Failure(message: _error!, onRetry: _reload)
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                  children: [
+                    const Text(
+                      'Portable company workspace',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: LoanHubColors.brandNavy,
+                      ),
                     ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      'Key work, borrower follow-up and controlled calls '
+                      'without desktop-sized tables.',
+                      style: TextStyle(color: LoanHubColors.muted),
+                    ),
+                    const SizedBox(height: 14),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _sections
+                            .map(
+                              (value) => Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: ChoiceChip(
+                                  label: Text(value),
+                                  selected: _section == value,
+                                  onSelected: (_) {
+                                    setState(() => _section = value);
+                                  },
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (_section == 'Overview')
+                      _Overview(
+                        dashboard: _dashboard,
+                        clients: _clients,
+                        calls: _calls,
+                        onChoose: (section) {
+                          setState(() => _section = section);
+                        },
+                        width: width,
+                      ),
+                    if (_section == 'Portfolio')
+                      _Portfolio(
+                        clients: _clients,
+                        query: _query,
+                        onQueryChanged: (value) {
+                          setState(() => _query = value);
+                        },
+                        onOpenCalls: widget.onOpenCalls,
+                      ),
+                    if (_section == 'Follow-up')
+                      _FollowUp(
+                        clients: _clients,
+                        onOpenCalls: widget.onOpenCalls,
+                      ),
+                    if (_section == 'Team') _Team(team: _team),
+                    if (_section == 'Calls') _CallHistory(calls: _calls),
+                  ],
+                ),
         ),
       ),
     );
@@ -192,7 +192,9 @@ class _Overview extends StatelessWidget {
     final borrowers = clients.length;
     final activeLoans = loans.where((loan) {
       final status = _text(loan['status']).toLowerCase();
-      return status != 'completed' && status != 'cancelled' && status != 'written_off';
+      return status != 'completed' &&
+          status != 'cancelled' &&
+          status != 'written_off';
     }).length;
     final overdue = loans.where(_isFollowUpLoan).length;
     final outstanding = loans.fold<double>(
@@ -208,12 +210,32 @@ class _Overview extends StatelessWidget {
           width: width,
           metrics: [
             _Metric('Borrowers', borrowers.toString(), Icons.people_outline),
-            _Metric('Active loans', activeLoans.toString(), Icons.payments_outlined),
-            _Metric('Follow-up', overdue.toString(), Icons.event_note_outlined,
-                warning: overdue > 0),
-            _Metric('Outstanding', _money(outstanding), Icons.account_balance_wallet_outlined),
-            _Metric('Live calls', liveCalls.toString(), Icons.phone_in_talk_outlined),
-            _Metric('Recordings', recordings.toString(), Icons.graphic_eq_outlined),
+            _Metric(
+              'Active loans',
+              activeLoans.toString(),
+              Icons.payments_outlined,
+            ),
+            _Metric(
+              'Follow-up',
+              overdue.toString(),
+              Icons.event_note_outlined,
+              warning: overdue > 0,
+            ),
+            _Metric(
+              'Outstanding',
+              _money(outstanding),
+              Icons.account_balance_wallet_outlined,
+            ),
+            _Metric(
+              'Live calls',
+              liveCalls.toString(),
+              Icons.phone_in_talk_outlined,
+            ),
+            _Metric(
+              'Recordings',
+              recordings.toString(),
+              Icons.graphic_eq_outlined,
+            ),
           ],
         ),
         const SizedBox(height: 20),
@@ -244,7 +266,7 @@ class _Overview extends StatelessWidget {
           title: 'Collections follow-up',
           subtitle: overdue == 0
               ? 'No overdue loans are currently shown.'
-              : overdue.toString() + ' overdue loan(s) need attention.',
+              : '$overdue overdue loan(s) need attention.',
           onTap: () => onChoose('Follow-up'),
         ),
         _ActionCard(
@@ -258,13 +280,14 @@ class _Overview extends StatelessWidget {
           title: 'Call activity',
           subtitle: calls.isEmpty
               ? 'No recent calls yet.'
-              : calls.length.toString() + ' recent controlled call(s).',
+              : '${calls.length} recent controlled call(s).',
           onTap: () => onChoose('Calls'),
         ),
         const SizedBox(height: 12),
         const _InfoCard(
           icon: Icons.shield_outlined,
-          text: 'Payments, permissions and audit rules still apply on mobile. '
+          text:
+              'Payments, permissions and audit rules still apply on mobile. '
               'Use the web workspace for document preparation and wide reports.',
         ),
       ],
@@ -311,7 +334,7 @@ class _Portfolio extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          items.length.toString() + ' borrower profile(s)',
+          '${items.length} borrower profile(s)',
           style: const TextStyle(
             color: LoanHubColors.muted,
             fontWeight: FontWeight.w600,
@@ -322,13 +345,14 @@ class _Portfolio extends StatelessWidget {
           const _Empty(
             icon: Icons.person_search_outlined,
             title: 'No borrower matched your search',
-            detail: 'Try a borrower name, permitted phone number or loan reference.',
+            detail:
+                'Try a borrower name, permitted phone number or loan reference.',
           ),
-        ...items.take(40).map(
-              (client) => _BorrowerCard(
-                client: client,
-                onOpenCalls: onOpenCalls,
-              ),
+        ...items
+            .take(40)
+            .map(
+              (client) =>
+                  _BorrowerCard(client: client, onOpenCalls: onOpenCalls),
             ),
         if (items.length > 40)
           const Padding(
@@ -362,7 +386,8 @@ class _FollowUp extends StatelessWidget {
       children: [
         const _InfoCard(
           icon: Icons.info_outline,
-          text: 'These are compact follow-up cards. Opening Calls lets you '
+          text:
+              'These are compact follow-up cards. Opening Calls lets you '
               'view the permitted borrower profile and place a governed call.',
         ),
         const SizedBox(height: 12),
@@ -370,7 +395,8 @@ class _FollowUp extends StatelessWidget {
           const _Empty(
             icon: Icons.task_alt_outlined,
             title: 'No follow-up loans found',
-            detail: 'There are no overdue or flagged loans in the available mobile data.',
+            detail:
+                'There are no overdue or flagged loans in the available mobile data.',
           ),
         ...loans.map(
           (item) => _LoanCard(
@@ -408,7 +434,7 @@ class _Team extends StatelessWidget {
                 subtitle: Text(_teamSubtitle(person)),
                 trailing: _text(person['extension']).isEmpty
                     ? null
-                    : Chip(label: Text('Ext. ' + _text(person['extension']))),
+                    : Chip(label: Text('Ext. ${_text(person['extension'])}')),
               ),
             ),
           )
@@ -428,10 +454,13 @@ class _CallHistory extends StatelessWidget {
       return const _Empty(
         icon: Icons.phone_missed_outlined,
         title: 'No controlled calls yet',
-        detail: 'Completed company calls will appear here when your role permits.',
+        detail:
+            'Completed company calls will appear here when your role permits.',
       );
     }
-    return Column(children: calls.map((call) => _CallCard(call: call)).toList());
+    return Column(
+      children: calls.map((call) => _CallCard(call: call)).toList(),
+    );
   }
 }
 
@@ -448,7 +477,9 @@ class _BorrowerCard extends StatelessWidget {
     final contacts = _maps(client['contacts']);
     final balance = loans.fold<double>(
       0,
-      (value, loan) => value + _number(loan['outstanding_balance'], _number(loan['balance'])),
+      (value, loan) =>
+          value +
+          _number(loan['outstanding_balance'], _number(loan['balance'])),
     );
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -484,9 +515,10 @@ class _BorrowerCard extends StatelessWidget {
               spacing: 7,
               runSpacing: 6,
               children: [
-                Chip(label: Text(loans.length.toString() + ' loan(s)')),
-                if (balance > 0) Chip(label: Text(_money(balance) + ' balance')),
-                Chip(label: Text(contacts.length.toString() + ' contact(s)')),
+                Chip(label: Text('${loans.length} loan(s)')),
+                if (balance > 0)
+                  Chip(label: Text('${_money(balance)} balance')),
+                Chip(label: Text('${contacts.length} contact(s)')),
               ],
             ),
             const SizedBox(height: 6),
@@ -518,16 +550,22 @@ class _LoanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = _text(borrower['name'], _text(borrower['full_name'], 'Borrower'));
+    final name = _text(
+      borrower['name'],
+      _text(borrower['full_name'], 'Borrower'),
+    );
     final reference = _text(loan['loan_reference'], 'Loan');
     final status = _text(loan['status'], 'Follow-up');
-    final balance = _number(loan['outstanding_balance'], _number(loan['balance']));
+    final balance = _number(
+      loan['outstanding_balance'],
+      _number(loan['balance']),
+    );
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: _Avatar(name: name),
         title: Text(name),
-        subtitle: Text(reference + '\n' + status + ' · ' + _money(balance) + ' balance'),
+        subtitle: Text('$reference\n$status · ${_money(balance)} balance'),
         isThreeLine: true,
         trailing: IconButton(
           tooltip: 'Open borrower calls',
@@ -548,7 +586,10 @@ class _CallCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final direction = _text(call['direction'], 'CALL').toUpperCase();
     final inbound = direction.contains('IN');
-    final name = _text(call['borrower_name'], _text(call['contact_name'], 'Client'));
+    final name = _text(
+      call['borrower_name'],
+      _text(call['contact_name'], 'Client'),
+    );
     final status = _text(call['status'], 'Recorded');
     final seconds = _int(call['duration_seconds']);
     final recordingData = _map(call['recording']);
@@ -556,13 +597,14 @@ class _CallCard extends StatelessWidget {
       recordingData['status'],
       _text(call['recording_status']),
     ).toLowerCase();
-    final recording = recordingStatus == 'available' ||
+    final recording =
+        recordingStatus == 'available' ||
             recordingStatus == 'ready' ||
             recordingStatus == 'completed'
         ? 'Recording ready'
         : recordingStatus.isEmpty
         ? 'No recording'
-        : 'Recording ' + recordingStatus;
+        : 'Recording $recordingStatus';
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
@@ -575,8 +617,7 @@ class _CallCard extends StatelessWidget {
         ),
         title: Text(name),
         subtitle: Text(
-          status + ' · ' + (seconds ~/ 60).toString() + 'm ' +
-              (seconds % 60).toString() + 's · ' + recording,
+          '$status · ${seconds ~/ 60}m ${seconds % 60}s · $recording',
         ),
         trailing: const Icon(Icons.chevron_right),
       ),
@@ -592,7 +633,11 @@ class _MetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final columns = width >= 650 ? 3 : width < 300 ? 1 : 2;
+    final columns = width >= 650
+        ? 3
+        : width < 300
+        ? 1
+        : 2;
     final horizontalPadding = 32.0;
     final gapSpace = 10.0 * (columns - 1);
     final itemWidth = ((width - horizontalPadding - gapSpace) / columns)
@@ -612,27 +657,33 @@ class _MetricGrid extends StatelessWidget {
                     children: [
                       Icon(
                         metric.icon,
-                        color: metric.warning ? Colors.orange : LoanHubColors.primary,
+                        color: metric.warning
+                            ? Colors.orange
+                            : LoanHubColors.primary,
                       ),
                       const SizedBox(width: 9),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(metric.label,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: LoanHubColors.muted,
-                                )),
+                            Text(
+                              metric.label,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: LoanHubColors.muted,
+                              ),
+                            ),
                             const SizedBox(height: 2),
-                            Text(metric.value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                  color: LoanHubColors.brandNavy,
-                                )),
+                            Text(
+                              metric.value,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                                color: LoanHubColors.brandNavy,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -681,8 +732,7 @@ class _Hero extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             Text(
-              borrowers.toString() + ' borrowers · ' + overdue.toString() +
-                  ' follow-up · ' + _money(outstanding) + ' outstanding',
+              '$borrowers borrowers · $overdue follow-up · ${_money(outstanding)} outstanding',
               style: const TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 12),
@@ -743,7 +793,12 @@ class _InfoCard extends StatelessWidget {
           children: [
             Icon(icon, color: LoanHubColors.primary),
             const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(color: LoanHubColors.muted))),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(color: LoanHubColors.muted),
+              ),
+            ),
           ],
         ),
       ),
@@ -768,7 +823,11 @@ class _Empty extends StatelessWidget {
           const SizedBox(height: 10),
           Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 5),
-          Text(detail, textAlign: TextAlign.center, style: const TextStyle(color: LoanHubColors.muted)),
+          Text(
+            detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: LoanHubColors.muted),
+          ),
         ],
       ),
     );
@@ -787,7 +846,11 @@ class _Failure extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       children: [
         const SizedBox(height: 100),
-        const Icon(Icons.cloud_off_outlined, size: 60, color: LoanHubColors.muted),
+        const Icon(
+          Icons.cloud_off_outlined,
+          size: 60,
+          color: LoanHubColors.muted,
+        ),
         const SizedBox(height: 14),
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 14),
@@ -866,14 +929,16 @@ List<Map<String, dynamic>> _maps(Object? value) {
       .toList();
 }
 
-String _money(double value) => 'LSL ' + value.toStringAsFixed(2);
+String _money(double value) => 'LSL ${value.toStringAsFixed(2)}';
 
 String _teamSubtitle(Map<String, dynamic> person) {
   final details = <String>[
     _text(person['role']),
     _text(person['phone']),
   ].where((item) => item.isNotEmpty).toList();
-  return details.isEmpty ? 'Authorised LoanHub team member' : details.join(' · ');
+  return details.isEmpty
+      ? 'Authorised LoanHub team member'
+      : details.join(' · ');
 }
 
 bool _isFlaggedClient(Map<String, dynamic> client) {
@@ -885,5 +950,6 @@ bool _isFollowUpLoan(Map<String, dynamic> loan) {
   return status.contains('overdue') ||
       status.contains('arrear') ||
       status.contains('default') ||
-      loan['requires_follow_up'] == true || loan['is_overdue'] == true;
+      loan['requires_follow_up'] == true ||
+      loan['is_overdue'] == true;
 }

@@ -75,9 +75,7 @@ class _BusinessCallsWorkspaceState extends State<BusinessCallsWorkspace> {
       if (mounted) setState(() => clients = rows);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not update the client search. Please retry.'),
           ),
@@ -114,10 +112,11 @@ class _BusinessCallsWorkspaceState extends State<BusinessCallsWorkspace> {
           api: widget.api,
           borrowerId: borrowerId,
           summary: client,
-          onCall: (contact, loan) => _call(
-            {...client, 'phone': contact['phone'], 'name': contact['name']},
-            loan,
-          ),
+          onCall: (contact, loan) => _call({
+            ...client,
+            'phone': contact['phone'],
+            'name': contact['name'],
+          }, loan),
         ),
       ),
     );
@@ -234,30 +233,29 @@ class _BusinessCallsWorkspaceState extends State<BusinessCallsWorkspace> {
                             ListTile(
                               leading: const Icon(Icons.badge_outlined),
                               title: const Text('Open borrower profile'),
-                              subtitle: const Text('Loans, authorised call contacts and call history'),
+                              subtitle: const Text(
+                                'Loans, authorised call contacts and call history',
+                              ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () => _openBorrower(client),
                             ),
-                            ...loans
-                              .map(
-                                (loan) => ListTile(
-                                  title: Text(
-                                    loan['loan_reference']?.toString() ??
-                                        'Loan',
-                                  ),
-                                  subtitle: Text(
-                                    '${loan['status'] ?? ''} · Balance M${loan['balance'] ?? 0}',
-                                  ),
-                                  trailing: FilledButton.icon(
-                                    onPressed: client['phone'] == null
-                                        ? null
-                                        : () => _call(client, loan),
-                                    icon: const Icon(Icons.call, size: 17),
-                                    label: const Text('CALL'),
-                                  ),
+                            ...loans.map(
+                              (loan) => ListTile(
+                                title: Text(
+                                  loan['loan_reference']?.toString() ?? 'Loan',
                                 ),
-                              )
-                              .toList(),
+                                subtitle: Text(
+                                  '${loan['status'] ?? ''} · Balance M${loan['balance'] ?? 0}',
+                                ),
+                                trailing: FilledButton.icon(
+                                  onPressed: client['phone'] == null
+                                      ? null
+                                      : () => _call(client, loan),
+                                  icon: const Icon(Icons.call, size: 17),
+                                  label: const Text('CALL'),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       );
@@ -509,7 +507,8 @@ class _ActiveBusinessCallPageState extends State<ActiveBusinessCallPage> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => error = 'Could not end the call from LoanHub. Please try again.',
+          () =>
+              error = 'Could not end the call from LoanHub. Please try again.',
         );
       }
     } finally {

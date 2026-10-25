@@ -62,9 +62,9 @@ class MoneyBlocState {
 
 class MoneyBloc extends Bloc<MoneyBlocEvent, MoneyBlocState> {
   MoneyBloc(this.api, this.repository) : super(const MoneyBlocState()) {
-    _subscription = repository.events.where((event) => event.isMoney).listen(
-      (event) => add(_MoneyRealtimeArrived(event)),
-    );
+    _subscription = repository.events
+        .where((event) => event.isMoney)
+        .listen((event) => add(_MoneyRealtimeArrived(event)));
     on<MoneyStarted>(_load);
     on<MoneyRefreshRequested>(_load);
     on<_MoneyRealtimeArrived>((event, emit) async {

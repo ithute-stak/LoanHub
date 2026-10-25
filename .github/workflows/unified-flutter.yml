@@ -1,0 +1,102 @@
+name: LoanHub Unified Flutter Validation
+
+on:
+  pull_request:
+    paths:
+      - 'apps/call_mobile/**'
+      - '.github/workflows/unified-flutter.yml'
+  push:
+    branches:
+      - 'feat/unify-loanhub-flutter-legacy'
+      - main
+    paths:
+      - 'apps/call_mobile/**'
+      - '.github/workflows/unified-flutter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/call_mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+      - name: Flutter static analysis
+        run: flutter analyze
+      - name: Flutter widget and unit tests
+        if: success() || failure()
+        run: flutter test
+      - name: Build integrated Android debug APK
+        if: success() || failure()
+        run: flutter build apk --debug --dart-define=LOANHUB_API_URL=https://api.loanhub.co.ls
+      - name: Check Dart formatting
+        if: always()
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Generate Dart formatting patch
+        if: always()
+        run: |
+          dart format lib test
+          git diff -- lib test > flutter-format.patch
+      - name: Upload formatting patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loanhub-dart-format-patch
+          path: apps/call_mobile/flutter-format.patch
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload integrated test APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loanhub-unified-flutter-debug
+          path: apps/call_mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+  apply-format:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/feat/unify-loanhub-flutter-legacy') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/unify-loanhub-flutter-legacy')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: unified-flutter-format-branch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/unify-loanhub-flutter-legacy
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Apply Dart analyzer quick fixes and canonical formatting
+        working-directory: apps/call_mobile
+        run: |
+          flutter pub get
+          dart fix --apply --code=curly_braces_in_flow_control_structures
+          dart format lib test
+      - name: Commit analyzer and formatting fixes
+        run: |
+          set -euo pipefail
+          git add -- apps/call_mobile/lib apps/call_mobile/test
+          if git diff --cached --quiet; then
+            echo 'Dart formatting already clean; nothing staged.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style(flutter): apply analyzer quick fixes and canonical formatting'
+          git push origin HEAD:feat/unify-loanhub-flutter-legacy

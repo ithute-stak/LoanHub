@@ -50,7 +50,8 @@ class ChatsPage extends StatelessWidget {
     if (state.error != null && conversations.isEmpty) {
       return _InlineError(
         message: state.error!,
-        onRetry: () => context.read<ChatBloc>().add(const ChatRefreshRequested()),
+        onRetry: () =>
+            context.read<ChatBloc>().add(const ChatRefreshRequested()),
       );
     }
     return Scaffold(
@@ -71,7 +72,8 @@ class ChatsPage extends StatelessWidget {
               )
             : ListView.separated(
                 itemCount: conversations.length,
-                separatorBuilder: (_, _) => const Divider(height: 1, indent: 78),
+                separatorBuilder: (_, _) =>
+                    const Divider(height: 1, indent: 78),
                 itemBuilder: (context, index) {
                   final item = conversations[index];
                   final last = item['last_message'] as Map<String, dynamic>?;
@@ -84,7 +86,9 @@ class ChatsPage extends StatelessWidget {
                     ),
                     leading: CircleAvatar(
                       radius: 26,
-                      backgroundColor: LoanHubColors.primary.withValues(alpha: .14),
+                      backgroundColor: LoanHubColors.primary.withValues(
+                        alpha: .14,
+                      ),
                       child: item['is_group'] == true
                           ? const Icon(Icons.groups)
                           : Text(_initials(title)),
@@ -133,14 +137,14 @@ class ChatsPage extends StatelessWidget {
                     onTap: () async {
                       await Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => ChatThreadPage(
-                            api: api,
-                            conversation: item,
-                          ),
+                          builder: (_) =>
+                              ChatThreadPage(api: api, conversation: item),
                         ),
                       );
                       if (context.mounted) {
-                        context.read<ChatBloc>().add(const ChatRefreshRequested());
+                        context.read<ChatBloc>().add(
+                          const ChatRefreshRequested(),
+                        );
                       }
                     },
                   );
@@ -222,19 +226,26 @@ class _NewChatPageState extends State<NewChatPage> {
                     itemCount: users.length,
                     itemBuilder: (context, index) {
                       final user = users[index];
-                      final name = user['display_name']?.toString() ?? 'LoanHub user';
+                      final name =
+                          user['display_name']?.toString() ?? 'LoanHub user';
                       return ListTile(
                         leading: CircleAvatar(child: Text(_initials(name))),
                         title: Text(name),
                         subtitle: Text(
                           [user['company_name'], user['role'], user['phone']]
                               .where(
-                                (value) => value != null && value.toString().isNotEmpty,
+                                (value) =>
+                                    value != null &&
+                                    value.toString().isNotEmpty,
                               )
                               .join(' · '),
                         ),
                         trailing: user['is_online'] == true
-                            ? const Icon(Icons.circle, size: 10, color: Colors.green)
+                            ? const Icon(
+                                Icons.circle,
+                                size: 10,
+                                color: Colors.green,
+                              )
                             : null,
                         onTap: () => Navigator.pop(context, user),
                       );
@@ -294,7 +305,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       if (mounted) {
         final changed =
             rows.length != messages.length ||
-            (rows.isNotEmpty && messages.isNotEmpty && rows.last['id'] != messages.last['id']);
+            (rows.isNotEmpty &&
+                messages.isNotEmpty &&
+                rows.last['id'] != messages.last['id']);
         setState(() {
           myUserId = session['user_id']?.toString();
           messages = rows;
@@ -314,7 +327,8 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final event = state.latestEvent;
     if (event == null) return;
     final eventConversation =
-        event.raw['conversation_id']?.toString() ?? event.data['conversation_id']?.toString();
+        event.raw['conversation_id']?.toString() ??
+        event.data['conversation_id']?.toString();
     if (eventConversation != conversationId) return;
 
     if (event.type == 'CHAT_TYPING') {
@@ -407,7 +421,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                     Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
                     Text(
                       partnerTyping ? 'typing…' : 'LoanHub secure chat',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w400),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
                   ],
                 ),
@@ -443,15 +460,15 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                   ? '🎤 Voice note'
                                   : '📎 Attachment');
                     return Align(
-                      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+                      alignment: mine
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
                       child: Container(
                         constraints: const BoxConstraints(maxWidth: 330),
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.fromLTRB(12, 8, 10, 6),
                         decoration: BoxDecoration(
-                          color: mine
-                              ? const Color(0xFFD9FDD3)
-                              : Colors.white,
+                          color: mine ? const Color(0xFFD9FDD3) : Colors.white,
                           borderRadius: BorderRadius.only(
                             topLeft: const Radius.circular(14),
                             topRight: const Radius.circular(14),
@@ -462,11 +479,13 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            if (!mine && widget.conversation['is_group'] == true)
+                            if (!mine &&
+                                widget.conversation['is_group'] == true)
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  sender?['display_name']?.toString() ?? 'LoanHub user',
+                                  sender?['display_name']?.toString() ??
+                                      'LoanHub user',
                                   style: const TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w800,

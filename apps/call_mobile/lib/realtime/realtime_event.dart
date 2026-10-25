@@ -21,7 +21,9 @@ class LoanHubRealtimeEvent {
 
   bool get isChat => domain == 'chat' || type.startsWith('CHAT_');
   bool get isMoney =>
-      domain == 'money' || type.startsWith('MONEY_') || type.startsWith('PAYMENT_');
+      domain == 'money' ||
+      type.startsWith('MONEY_') ||
+      type.startsWith('PAYMENT_');
   bool get isCall => domain == 'call' || type.contains('CALL');
   bool get isPresence => domain == 'presence' || type.startsWith('PRESENCE_');
 

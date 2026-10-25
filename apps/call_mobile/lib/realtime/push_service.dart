@@ -85,7 +85,9 @@ class LoanHubPushService {
       _foregroundSubscription = FirebaseMessaging.onMessage.listen((message) {
         repository.ingest(_eventFromMessage(message));
       });
-      _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen((
+        message,
+      ) {
         final event = _eventFromMessage(message);
         repository.ingest(event);
         final route = event.notificationRoute;

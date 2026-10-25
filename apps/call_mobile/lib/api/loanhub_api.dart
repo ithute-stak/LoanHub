@@ -349,10 +349,7 @@ class LoanHubApi {
   }
 
   Future<List<Map<String, dynamic>>> callRecords({int limit = 60}) async {
-    final result = await _request(
-      'GET',
-      '/call-management/calls?limit=$limit',
-    );
+    final result = await _request('GET', '/call-management/calls?limit=$limit');
     return (result['__list'] as List<dynamic>).cast<Map<String, dynamic>>();
   }
 

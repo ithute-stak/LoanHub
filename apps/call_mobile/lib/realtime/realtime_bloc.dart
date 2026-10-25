@@ -76,10 +76,7 @@ class RealtimeBloc extends Bloc<RealtimeBlocEvent, RealtimeBlocState> {
     on<RealtimeStopped>((event, emit) async => repository.stop());
     on<_RealtimeEventArrived>((event, emit) {
       emit(
-        state.copyWith(
-          latestEvent: event.event,
-          revision: state.revision + 1,
-        ),
+        state.copyWith(latestEvent: event.event, revision: state.revision + 1),
       );
     });
     on<_RealtimeConnectionChanged>((event, emit) {

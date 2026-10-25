@@ -62,17 +62,14 @@ class ChatBlocState {
 
 class ChatBloc extends Bloc<ChatBlocEvent, ChatBlocState> {
   ChatBloc(this.api, this.repository) : super(const ChatBlocState()) {
-    _subscription = repository.events.where((event) => event.isChat).listen(
-      (event) => add(_ChatRealtimeArrived(event)),
-    );
+    _subscription = repository.events
+        .where((event) => event.isChat)
+        .listen((event) => add(_ChatRealtimeArrived(event)));
     on<ChatStarted>(_load);
     on<ChatRefreshRequested>(_load);
     on<_ChatRealtimeArrived>((event, emit) async {
       emit(
-        state.copyWith(
-          latestEvent: event.event,
-          revision: state.revision + 1,
-        ),
+        state.copyWith(latestEvent: event.event, revision: state.revision + 1),
       );
       // Typing is ephemeral and should not cause an API reload. Persisted chat
       // mutations immediately rehydrate the encrypted server state.

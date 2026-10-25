@@ -6,7 +6,14 @@ import 'theme/loanhub_theme.dart';
 
 /// Destinations exposed by the mobile shell. The server remains responsible for
 /// authorisation; this mapping only keeps each role's phone workspace focused.
-enum MobileWorkspaceDestination { chats, calls, money, explore, operations, profile }
+enum MobileWorkspaceDestination {
+  chats,
+  calls,
+  money,
+  explore,
+  operations,
+  profile,
+}
 
 class MobileRoleWorkspace extends StatefulWidget {
   const MobileRoleWorkspace({
@@ -63,10 +70,13 @@ class _MobileRoleWorkspaceState extends State<MobileRoleWorkspace> {
     final definition = MobileRoleDefinition.forRole(role);
     final width = MediaQuery.sizeOf(context).width;
     final padding = LoanHubBreakpoints.pagePadding(width);
-    final columns = width < 390 ? 1 : width < 700 ? 2 : 3;
+    final columns = width < 390
+        ? 1
+        : width < 700
+        ? 2
+        : 3;
     final contentWidth = (width - (padding * 2)).clamp(0.0, 920.0).toDouble();
-    final cardWidth =
-        (contentWidth - (12 * (columns - 1))) / columns;
+    final cardWidth = (contentWidth - (12 * (columns - 1))) / columns;
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -104,7 +114,8 @@ class _MobileRoleWorkspaceState extends State<MobileRoleWorkspace> {
                             width: cardWidth,
                             child: _RoleActionCard(
                               action: action,
-                              onTap: () => widget.onNavigate(action.destination),
+                              onTap: () =>
+                                  widget.onNavigate(action.destination),
                             ),
                           ),
                         )
@@ -327,8 +338,12 @@ class MobileRoleDefinition {
 
   static MobileRoleDefinition forRole(String value) {
     final role = value.trim().toLowerCase();
-    if (const {'company_owner', 'owner', 'company_admin', 'admin'}
-        .contains(role)) {
+    if (const {
+      'company_owner',
+      'owner',
+      'company_admin',
+      'admin',
+    }.contains(role)) {
       return const MobileRoleDefinition(
         title: 'Company leadership',
         description:
@@ -349,7 +364,8 @@ class MobileRoleDefinition {
           ),
           MobileRoleAction(
             title: 'Money activity',
-            subtitle: 'View or create provider-confirmed transfer instructions.',
+            subtitle:
+                'View or create provider-confirmed transfer instructions.',
             icon: Icons.account_balance_wallet_outlined,
             destination: MobileWorkspaceDestination.money,
           ),
@@ -415,7 +431,9 @@ class MobileRoleDefinition {
             'Calls only use permitted contacts; LoanHub records the employee, borrower and related loan.',
         desktopNote:
             'Use web LoanHub for full application capture, calculators, approval packs and portfolio analysis.',
-        icon: collections ? Icons.assignment_late_outlined : Icons.badge_outlined,
+        icon: collections
+            ? Icons.assignment_late_outlined
+            : Icons.badge_outlined,
         actions: [
           const MobileRoleAction(
             title: 'Borrower calls',
@@ -431,7 +449,8 @@ class MobileRoleDefinition {
           ),
           const MobileRoleAction(
             title: 'Payment activity',
-            subtitle: 'See settlement activity without treating pending money as received.',
+            subtitle:
+                'See settlement activity without treating pending money as received.',
             icon: Icons.receipt_long_outlined,
             destination: MobileWorkspaceDestination.money,
           ),
@@ -493,7 +512,8 @@ class MobileRoleDefinition {
           ),
           MobileRoleAction(
             title: 'Client calling',
-            subtitle: 'Open controlled calls if your company subscription permits it.',
+            subtitle:
+                'Open controlled calls if your company subscription permits it.',
             icon: Icons.call_outlined,
             destination: MobileWorkspaceDestination.calls,
           ),
@@ -506,8 +526,11 @@ class MobileRoleDefinition {
         ],
       );
     }
-    if (const {'platform_owner', 'platform_admin', 'super_admin'}
-        .contains(role)) {
+    if (const {
+      'platform_owner',
+      'platform_admin',
+      'super_admin',
+    }.contains(role)) {
       return const MobileRoleDefinition(
         title: 'LoanHub platform workspace',
         description:
@@ -581,7 +604,6 @@ class MobileRoleDefinition {
     );
   }
 }
-
 
 bool _hasPortableOperations(String role) {
   return const {

@@ -24,7 +24,11 @@ final class _NotificationRealtimeArrived extends NotificationBlocEvent {
 }
 
 class NotificationBlocState {
-  const NotificationBlocState({this.route, this.latestEvent, this.revision = 0});
+  const NotificationBlocState({
+    this.route,
+    this.latestEvent,
+    this.revision = 0,
+  });
 
   final String? route;
   final LoanHubRealtimeEvent? latestEvent;
@@ -53,10 +57,7 @@ class NotificationBloc
 
     on<_NotificationRealtimeArrived>((event, emit) {
       emit(
-        state.copyWith(
-          latestEvent: event.event,
-          revision: state.revision + 1,
-        ),
+        state.copyWith(latestEvent: event.event, revision: state.revision + 1),
       );
     });
     on<NotificationRouteRequested>((event, emit) {

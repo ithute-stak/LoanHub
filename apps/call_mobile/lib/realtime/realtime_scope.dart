@@ -110,7 +110,8 @@ class _LoanHubRealtimeScopeState extends State<LoanHubRealtimeScope>
         ],
         child: BlocListener<RealtimeBloc, RealtimeBlocState>(
           listenWhen: (previous, current) =>
-              previous.revision != current.revision && current.latestEvent != null,
+              previous.revision != current.revision &&
+              current.latestEvent != null,
           listener: (context, state) {
             final event = state.latestEvent;
             if (event?.notification != null) {

@@ -8,6 +8,8 @@ import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
 import 'features/explore/explore_page.dart';
 import 'features/money/money_page.dart';
+import 'features/legacy/legacy_capture_page.dart';
+import 'features/legacy/legacy_bloc.dart';
 import 'features/operations/mobile_operations_page.dart';
 import 'features/profile/profile_page.dart';
 import 'layout/loanhub_responsive.dart';
@@ -69,11 +71,44 @@ class _SuperAppHomeState extends State<SuperAppHome> {
         setState(() => index = 4);
         return;
       case MobileWorkspaceDestination.explore:
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => ExplorePage(api: widget.api)),
-        );
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => ExplorePage(api: widget.api)));
         return;
     }
+  }
+
+  Future<void> _openLegacyCapture() async {
+    const permittedRoles = <String>{
+      'company_owner',
+      'company_admin',
+      'owner',
+      'admin',
+      'branch_manager',
+      'accountant',
+      'finance_officer',
+      'cashier',
+    };
+    final session = await widget.api.sessionInfo();
+    if (!mounted) return;
+    if (!permittedRoles.contains(session['role']?.toString().toLowerCase())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Legacy bank deductions require company finance or management access.',
+          ),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => LegacyBloc(),
+          child: LegacyCapturePage(api: widget.api),
+        ),
+      ),
+    );
   }
 
   Future<void> _applyNotificationRoute(String route) async {
@@ -115,10 +150,7 @@ class _SuperAppHomeState extends State<SuperAppHome> {
       (bloc) => bloc.state.latestMoneyEvent?.type,
     );
     final pages = [
-      MobileRoleWorkspace(
-        api: widget.api,
-        onNavigate: _navigateWorkspace,
-      ),
+      MobileRoleWorkspace(api: widget.api, onNavigate: _navigateWorkspace),
       ChatsPage(api: widget.api),
       CallsPage(
         api: widget.api,
@@ -144,10 +176,7 @@ class _SuperAppHomeState extends State<SuperAppHome> {
               const LoanHubAppIcon(size: 34, radius: 10),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  _titles[index],
-                  overflow: TextOverflow.ellipsis,
-                ),
+                child: Text(_titles[index], overflow: TextOverflow.ellipsis),
               ),
               const SizedBox(width: 8),
               _RealtimeDot(status: connection),
@@ -156,7 +185,9 @@ class _SuperAppHomeState extends State<SuperAppHome> {
           actions: [
             PopupMenuButton<String>(
               onSelected: (value) {
-                if (value == 'channels') {
+                if (value == 'legacy') {
+                  unawaited(_openLegacyCapture());
+                } else if (value == 'channels') {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => ExplorePage(api: widget.api),
@@ -167,6 +198,14 @@ class _SuperAppHomeState extends State<SuperAppHome> {
                 }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'legacy',
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.account_balance_outlined),
+                    title: Text('Legacy bank deductions'),
+                  ),
+                ),
                 PopupMenuItem(
                   value: 'channels',
                   child: ListTile(
@@ -193,16 +232,17 @@ class _SuperAppHomeState extends State<SuperAppHome> {
                   NavigationRail(
                     extended: width >= LoanHubBreakpoints.wideTablet,
                     selectedIndex: index,
-                    onDestinationSelected: (value) => setState(
-                      () => index = value,
-                    ),
+                    onDestinationSelected: (value) =>
+                        setState(() => index = value),
                     labelType: width >= LoanHubBreakpoints.wideTablet
                         ? NavigationRailLabelType.none
                         : NavigationRailLabelType.all,
                     destinations: _railDestinations(unread, moneyEvent),
                   ),
                   const VerticalDivider(width: 1),
-                  Expanded(child: IndexedStack(index: index, children: pages)),
+                  Expanded(
+                    child: IndexedStack(index: index, children: pages),
+                  ),
                 ],
               )
             : IndexedStack(index: index, children: pages),
