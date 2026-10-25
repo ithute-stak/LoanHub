@@ -43,6 +43,19 @@ jobs:
       - name: Check Dart formatting
         if: always()
         run: dart format --output=none --set-exit-if-changed lib test
+      - name: Generate Dart formatting patch
+        if: always()
+        run: |
+          dart format lib test
+          git diff -- lib test > flutter-format.patch
+      - name: Upload formatting patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loanhub-dart-format-patch
+          path: apps/call_mobile/flutter-format.patch
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload integrated test APK
         if: always()
         uses: actions/upload-artifact@v4
