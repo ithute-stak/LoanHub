@@ -286,10 +286,15 @@ class CdasClient:
                 ),
                 payload,
             )
-        if not isinstance(payload, dict) or not payload.get("Authorization"):
+        if not isinstance(payload, dict) or "Authorization" not in payload:
             raise CdasError(502, "CDAS authentication returned an invalid response")
 
-        token = str(payload["Authorization"]).strip()
+        # Never coerce structured provider data into a credential: a malformed
+        # login payload must fail closed before it can become an auth header.
+        token_value = payload["Authorization"]
+        if not isinstance(token_value, str):
+            raise CdasError(502, "CDAS authentication returned an invalid authorization token")
+        token = token_value.strip()
         if not token:
             raise CdasError(502, "CDAS authentication returned an empty authorization token")
 
