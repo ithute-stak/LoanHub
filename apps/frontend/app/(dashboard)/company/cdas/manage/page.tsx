@@ -47,6 +47,12 @@ type CdasLedgerOperation = {
   requires_reconciliation: boolean;
   created_at: string | null;
   error_message: string | null;
+  provider_status_code?: number | null;
+  submitted_at?: string | null;
+  completed_at?: string | null;
+  reconciled_at?: string | null;
+  updated_at?: string | null;
+  environment?: string;
 };
 type CdasLedgerResponse = { items: CdasLedgerOperation[]; count: number; total: number; offset: number; limit: number; has_more: boolean };
 type RosterSnapshot = {
@@ -430,6 +436,14 @@ export default function CdasManagePage() {
               <p className="text-sm">Type: {reviewedOperation.operation_type} · Status: {reviewedOperation.state}</p>
               <p className="text-sm">Employee: {reviewedOperation.employee_no || "—"} · Deduction: {reviewedOperation.deduction_id ?? "—"} · Reference: {reviewedOperation.reference_no || "—"}</p>
               <p className="text-xs text-muted-foreground">Actor: {reviewedOperation.actor_user_id || "Unavailable"} · Created: {reviewedOperation.created_at ? new Date(reviewedOperation.created_at).toLocaleString() : "Unknown"}</p>
+              <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">Environment</dt><dd>{reviewedOperation.environment || "Unavailable"}</dd></div>
+                <div><dt className="text-muted-foreground">Provider HTTP status</dt><dd>{reviewedOperation.provider_status_code ?? "Unavailable"}</dd></div>
+                <div><dt className="text-muted-foreground">Submitted</dt><dd>{reviewedOperation.submitted_at ? new Date(reviewedOperation.submitted_at).toLocaleString() : "Not recorded"}</dd></div>
+                <div><dt className="text-muted-foreground">Completed</dt><dd>{reviewedOperation.completed_at ? new Date(reviewedOperation.completed_at).toLocaleString() : "Not recorded"}</dd></div>
+                <div><dt className="text-muted-foreground">Reconciled</dt><dd>{reviewedOperation.reconciled_at ? new Date(reviewedOperation.reconciled_at).toLocaleString() : "Not recorded"}</dd></div>
+                <div><dt className="text-muted-foreground">Last updated</dt><dd>{reviewedOperation.updated_at ? new Date(reviewedOperation.updated_at).toLocaleString() : "Not recorded"}</dd></div>
+              </dl>
               {reviewedOperation.error_message && <p className="text-sm text-destructive">{reviewedOperation.error_message}</p>}
               {reviewedOperation.requires_reconciliation && <Button type="button" disabled={reviewLoading || !canManage} onClick={() => void reconcileLedgerOperation(reviewedOperation.id)}>{reviewLoading ? "Checking provider…" : "Reconcile (read-only)"}</Button>}
               <p className="text-xs text-muted-foreground">Reconciliation checks provider records only. It does not resend an uncertain deduction change.</p>
