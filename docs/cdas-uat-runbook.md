@@ -6,7 +6,7 @@ It must not be used to exercise deduction mutations against production payroll r
 
 ## Preconditions
 
-- branch: `cdas-reintegration`
+- branch: current reviewed `main` (or an explicitly approved release commit)
 - local LoanHub database, not the production database
 - local frontend points to the local backend
 - CDAS environment is set to `test`
@@ -20,8 +20,8 @@ It must not be used to exercise deduction mutations against production payroll r
 ```bash
 cd ~/Documents/GitHub/production_repo/LoanHub
 git fetch origin
-git switch cdas-reintegration
-git pull --ff-only origin cdas-reintegration
+git switch main
+git pull --ff-only origin main
 git log -1 --oneline
 git status
 ```
@@ -221,6 +221,12 @@ The operator must first reconcile the provider state. Only then may a new explic
 
 This protects against duplicate or ambiguous deduction mutations.
 
+## Evidence record (do not include credentials or employee personal data)
+
+Record these fields for every authorized test: UTC timestamp, operator, environment (`test`), company identifier, deployed git SHA, gate (A–G), requested operation, HTTP status, sanitized correlation ID, observed outcome, expected outcome, PASS/FAIL/BLOCKED, and any reconciliation action. Never store passwords, authorization tokens, national IDs, or complete employee payloads in GitHub issues or logs.
+
+**Read-only go/no-go:** Do not advance beyond Gate A when provider authentication is unverified. Do not proceed to Gate G without specific written permission for test-only mutations, approved test identities, and a reconciliation plan.
+
 ## Completion criteria
 
 CDAS UAT is complete only when:
@@ -242,4 +248,4 @@ CDAS UAT is complete only when:
 
 Passing this runbook does not itself authorize deployment.
 
-PR #78 must remain unmerged until explicit production approval is given. Production deployment should follow the repository's production release process and deployment safety guard.
+Use the current reviewed main-branch release and established guarded deployment process. Testing in isolation does not grant approval to enable live provider credentials or payroll mutations.
