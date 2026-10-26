@@ -15,10 +15,15 @@ from services import cdas_operation_ledger as ledger
     ("outcome", "expected"),
     [("acknowledged", "acknowledged"), ("provider_rejected", "rejected"), ("timeout", "unknown")],
 )
-async def test_tracked_write_calls_provider_once_and_records_outcome(monkeypatch, outcome, expected):
+@pytest.mark.parametrize("operation_type", ["deduction.lifecycle.1", "deduction.lifecycle.3", "deduction.modify_active", "deduction.settle"])
+async def test_tracked_write_calls_provider_once_and_records_outcome(monkeypatch, outcome, expected, operation_type):
     operation = MagicMock()
     states = []
-    monkeypatch.setattr(ledger, "begin_provider_operation", lambda *a, **kw: operation)
+    def begin(*args, **kwargs):
+        assert kwargs["operation_type"] == operation_type
+        return operation
+
+    monkeypatch.setattr(ledger, "begin_provider_operation", begin)
     monkeypatch.setattr(ledger, "mark_operation_submitting", lambda *a, **kw: states.append("submitting"))
     monkeypatch.setattr(ledger, "mark_operation_acknowledged", lambda *a, **kw: states.append("acknowledged"))
     monkeypatch.setattr(ledger, "mark_operation_rejected", lambda *a, **kw: states.append("rejected"))
@@ -39,7 +44,7 @@ async def test_tracked_write_calls_provider_once_and_records_outcome(monkeypatch
 
     arguments = dict(
         company_id=uuid4(), branch_id=None, actor_user_id=None,
-        environment="test", operation_type="deduction.lifecycle.1",
+        environment="test", operation_type=operation_type,
         request_snapshot={"EmployeeNo": "SIM-1", "DeductionAmount": "20.00"},
         provider_call=provider,
     )
