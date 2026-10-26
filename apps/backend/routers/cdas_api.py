@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_, cast, String
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -2305,6 +2306,7 @@ def list_cdas_operations(
     unresolved_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=120),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -2316,6 +2318,18 @@ def list_cdas_operations(
         query = query.filter(CdasProviderOperation.state == state.strip().lower())
     if unresolved_only:
         query = query.filter(CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES))
+    term = (search or "").strip()
+    if term:
+        pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(or_(
+            CdasProviderOperation.employee_no.ilike(pattern, escape="\\"),
+            CdasProviderOperation.reference_no.ilike(pattern, escape="\\"),
+            CdasProviderOperation.operation_type.ilike(pattern, escape="\\"),
+            CdasProviderOperation.state.ilike(pattern, escape="\\"),
+            cast(CdasProviderOperation.deduction_id, String).ilike(pattern, escape="\\"),
+            cast(CdasProviderOperation.id, String).ilike(pattern, escape="\\"),
+            cast(CdasProviderOperation.actor_user_id, String).ilike(pattern, escape="\\"),
+        ))
     total = query.count()
     rows = query.order_by(CdasProviderOperation.created_at.desc(), CdasProviderOperation.id.desc()).offset(offset).limit(limit).all()
     actor_ids = {row.actor_user_id for row in rows if row.actor_user_id is not None}
