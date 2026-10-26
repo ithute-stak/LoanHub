@@ -22,7 +22,7 @@ async def test_unexpected_provider_write_failure_marks_operation_unknown(monkeyp
 
     def unknown(*args, **kwargs):
         events.append("unknown")
-        assert kwargs["operation"] is operation if "operation" in kwargs else args[1] is operation
+        assert args[1] is operation
         assert "verify provider state" in kwargs["error_message"]
 
     monkeypatch.setattr(ledger, "begin_provider_operation", begin)
