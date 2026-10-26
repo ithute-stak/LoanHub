@@ -158,7 +158,7 @@ export default function CdasManagePage() {
         api.get<OperationsResponse>("/cdas/loans/operations"),
         api.get<RosterResponse>("/cdas/roster-intelligence"),
         api.get<OperationsKpis>("/cdas/operations-kpis"),
-        api.get<CdasLedgerResponse>("/cdas/operations?limit=200"),
+        api.get<CdasLedgerResponse>("/cdas/operations?limit=200&unresolved_only=true"),
       ]);
       setItems(response.data.items);
       setLedgerItems(ledgerResponse.data.items);
@@ -168,6 +168,19 @@ export default function CdasManagePage() {
       setError(getErrorMessage(requestError, "CDAS operations could not be loaded."));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadLedger(mode: "all" | "unresolved") {
+    try {
+      const url = mode === "unresolved"
+        ? "/cdas/operations?limit=200&unresolved_only=true"
+        : "/cdas/operations?limit=200";
+      const response = await api.get<CdasLedgerResponse>(url);
+      setLedgerItems(response.data.items);
+      setLedgerFilter(mode);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "CDAS operation ledger could not be loaded."));
     }
   }
 
@@ -187,13 +200,12 @@ export default function CdasManagePage() {
   const visibleLedger = useMemo(() => {
     const searchTerm = ledgerSearch.trim().toLowerCase();
     return ledgerItems.filter((item) => {
-      if (ledgerFilter === "unresolved" && !item.requires_reconciliation) return false;
       if (!searchTerm) return true;
       return [item.employee_no, item.reference_no, item.operation_type, item.state,
         item.actor_user_id, item.actor_name, item.deduction_id?.toString(), item.id]
         .some((value) => (value || "").toLowerCase().includes(searchTerm));
     });
-  }, [ledgerItems, ledgerFilter, ledgerSearch]);
+  }, [ledgerItems, ledgerSearch]);
 
   const totals = useMemo(() => ({
     total: items.length,
@@ -338,14 +350,14 @@ export default function CdasManagePage() {
       <Card>
         <CardHeader>
           <CardTitle>CDAS provider operation ledger</CardTitle>
-          <CardDescription>Recent 200 company operations. Search by employee, deduction ID, reference, status or staff user ID. This is a local record and does not contact CDAS.</CardDescription>
+          <CardDescription>Up to 200 company operations for the selected queue. Search by employee, deduction ID, reference, status or staff user ID. This is a local record and does not contact CDAS.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Input aria-label="Search CDAS operation ledger" placeholder="Search employee, reference, staff ID…" value={ledgerSearch}
               onChange={(event) => setLedgerSearch(event.target.value)} className="min-w-52 flex-1" />
-            <Button type="button" variant={ledgerFilter === "unresolved" ? "default" : "outline"} onClick={() => setLedgerFilter("unresolved")}>Needs attention</Button>
-            <Button type="button" variant={ledgerFilter === "all" ? "default" : "outline"} onClick={() => setLedgerFilter("all")}>All operations</Button>
+            <Button type="button" variant={ledgerFilter === "unresolved" ? "default" : "outline"} onClick={() => void loadLedger("unresolved")}>Needs attention</Button>
+            <Button type="button" variant={ledgerFilter === "all" ? "default" : "outline"} onClick={() => void loadLedger("all")}>All operations</Button>
           </div>
           <p className="text-xs text-muted-foreground">Showing {visibleLedger.length} of {ledgerItems.length} recently loaded operations. Staff are shown by their audit user ID.</p>
           <div className="max-h-96 space-y-2 overflow-y-auto">
