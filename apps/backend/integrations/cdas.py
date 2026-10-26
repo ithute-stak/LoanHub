@@ -297,6 +297,8 @@ class CdasClient:
         token = token_value.strip()
         if not token:
             raise CdasError(502, "CDAS authentication returned an empty authorization token")
+        if any(ord(character) < 32 or ord(character) == 127 for character in token):
+            raise CdasError(502, "CDAS authentication returned an invalid authorization token")
 
         now = self._now()
         self._session_cookies = cookies
