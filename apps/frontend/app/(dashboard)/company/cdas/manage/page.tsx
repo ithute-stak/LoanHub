@@ -143,6 +143,8 @@ export default function CdasManagePage() {
   const [ledgerTotal, setLedgerTotal] = useState(0);
   const [ledgerHasMore, setLedgerHasMore] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [reviewedOperation, setReviewedOperation] = useState<CdasLedgerOperation | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [reconciliationFeedback, setReconciliationFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [workingLoanId, setWorkingLoanId] = useState<string | null>(null);
@@ -197,6 +199,41 @@ export default function CdasManagePage() {
       setError(getErrorMessage(requestError, "CDAS operation ledger could not be loaded."));
     } finally {
       setLedgerLoading(false);
+    }
+  }
+
+  async function reviewOperation(operationId: string) {
+    if (reviewLoading) return;
+    setReviewLoading(true);
+    setError(null);
+    try {
+      const response = await api.get<CdasLedgerOperation>("/cdas/operations/" + encodeURIComponent(operationId));
+      setReviewedOperation(response.data);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "CDAS operation details could not be loaded."));
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function reconcileLedgerOperation(operationId: string) {
+    if (reviewLoading || !canManage) return;
+    setReviewLoading(true);
+    setError(null);
+    setReconciliationFeedback(null);
+    try {
+      const response = await api.post<{ reconciled: boolean; operation: CdasLedgerOperation }>(
+        "/cdas/operations/" + encodeURIComponent(operationId) + "/reconcile",
+      );
+      setReviewedOperation(response.data.operation);
+      setReconciliationFeedback(response.data.reconciled
+        ? "Provider readback confirmed the operation."
+        : "Provider readback did not confirm the operation. It remains unresolved; no write was retried.");
+      await loadLedger(ledgerFilter, ledgerOffset);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Read-only CDAS reconciliation could not be completed."));
+    } finally {
+      setReviewLoading(false);
     }
   }
 
@@ -380,9 +417,22 @@ export default function CdasManagePage() {
                 <p className="mt-1 text-muted-foreground">Employee {item.employee_no || "—"} · Deduction {item.deduction_id ?? "—"} · Reference {item.reference_no || "—"}</p>
                 <p className="mt-1 break-all text-xs text-muted-foreground">Staff: {item.actor_name || "Name unavailable"} · User ID: {item.actor_user_id || "Unavailable"} · {item.created_at ? new Date(item.created_at).toLocaleString() : "Date unavailable"}</p>
                 {item.error_message && <p className="mt-1 text-xs text-destructive">{item.error_message}</p>}
+                <Button type="button" size="sm" variant="outline" className="mt-2" disabled={reviewLoading} onClick={() => void reviewOperation(item.id)}>Review operation</Button>
               </div>
             ))}
           </div>
+          {reviewedOperation && (
+            <div className="rounded-xl border p-4 space-y-2" aria-label="Selected CDAS operation details">
+              <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">Operation review</h3><Button variant="ghost" size="sm" onClick={() => setReviewedOperation(null)}>Close</Button></div>
+              <p className="break-all text-xs">Operation ID: {reviewedOperation.id}</p>
+              <p className="text-sm">Type: {reviewedOperation.operation_type} · Status: {reviewedOperation.state}</p>
+              <p className="text-sm">Employee: {reviewedOperation.employee_no || "—"} · Deduction: {reviewedOperation.deduction_id ?? "—"} · Reference: {reviewedOperation.reference_no || "—"}</p>
+              <p className="text-xs text-muted-foreground">Actor: {reviewedOperation.actor_user_id || "Unavailable"} · Created: {reviewedOperation.created_at ? new Date(reviewedOperation.created_at).toLocaleString() : "Unknown"}</p>
+              {reviewedOperation.error_message && <p className="text-sm text-destructive">{reviewedOperation.error_message}</p>}
+              {reviewedOperation.requires_reconciliation && <Button type="button" disabled={reviewLoading || !canManage} onClick={() => void reconcileLedgerOperation(reviewedOperation.id)}>{reviewLoading ? "Checking provider…" : "Reconcile (read-only)"}</Button>}
+              <p className="text-xs text-muted-foreground">Reconciliation checks provider records only. It does not resend an uncertain deduction change.</p>
+            </div>
+          )}
           <div className="flex items-center justify-end gap-2">
             <Button type="button" variant="outline" disabled={ledgerLoading || ledgerOffset === 0} onClick={() => void loadLedger(ledgerFilter, Math.max(0, ledgerOffset - 50))}>Previous</Button>
             <Button type="button" variant="outline" disabled={ledgerLoading || !ledgerHasMore} onClick={() => void loadLedger(ledgerFilter, ledgerOffset + 50)}>Next</Button>
