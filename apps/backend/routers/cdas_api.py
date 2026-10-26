@@ -2302,6 +2302,7 @@ async def settle_linked_cdas_deduction(
 @router.get("/operations")
 def list_cdas_operations(
     state: str | None = Query(default=None, max_length=40),
+    unresolved_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
@@ -2312,6 +2313,8 @@ def list_cdas_operations(
     query = db.query(CdasProviderOperation).filter(CdasProviderOperation.company_id == context.company_id)
     if state:
         query = query.filter(CdasProviderOperation.state == state.strip().lower())
+    if unresolved_only:
+        query = query.filter(CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES))
     rows = query.order_by(CdasProviderOperation.created_at.desc()).limit(limit).all()
     actor_ids = {row.actor_user_id for row in rows if row.actor_user_id is not None}
     staff_names: dict[UUID, str] = {}
