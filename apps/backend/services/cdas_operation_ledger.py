@@ -397,7 +397,10 @@ def _modified_values_match(operation: CdasProviderOperation, record: dict[str, A
         return False
     requested_installments = request.get("TotalInstallment")
     returned_installments = record.get("TotalInstallment")
-    if requested_installments not in (None, "") and returned_installments not in (None, ""):
+    if requested_installments not in (None, ""):
+        # An omitted read-back value cannot confirm a requested change.
+        if returned_installments in (None, "") or isinstance(returned_installments, bool):
+            return False
         try:
             if int(requested_installments) != int(returned_installments):
                 return False
