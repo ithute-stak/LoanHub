@@ -290,6 +290,16 @@ async def execute_provider_operation(
                 response_snapshot=_provider_error_snapshot(error),
             )
         raise CdasTrackedProviderError(error, operation) from error
+    except Exception:
+        # A provider write may already have been applied when an unexpected
+        # local failure occurs. Preserve an unresolved ledger entry and require
+        # read-only reconciliation before the operator can submit again.
+        mark_operation_unknown(
+            db,
+            operation,
+            error_message="Unexpected CDAS write failure; verify provider state before retrying",
+        )
+        raise
 
     mark_operation_acknowledged(
         db,
