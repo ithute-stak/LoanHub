@@ -2304,6 +2304,7 @@ def list_cdas_operations(
     state: str | None = Query(default=None, max_length=40),
     unresolved_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
@@ -2315,7 +2316,8 @@ def list_cdas_operations(
         query = query.filter(CdasProviderOperation.state == state.strip().lower())
     if unresolved_only:
         query = query.filter(CdasProviderOperation.state.in_(UNRESOLVED_OPERATION_STATES))
-    rows = query.order_by(CdasProviderOperation.created_at.desc()).limit(limit).all()
+    total = query.count()
+    rows = query.order_by(CdasProviderOperation.created_at.desc(), CdasProviderOperation.id.desc()).offset(offset).limit(limit).all()
     actor_ids = {row.actor_user_id for row in rows if row.actor_user_id is not None}
     staff_names: dict[UUID, str] = {}
     if actor_ids:
@@ -2337,7 +2339,7 @@ def list_cdas_operations(
         item = operation_summary(row)
         item["actor_name"] = staff_names.get(row.actor_user_id) or None
         items.append(item)
-    return {"items": items, "count": len(items)}
+    return {"items": items, "count": len(items), "total": total, "offset": offset, "limit": limit, "has_more": offset + len(items) < total}
 
 
 @router.get("/operations/{operation_id}")

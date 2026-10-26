@@ -48,7 +48,7 @@ type CdasLedgerOperation = {
   created_at: string | null;
   error_message: string | null;
 };
-type CdasLedgerResponse = { items: CdasLedgerOperation[]; count: number };
+type CdasLedgerResponse = { items: CdasLedgerOperation[]; count: number; total: number; offset: number; limit: number; has_more: boolean };
 type RosterSnapshot = {
   environment: string;
   captured_at: string;
@@ -138,6 +138,10 @@ export default function CdasManagePage() {
   const [ledgerItems, setLedgerItems] = useState<CdasLedgerOperation[]>([]);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerFilter, setLedgerFilter] = useState<"all" | "unresolved">("unresolved");
+  const [ledgerOffset, setLedgerOffset] = useState(0);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [ledgerHasMore, setLedgerHasMore] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [reconciliationFeedback, setReconciliationFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [workingLoanId, setWorkingLoanId] = useState<string | null>(null);
@@ -158,10 +162,13 @@ export default function CdasManagePage() {
         api.get<OperationsResponse>("/cdas/loans/operations"),
         api.get<RosterResponse>("/cdas/roster-intelligence"),
         api.get<OperationsKpis>("/cdas/operations-kpis"),
-        api.get<CdasLedgerResponse>("/cdas/operations?limit=200&unresolved_only=true"),
+        api.get<CdasLedgerResponse>("/cdas/operations?limit=50&offset=0&unresolved_only=true"),
       ]);
       setItems(response.data.items);
       setLedgerItems(ledgerResponse.data.items);
+      setLedgerOffset(0);
+      setLedgerTotal(ledgerResponse.data.total);
+      setLedgerHasMore(ledgerResponse.data.has_more);
       setRoster(rosterResponse.data.snapshot);
       setKpis(kpiResponse.data);
     } catch (requestError: unknown) {
@@ -171,16 +178,22 @@ export default function CdasManagePage() {
     }
   }
 
-  async function loadLedger(mode: "all" | "unresolved") {
+  async function loadLedger(mode: "all" | "unresolved", offset = 0) {
+    if (ledgerLoading) return;
+    setLedgerLoading(true);
     try {
-      const url = mode === "unresolved"
-        ? "/cdas/operations?limit=200&unresolved_only=true"
-        : "/cdas/operations?limit=200";
+      const url = "/cdas/operations?limit=50&offset=" + offset
+        + (mode === "unresolved" ? "&unresolved_only=true" : "");
       const response = await api.get<CdasLedgerResponse>(url);
       setLedgerItems(response.data.items);
+      setLedgerOffset(response.data.offset);
+      setLedgerTotal(response.data.total);
+      setLedgerHasMore(response.data.has_more);
       setLedgerFilter(mode);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS operation ledger could not be loaded."));
+    } finally {
+      setLedgerLoading(false);
     }
   }
 
@@ -359,7 +372,7 @@ export default function CdasManagePage() {
             <Button type="button" variant={ledgerFilter === "unresolved" ? "default" : "outline"} onClick={() => void loadLedger("unresolved")}>Needs attention</Button>
             <Button type="button" variant={ledgerFilter === "all" ? "default" : "outline"} onClick={() => void loadLedger("all")}>All operations</Button>
           </div>
-          <p className="text-xs text-muted-foreground">Showing {visibleLedger.length} of {ledgerItems.length} recently loaded operations. Staff are shown by their audit user ID.</p>
+          <p className="text-xs text-muted-foreground">Showing {ledgerItems.length ? ledgerOffset + 1 : 0}–{ledgerOffset + ledgerItems.length} of {ledgerTotal} {ledgerFilter === "unresolved" ? "unresolved" : "total"} operations. Search applies to this page. Staff are shown by their audit user ID.</p>
           <div className="max-h-96 space-y-2 overflow-y-auto">
             {visibleLedger.length === 0 && <p className="rounded-xl border p-4 text-sm text-muted-foreground">No matching operations in the loaded records.</p>}
             {visibleLedger.map((item) => (
@@ -373,6 +386,10 @@ export default function CdasManagePage() {
                 {item.error_message && <p className="mt-1 text-xs text-destructive">{item.error_message}</p>}
               </div>
             ))}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" disabled={ledgerLoading || ledgerOffset === 0} onClick={() => void loadLedger(ledgerFilter, Math.max(0, ledgerOffset - 50))}>Previous</Button>
+            <Button type="button" variant="outline" disabled={ledgerLoading || !ledgerHasMore} onClick={() => void loadLedger(ledgerFilter, ledgerOffset + 50)}>Next</Button>
           </div>
         </CardContent>
       </Card>
