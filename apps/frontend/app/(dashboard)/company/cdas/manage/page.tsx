@@ -165,11 +165,13 @@ export default function CdasManagePage() {
         api.get<OperationsResponse>("/cdas/loans/operations"),
         api.get<RosterResponse>("/cdas/roster-intelligence"),
         api.get<OperationsKpis>("/cdas/operations-kpis"),
-        api.get<CdasLedgerResponse>("/cdas/operations?limit=50&offset=0&unresolved_only=true"),
+        api.get<CdasLedgerResponse>("/cdas/operations?limit=50&offset=" + ledgerOffset
+          + (ledgerFilter === "unresolved" ? "&unresolved_only=true" : "")
+          + (appliedLedgerSearch ? "&search=" + encodeURIComponent(appliedLedgerSearch) : "")),
       ]);
       setItems(response.data.items);
       setLedgerItems(ledgerResponse.data.items);
-      setLedgerOffset(0);
+      setLedgerOffset(ledgerResponse.data.offset);
       setLedgerTotal(ledgerResponse.data.total);
       setLedgerHasMore(ledgerResponse.data.has_more);
       setRoster(rosterResponse.data.snapshot);
