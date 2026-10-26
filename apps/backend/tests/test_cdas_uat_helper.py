@@ -65,4 +65,6 @@ def test_uat_runbook_keeps_mutations_after_read_acceptance() -> None:
     assert read_gate < mutation_gate
     assert "bash scripts/cdas-uat-local.sh start" in source
     assert "must not automatically replay that write" in source
-    assert "PR #78 must remain unmerged" in source
+    assert "Use the current reviewed main-branch release" in source
+    assert "does not grant approval to enable live provider credentials" in source
+    assert "Do not proceed to Gate G without specific written permission" in source
