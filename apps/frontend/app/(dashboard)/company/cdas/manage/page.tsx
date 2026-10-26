@@ -137,6 +137,7 @@ export default function CdasManagePage() {
   const [items, setItems] = useState<CdasOperationalLoan[]>([]);
   const [ledgerItems, setLedgerItems] = useState<CdasLedgerOperation[]>([]);
   const [ledgerSearch, setLedgerSearch] = useState("");
+  const [appliedLedgerSearch, setAppliedLedgerSearch] = useState("");
   const [ledgerFilter, setLedgerFilter] = useState<"all" | "unresolved">("unresolved");
   const [ledgerOffset, setLedgerOffset] = useState(0);
   const [ledgerTotal, setLedgerTotal] = useState(0);
@@ -178,18 +179,20 @@ export default function CdasManagePage() {
     }
   }
 
-  async function loadLedger(mode: "all" | "unresolved", offset = 0) {
+  async function loadLedger(mode: "all" | "unresolved", offset = 0, term = appliedLedgerSearch) {
     if (ledgerLoading) return;
     setLedgerLoading(true);
     try {
       const url = "/cdas/operations?limit=50&offset=" + offset
-        + (mode === "unresolved" ? "&unresolved_only=true" : "");
+        + (mode === "unresolved" ? "&unresolved_only=true" : "")
+        + (term.trim() ? "&search=" + encodeURIComponent(term.trim()) : "");
       const response = await api.get<CdasLedgerResponse>(url);
       setLedgerItems(response.data.items);
       setLedgerOffset(response.data.offset);
       setLedgerTotal(response.data.total);
       setLedgerHasMore(response.data.has_more);
       setLedgerFilter(mode);
+      setAppliedLedgerSearch(term.trim());
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "CDAS operation ledger could not be loaded."));
     } finally {
@@ -210,15 +213,7 @@ export default function CdasManagePage() {
     );
   }, [items, search]);
 
-  const visibleLedger = useMemo(() => {
-    const searchTerm = ledgerSearch.trim().toLowerCase();
-    return ledgerItems.filter((item) => {
-      if (!searchTerm) return true;
-      return [item.employee_no, item.reference_no, item.operation_type, item.state,
-        item.actor_user_id, item.actor_name, item.deduction_id?.toString(), item.id]
-        .some((value) => (value || "").toLowerCase().includes(searchTerm));
-    });
-  }, [ledgerItems, ledgerSearch]);
+  const visibleLedger = ledgerItems;
 
   const totals = useMemo(() => ({
     total: items.length,
@@ -363,16 +358,17 @@ export default function CdasManagePage() {
       <Card>
         <CardHeader>
           <CardTitle>CDAS provider operation ledger</CardTitle>
-          <CardDescription>Up to 200 company operations for the selected queue. Search by employee, deduction ID, reference, status or staff user ID. This is a local record and does not contact CDAS.</CardDescription>
+          <CardDescription>Search company operations across the selected queue history. Search by employee, deduction ID, reference, status or staff user ID. This is a local record and does not contact CDAS.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Input aria-label="Search CDAS operation ledger" placeholder="Search employee, reference, staff ID…" value={ledgerSearch}
               onChange={(event) => setLedgerSearch(event.target.value)} className="min-w-52 flex-1" />
+            <Button type="button" variant="outline" disabled={ledgerLoading} onClick={() => void loadLedger(ledgerFilter, 0, ledgerSearch)}>Search history</Button>
             <Button type="button" variant={ledgerFilter === "unresolved" ? "default" : "outline"} onClick={() => void loadLedger("unresolved")}>Needs attention</Button>
             <Button type="button" variant={ledgerFilter === "all" ? "default" : "outline"} onClick={() => void loadLedger("all")}>All operations</Button>
           </div>
-          <p className="text-xs text-muted-foreground">Showing {ledgerItems.length ? ledgerOffset + 1 : 0}–{ledgerOffset + ledgerItems.length} of {ledgerTotal} {ledgerFilter === "unresolved" ? "unresolved" : "total"} operations. Search applies to this page. Staff are shown by their audit user ID.</p>
+          <p className="text-xs text-muted-foreground">Showing {ledgerItems.length ? ledgerOffset + 1 : 0}–{ledgerOffset + ledgerItems.length} of {ledgerTotal} {ledgerFilter === "unresolved" ? "unresolved" : "total"} operations. Search covers the selected queue history. Staff are shown by their audit user ID.</p>
           <div className="max-h-96 space-y-2 overflow-y-auto">
             {visibleLedger.length === 0 && <p className="rounded-xl border p-4 text-sm text-muted-foreground">No matching operations in the loaded records.</p>}
             {visibleLedger.map((item) => (

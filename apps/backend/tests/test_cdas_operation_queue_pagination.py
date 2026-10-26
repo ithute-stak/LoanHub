@@ -27,4 +27,4 @@ def test_management_queue_has_server_paging_controls():
     assert 'loadLedger(ledgerFilter, ledgerOffset + 50)' in source
     assert 'setLedgerHasMore(response.data.has_more)' in source
     assert 'setLedgerTotal(response.data.total)' in source
-    assert 'Search applies to this page.' in source
+    assert 'Search covers the selected queue history.' in source
