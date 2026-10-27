@@ -149,6 +149,8 @@ def mark_operation_acknowledged(
     operation.response_snapshot = response_snapshot
     operation.provider_status_code = provider_status_code
     operation.error_message = None
+    if not operation.requires_reconciliation and operation.reconciliation_required_at is None:
+        operation.reconciliation_required_at = _utcnow_naive()
     operation.requires_reconciliation = True
     db.commit()
     db.refresh(operation)
@@ -180,6 +182,8 @@ def mark_operation_unknown(
 ) -> None:
     operation.state = "unknown_provider_state"
     operation.error_message = error_message
+    if not operation.requires_reconciliation and operation.reconciliation_required_at is None:
+        operation.reconciliation_required_at = _utcnow_naive()
     operation.requires_reconciliation = True
     db.commit()
     db.refresh(operation)
@@ -194,6 +198,8 @@ def mark_operation_requires_reconciliation(
 ) -> None:
     operation.state = "requires_reconciliation"
     operation.error_message = message
+    if not operation.requires_reconciliation and operation.reconciliation_required_at is None:
+        operation.reconciliation_required_at = _utcnow_naive()
     operation.requires_reconciliation = True
     if reconciliation_snapshot is not None:
         operation.response_snapshot = {
@@ -504,6 +510,7 @@ def operation_summary(operation: CdasProviderOperation) -> dict[str, Any]:
         "submitted_at": operation.submitted_at.isoformat() if operation.submitted_at else None,
         "completed_at": operation.completed_at.isoformat() if operation.completed_at else None,
         "reconciled_at": operation.reconciled_at.isoformat() if operation.reconciled_at else None,
+        "reconciliation_required_at": operation.reconciliation_required_at.isoformat() if operation.reconciliation_required_at else None,
         "created_at": operation.created_at.isoformat() if operation.created_at else None,
         "updated_at": operation.updated_at.isoformat() if operation.updated_at else None,
     }
