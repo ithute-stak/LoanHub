@@ -189,7 +189,7 @@ export default function CdasManagePage() {
     }
   }
 
-  async function loadLedger(mode: "all" | "unresolved", offset = 0, term = appliedLedgerSearch) {
+  async function loadLedger(mode: "all" | "unresolved", offset = 0, term = appliedLedgerSearch, keepReview = false) {
     if (ledgerLoading) return;
     setLedgerLoading(true);
     try {
@@ -198,6 +198,7 @@ export default function CdasManagePage() {
         + (term.trim() ? "&search=" + encodeURIComponent(term.trim()) : "");
       const response = await api.get<CdasLedgerResponse>(url);
       setLedgerItems(response.data.items);
+      if (!keepReview) setReviewedOperation(null);
       setLedgerOffset(response.data.offset);
       setLedgerTotal(response.data.total);
       setLedgerHasMore(response.data.has_more);
@@ -237,7 +238,7 @@ export default function CdasManagePage() {
       setReconciliationFeedback(response.data.reconciled
         ? "Provider readback confirmed the operation."
         : "Provider readback did not confirm the operation. It remains unresolved; no write was retried.");
-      await loadLedger(ledgerFilter, ledgerOffset);
+      await loadLedger(ledgerFilter, ledgerOffset, appliedLedgerSearch, true);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "Read-only CDAS reconciliation could not be completed."));
     } finally {
