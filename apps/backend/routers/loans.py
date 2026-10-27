@@ -900,6 +900,57 @@ def list_loans(
     return query.order_by(ClientCompanyLoan.created_at.desc()).offset(skip).limit(limit).all()
 
 
+@router.get("/reports/monthly-payments.pdf")
+def monthly_loan_payments_pdf(
+    month: str = Query(..., pattern=r"^\\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Print actual confirmed loan repayments for a company and selected month."""
+    from datetime import timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from database.models.enums import PaymentDirection, PaymentPurpose
+    from services.monthly_loan_payment_report import render_monthly_loan_payments
+
+    require_tenant_roles(context, CASHIER_ROLES | LENDING_ROLES | FINANCE_ROLES | COMPANY_MANAGEMENT_ROLES)
+    year, month_number = map(int, month.split("-"))
+    local_start = datetime(year, month_number, 1, tzinfo=ZoneInfo(settings.APP_TIMEZONE))
+    if month_number == 12:
+        local_end = datetime(year + 1, 1, 1, tzinfo=local_start.tzinfo)
+    else:
+        local_end = datetime(year, month_number + 1, 1, tzinfo=local_start.tzinfo)
+    # PaymentTransaction.completed_at is a timezone-naive UTC database column.
+    start_utc = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = local_end.astimezone(timezone.utc).replace(tzinfo=None)
+    payments_query = (
+        db.query(PaymentTransaction)
+        .join(ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id)
+        .options(joinedload(PaymentTransaction.loan))
+        .filter(
+            PaymentTransaction.company_id == context.company_id,
+            ClientCompanyLoan.company_id == context.company_id,
+            PaymentTransaction.purpose == PaymentPurpose.LOAN_REPAYMENT,
+            PaymentTransaction.direction == PaymentDirection.INBOUND,
+            PaymentTransaction.status == PaymentStatus.SUCCEEDED,
+            PaymentTransaction.completed_at >= start_utc,
+            PaymentTransaction.completed_at < end_utc,
+        )
+    )
+    if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
+        payments_query = payments_query.filter(ClientCompanyLoan.branch_id == context.branch_id)
+    rows = payments_query.order_by(PaymentTransaction.completed_at, PaymentTransaction.id).all()
+    company = db.get(type(context.company), context.company_id) if getattr(context, "company", None) is not None else None
+    if company is None:
+        from database.models.company import LoanCompany
+        company = db.get(LoanCompany, context.company_id)
+    pdf = render_monthly_loan_payments(
+        db, company=company, month=month, payments=rows,
+        timezone_name=settings.APP_TIMEZONE,
+    )
+    return _pdf_response(pdf, f"loanhub-monthly-payments-{month}.pdf")
+
+
 @router.get("/bank-submissions.zip")
 def download_bank_submissions(
     x_company_id: str | None = Header(default=None, alias="X-Company-ID"),
