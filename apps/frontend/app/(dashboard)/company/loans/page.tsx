@@ -409,6 +409,30 @@ export default function CompanyLoansPage() {
         setScheduleOpen(true);
     }
 
+    async function previewFinalRollover(item: RepaymentInstallment) {
+        if (!selectedLoan) return;
+        try {
+            const response = await api.get<{
+                unpaid_remainder: string;
+                parent_loan_id: string;
+                proposed_cash_disbursement: string;
+                inherited_interest_rate: string;
+                requires_signed_amendment: boolean;
+            }>(`/loans/${selectedLoan.id}/installments/${item.id}/final-rollover-preview`);
+            const quote = response.data;
+            window.alert(
+                `FINAL INSTALLMENT ROLLOVER — REVIEW ONLY\\n\\n` +
+                `Remaining balance: ${formatMoney(quote.unpaid_remainder)}\\n` +
+                `Proposed linked facility: ${formatMoney(quote.unpaid_remainder)}\\n` +
+                `New cash disbursement: ${formatMoney(quote.proposed_cash_disbursement)}\\n` +
+                `Parent interest rate: ${quote.inherited_interest_rate}%\\n\\n` +
+                `A separate credit approval and signed agreement are required. No loan or financial posting has been created.`
+            );
+        } catch (error) {
+            toast.error(getErrorMessage(error, "Final-installment rollover preview failed."));
+        }
+    }
+
     async function carryForwardInstallment(item: RepaymentInstallment) {
         if (!selectedLoan) return;
         const remainder = Math.max(0, Number(item.total_due) - Number(item.paid_amount));
@@ -1451,6 +1475,11 @@ export default function CompanyLoansPage() {
                                                             {(activeRole === "company_owner" || activeRole === "company_admin") && repaymentLoan && Number(item.paid_amount) > 0 && installmentOutstanding(item) > 0 && selectedLoan?.installments?.some((next) => !next.is_superseded && next.installment_number > item.installment_number && next.status !== "paid" && next.status !== "waived") ? (
                                                                 <Button type="button" size="sm" variant="outline" title="Management-approved transfer of the remaining balance to the next installment" onClick={() => void carryForwardInstallment(item)}>
                                                                     Carry balance forward
+                                                                </Button>
+                                                            ) : null}
+                                                            {(activeRole === "company_owner" || activeRole === "company_admin") && repaymentLoan && Number(item.paid_amount) > 0 && installmentOutstanding(item) > 0 && selectedLoan?.installments?.filter((row) => !row.is_superseded).at(-1)?.id === item.id ? (
+                                                                <Button type="button" size="sm" variant="outline" onClick={() => void previewFinalRollover(item)} title="Preview an approved linked rollover facility without creating credit">
+                                                                    Preview final rollover
                                                                 </Button>
                                                             ) : null}
                                                             {canAdjustDate ? (

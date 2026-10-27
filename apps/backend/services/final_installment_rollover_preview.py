@@ -24,8 +24,8 @@ def preview_final_installment_rollover(loan, installment_id):
     if paid <= 0 or remainder <= 0:
         raise HTTPException(status_code=409, detail="A partially paid final installment is required")
     balance = Decimal(str(loan.balance or 0))
-    if balance < remainder:
-        raise HTTPException(status_code=409, detail="Loan balance is inconsistent with the final installment remainder")
+    if balance != remainder:
+        raise HTTPException(status_code=409, detail="Loan balance must exactly match the remaining final installment before linked rollover")
     return {
         "parent_loan_id": str(loan.id),
         "borrower_id": str(loan.borrower_id),
