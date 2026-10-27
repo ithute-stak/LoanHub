@@ -68,13 +68,16 @@ def post_final_rollover(
     if remainder:
         raise HTTPException(status_code=409, detail="Transferred components do not reconcile")
     carried_principal, carried_interest, carried_fees = portions
-    if len([i for i in parent.installments if not i.is_superseded]) != 1:
-        # Historical fully paid installments are fine; the final row must be
-        # the only *open* row.
-        open_rows = [i for i in parent.installments if not i.is_superseded and
-                     i.status not in (InstallmentStatus.PAID, InstallmentStatus.WAIVED)]
-        if len(open_rows) != 1 or open_rows[0].id != row.id:
-            raise HTTPException(status_code=409, detail="Other open installments require reconciliation")
+    # The transfer may only close the one remaining open installment. Paid
+    # historic installments remain in the active historical schedule.
+    open_rows = [
+        i for i in parent.installments
+        if not i.is_superseded
+        and Decimal(str(i.total_due or 0)) > Decimal(str(i.paid_amount or 0))
+        and i.status != InstallmentStatus.WAIVED
+    ]
+    if len(open_rows) != 1 or open_rows[0].id != row.id:
+        raise HTTPException(status_code=409, detail="Other open installments require reconciliation")
     original = {
         "balance": str(parent.balance),
         "total_repayable": str(parent.total_repayable),
