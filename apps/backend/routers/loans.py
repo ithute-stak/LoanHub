@@ -92,6 +92,37 @@ class InstallmentArrearsRolloverRequest(BaseModel):
     agreement_reference: str | None = Field(default=None, max_length=180)
 
 
+class FinalRolloverTransferPlanRequest(BaseModel):
+    installment_id: UUID
+    approved_amount: Decimal
+    agreed_due_date: date
+    agreement_reference: str = Field(min_length=5, max_length=180)
+    approval_reference: str = Field(min_length=5, max_length=180)
+
+
+@router.post("/{loan_id}/installments/final-rollover-transfer-plan")
+def final_rollover_transfer_plan(
+    loan_id: UUID,
+    payload: FinalRolloverTransferPlanRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Validate a signed rollover and show a balanced transfer, without posting."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    from services.linked_rollover_transfer_plan import prepare_linked_rollover
+    from zoneinfo import ZoneInfo
+    from database.config.config import settings
+    return prepare_linked_rollover(
+        loan, payload.installment_id,
+        approved_amount=payload.approved_amount,
+        effective_due_date=payload.agreed_due_date,
+        agreement_reference=payload.agreement_reference,
+        approval_reference=payload.approval_reference,
+        as_of=datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date(),
+    )
+
+
 @router.get("/{loan_id}/installments/{installment_id}/final-rollover-preview")
 def preview_final_balance_rollover(
     loan_id: UUID,
