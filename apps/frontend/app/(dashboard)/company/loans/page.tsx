@@ -1448,7 +1448,7 @@ export default function CompanyLoansPage() {
                                                                     Pay installment
                                                                 </Button>
                                                             ) : null}
-                                                            {["company_owner", "company_admin"].includes(activeRole) && repaymentLoan && Number(item.paid_amount) > 0 && installmentOutstanding(item) > 0 && selectedLoan?.installments?.some((next) => !next.is_superseded && next.installment_number > item.installment_number && next.status !== "paid" && next.status !== "waived") ? (
+                                                            {(activeRole === "company_owner" || activeRole === "company_admin") && repaymentLoan && Number(item.paid_amount) > 0 && installmentOutstanding(item) > 0 && selectedLoan?.installments?.some((next) => !next.is_superseded && next.installment_number > item.installment_number && next.status !== "paid" && next.status !== "waived") ? (
                                                                 <Button type="button" size="sm" variant="outline" title="Management-approved transfer of the remaining balance to the next installment" onClick={() => void carryForwardInstallment(item)}>
                                                                     Carry balance forward
                                                                 </Button>
