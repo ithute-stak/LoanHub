@@ -24,7 +24,8 @@ import type {
 function normalizeLoanCurrentState(loan: Loan): Loan {
   const status = String(loan.status ?? "").toLowerCase();
   const balance = Number(loan.balance ?? 0);
-  const canBeCurrentlyOverdue = Number.isFinite(balance) && balance > 0 &&
+  const hasOutstandingBalance = Number.isFinite(balance) && balance > 0;
+  const canBeCurrentlyOverdue = hasOutstandingBalance &&
     (status === "active" || status === "defaulted");
   const localToday = [
     new Date().getFullYear(),
