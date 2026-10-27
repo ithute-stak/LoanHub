@@ -35,3 +35,10 @@ def test_owner_only_post_and_signed_terms():
     assert "post_final_rollover(" in section
     assert "agreement_reference=payload.agreement_reference" in section
     assert "approval_reference=payload.approval_reference" in section
+
+
+def test_parent_repayment_reversal_blocked_after_linked_rollover():
+    loan_service = (ROOT / "apps/backend/services/loan_service.py").read_text()
+    reversal = loan_service.split("def reverse_loan_payment(", 1)[1]
+    assert 'get("linked_rollover_out")' in reversal
+    assert reversal.index('get("linked_rollover_out")') < reversal.index("db.query(PaymentAllocation)")
