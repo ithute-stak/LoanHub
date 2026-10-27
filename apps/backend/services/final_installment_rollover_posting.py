@@ -43,6 +43,14 @@ def post_final_rollover(
     ).all()
     if children:
         raise HTTPException(status_code=409, detail="A linked facility already exists for this parent loan")
+    # Prevent an unapproved second-generation linked rollover, or transferring
+    # a loan carrying active payroll deductions without mandate migration.
+    if parent.parent_loan_id is not None:
+        raise HTTPException(status_code=409, detail="Chained rollover facilities require manual reconciliation")
+    if parent.cdas_collection_enabled:
+        raise HTTPException(status_code=409, detail="Active CDAS collection must be migrated and approved before rollover")
+    if (parent.calculation_breakdown or {}).get("linked_rollover_out"):
+        raise HTTPException(status_code=409, detail="This loan has already been transferred")
     plan = prepare_linked_rollover(
         parent, installment_id, approved_amount=approved_amount,
         effective_due_date=due_date, agreement_reference=agreement_reference,
