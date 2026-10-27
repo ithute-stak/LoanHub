@@ -296,3 +296,5 @@ from database.models.legacy_bank_deduction import LegacyBankDeduction
 from database.models.pad_signing import ContractPadSigningSession, ContractPadCaptureEvidence
 
 from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow
+
+from database.models.loan_rollover_transfer import LoanRolloverTransfer
