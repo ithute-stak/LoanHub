@@ -86,6 +86,39 @@ class LastPaymentReversalRequest(BaseModel):
     reason: str = Field(min_length=12, max_length=500)
 
 
+class InstallmentArrearsRolloverRequest(BaseModel):
+    installment_id: UUID
+    approval_reason: str = Field(min_length=12, max_length=500)
+    agreement_reference: str | None = Field(default=None, max_length=180)
+
+
+@router.post("/{loan_id}/installments/carry-forward")
+def carry_installment_balance(
+    loan_id: UUID,
+    payload: InstallmentArrearsRolloverRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Management-authorised transfer of a partial-payment remainder to the next due date."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(ClientCompanyLoan.id == loan_id, ClientCompanyLoan.company_id == context.company_id)
+        .with_for_update()
+        .first()
+    )
+    if loan is None:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    assert_tenant_loan(context, loan)
+    from services.installment_arrears_rollover_service import carry_installment_shortfall
+    return carry_installment_shortfall(
+        db, loan=loan, installment_id=payload.installment_id,
+        actor_user_id=context.user.id, actor_role=context.role.value,
+        reason=payload.approval_reason,
+        agreement_reference=payload.agreement_reference,
+    )
+
+
 @router.get("/{loan_id}/repayments/last")
 def get_last_repayment_for_reversal(
     loan_id: UUID,
