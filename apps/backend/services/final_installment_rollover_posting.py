@@ -51,6 +51,23 @@ def post_final_rollover(
     validate_rollover_receivable_transfer(plan=plan, parent_outstanding=parent.balance)
     row = next(i for i in parent.installments if i.id == installment_id)
     outstanding = Decimal(plan["approved_transfer_amount"])
+    # Preserve the principal / earned-interest / fee distinction.
+    # Do not transform outstanding charges into new loan principal.
+    components = [
+        Decimal(str(row.principal_due or 0)),
+        Decimal(str(row.interest_due or 0)),
+        Decimal(str(row.fee_due or 0)),
+    ]
+    if sum(components) != Decimal(str(row.total_due)):
+        raise HTTPException(status_code=409, detail="Source installment components do not reconcile")
+    portions = [Decimal("0"), Decimal("0"), Decimal("0")]
+    remainder = outstanding
+    for idx in (2, 1, 0):
+        portions[idx] = min(components[idx], remainder)
+        remainder -= portions[idx]
+    if remainder:
+        raise HTTPException(status_code=409, detail="Transferred components do not reconcile")
+    carried_principal, carried_interest, carried_fees = portions
     if len([i for i in parent.installments if not i.is_superseded]) != 1:
         # Historical fully paid installments are fine; the final row must be
         # the only *open* row.
@@ -72,7 +89,7 @@ def post_final_rollover(
         borrower_id=parent.borrower_id, parent_loan_id=parent.id,
         loan_reference=generate_loan_reference(db, parent.company),
         origination_channel="balance_rollover",
-        is_top_up=False, principal_amount=outstanding,
+        is_top_up=False, principal_amount=carried_principal,
         interest_rate=Decimal("0"), processing_fee=Decimal("0"),
         total_repayable=outstanding,
         repayment_type=parent.repayment_type, repayment_period=1,
@@ -82,6 +99,7 @@ def post_final_rollover(
                 "parent_loan_id": str(parent.id), "source_installment_id": str(row.id),
                 "signed_agreement": agreement_reference,
                 "credit_approval": approval_reference, "transferred_amount": str(outstanding),
+                "transferred_components": {"principal": str(carried_principal), "interest": str(carried_interest), "fees": str(carried_fees)},
                 "parent_terms": {
                     "interest_rate": str(parent.interest_rate),
                     "repayment_type": parent.repayment_type.value,
@@ -93,8 +111,8 @@ def post_final_rollover(
             },
             "schedule_rows": [{
                 "installment_number": 1, "due_date": due_date.isoformat(),
-                "principal_due": str(outstanding), "interest_due": "0.00",
-                "fee_due": "0.00", "total_due": str(outstanding),
+                "principal_due": str(carried_principal), "interest_due": str(carried_interest),
+                "fee_due": str(carried_fees), "total_due": str(outstanding),
             }],
         },
         cdas_collection_enabled=False, cdas_collection_plan={},
@@ -109,8 +127,8 @@ def post_final_rollover(
     db.flush()  # Allocates distinct folio through existing loan before_insert hook.
     db.add(RepaymentInstallment(
         loan_id=child.id, installment_number=1, due_date=due_date,
-        principal_due=outstanding, interest_due=Decimal("0"),
-        fee_due=Decimal("0"), total_due=outstanding, paid_amount=Decimal("0"),
+        principal_due=carried_principal, interest_due=carried_interest,
+        fee_due=carried_fees, total_due=outstanding, paid_amount=Decimal("0"),
         status=InstallmentStatus.PENDING,
     ))
     # Historical allocations and installment components remain untouched; the
@@ -118,7 +136,7 @@ def post_final_rollover(
     row.is_superseded = True
     row.superseded_at = now
     parent.balance = Decimal("0")
-    parent.total_repayable = parent.amount_paid
+    # Preserve original contractual total; the transfer is separately tracked.
     parent.status = LoanStatus.COMPLETED
     parent.is_overdue = False
     previous = dict(parent.calculation_breakdown or {})
@@ -137,7 +155,7 @@ def post_final_rollover(
         description=f"Transferred {outstanding} outstanding receivable from {parent.loan_reference} to {child.loan_reference}; no cash disbursed",
         before_data=original,
         after_data={"parent_balance": "0.00", "child_loan_id": str(child.id), "child_balance": str(outstanding)},
-        changed_fields=["balance", "status", "total_repayable"],
+        changed_fields=["balance", "status", "calculation_breakdown"],
         event_data={"child_loan_id": str(child.id), "source_installment_id": str(row.id), "amount": str(outstanding),
                     "signed_agreement": agreement_reference, "credit_approval": approval_reference,
                     "no_cash_movement": True, "net_receivable_change": "0.00"},
