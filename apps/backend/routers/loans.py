@@ -108,6 +108,8 @@ def post_final_rollover_transfer(
     context: TenantContext = Depends(get_tenant_context),
 ):
     """Management-authorized atomic, non-cash receivable transfer."""
+    # Fail closed until ledger/subledger and rollback integration tests are complete.
+    raise HTTPException(status_code=503, detail="Final installment rollover posting is disabled pending accounting reconciliation and database transaction certification")
     require_tenant_roles(context, {UserRole.COMPANY_OWNER})
     loan = _tenant_loan_or_404(db, context, loan_id)
     if not loan:
