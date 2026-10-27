@@ -100,6 +100,30 @@ class FinalRolloverTransferPlanRequest(BaseModel):
     approval_reference: str = Field(min_length=5, max_length=180)
 
 
+@router.post("/{loan_id}/installments/final-rollover-post")
+def post_final_rollover_transfer(
+    loan_id: UUID,
+    payload: FinalRolloverTransferPlanRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Management-authorized atomic, non-cash receivable transfer."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER})
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    from services.final_installment_rollover_posting import post_final_rollover
+    return post_final_rollover(
+        db, company_id=context.company_id, parent_id=loan_id,
+        installment_id=payload.installment_id, approved_amount=payload.approved_amount,
+        due_date=payload.agreed_due_date,
+        agreement_reference=payload.agreement_reference,
+        approval_reference=payload.approval_reference,
+        actor_user_id=context.user.id, actor_role=context.role.value,
+        as_of=datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date(),
+    )
+
+
 @router.post("/{loan_id}/installments/final-rollover-transfer-plan")
 def final_rollover_transfer_plan(
     loan_id: UUID,
