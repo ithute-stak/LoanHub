@@ -87,6 +87,12 @@ def _schedule_rows(loan: ClientCompanyLoan) -> list[dict[str, Any]]:
             number = int(item.get("installment_number") or 0)
             if number in actual_due_dates:
                 item["due_date"] = actual_due_dates[number]
+            # The approved schedule can change after origination (for example,
+            # a controlled shortfall rollover). Never print stale snapshot dues.
+            actual = next((inst for inst in loan.installments if inst.installment_number == number and not inst.is_superseded), None)
+            if actual is not None:
+                for field in ("principal_due", "interest_due", "fee_due", "total_due"):
+                    item[field] = str(getattr(actual, field))
             merged.append(item)
         return merged
 
