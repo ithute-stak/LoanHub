@@ -132,7 +132,7 @@ function unresolvedAgeLabel(operation: CdasLedgerOperation): string | null {
   const hours = Math.max(0, Math.floor((Date.now() - timestamp) / 3600000));
   if (hours < 24) return null;
   const days = Math.floor(hours / 24);
-  return days >= 1 ? "Unresolved for " + days + " day" + (days === 1 ? "" : "s") : null;
+  return days >= 1 ? "Open operation created " + days + " day" + (days === 1 ? "" : "s") + " ago" : null;
 }
 
 function money(value: string | number | null | undefined) {
