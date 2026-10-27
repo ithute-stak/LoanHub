@@ -92,6 +92,15 @@ class InstallmentArrearsRolloverRequest(BaseModel):
     agreement_reference: str | None = Field(default=None, max_length=180)
 
 
+class FinalRolloverPostRequest(BaseModel):
+    installment_id: UUID
+    approved_amount: Decimal
+    agreed_due_date: date
+    agreement_reference: str = Field(min_length=5, max_length=180)
+    approval_reference: str = Field(min_length=5, max_length=180)
+    component_evidence: dict | None = None
+
+
 class FinalRolloverTransferPlanRequest(BaseModel):
     installment_id: UUID
     approved_amount: Decimal
@@ -103,7 +112,7 @@ class FinalRolloverTransferPlanRequest(BaseModel):
 @router.post("/{loan_id}/installments/final-rollover-post")
 def post_final_rollover_transfer(
     loan_id: UUID,
-    payload: FinalRolloverTransferPlanRequest,
+    payload: FinalRolloverPostRequest,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
@@ -121,6 +130,7 @@ def post_final_rollover_transfer(
         due_date=payload.agreed_due_date,
         agreement_reference=payload.agreement_reference,
         approval_reference=payload.approval_reference,
+        component_evidence=payload.component_evidence,
         actor_user_id=context.user.id, actor_role=context.role.value,
         as_of=datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date(),
     )
