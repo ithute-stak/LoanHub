@@ -79,3 +79,10 @@ def test_balance_conservation_checked_after_flush_before_commit():
 def test_internal_posting_service_is_also_disabled():
     service_body = POSTING.split("def post_final_rollover(", 1)[1]
     assert service_body.index('status_code=503') < service_body.index(".with_for_update()")
+
+
+def test_posting_service_compiles_and_service_gate_is_present():
+    # Source-text assertions alone can pass even when Python cannot parse the file.
+    compile(POSTING, str(ROOT / "apps/backend/services/final_installment_rollover_posting.py"), "exec")
+    function = POSTING.split("def post_final_rollover(", 1)[1]
+    assert function.index("status_code=503") < function.index(".with_for_update()")
