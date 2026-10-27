@@ -68,3 +68,9 @@ def test_component_evidence_is_wired_to_posting_but_endpoint_stays_disabled():
     assert "class FinalRolloverPostRequest(BaseModel):" in ROUTER
     endpoint = ROUTER.split("def post_final_rollover_transfer(", 1)[1].split('@router.post("/{loan_id}/installments/final-rollover-transfer-plan")', 1)[0]
     assert endpoint.index("status_code=503") < endpoint.index("post_final_rollover(")
+
+
+def test_balance_conservation_checked_after_flush_before_commit():
+    assert POSTING.index("db.flush()\n    if Decimal(str(parent.balance))") < POSTING.index("db.commit()")
+    assert "Decimal(str(parent.balance)) + Decimal(str(child.balance)) != outstanding" in POSTING
+    assert "child.parent_loan_id != parent.id" in POSTING
