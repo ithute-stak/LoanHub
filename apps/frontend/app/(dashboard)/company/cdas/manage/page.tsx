@@ -46,6 +46,7 @@ type CdasLedgerOperation = {
   actor_name: string | null;
   requires_reconciliation: boolean;
   created_at: string | null;
+  reconciliation_required_at?: string | null;
   error_message: string | null;
   provider_status_code?: number | null;
   submitted_at?: string | null;
@@ -126,13 +127,18 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function unresolvedAgeLabel(operation: CdasLedgerOperation): string | null {
-  if (!operation.requires_reconciliation || !operation.created_at) return null;
-  const timestamp = Date.parse(operation.created_at);
+  if (!operation.requires_reconciliation) return null;
+  const measuredFromReconciliation = Boolean(operation.reconciliation_required_at);
+  const recordedAt = operation.reconciliation_required_at || operation.created_at;
+  if (!recordedAt) return null;
+  const timestamp = Date.parse(recordedAt);
   if (!Number.isFinite(timestamp)) return null;
   const hours = Math.max(0, Math.floor((Date.now() - timestamp) / 3600000));
   if (hours < 24) return null;
   const days = Math.floor(hours / 24);
-  return days >= 1 ? "Open operation created " + days + " day" + (days === 1 ? "" : "s") + " ago" : null;
+  return measuredFromReconciliation
+    ? "Reconciliation required for " + days + " day" + (days === 1 ? "" : "s")
+    : "Open operation created " + days + " day" + (days === 1 ? "" : "s") + " ago";
 }
 
 function money(value: string | number | null | undefined) {
@@ -462,6 +468,7 @@ export default function CdasManagePage() {
                 <div><dt className="text-muted-foreground">Provider HTTP status</dt><dd>{reviewedOperation.provider_status_code ?? "Unavailable"}</dd></div>
                 <div><dt className="text-muted-foreground">Submitted</dt><dd>{reviewedOperation.submitted_at ? new Date(reviewedOperation.submitted_at).toLocaleString() : "Not recorded"}</dd></div>
                 <div><dt className="text-muted-foreground">Completed</dt><dd>{reviewedOperation.completed_at ? new Date(reviewedOperation.completed_at).toLocaleString() : "Not recorded"}</dd></div>
+                <div><dt className="text-muted-foreground">Reconciliation required since</dt><dd>{reviewedOperation.reconciliation_required_at ? new Date(reviewedOperation.reconciliation_required_at).toLocaleString() : "Not recorded (legacy operation)"}</dd></div>
                 <div><dt className="text-muted-foreground">Reconciled</dt><dd>{reviewedOperation.reconciled_at ? new Date(reviewedOperation.reconciled_at).toLocaleString() : "Not recorded"}</dd></div>
                 <div><dt className="text-muted-foreground">Last updated</dt><dd>{reviewedOperation.updated_at ? new Date(reviewedOperation.updated_at).toLocaleString() : "Not recorded"}</dd></div>
               </dl>
