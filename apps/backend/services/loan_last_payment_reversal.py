@@ -124,6 +124,15 @@ def reverse_latest_cash_repayment(
     if treasury_entry.is_voided:
         raise HTTPException(status_code=409, detail="Treasury entry was previously voided")
 
+    # An approved carry-forward rewrites schedule dues. Reversing a payment
+    # afterwards requires unwinding the rollover first, including its audit trail.
+    # Do not silently reopen a settled-by-rollover installment.
+    if (loan.calculation_breakdown or {}).get("installment_carry_forward_history"):
+        raise HTTPException(
+            status_code=409,
+            detail="This loan has an approved installment carry-forward; reverse the restructuring before reversing payments",
+        )
+
     before_balance = str(loan.balance)
     before_paid = str(loan.amount_paid)
     try:
