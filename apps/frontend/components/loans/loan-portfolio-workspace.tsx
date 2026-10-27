@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 
 import {branchApi} from "@/api/branch";
-import {downloadBankSubmissionsZip, downloadOverduePortfolioPdf} from "@/api/loans";
+import {downloadBankSubmissionsZip, downloadOverduePortfolioPdf, downloadMonthlyLoanPaymentsPdf} from "@/api/loans";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
@@ -374,6 +374,11 @@ export function LoanPortfolioWorkspace({
     const [expanded, setExpanded] = useState(false);
     const [exportingBankZip, setExportingBankZip] = useState(false);
     const [exportingOverduePdf, setExportingOverduePdf] = useState(false);
+    const [reportMonth, setReportMonth] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    });
+    const [exportingMonthlyReport, setExportingMonthlyReport] = useState(false);
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
     const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
     const [page, setPage] = useState(1);
@@ -650,6 +655,26 @@ export function LoanPortfolioWorkspace({
         }
     }
 
+    async function downloadMonthlyReport() {
+        setExportingMonthlyReport(true);
+        try {
+            const blob = await downloadMonthlyLoanPaymentsPdf(reportMonth);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `loanhub-monthly-payments-${reportMonth}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+            console.error("Monthly loan payment report failed", error);
+            window.alert("Could not generate the monthly payments report. Please check your access and try again.");
+        } finally {
+            setExportingMonthlyReport(false);
+        }
+    }
+
     async function downloadOverdueReport() {
         const ids = filteredRows.filter((row) => row.loan.is_overdue).map((row) => row.loan.id);
         if (ids.length === 0) return;
@@ -714,6 +739,13 @@ export function LoanPortfolioWorkspace({
                     </div>
                     <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
                         {searchControl}
+                        <label className="flex shrink-0 items-center gap-2 text-xs font-medium" aria-label="Payment report month">
+                            <span className="whitespace-nowrap">Payment month</span>
+                            <Input aria-label="Select payment report month" type="month" value={reportMonth} onChange={(event) => setReportMonth(event.target.value)} className="h-9 w-37 rounded-xl" />
+                        </label>
+                        <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingMonthlyReport || !reportMonth} onClick={() => void downloadMonthlyReport()}>
+                            <FileText className="size-4"/>{exportingMonthlyReport ? "Generating PDF..." : "Monthly payments PDF"}
+                        </Button>
                         <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingOverduePdf || !filteredRows.some((row) => row.loan.is_overdue)} onClick={() => void downloadOverdueReport()}>
                             <FileText className="size-4"/>{exportingOverduePdf ? "Generating PDF..." : "Overdue PDF"}
                         </Button>
