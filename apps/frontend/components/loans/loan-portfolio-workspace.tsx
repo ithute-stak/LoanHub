@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 
 import {branchApi} from "@/api/branch";
-import {downloadBankSubmissionsZip, downloadOverduePortfolioPdf, downloadMonthlyLoanPaymentsPdf} from "@/api/loans";
+import {downloadBankSubmissionsZip, downloadOverduePortfolioPdf, downloadMonthlyLoanPaymentsPdf, downloadLoanCashStatementPdf} from "@/api/loans";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
@@ -379,6 +379,12 @@ export function LoanPortfolioWorkspace({
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     });
     const [exportingMonthlyReport, setExportingMonthlyReport] = useState(false);
+    const [statementPeriod, setStatementPeriod] = useState<"weekly" | "monthly">("monthly");
+    const [statementDate, setStatementDate] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    });
+    const [exportingStatement, setExportingStatement] = useState(false);
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
     const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
     const [page, setPage] = useState(1);
@@ -655,6 +661,26 @@ export function LoanPortfolioWorkspace({
         }
     }
 
+    async function downloadAccountingStatement() {
+        setExportingStatement(true);
+        try {
+            const blob = await downloadLoanCashStatementPdf(statementPeriod, statementDate);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `loanhub-loan-statement-${statementPeriod}-${statementDate}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+            console.error("Loan accounting statement error", error);
+            window.alert("Could not generate the loan statement. Verify the reporting period and your access.");
+        } finally {
+            setExportingStatement(false);
+        }
+    }
+
     async function downloadMonthlyReport() {
         setExportingMonthlyReport(true);
         try {
@@ -743,6 +769,14 @@ export function LoanPortfolioWorkspace({
                             <span className="whitespace-nowrap">Payment month</span>
                             <Input aria-label="Select payment report month" type="month" value={reportMonth} onChange={(event) => setReportMonth(event.target.value)} className="h-9 w-37 rounded-xl" />
                         </label>
+                        <Select value={statementPeriod} onValueChange={(value) => setStatementPeriod(value as "weekly" | "monthly")}>
+                            <SelectTrigger aria-label="Statement period" className="h-9 w-28 rounded-xl"><SelectValue/></SelectTrigger>
+                            <SelectContent><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
+                        </Select>
+                        <Input aria-label="Statement date" type="date" value={statementDate} onChange={(event) => setStatementDate(event.target.value)} className="h-9 w-40 shrink-0 rounded-xl" />
+                        <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingStatement || !statementDate} onClick={() => void downloadAccountingStatement()}>
+                            <FileText className="size-4"/>{exportingStatement ? "Generating..." : "Accounting statement PDF"}
+                        </Button>
                         <Button variant="outline" className="shrink-0 rounded-xl" disabled={exportingMonthlyReport || !reportMonth} onClick={() => void downloadMonthlyReport()}>
                             <FileText className="size-4"/>{exportingMonthlyReport ? "Generating PDF..." : "Monthly payments PDF"}
                         </Button>
