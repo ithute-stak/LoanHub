@@ -902,7 +902,7 @@ def list_loans(
 
 @router.get("/reports/monthly-payments.pdf")
 def monthly_loan_payments_pdf(
-    month: str = Query(..., pattern=r"^\\d{4}-(0[1-9]|1[0-2])$"),
+    month: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
