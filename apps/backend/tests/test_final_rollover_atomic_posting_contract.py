@@ -49,3 +49,14 @@ def test_parent_repayment_reversal_blocked_after_linked_rollover():
 def test_only_one_open_installment_can_be_transferred():
     assert "if len(open_rows) != 1 or open_rows[0].id != row.id:" in POSTING
     assert 'detail="Other open installments require reconciliation"' in POSTING
+
+
+def test_cdas_and_chained_rollovers_fail_closed():
+    assert "if parent.parent_loan_id is not None:" in POSTING
+    assert "if parent.cdas_collection_enabled:" in POSTING
+    assert 'get("linked_rollover_out")' in POSTING
+
+def test_financial_posting_route_remains_disabled():
+    section = ROUTER.split("def post_final_rollover_transfer(", 1)[1].split('@router.post("/{loan_id}/installments/final-rollover-transfer-plan")', 1)[0]
+    assert 'status_code=503' in section
+    assert section.index('status_code=503') < section.index("post_final_rollover(")
