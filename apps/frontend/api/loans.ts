@@ -21,12 +21,12 @@ import type {
 } from "@/types/loan";
 
 /** Current delinquency is based on outstanding scheduled installments, not stale status flags. */
-export function normalizeLoanCurrentState(loan: Loan, today?: string): Loan {
+function normalizeLoanCurrentState(loan: Loan): Loan {
   const status = String(loan.status ?? "").toLowerCase();
   const balance = Number(loan.balance ?? 0);
   const canBeCurrentlyOverdue = Number.isFinite(balance) && balance > 0 &&
     (status === "active" || status === "defaulted");
-  const localToday = today ?? [
+  const localToday = [
     new Date().getFullYear(),
     String(new Date().getMonth() + 1).padStart(2, "0"),
     String(new Date().getDate()).padStart(2, "0"),
