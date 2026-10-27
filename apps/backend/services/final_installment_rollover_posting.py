@@ -58,7 +58,13 @@ def post_final_rollover(
     approval_reference: str, actor_user_id: UUID, actor_role: str, as_of,
     component_evidence: dict | None = None,
 ) -> dict:
-    # Defense in depth: this unfinished financial operation must not be callable\n    # from another internal service while the HTTP route is disabled.\n    raise HTTPException(\n        status_code=503,\n        detail="Final rollover posting is disabled until PostgreSQL and accounting certification",\n    )\n    # Lock the parent before reading children/schedules, serializing concurrent
+    # Defense in depth: this unfinished financial operation must not be callable
+    # from another internal service while the HTTP route is disabled.
+    raise HTTPException(
+        status_code=503,
+        detail="Final rollover posting is disabled until PostgreSQL and accounting certification",
+    )
+    # Lock the parent before reading children/schedules, serializing concurrent
     # posting requests. The parent lock is always acquired before any writes.
     parent = (
         db.query(ClientCompanyLoan)
