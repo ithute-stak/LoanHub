@@ -900,6 +900,37 @@ def list_loans(
     return query.order_by(ClientCompanyLoan.created_at.desc()).offset(skip).limit(limit).all()
 
 
+@router.get("/reports/loan-cash-statement.pdf")
+def loan_cash_statement_pdf(
+    period: str = Query(..., pattern="^(weekly|monthly)$"),
+    start: date = Query(...),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Scoped company loan cash-movement statement for a calendar week or month."""
+    from datetime import timedelta, timezone
+    from database.models.company import LoanCompany
+    from services.loan_period_statement_service import statement_ledger, build_period_statement
+
+    require_tenant_roles(context, CASHIER_ROLES | LENDING_ROLES | FINANCE_ROLES | COMPANY_MANAGEMENT_ROLES)
+    zone = ZoneInfo(settings.APP_TIMEZONE)
+    if period == "weekly":
+        first = start - timedelta(days=start.weekday())
+        last = first + timedelta(days=7)
+        period_label = f"Week {first.isoformat()} to {(last - timedelta(days=1)).isoformat()}"
+    else:
+        first = start.replace(day=1)
+        last = first.replace(year=first.year + 1, month=1) if first.month == 12 else first.replace(month=first.month + 1)
+        period_label = first.strftime("%B %Y")
+    begin_utc = datetime.combine(first, time.min, tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = datetime.combine(last, time.min, tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+    branch_id = context.branch_id if context.role not in COMPANY_MANAGEMENT_ROLES else None
+    postings = statement_ledger(db, company_id=context.company_id, branch_id=branch_id, start_utc=begin_utc, end_utc=end_utc)
+    pdf = build_period_statement(db, company=db.get(LoanCompany, context.company_id), period=period_label,
+                                 start_utc=begin_utc, end_utc=end_utc, payments=postings, timezone_name=settings.APP_TIMEZONE)
+    return _pdf_response(pdf, f"loanhub-loan-cash-statement-{period}-{first.isoformat()}.pdf")
+
+
 @router.get("/reports/monthly-payments.pdf")
 def monthly_loan_payments_pdf(
     month: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
