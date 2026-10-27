@@ -92,12 +92,48 @@ class InstallmentArrearsRolloverRequest(BaseModel):
     agreement_reference: str | None = Field(default=None, max_length=180)
 
 
+class FinalRolloverPostRequest(BaseModel):
+    installment_id: UUID
+    approved_amount: Decimal
+    agreed_due_date: date
+    agreement_reference: str = Field(min_length=5, max_length=180)
+    approval_reference: str = Field(min_length=5, max_length=180)
+    component_evidence: dict | None = None
+
+
 class FinalRolloverTransferPlanRequest(BaseModel):
     installment_id: UUID
     approved_amount: Decimal
     agreed_due_date: date
     agreement_reference: str = Field(min_length=5, max_length=180)
     approval_reference: str = Field(min_length=5, max_length=180)
+
+
+@router.post("/{loan_id}/installments/final-rollover-post")
+def post_final_rollover_transfer(
+    loan_id: UUID,
+    payload: FinalRolloverPostRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Management-authorized atomic, non-cash receivable transfer."""
+    # Fail closed until ledger/subledger and rollback integration tests are complete.
+    raise HTTPException(status_code=503, detail="Final installment rollover posting is disabled pending accounting reconciliation and database transaction certification")
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER})
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    from services.final_installment_rollover_posting import post_final_rollover
+    return post_final_rollover(
+        db, company_id=context.company_id, parent_id=loan_id,
+        installment_id=payload.installment_id, approved_amount=payload.approved_amount,
+        due_date=payload.agreed_due_date,
+        agreement_reference=payload.agreement_reference,
+        approval_reference=payload.approval_reference,
+        component_evidence=payload.component_evidence,
+        actor_user_id=context.user.id, actor_role=context.role.value,
+        as_of=datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date(),
+    )
 
 
 @router.post("/{loan_id}/installments/final-rollover-transfer-plan")
