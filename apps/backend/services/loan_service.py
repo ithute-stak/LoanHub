@@ -1234,7 +1234,7 @@ def reverse_loan_payment(db: Session, payment: PaymentTransaction) -> None:
         return
 
     if payment.purpose in {PaymentPurpose.LOAN_REPAYMENT, PaymentPurpose.DIRECT_DEBIT}:
-        if (loan.calculation_breakdown or {}).get("installment_carry_forward_history"):
+        if (loan.calculation_breakdown or {}).get("installment_carry_forward_history") or (loan.calculation_breakdown or {}).get("linked_rollover_out"):
             raise HTTPException(
                 status_code=409,
                 detail="An approved installment carry-forward exists. Reverse the restructuring before reversing historical repayments.",
