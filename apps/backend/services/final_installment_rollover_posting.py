@@ -33,6 +33,14 @@ def split_rollover_components(*, principal, interest, fees, total_due, paid_amou
     unpaid = full - Decimal(str(paid_amount))
     if full != sum(values) or unpaid <= 0 or any(v < 0 for v in values):
         raise HTTPException(status_code=409, detail="Source installment components do not reconcile")
+    # The repayment allocation table records only installment-level amounts,
+    # not principal/interest/fee allocation. For mixed-component partial
+    # payments, no valid residual classification can be inferred from totals.
+    if Decimal(str(paid_amount)) > 0 and sum(v > 0 for v in values) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Mixed principal/interest/fee partial repayment requires an authoritative component allocation ledger",
+        )
     remaining = unpaid
     result = [Decimal("0"), Decimal("0"), Decimal("0")]
     for idx in (2, 1, 0):
