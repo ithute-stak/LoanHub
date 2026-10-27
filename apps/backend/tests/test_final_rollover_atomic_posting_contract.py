@@ -10,12 +10,14 @@ def test_posting_is_serialized_and_debt_neutral():
     assert ".with_for_update()" in POSTING
     assert "ClientCompanyLoan.parent_loan_id == parent_id" in POSTING
     assert "validate_rollover_receivable_transfer(plan=plan" in POSTING
-    assert 'principal_amount=outstanding' in POSTING
+    assert 'principal_amount=carried_principal' in POSTING
     assert 'interest_rate=Decimal("0")' in POSTING
     assert 'processing_fee=Decimal("0")' in POSTING
     assert 'total_repayable=outstanding' in POSTING
     assert 'parent.balance = Decimal("0")' in POSTING
-    assert 'parent.total_repayable = parent.amount_paid' in POSTING
+    assert 'parent.total_repayable = parent.amount_paid' not in POSTING
+    assert 'carried_principal, carried_interest, carried_fees = portions' in POSTING
+    assert 'principal_due=carried_principal, interest_due=carried_interest' in POSTING
     assert "row.is_superseded = True" in POSTING
     assert "db.commit()" in POSTING
     assert "PaymentTransaction(" not in POSTING
