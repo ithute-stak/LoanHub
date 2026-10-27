@@ -907,7 +907,7 @@ def monthly_loan_payments_pdf(
     context: TenantContext = Depends(get_tenant_context),
 ):
     """Print actual confirmed loan repayments for a company and selected month."""
-    from datetime import timedelta, timezone
+    from datetime import timezone
     from zoneinfo import ZoneInfo
 
     from database.models.enums import PaymentDirection, PaymentPurpose
@@ -940,10 +940,8 @@ def monthly_loan_payments_pdf(
     if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
         payments_query = payments_query.filter(ClientCompanyLoan.branch_id == context.branch_id)
     rows = payments_query.order_by(PaymentTransaction.completed_at, PaymentTransaction.id).all()
-    company = db.get(type(context.company), context.company_id) if getattr(context, "company", None) is not None else None
-    if company is None:
-        from database.models.company import LoanCompany
-        company = db.get(LoanCompany, context.company_id)
+    from database.models.company import LoanCompany
+    company = db.get(LoanCompany, context.company_id)
     pdf = render_monthly_loan_payments(
         db, company=company, month=month, payments=rows,
         timezone_name=settings.APP_TIMEZONE,
