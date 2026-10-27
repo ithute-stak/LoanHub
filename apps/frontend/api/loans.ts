@@ -419,3 +419,15 @@ export async function reverseLastLoanRepayment(
     `/loans/${loanId}/repayments/last/reverse`, payload,
   )).data;
 }
+
+/** Company/branch-scoped PDF of confirmed borrower repayments in a calendar month. */
+export async function downloadMonthlyLoanPaymentsPdf(month: string): Promise<Blob> {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    throw new Error("Select a valid reporting month.");
+  }
+  const response = await api.get<Blob>(
+    `/loans/reports/monthly-payments.pdf?month=${encodeURIComponent(month)}`,
+    { responseType: "blob" },
+  );
+  return response.data;
+}
