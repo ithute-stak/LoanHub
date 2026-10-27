@@ -241,6 +241,15 @@ export default function CdasManagePage() {
       await loadLedger(ledgerFilter, ledgerOffset, appliedLedgerSearch, true);
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "Read-only CDAS reconciliation could not be completed."));
+      // The backend may have persisted a reconciliation failure before returning
+      // the provider error. Refresh local audit state without another CDAS call.
+      try {
+        const latest = await api.get<CdasLedgerOperation>("/cdas/operations/" + encodeURIComponent(operationId));
+        setReviewedOperation(latest.data);
+        await loadLedger(ledgerFilter, ledgerOffset, appliedLedgerSearch, true);
+      } catch {
+        // Keep the original provider failure visible even if audit refresh fails.
+      }
     } finally {
       setReviewLoading(false);
     }
