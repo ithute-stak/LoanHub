@@ -110,6 +110,21 @@ def final_rollover_transfer_plan(
     """Validate a signed rollover and show a balanced transfer, without posting."""
     require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
     loan = _tenant_loan_or_404(db, context, loan_id)
+    # Parent-to-child rollover must be unique: even the planning endpoint
+    # rejects parents that already have a linked facility.
+    existing_child = (
+        db.query(ClientCompanyLoan.id)
+        .filter(
+            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.parent_loan_id == loan.id,
+        )
+        .first()
+    )
+    if existing_child is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A linked child facility already exists for this loan; reconcile it before another rollover",
+        )
     from services.linked_rollover_transfer_plan import prepare_linked_rollover
     from zoneinfo import ZoneInfo
     from database.config.config import settings
