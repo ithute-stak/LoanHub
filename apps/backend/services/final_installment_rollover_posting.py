@@ -21,6 +21,7 @@ from database.models.repayment import RepaymentInstallment
 from services.linked_rollover_transfer_plan import prepare_linked_rollover
 from services.rollover_receivable_reconciliation import validate_rollover_receivable_transfer
 from services.loan_service import generate_loan_reference
+from services.rollover_component_evidence import verify_component_allocation_evidence
 
 def split_rollover_components(*, principal, interest, fees, total_due, paid_amount):
     """Allocate historical payments to principal first; preserve unpaid charge types.
@@ -55,6 +56,7 @@ def post_final_rollover(
     db: Session, *, company_id: UUID, parent_id: UUID, installment_id: UUID,
     approved_amount: Decimal, due_date, agreement_reference: str,
     approval_reference: str, actor_user_id: UUID, actor_role: str, as_of,
+    component_evidence: dict | None = None,
 ) -> dict:
     # Lock the parent before reading children/schedules, serializing concurrent
     # posting requests. The parent lock is always acquired before any writes.
@@ -90,10 +92,24 @@ def post_final_rollover(
     outstanding = Decimal(plan["approved_transfer_amount"])
     # Preserve the principal / earned-interest / fee distinction.
     # Do not transform outstanding charges into new loan principal.
-    carried_principal, carried_interest, carried_fees = split_rollover_components(
-        principal=row.principal_due, interest=row.interest_due, fees=row.fee_due,
-        total_due=row.total_due, paid_amount=row.paid_amount,
+    # The original payment ledger does not establish the component waterfall.
+    # Require independently verified evidence for mixed-component schedules.
+    component_count = sum(
+        Decimal(str(value or 0)) > 0
+        for value in (row.principal_due, row.interest_due, row.fee_due)
     )
+    if component_count > 1:
+        verified = verify_component_allocation_evidence(
+            installment=row, evidence=component_evidence,
+        )
+        carried_principal = Decimal(verified["remaining_principal"])
+        carried_interest = Decimal(verified["remaining_interest"])
+        carried_fees = Decimal(verified["remaining_fees"])
+    else:
+        carried_principal, carried_interest, carried_fees = split_rollover_components(
+            principal=row.principal_due, interest=row.interest_due, fees=row.fee_due,
+            total_due=row.total_due, paid_amount=row.paid_amount,
+        )
     if sum((carried_principal, carried_interest, carried_fees)) != outstanding:
         raise HTTPException(status_code=409, detail="Component balance differs from approved transfer")
     # The transfer may only close the one remaining open installment. Paid
