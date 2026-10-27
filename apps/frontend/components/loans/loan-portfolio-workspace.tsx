@@ -763,8 +763,24 @@ export function LoanPortfolioWorkspace({
             </CardHeader>
             </StickyFilterBar>
             <CardContent className="overflow-hidden rounded-b-2xl p-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button size="sm" variant={filters.status === "active" ? "default" : "outline"} onClick={() => applyQuickFilter("active")}>Active</Button>
+                        <Button size="sm" variant={filters.overdue === "yes" ? "default" : "outline"} onClick={() => applyQuickFilter("overdue")}>Overdue</Button>
+                        <Button size="sm" variant={filters.dueWindow === "next_7" ? "default" : "outline"} onClick={() => applyQuickFilter("due7")}>Due in 7 days</Button>
+                        <Button size="sm" variant="outline" onClick={() => setExpanded(true)}><SlidersHorizontal className="size-4"/>Advanced filters</Button>
+                        <Button size="sm" variant="ghost" disabled={!activeFilterCount} onClick={resetFilters}><FilterX className="size-4"/>Clear filters</Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Label className="whitespace-nowrap text-xs">Rows per page</Label>
+                        <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
+                            <SelectTrigger aria-label="Rows per page" className="h-9 w-22"><SelectValue/></SelectTrigger>
+                            <SelectContent>{PAGE_SIZES.map((size) => <SelectItem key={size} value={String(size)}>{size}</SelectItem>)}</SelectContent>
+                        </Select>
+                    </div>
+                </div>
                 <LoanTable
-                    rows={filteredRows}
+                    rows={pageRows}
                     canDisburse={canDisburse}
                     signedContractRequired={signedContractRequired}
                     onOpenSchedule={onOpenSchedule}
@@ -773,6 +789,18 @@ export function LoanPortfolioWorkspace({
                     onStartCall={onStartCall}
                     compact
                 />
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
+                    <p className="text-sm text-muted-foreground">
+                        Showing {filteredRows.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + pageSize, filteredRows.length)} of {filteredRows.length} matching loans
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setPage(1)}>First</Button>
+                        <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft className="size-4"/>Previous</Button>
+                        <span className="whitespace-nowrap text-xs font-medium">Page {safePage} of {totalPages}</span>
+                        <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next<ChevronRight className="size-4"/></Button>
+                        <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setPage(totalPages)}>Last</Button>
+                    </div>
+                </div>
             </CardContent>
         </Card>
 
