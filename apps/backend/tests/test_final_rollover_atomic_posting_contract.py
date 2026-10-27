@@ -44,3 +44,8 @@ def test_parent_repayment_reversal_blocked_after_linked_rollover():
     reversal = loan_service.split("def reverse_loan_payment(", 1)[1]
     assert 'get("linked_rollover_out")' in reversal
     assert reversal.index('get("linked_rollover_out")') < reversal.index("db.query(PaymentAllocation)")
+
+
+def test_only_one_open_installment_can_be_transferred():
+    assert "if len(open_rows) != 1 or open_rows[0].id != row.id:" in POSTING
+    assert 'detail="Other open installments require reconciliation"' in POSTING
