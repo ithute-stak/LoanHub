@@ -74,3 +74,8 @@ def test_balance_conservation_checked_after_flush_before_commit():
     assert POSTING.index("db.flush()\n    if Decimal(str(parent.balance))") < POSTING.index("db.commit()")
     assert "Decimal(str(parent.balance)) + Decimal(str(child.balance)) != outstanding" in POSTING
     assert "child.parent_loan_id != parent.id" in POSTING
+
+
+def test_internal_posting_service_is_also_disabled():
+    service_body = POSTING.split("def post_final_rollover(", 1)[1]
+    assert service_body.index('status_code=503') < service_body.index(".with_for_update()")
