@@ -92,6 +92,20 @@ class InstallmentArrearsRolloverRequest(BaseModel):
     agreement_reference: str | None = Field(default=None, max_length=180)
 
 
+@router.get("/{loan_id}/installments/{installment_id}/final-rollover-preview")
+def preview_final_balance_rollover(
+    loan_id: UUID,
+    installment_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only proposal for a separately approved child facility."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    from services.final_installment_rollover_preview import preview_final_installment_rollover
+    return preview_final_installment_rollover(loan, installment_id)
+
+
 @router.post("/{loan_id}/installments/carry-forward")
 def carry_installment_balance(
     loan_id: UUID,
