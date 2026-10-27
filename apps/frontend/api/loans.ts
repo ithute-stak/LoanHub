@@ -431,3 +431,12 @@ export async function downloadMonthlyLoanPaymentsPdf(month: string): Promise<Blo
   );
   return response.data;
 }
+
+/** Scoped, auditable loan cash movement for a week or month. */
+export async function downloadLoanCashStatementPdf(period: "weekly" | "monthly", start: string): Promise<Blob> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) throw new Error("Invalid statement date.");
+  return (await api.get<Blob>(
+    `/loans/reports/loan-cash-statement.pdf?period=${period}&start=${encodeURIComponent(start)}`,
+    {responseType: "blob"},
+  )).data;
+}
