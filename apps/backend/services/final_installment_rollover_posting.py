@@ -207,6 +207,13 @@ def post_final_rollover(
                     "signed_agreement": agreement_reference, "credit_approval": approval_reference,
                     "no_cash_movement": True, "net_receivable_change": "0.00"},
     ))
+    # Flush and reconcile the persisted ORM balances before committing the
+    # transaction. A failed flush/validation is rolled back by the caller.
+    db.flush()
+    if Decimal(str(parent.balance)) + Decimal(str(child.balance)) != outstanding:
+        raise HTTPException(status_code=409, detail="The linked transfer does not conserve total receivables")
+    if child.parent_loan_id != parent.id or child.company_id != parent.company_id:
+        raise HTTPException(status_code=409, detail="The linked loan relationship is inconsistent")
     db.commit()
     return {"parent_loan_id": str(parent.id), "child_loan_id": str(child.id),
             "child_loan_reference": child.loan_reference, "child_folio": child.folio_number,
