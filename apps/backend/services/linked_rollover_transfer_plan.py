@@ -41,7 +41,7 @@ def prepare_linked_rollover(
     if any(getattr(row, "is_superseded", False) for row in loan.installments):
         raise HTTPException(status_code=409, detail="Superseded schedules require manual reconciliation")
 
-    return {
+    transfer = {
         **proposal,
         "approved_transfer_amount": str(confirmed),
         "agreed_due_date": effective_due_date.isoformat(),
@@ -55,5 +55,10 @@ def prepare_linked_rollover(
         "new_interest_or_fee": "0.00",
         "transfer_balances": True,
         "posting_enabled": False,
-        "posting_blocker": "Requires atomic parent-child receivable journal, immutable transfer record, and dedicated reversal workflow",
+        "posting_blocker": "Requires atomic parent-child subledger posting, immutable transfer record, and dedicated reversal workflow",
     }
+    from services.rollover_receivable_reconciliation import validate_rollover_receivable_transfer
+    transfer["receivable_reconciliation"] = validate_rollover_receivable_transfer(
+        plan=transfer, parent_outstanding=original_balance,
+    )
+    return transfer
