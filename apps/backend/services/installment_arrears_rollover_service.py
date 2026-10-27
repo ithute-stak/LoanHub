@@ -1,7 +1,10 @@
 """Controlled carry-forward of an installment shortfall without creating or extinguishing debt."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+from database.config.config import settings
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
@@ -78,7 +81,7 @@ def carry_installment_shortfall(
     current.status = InstallmentStatus.PAID
     current.paid_at = datetime.now(timezone.utc)
     loan.is_overdue = any(
-        i.due_date < date.today() and cents(i.total_due) > cents(i.paid_amount)
+        i.due_date < datetime.now(ZoneInfo(settings.APP_TIMEZONE)).date() and cents(i.total_due) > cents(i.paid_amount)
         and i.status != InstallmentStatus.WAIVED for i in rows
     )
     history = list((loan.calculation_breakdown or {}).get("installment_carry_forward_history") or [])
