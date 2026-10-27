@@ -454,7 +454,7 @@ export default function CdasManagePage() {
               <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">Operation review</h3><Button variant="ghost" size="sm" onClick={() => setReviewedOperation(null)}>Close</Button></div>
               <p className="break-all text-xs">Operation ID: {reviewedOperation.id}</p>
               <p className="text-sm">Type: {reviewedOperation.operation_type} · Status: {reviewedOperation.state}</p>
-              {unresolvedAgeLabel(reviewedOperation) && <p className="text-sm font-semibold text-destructive">{unresolvedAgeLabel(reviewedOperation)} — prioritize provider verification.</p>
+              {unresolvedAgeLabel(reviewedOperation) && <p className="text-sm font-semibold text-destructive">{unresolvedAgeLabel(reviewedOperation)} — prioritize provider verification.</p>}
               <p className="text-sm">Employee: {reviewedOperation.employee_no || "—"} · Deduction: {reviewedOperation.deduction_id ?? "—"} · Reference: {reviewedOperation.reference_no || "—"}</p>
               <p className="text-xs text-muted-foreground">Actor: {reviewedOperation.actor_user_id || "Unavailable"} · Created: {reviewedOperation.created_at ? new Date(reviewedOperation.created_at).toLocaleString() : "Unknown"}</p>
               <dl className="grid gap-2 text-xs sm:grid-cols-2">
