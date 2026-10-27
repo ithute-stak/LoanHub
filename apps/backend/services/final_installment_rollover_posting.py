@@ -22,6 +22,27 @@ from services.linked_rollover_transfer_plan import prepare_linked_rollover
 from services.rollover_receivable_reconciliation import validate_rollover_receivable_transfer
 from services.loan_service import generate_loan_reference
 
+def split_rollover_components(*, principal, interest, fees, total_due, paid_amount):
+    """Allocate historical payments to principal first; preserve unpaid charge types.
+
+    This policy must match LoanHub's authoritative repayment-allocation waterfall
+    before posting is enabled. It is isolated for financial review and testing.
+    """
+    values = [Decimal(str(v or 0)) for v in (principal, interest, fees)]
+    full = Decimal(str(total_due))
+    unpaid = full - Decimal(str(paid_amount))
+    if full != sum(values) or unpaid <= 0 or any(v < 0 for v in values):
+        raise HTTPException(status_code=409, detail="Source installment components do not reconcile")
+    remaining = unpaid
+    result = [Decimal("0"), Decimal("0"), Decimal("0")]
+    for idx in (2, 1, 0):
+        result[idx] = min(remaining, values[idx])
+        remaining -= result[idx]
+    if remaining:
+        raise HTTPException(status_code=409, detail="Transferred components do not reconcile")
+    return tuple(result)
+
+
 def post_final_rollover(
     db: Session, *, company_id: UUID, parent_id: UUID, installment_id: UUID,
     approved_amount: Decimal, due_date, agreement_reference: str,
@@ -61,21 +82,12 @@ def post_final_rollover(
     outstanding = Decimal(plan["approved_transfer_amount"])
     # Preserve the principal / earned-interest / fee distinction.
     # Do not transform outstanding charges into new loan principal.
-    components = [
-        Decimal(str(row.principal_due or 0)),
-        Decimal(str(row.interest_due or 0)),
-        Decimal(str(row.fee_due or 0)),
-    ]
-    if sum(components) != Decimal(str(row.total_due)):
-        raise HTTPException(status_code=409, detail="Source installment components do not reconcile")
-    portions = [Decimal("0"), Decimal("0"), Decimal("0")]
-    remainder = outstanding
-    for idx in (2, 1, 0):
-        portions[idx] = min(components[idx], remainder)
-        remainder -= portions[idx]
-    if remainder:
-        raise HTTPException(status_code=409, detail="Transferred components do not reconcile")
-    carried_principal, carried_interest, carried_fees = portions
+    carried_principal, carried_interest, carried_fees = split_rollover_components(
+        principal=row.principal_due, interest=row.interest_due, fees=row.fee_due,
+        total_due=row.total_due, paid_amount=row.paid_amount,
+    )
+    if sum((carried_principal, carried_interest, carried_fees)) != outstanding:
+        raise HTTPException(status_code=409, detail="Component balance differs from approved transfer")
     # The transfer may only close the one remaining open installment. Paid
     # historic installments remain in the active historical schedule.
     open_rows = [
