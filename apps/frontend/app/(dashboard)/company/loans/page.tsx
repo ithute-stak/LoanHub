@@ -409,6 +409,31 @@ export default function CompanyLoansPage() {
         setScheduleOpen(true);
     }
 
+    async function carryForwardInstallment(item: RepaymentInstallment) {
+        if (!selectedLoan) return;
+        const remainder = Math.max(0, Number(item.total_due) - Number(item.paid_amount));
+        const agreement = window.prompt(
+            `Approve carrying ${formatMoney(remainder)} from installment ${item.installment_number} into the next installment? Enter the documented agreement or approval reason (at least 12 characters):`
+        );
+        if (agreement === null) return;
+        if (agreement.trim().length < 12) {
+            toast.warning("A documented approval reason of at least 12 characters is required.");
+            return;
+        }
+        try {
+            await api.post(`/loans/${selectedLoan.id}/installments/carry-forward`, {
+                installment_id: item.id,
+                approval_reason: agreement.trim(),
+            });
+            const updated = await getLoan(selectedLoan.id);
+            setSelectedLoan(updated);
+            setLoans((rows) => rows.map((loan) => loan.id === updated.id ? updated : loan));
+            toast.success(`Remaining ${formatMoney(remainder)} carried to the next installment. Loan debt unchanged.`);
+        } catch (error) {
+            toast.error(getErrorMessage(error, "The installment balance could not be carried forward."));
+        }
+    }
+
     function openDueDateAdjustment(item: RepaymentInstallment) {
         setScheduleOpen(false);
         setEditingInstallment(item);
@@ -1421,6 +1446,11 @@ export default function CompanyLoansPage() {
                                                                 >
                                                                     <HandCoins className="h-3.5 w-3.5"/>
                                                                     Pay installment
+                                                                </Button>
+                                                            ) : null}
+                                                            {["company_owner", "company_admin"].includes(activeRole) && repaymentLoan && Number(item.paid_amount) > 0 && installmentOutstanding(item) > 0 && selectedLoan?.installments?.some((next) => !next.is_superseded && next.installment_number > item.installment_number && next.status !== "paid" && next.status !== "waived") ? (
+                                                                <Button type="button" size="sm" variant="outline" title="Management-approved transfer of the remaining balance to the next installment" onClick={() => void carryForwardInstallment(item)}>
+                                                                    Carry balance forward
                                                                 </Button>
                                                             ) : null}
                                                             {canAdjustDate ? (
