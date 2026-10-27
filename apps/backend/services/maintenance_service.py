@@ -41,6 +41,14 @@ class MaintenanceResult:
         return asdict(self)
 
 
+def installment_is_currently_overdue(installment: RepaymentInstallment, *, today: date) -> bool:
+    """Current delinquency excludes paid, waived, and superseded schedule rows."""
+    if installment.is_superseded or installment.status == InstallmentStatus.WAIVED:
+        return False
+    remaining = (installment.total_due or 0) - (installment.paid_amount or 0)
+    return remaining > 0 and bool(installment.due_date) and installment.due_date < today
+
+
 def run_maintenance(db: Session) -> MaintenanceResult:
     """Reconcile time-dependent records through normal ORM changes.
 
@@ -125,10 +133,9 @@ def run_maintenance(db: Session) -> MaintenanceResult:
     overdue_loan_ids = set()
     overdue_installment_count = 0
     for installment in active_installments:
-        if installment.status in {InstallmentStatus.WAIVED, InstallmentStatus.PAID}:
+        if installment.status == InstallmentStatus.WAIVED:
             continue
-        remaining = (installment.total_due or 0) - (installment.paid_amount or 0)
-        is_late = remaining > 0 and installment.due_date < today
+        is_late = installment_is_currently_overdue(installment, today=today)
         if is_late:
             overdue_loan_ids.add(installment.loan_id)
             overdue_installment_count += 1
