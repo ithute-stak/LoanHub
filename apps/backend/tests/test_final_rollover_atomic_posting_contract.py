@@ -60,3 +60,11 @@ def test_financial_posting_route_remains_disabled():
     section = ROUTER.split("def post_final_rollover_transfer(", 1)[1].split('@router.post("/{loan_id}/installments/final-rollover-transfer-plan")', 1)[0]
     assert 'status_code=503' in section
     assert section.index('status_code=503') < section.index("post_final_rollover(")
+
+
+def test_component_evidence_is_wired_to_posting_but_endpoint_stays_disabled():
+    assert "verify_component_allocation_evidence(" in POSTING
+    assert "component_evidence=payload.component_evidence" in ROUTER
+    assert "class FinalRolloverPostRequest(BaseModel):" in ROUTER
+    endpoint = ROUTER.split("def post_final_rollover_transfer(", 1)[1].split('@router.post("/{loan_id}/installments/final-rollover-transfer-plan")', 1)[0]
+    assert endpoint.index("status_code=503") < endpoint.index("post_final_rollover(")
