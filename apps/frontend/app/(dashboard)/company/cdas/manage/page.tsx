@@ -125,6 +125,16 @@ const STATUS_LABELS: Record<string, string> = {
   registration_failed: "Registration failed",
 };
 
+function unresolvedAgeLabel(operation: CdasLedgerOperation): string | null {
+  if (!operation.requires_reconciliation || !operation.created_at) return null;
+  const timestamp = Date.parse(operation.created_at);
+  if (!Number.isFinite(timestamp)) return null;
+  const hours = Math.max(0, Math.floor((Date.now() - timestamp) / 3600000));
+  if (hours < 24) return null;
+  const days = Math.floor(hours / 24);
+  return days >= 1 ? "Unresolved for " + days + " day" + (days === 1 ? "" : "s") : null;
+}
+
 function money(value: string | number | null | undefined) {
   const amount = Number(value || 0);
   return "M " + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -430,7 +440,7 @@ export default function CdasManagePage() {
               <div key={item.id} className="rounded-xl border p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">{item.operation_type.replaceAll(".", " · ")}</span>
-                  <Badge variant={item.requires_reconciliation ? "destructive" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge>
+                  <div className="flex flex-wrap items-center gap-2"><Badge variant={item.requires_reconciliation ? "destructive" : "secondary"}>{item.state.replaceAll("_", " ")}</Badge>{unresolvedAgeLabel(item) && <Badge variant="destructive">{unresolvedAgeLabel(item)}</Badge>}</div>
                 </div>
                 <p className="mt-1 text-muted-foreground">Employee {item.employee_no || "—"} · Deduction {item.deduction_id ?? "—"} · Reference {item.reference_no || "—"}</p>
                 <p className="mt-1 break-all text-xs text-muted-foreground">Staff: {item.actor_name || "Name unavailable"} · User ID: {item.actor_user_id || "Unavailable"} · {item.created_at ? new Date(item.created_at).toLocaleString() : "Date unavailable"}</p>
@@ -444,6 +454,7 @@ export default function CdasManagePage() {
               <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">Operation review</h3><Button variant="ghost" size="sm" onClick={() => setReviewedOperation(null)}>Close</Button></div>
               <p className="break-all text-xs">Operation ID: {reviewedOperation.id}</p>
               <p className="text-sm">Type: {reviewedOperation.operation_type} · Status: {reviewedOperation.state}</p>
+              {unresolvedAgeLabel(reviewedOperation) && <p className="text-sm font-semibold text-destructive">{unresolvedAgeLabel(reviewedOperation)} — prioritize provider verification.</p>}
               <p className="text-sm">Employee: {reviewedOperation.employee_no || "—"} · Deduction: {reviewedOperation.deduction_id ?? "—"} · Reference: {reviewedOperation.reference_no || "—"}</p>
               <p className="text-xs text-muted-foreground">Actor: {reviewedOperation.actor_user_id || "Unavailable"} · Created: {reviewedOperation.created_at ? new Date(reviewedOperation.created_at).toLocaleString() : "Unknown"}</p>
               <dl className="grid gap-2 text-xs sm:grid-cols-2">
