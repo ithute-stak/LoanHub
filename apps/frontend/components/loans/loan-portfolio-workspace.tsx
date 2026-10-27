@@ -417,10 +417,13 @@ export function LoanPortfolioWorkspace({
         const contract = contractByLoan.get(loan.id);
         const branch = branchById.get(loan.branch_id ?? client?.branch_id ?? "");
         const nextInstallment = [...loan.installments]
-            .filter((installment) => ["pending", "partially_paid", "overdue"].includes(installment.status))
+            .filter((installment) => !installment.is_superseded && !installment.superseded_by_cycle_id &&
+                installment.status !== "waived" &&
+                Number(installment.total_due) - Number(installment.paid_amount) > 0.005)
             .sort((left, right) => left.due_date.localeCompare(right.due_date) || left.installment_number - right.installment_number)[0];
-        const nextDueDate = nextInstallment?.due_date ?? (Number(loan.balance) > 0 ? loan.first_payment_due : null);
-        const nextDueAmount = nextInstallment ? installmentOutstanding(nextInstallment) : (Number(loan.balance) > 0 ? Number(loan.installment_amount) : null);
+        const scheduleExists = loan.installments.some((installment) => !installment.is_superseded && !installment.superseded_by_cycle_id);
+        const nextDueDate = nextInstallment?.due_date ?? (!scheduleExists && Number(loan.balance) > 0 ? loan.first_payment_due : null);
+        const nextDueAmount = nextInstallment ? installmentOutstanding(nextInstallment) : (!scheduleExists && Number(loan.balance) > 0 ? Number(loan.installment_amount) : null);
         const progress = Number(loan.total_repayable) > 0
             ? (Number(loan.amount_paid) / Number(loan.total_repayable)) * 100
             : 0;

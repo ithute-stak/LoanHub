@@ -41,6 +41,14 @@ class MaintenanceResult:
         return asdict(self)
 
 
+def installment_is_currently_overdue(installment: RepaymentInstallment, *, today: date) -> bool:
+    """Current delinquency excludes paid, waived, and superseded schedule rows."""
+    if installment.is_superseded or installment.status == InstallmentStatus.WAIVED:
+        return False
+    remaining = (installment.total_due or 0) - (installment.paid_amount or 0)
+    return remaining > 0 and bool(installment.due_date) and installment.due_date < today
+
+
 def run_maintenance(db: Session) -> MaintenanceResult:
     """Reconcile time-dependent records through normal ORM changes.
 
@@ -102,44 +110,61 @@ def run_maintenance(db: Session) -> MaintenanceResult:
         subscription.auto_renew = False
     result.expired_subscriptions = len(subscriptions)
 
-    installments = (
-        db.query(RepaymentInstallment)
+    # Reconcile both directions. Previously the maintenance pass only set overdue
+    # to True and never cleared it when a late installment was subsequently paid.
+    eligible_loans = (
+        db.query(ClientCompanyLoan)
         .filter(
-            RepaymentInstallment.is_superseded.is_(False),
-            RepaymentInstallment.status.in_(
-                [
-                    InstallmentStatus.PENDING,
-                    InstallmentStatus.PARTIALLY_PAID,
-                ]
-            ),
-            RepaymentInstallment.paid_amount < RepaymentInstallment.total_due,
-            RepaymentInstallment.due_date < today,
+            ClientCompanyLoan.balance > 0,
+            ClientCompanyLoan.status.in_([LoanStatus.ACTIVE, LoanStatus.DEFAULTED]),
         )
         .all()
     )
-    overdue_loan_ids = set()
-    for installment in installments:
-        installment.status = InstallmentStatus.OVERDUE
-        overdue_loan_ids.add(installment.loan_id)
-    result.overdue_installments = len(installments)
-
-    overdue_loans = []
-    if overdue_loan_ids:
-        overdue_loans = (
-            db.query(ClientCompanyLoan)
-            .filter(
-                ClientCompanyLoan.id.in_(overdue_loan_ids),
-                ClientCompanyLoan.balance > 0,
-                ClientCompanyLoan.status.in_(
-                    [LoanStatus.ACTIVE, LoanStatus.APPROVED]
-                ),
-                ClientCompanyLoan.is_overdue.is_(False),
-            )
-            .all()
+    active_loan_ids = {loan.id for loan in eligible_loans}
+    active_installments = (
+        db.query(RepaymentInstallment)
+        .filter(
+            RepaymentInstallment.loan_id.in_(active_loan_ids),
+            RepaymentInstallment.is_superseded.is_(False),
         )
-        for loan in overdue_loans:
-            loan.is_overdue = True
-    result.overdue_loans = len(overdue_loans)
+        .all()
+    ) if active_loan_ids else []
+
+    overdue_loan_ids = set()
+    overdue_installment_count = 0
+    for installment in active_installments:
+        if installment.status == InstallmentStatus.WAIVED:
+            continue
+        is_late = installment_is_currently_overdue(installment, today=today)
+        if is_late:
+            overdue_loan_ids.add(installment.loan_id)
+            overdue_installment_count += 1
+            if installment.status != InstallmentStatus.OVERDUE:
+                installment.status = InstallmentStatus.OVERDUE
+        elif installment.status == InstallmentStatus.OVERDUE:
+            installment.status = (
+                InstallmentStatus.PARTIALLY_PAID
+                if (installment.paid_amount or 0) > 0
+                else InstallmentStatus.PENDING
+            )
+    result.overdue_installments = overdue_installment_count
+
+    for loan in eligible_loans:
+        loan.is_overdue = loan.id in overdue_loan_ids
+    # Also clear flags on all other loans (settled, pending, cancelled, etc.).
+    stale_loans = (
+        db.query(ClientCompanyLoan)
+        .filter(
+            ClientCompanyLoan.is_overdue.is_(True),
+            ClientCompanyLoan.id.notin_(active_loan_ids),
+        )
+        .all()
+    ) if active_loan_ids else db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.is_overdue.is_(True)
+    ).all()
+    for loan in stale_loans:
+        loan.is_overdue = False
+    result.overdue_loans = len(overdue_loan_ids)
 
     settled_loans = (
         db.query(ClientCompanyLoan)
