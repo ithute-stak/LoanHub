@@ -20,16 +20,35 @@ import type {
   OverpaymentAction,
 } from "@/types/loan";
 
-function normalizeLoanCurrentState(loan: Loan): Loan {
+/** Current delinquency is based on outstanding scheduled installments, not stale status flags. */
+export function normalizeLoanCurrentState(loan: Loan, today?: string): Loan {
   const status = String(loan.status ?? "").toLowerCase();
   const balance = Number(loan.balance ?? 0);
-  const hasOutstandingBalance = Number.isFinite(balance) && balance > 0;
-  const canBeCurrentlyOverdue = hasOutstandingBalance && (status === "active" || status === "defaulted");
+  const canBeCurrentlyOverdue = Number.isFinite(balance) && balance > 0 &&
+    (status === "active" || status === "defaulted");
+  const localToday = today ?? [
+    new Date().getFullYear(),
+    String(new Date().getMonth() + 1).padStart(2, "0"),
+    String(new Date().getDate()).padStart(2, "0"),
+  ].join("-");
 
-  if (loan.is_overdue && !canBeCurrentlyOverdue) {
-    return { ...loan, is_overdue: false };
-  }
-  return loan;
+  // An older renewal cycle must not make a currently renewed loan look overdue.
+  const activeInstallments = Array.isArray(loan.installments)
+    ? loan.installments.filter((item) => !item.is_superseded && !item.superseded_by_cycle_id)
+    : [];
+  const hasSchedule = activeInstallments.length > 0;
+  const overdueFromSchedule = activeInstallments.some((item) => {
+    const remaining = Number(item.total_due) - Number(item.paid_amount);
+    return Number.isFinite(remaining) && remaining > 0.005 &&
+      item.status !== "waived" && Boolean(item.due_date) &&
+      item.due_date.slice(0, 10) < localToday;
+  });
+
+  return {
+    ...loan,
+    is_overdue: canBeCurrentlyOverdue &&
+      (hasSchedule ? overdueFromSchedule : Boolean(loan.is_overdue)),
+  };
 }
 
 export async function listLoans(): Promise<Loan[]> {
