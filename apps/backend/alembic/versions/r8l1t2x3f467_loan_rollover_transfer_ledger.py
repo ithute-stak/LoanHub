@@ -50,11 +50,11 @@ def upgrade():
     # compensating entry, never an UPDATE or DELETE of posted evidence.
     op.execute("""
         CREATE FUNCTION prevent_rollover_transfer_mutation() RETURNS trigger
-        LANGUAGE plpgsql AS $
+        LANGUAGE plpgsql AS $$
         BEGIN
             RAISE EXCEPTION 'Rollover transfer ledger is append-only';
         END;
-        $
+        $$
     """)
     op.execute("""
         CREATE TRIGGER trg_rollover_transfer_immutable
