@@ -21,7 +21,7 @@ def prepare_rollover_compensation_balances(*, transfer_amount, parent_balance, c
     return {
         "parent_balance_after": amount,
         "child_balance_after": Decimal("0"),
-        "net_receivable_change": parent + child - amount,
+        "net_receivable_change": (amount + Decimal("0")) - (parent + child),
         "amount": amount,
         "no_cash_movement": True,
     }
