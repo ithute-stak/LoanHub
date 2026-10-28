@@ -173,8 +173,8 @@ def post_rollover_compensation(
         raise HTTPException(status_code=409, detail="Compensation would change total receivables")
     reconcile_rollover_accounting(
         transfer=transfer, company_id=company_id,
-        parent_before=child.balance, parent_after=before_child_balance,
-        child_before=parent.balance, child_after=before_parent_balance,
+        parent_before=before_child_balance, parent_after=child.balance,
+        child_before=before_parent_balance, child_after=parent.balance,
     )
     db.commit()
     return {"transfer_id": str(transfer.id), "compensation_reference": reference,
