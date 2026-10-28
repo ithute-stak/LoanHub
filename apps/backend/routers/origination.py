@@ -902,7 +902,7 @@ def override_assessment(
     # The company owner may explicitly accept credit risk even when routine
     # management affordability overrides are disabled. This does not waive KYC,
     # sanctions, identity, payroll or other statutory safeguards.
-    owner_risk_acceptance = context.user.role == UserRole.COMPANY_OWNER and payload.decision in {"eligible", "conditionally_eligible"}
+    owner_risk_acceptance = context.role == UserRole.COMPANY_OWNER and payload.decision in {"eligible", "conditionally_eligible"}
     if not policy.manager_override_enabled and not owner_risk_acceptance:
         raise HTTPException(status_code=403, detail="Affordability overrides are disabled by company policy")
     assessment.overridden = True
