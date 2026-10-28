@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_reversal_approval import LoanRolloverReversalApproval
+from database.models.loan_rollover_reversal_request import LoanRolloverReversalRequest
 from services.rollover_checker_identity import verify_rollover_checker_identity
 
 
@@ -24,7 +25,13 @@ def record_rollover_checker_decision(
         raise HTTPException(status_code=404, detail="Rollover transfer not found")
     if transfer.status != "posted":
         raise HTTPException(status_code=409, detail="Only posted transfers can be reviewed")
-    maker_id = transfer.posted_by_user_id
+    request = db.query(LoanRolloverReversalRequest).filter(
+        LoanRolloverReversalRequest.transfer_id == transfer.id,
+        LoanRolloverReversalRequest.company_id == company_id,
+    ).one_or_none()
+    if request is None:
+        raise HTTPException(status_code=409, detail="Authenticated maker reversal request required")
+    maker_id = request.maker_user_id
     verify_rollover_checker_identity(
         db, company_id=company_id, maker_user_id=maker_id,
         checker_user_id=checker_user_id,
@@ -38,7 +45,8 @@ def record_rollover_checker_decision(
         company_id=company_id, transfer_id=transfer.id,
         maker_user_id=maker_id, checker_user_id=checker_user_id,
         approval_reference=approval_reference, decision=decision, reason=reason,
-        evidence={"checker_authenticated": True, "maker_source": "original_transfer_actor",
+        evidence={"checker_authenticated": True, "maker_source": "authenticated_reversal_request",
+                  "maker_request_id": str(request.id),
                   "financial_posting_enabled": False},
     )
     db.add(record)
