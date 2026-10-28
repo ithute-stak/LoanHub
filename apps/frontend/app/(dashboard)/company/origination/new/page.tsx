@@ -661,6 +661,30 @@ function OriginationWizard() {
     }
   }
 
+  async function acceptAffordabilityRisk() {
+    if (activeRole !== "company_owner" || !assessment || !application) return;
+    const reason = window.prompt("Company owner risk acceptance: explain why this loan or top-up should be considered despite the affordability warning (minimum 10 characters). KYC and compliance checks still apply.");
+    if (reason === null) return;
+    if (reason.trim().length < 10) {
+      toast.error("Provide a risk acceptance reason of at least 10 characters.");
+      return;
+    }
+    setWorking(true);
+    try {
+      const updated = await originationApi.overrideAssessment(assessment.id, {
+        decision: "conditionally_eligible",
+        reason: reason.trim(),
+      });
+      setAssessment(updated);
+      setApplication((current) => current ? { ...current, affordability_decision: "conditionally_eligible" } : current);
+      toast.success("Owner risk acceptance recorded", { description: "Financial advice is retained. Mandatory identity, KYC and compliance controls still apply." });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Unable to record the owner's risk decision."));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function submitApplication() {
     if (!application) return;
     setWorking(true);
@@ -756,7 +780,17 @@ function OriginationWizard() {
             {step === 2 ? <EmploymentStep employment={employment} onEmploymentChange={setEmployment} incomes={incomeSources} onIncomesChange={setIncomeSources} /> : null}
             {step === 3 ? <ExpensesStep expenses={expenses} onExpensesChange={setExpenses} debts={debts} onDebtsChange={setDebts} /> : null}
             {step === 4 ? <BankingStep values={bankAccounts} onChange={setBankAccounts} identityName={profile?.identity.full_name ?? selectedClient?.full_name ?? ""} /> : null}
-            {step === 5 ? <AffordabilityStep calculation={calculation} assessment={assessment} totalExpenses={totalExpenses} totalDebts={totalDebts} verifiedIncome={employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0)} /> : null}
+            {step === 5 ? <>
+              <AffordabilityStep calculation={calculation} assessment={assessment} totalExpenses={totalExpenses} totalDebts={totalDebts} verifiedIncome={employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0)} />
+              {assessment && !["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision) && activeRole === "company_owner" ? (
+                <div className="rounded-2xl border border-amber-400/50 p-4 space-y-3">
+                  <p className="font-semibold">Company owner: accept lending risk</p>
+                  <p className="text-sm text-muted-foreground">Affordability is advisory. You may record a reasoned decision to consider this loan or top-up at the company's risk. The original assessment remains on record; KYC, sanctions and other mandatory safeguards are not waived.</p>
+                  <Button type="button" variant="outline" disabled={working} onClick={() => void acceptAffordabilityRisk()}>Record owner risk acceptance</Button>
+                </div>
+              ) : null}
+              {assessment?.overridden ? <p className="text-sm">Recorded decision: {titleCase(assessment.override_decision ?? assessment.decision)}. Owner/manager reason: {assessment.override_reason ?? "Not recorded"}. Original recommendation: {titleCase(assessment.decision)}.</p> : null}
+            </> : null}
             {step === 6 ? <ReviewStep application={application} profile={profile} assessment={assessment} calculation={calculation} product={selectedProduct} totalExpenses={totalExpenses} totalDebts={totalDebts} /> : null}
 
             <div className="flex flex-wrap justify-between gap-3 border-t pt-5">
