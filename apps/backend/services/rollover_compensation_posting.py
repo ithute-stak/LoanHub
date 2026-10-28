@@ -115,6 +115,16 @@ def post_rollover_compensation(
     ).with_for_update().one_or_none()
     if source is None or not source.is_superseded:
         raise HTTPException(status_code=409, detail="Original installment is not available for restoration")
+    # A matching remainder alone is not sufficient: changing both total_due and
+    # paid_amount by the same amount preserves the remainder but corrupts the
+    # original repayment history. Require the immutable posting-time snapshot.
+    if not all(key in original for key in ("installment_total_due", "installment_paid_amount")):
+        raise HTTPException(status_code=409, detail="Original rollover installment evidence is missing")
+    if (
+        Decimal(str(source.total_due)) != Decimal(str(original["installment_total_due"]))
+        or Decimal(str(source.paid_amount)) != Decimal(str(original["installment_paid_amount"]))
+    ):
+        raise HTTPException(status_code=409, detail="Original installment repayment history changed")
     # The source installment must still carry the original unpaid amount.
     # Do not restore a different schedule or silently double-count historical debt.
     source_remaining = Decimal(str(source.total_due)) - Decimal(str(source.paid_amount))
