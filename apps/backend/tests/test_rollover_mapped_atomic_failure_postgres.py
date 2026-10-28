@@ -61,6 +61,7 @@ def test_failed_transfer_ledger_flush_rolls_back_loan_and_schedule_updates():
                 seed.add(installment)
                 seed.flush()
                 source_id = installment.id
+                seed.commit()
             # A rejected CHECK constraint simulates failure after the other
             # balance/schedule operations have been staged and flushed.
             with Session(bind=connection) as session:
