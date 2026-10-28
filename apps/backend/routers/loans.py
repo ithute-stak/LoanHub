@@ -109,6 +109,33 @@ class FinalRolloverTransferPlanRequest(BaseModel):
     approval_reference: str = Field(min_length=5, max_length=180)
 
 
+class RolloverCheckerDecisionRequest(BaseModel):
+    approval_reference: str = Field(min_length=5, max_length=180)
+    decision: str = Field(pattern="^(approved|rejected)$")
+    reason: str = Field(min_length=12, max_length=500)
+
+
+@router.post("/rollover-transfers/{transfer_id}/checker-decision")
+def submit_rollover_checker_decision(
+    transfer_id: UUID,
+    payload: RolloverCheckerDecisionRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Authenticated and tenant-scoped review; never posts financial reversal."""
+    require_tenant_roles(context, {
+        UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN,
+        UserRole.FINANCE_OFFICER, UserRole.COMPLIANCE_OFFICER,
+    })
+    from services.rollover_checker_decision import record_rollover_checker_decision
+    return record_rollover_checker_decision(
+        db, company_id=context.company_id, transfer_id=transfer_id,
+        checker_user_id=context.user.id,
+        approval_reference=payload.approval_reference,
+        decision=payload.decision, reason=payload.reason,
+    )
+
+
 @router.post("/{loan_id}/installments/final-rollover-post")
 def post_final_rollover_transfer(
     loan_id: UUID,
