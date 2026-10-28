@@ -18,6 +18,7 @@ from database.models.enums import LoanStatus, InstallmentStatus
 from database.models.repayment import RepaymentInstallment, PaymentAllocation
 from database.models.payment import PaymentTransaction
 from services.rollover_reversal_preflight import validate_rollover_reversal_preflight
+from services.rollover_accounting_reconciliation import reconcile_rollover_accounting
 from services.rollover_reversal_approval import require_rollover_reversal_approval
 
 
@@ -136,6 +137,7 @@ def post_rollover_compensation(
         )
     # Proposed atomic compensation. Unreachable until the entry-point 503
     # gate is deliberately removed after independent accounting certification.
+    before_parent_balance, before_child_balance = parent.balance, child.balance
     amount = Decimal(str(transfer.transfer_amount))
     parent.balance = amount
     parent.status = LoanStatus.ACTIVE
@@ -169,6 +171,11 @@ def post_rollover_compensation(
     db.flush()
     if Decimal(str(parent.balance)) + Decimal(str(child.balance)) != amount:
         raise HTTPException(status_code=409, detail="Compensation would change total receivables")
+    reconcile_rollover_accounting(
+        transfer=transfer, company_id=company_id,
+        parent_before=before_child_balance, parent_after=child.balance,
+        child_before=before_parent_balance, child_after=parent.balance,
+    )
     db.commit()
     return {"transfer_id": str(transfer.id), "compensation_reference": reference,
             "parent_balance": str(parent.balance), "child_balance": str(child.balance)}

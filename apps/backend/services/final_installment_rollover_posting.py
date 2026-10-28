@@ -23,6 +23,7 @@ from services.linked_rollover_transfer_plan import prepare_linked_rollover
 from services.rollover_receivable_reconciliation import validate_rollover_receivable_transfer
 from services.loan_service import generate_loan_reference
 from services.rollover_component_evidence import verify_component_allocation_evidence
+from services.rollover_accounting_reconciliation import reconcile_rollover_accounting
 
 def split_rollover_components(*, principal, interest, fees, total_due, paid_amount):
     """Allocate historical payments to principal first; preserve unpaid charge types.
@@ -203,7 +204,7 @@ def post_final_rollover(
     parent.calculation_breakdown = previous
     # Record the receivable transfer in the same SQL transaction as the
     # loan changes. Both API and service posting gates remain disabled.
-    db.add(LoanRolloverTransfer(
+    transfer_record = LoanRolloverTransfer(
         company_id=parent.company_id, parent_loan_id=parent.id,
         child_loan_id=child.id, source_installment_id=row.id,
         transfer_reference=approval_reference,
@@ -220,7 +221,8 @@ def post_final_rollover(
             "no_cash_movement": True,
             "recorded_at": now.isoformat(),
         },
-    ))
+    )
+    db.add(transfer_record)
     db.add(AuditLog(
         user_id=actor_user_id, company_id=parent.company_id, branch_id=parent.branch_id,
         action="loan.final_installment_receivable_transferred", table_name="client_company_loan",
@@ -241,6 +243,11 @@ def post_final_rollover(
         raise HTTPException(status_code=409, detail="The linked transfer does not conserve total receivables")
     if child.parent_loan_id != parent.id or child.company_id != parent.company_id:
         raise HTTPException(status_code=409, detail="The linked loan relationship is inconsistent")
+    reconcile_rollover_accounting(
+        transfer=transfer_record, company_id=company_id,
+        parent_before=original["balance"], parent_after=parent.balance,
+        child_before=Decimal("0"), child_after=child.balance,
+    )
     db.commit()
     return {"parent_loan_id": str(parent.id), "child_loan_id": str(child.id),
             "child_loan_reference": child.loan_reference, "child_folio": child.folio_number,
