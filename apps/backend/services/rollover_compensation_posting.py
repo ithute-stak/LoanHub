@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
 from database.models.client_loan_company import ClientCompanyLoan
-from database.models.repayment import RepaymentInstallment
+from database.models.repayment import RepaymentInstallment, PaymentAllocation
+from database.models.payment import PaymentTransaction
 from services.rollover_reversal_preflight import validate_rollover_reversal_preflight
 
 
@@ -58,12 +59,20 @@ def post_rollover_compensation(
         RepaymentInstallment.loan_id == child.id
     ).with_for_update().all()
 
-    # Even a zero-valued payment transaction means provider-side settlement
-    # may exist. Real payment checks will be added before this gate can open.
+    # Every recorded payment or allocation is treated as activity, regardless
+    # of status or amount. A reversal must not erase provider-side history.
+    child_payment_count = db.query(PaymentTransaction.id).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.loan_id == child.id,
+    ).count()
+    allocation_count = db.query(PaymentAllocation.payment_id).join(
+        RepaymentInstallment,
+        PaymentAllocation.installment_id == RepaymentInstallment.id,
+    ).filter(RepaymentInstallment.loan_id == child.id).count()
     validate_rollover_reversal_preflight(
         transfer=transfer, parent=parent, child=child,
         child_installments=installments,
-        child_payments_count=1,  # fail closed until transaction scan is integrated
+        child_payments_count=child_payment_count + allocation_count,
         actor_company_id=company_id,
     )
     raise HTTPException(status_code=503, detail="Financial reversal posting remains disabled")
