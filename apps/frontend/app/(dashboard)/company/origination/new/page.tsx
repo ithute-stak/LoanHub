@@ -264,7 +264,7 @@ function OriginationWizard() {
       contract_expiry_date: row.employment.contract_expiry_date,
       salary_frequency: row.employment.salary_frequency,
       gross_salary: Number(row.employment.gross_salary || registeredClient?.monthly_income || 0),
-      net_salary: Number(row.employment.net_salary || registeredClient?.monthly_income || 0),
+      net_salary: Number(row.employment.net_salary),
       verified_net_income: Number(row.employment.verified_net_income),
       salary_day: row.employment.salary_day ?? registeredClient?.income_day ?? null,
       verification_method: row.employment.verification_method,
@@ -278,7 +278,7 @@ function OriginationWizard() {
       employer_name: registeredClient?.employer_name || null,
       job_title: registeredClient?.job_title || null,
       gross_salary: Number(registeredClient?.monthly_income || 0),
-      net_salary: Number(registeredClient?.monthly_income || 0),
+      net_salary: 0,
       salary_day: registeredClient?.income_day ?? null,
       // Registration income is declared, not automatically verified.
       verified_net_income: 0,
