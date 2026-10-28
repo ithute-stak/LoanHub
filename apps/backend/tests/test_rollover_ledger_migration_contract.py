@@ -19,3 +19,11 @@ def test_ledger_migration_includes_model_financial_constraints():
             assert constraint.name in source
     assert 'sa.ForeignKey("repayment_installments.id"' in source
     assert 'sa.ForeignKey("client_company_loan.id"' in source
+
+
+def test_posted_ledger_is_immutable_at_database_level():
+    source = MIGRATION.read_text()
+    assert "CREATE TRIGGER trg_rollover_transfer_immutable" in source
+    assert "BEFORE UPDATE OR DELETE ON loan_rollover_transfers" in source
+    assert "RAISE EXCEPTION 'Rollover transfer ledger is append-only'" in source
+    assert "DROP TRIGGER IF EXISTS trg_rollover_transfer_immutable" in source
