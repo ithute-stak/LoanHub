@@ -75,4 +75,13 @@ def post_rollover_compensation(
         child_payments_count=child_payment_count + allocation_count,
         actor_company_id=company_id,
     )
+    from services.rollover_compensation_balances import prepare_rollover_compensation_balances
+    original = ((parent.calculation_breakdown or {}).get("linked_rollover_out") or {}).get("original") or {}
+    prepare_rollover_compensation_balances(
+        transfer_amount=transfer.transfer_amount,
+        parent_balance=parent.balance,
+        child_balance=child.balance,
+        child_amount_paid=child.amount_paid,
+        original_parent_balance=original.get("balance", "-1"),
+    )
     raise HTTPException(status_code=503, detail="Financial reversal posting remains disabled")
