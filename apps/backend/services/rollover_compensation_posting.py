@@ -58,6 +58,18 @@ def post_rollover_compensation(
     if parent is None or child is None:
         raise HTTPException(status_code=409, detail="Linked loans are missing")
 
+    # Reversing a facility with descendants can strand another loan or
+    # invalidate a top-up/renewal chain. A specialist must reconcile it.
+    linked_descendant = db.query(ClientCompanyLoan.id).filter(
+        ClientCompanyLoan.company_id == company_id,
+        ClientCompanyLoan.parent_loan_id == child.id,
+    ).first()
+    if linked_descendant is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Child loan has a linked descendant; specialist settlement required",
+        )
+
     installments = db.query(RepaymentInstallment).filter(
         RepaymentInstallment.loan_id == child.id
     ).with_for_update().all()
