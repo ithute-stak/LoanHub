@@ -10,8 +10,8 @@ def sample():
     company,parent_id,child_id=uuid4(),uuid4(),uuid4()
     transfer=SimpleNamespace(id=uuid4(),company_id=company,parent_loan_id=parent_id,child_loan_id=child_id,status="posted",transfer_amount=Decimal("20.00"))
     parent=SimpleNamespace(id=parent_id,company_id=company,balance=Decimal("0"),calculation_breakdown={"linked_rollover_out":{"child_loan_id":str(child_id),"amount":"20.00"}})
-    child=SimpleNamespace(id=child_id,parent_loan_id=parent_id,company_id=company,balance=Decimal("20.00"),amount_paid=Decimal("0"))
-    installments=[SimpleNamespace(paid_amount=Decimal("0"),total_due=Decimal("20.00"))]
+    child=SimpleNamespace(id=child_id,parent_loan_id=parent_id,company_id=company,balance=Decimal("20.00"),amount_paid=Decimal("0"),status="active")
+    installments=[SimpleNamespace(paid_amount=Decimal("0"),total_due=Decimal("20.00"),is_superseded=False)]
     return dict(transfer=transfer,parent=parent,child=child,child_installments=installments,child_payments_count=0,actor_company_id=company)
 
 
@@ -37,3 +37,15 @@ def test_changed_or_cross_tenant_rollover_rejected(mutation):
     with pytest.raises(HTTPException) as exc:
         validate_rollover_reversal_preflight(**args)
     assert exc.value.status_code in (404,409)
+
+
+def test_inactive_child_and_superseded_schedule_rejected():
+    for change in ("inactive", "superseded"):
+        args = sample()
+        if change == "inactive":
+            args["child"].status = "cancelled"
+        else:
+            args["child_installments"][0].is_superseded = True
+        with pytest.raises(HTTPException) as exc:
+            validate_rollover_reversal_preflight(**args)
+        assert exc.value.status_code == 409
