@@ -302,3 +302,5 @@ from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
 
 from database.models.loan_rollover_reversal_approval import LoanRolloverReversalApproval
+
+from database.models.loan_rollover_reversal_request import LoanRolloverReversalRequest
