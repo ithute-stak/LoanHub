@@ -48,8 +48,10 @@ def test_partial_final_installment_transfer_and_compensation_conserve_receivable
                     INSERT INTO client_company_loan (id,balance,status) VALUES
                     (:parent,60.00,'ACTIVE'), (:child,0.00,'PENDING')
                 """), {"parent":parent,"child":child})
-                for model in (RepaymentInstallment, LoanRolloverTransfer, LoanRolloverCompensation):
-                    conn.execute(CreateTable(model.__table__, include_foreign_key_constraints=None))
+                # ORM create() installs the PostgreSQL installment-status enum too.
+                RepaymentInstallment.__table__.create(bind=conn)
+                for model in (LoanRolloverTransfer, LoanRolloverCompensation):
+                    conn.execute(CreateTable(model.__table__))
                 with Session(bind=conn, expire_on_commit=False) as db:
                     source = RepaymentInstallment(
                         loan_id=parent, installment_number=1, due_date=__import__("datetime").date(2026,11,1),
