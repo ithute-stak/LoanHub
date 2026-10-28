@@ -22,6 +22,20 @@ from services.rollover_accounting_reconciliation import reconcile_rollover_accou
 from services.rollover_reversal_approval import require_rollover_reversal_approval
 
 
+def validate_rollover_source_history(*, source, original):
+    """Require the exact original total and paid amount, not only the difference."""
+    if not all(key in original for key in ("installment_total_due", "installment_paid_amount")):
+        raise HTTPException(status_code=409, detail="Original rollover installment evidence is missing")
+    try:
+        expected_total = Decimal(str(original["installment_total_due"]))
+        expected_paid = Decimal(str(original["installment_paid_amount"]))
+        current_total = Decimal(str(source.total_due))
+        current_paid = Decimal(str(source.paid_amount))
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise HTTPException(status_code=409, detail="Invalid original installment evidence") from exc
+    if expected_total != current_total or expected_paid != current_paid:
+        raise HTTPException(status_code=409, detail="Original installment repayment history changed")
+
 def post_rollover_compensation(
     db: Session, *, company_id: UUID, transfer_id: UUID, actor_user_id: UUID,
     independent_approver_id: UUID, reference: str, approval_reference: str,
@@ -115,6 +129,7 @@ def post_rollover_compensation(
     ).with_for_update().one_or_none()
     if source is None or not source.is_superseded:
         raise HTTPException(status_code=409, detail="Original installment is not available for restoration")
+    validate_rollover_source_history(source=source, original=original)
     # The source installment must still carry the original unpaid amount.
     # Do not restore a different schedule or silently double-count historical debt.
     source_remaining = Decimal(str(source.total_due)) - Decimal(str(source.paid_amount))
