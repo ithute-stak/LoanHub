@@ -230,7 +230,7 @@ function OriginationWizard() {
   const topUpSettlement = topUpSettlementQuote ?? 0;
   const topUpTotal = topUpSettlement + Number(topUpCashRequested || 0);
 
-  const applyProfile = useCallback((row: FinancialProfile) => {
+  const applyProfile = useCallback((row: FinancialProfile, registeredClient?: CompanyClient | null) => {
     setProfile(row);
     setKyc(row.kyc ? {
       status: row.kyc.status,
@@ -250,29 +250,40 @@ function OriginationWizard() {
       document_file_ids: row.kyc.document_file_ids,
       verification_notes: row.kyc.verification_notes,
       expires_at: row.kyc.expires_at,
-    } : emptyKyc);
+    } : { ...emptyKyc });
     setEmployment(row.employment ? {
-      employment_status: row.employment.employment_status,
-      employer_name: row.employment.employer_name,
+      employment_status: row.employment.employment_status || registeredClient?.employment_status || emptyEmployment.employment_status,
+      employer_name: row.employment.employer_name || registeredClient?.employer_name || null,
       employer_registration: row.employment.employer_registration,
       employer_phone: row.employment.employer_phone,
       employer_address: row.employment.employer_address,
       employee_number: row.employment.employee_number,
-      job_title: row.employment.job_title,
+      job_title: row.employment.job_title || registeredClient?.job_title || null,
       employment_start_date: row.employment.employment_start_date,
       contract_type: row.employment.contract_type,
       contract_expiry_date: row.employment.contract_expiry_date,
       salary_frequency: row.employment.salary_frequency,
-      gross_salary: Number(row.employment.gross_salary),
-      net_salary: Number(row.employment.net_salary),
+      gross_salary: Number(row.employment.gross_salary || registeredClient?.monthly_income || 0),
+      net_salary: Number(row.employment.net_salary || registeredClient?.monthly_income || 0),
       verified_net_income: Number(row.employment.verified_net_income),
-      salary_day: row.employment.salary_day,
+      salary_day: row.employment.salary_day ?? registeredClient?.income_day ?? null,
       verification_method: row.employment.verification_method,
       verification_status: row.employment.verification_status,
       payslip_count: Number(row.employment.payslip_count),
       bank_statement_months: Number(row.employment.bank_statement_months),
       notes: row.employment.notes,
-    } : emptyEmployment);
+    } : {
+      ...emptyEmployment,
+      employment_status: registeredClient?.employment_status || emptyEmployment.employment_status,
+      employer_name: registeredClient?.employer_name || null,
+      job_title: registeredClient?.job_title || null,
+      gross_salary: Number(registeredClient?.monthly_income || 0),
+      net_salary: Number(registeredClient?.monthly_income || 0),
+      salary_day: registeredClient?.income_day ?? null,
+      // Registration income is declared, not automatically verified.
+      verified_net_income: 0,
+      verification_status: "unverified",
+    });
     // Read models include server-managed IDs, tenancy metadata and timestamps.
     // Build writable input DTOs explicitly instead of echoing read models into the API.
     setIncomeSources(row.income_sources.map((item) => ({
@@ -365,13 +376,13 @@ function OriginationWizard() {
         setRate(Number(workspace.application.interest_rate ?? 20));
         setAssessment(workspace.assessments[0] ?? null);
         setStep(Math.min(Math.max((workspace.application.application_step ?? 1) - 1, 0), steps.length - 1));
-        applyProfile(workspace.profile);
+        applyProfile(workspace.profile, clientRows.find((client) => client.borrower_id === workspace.application.borrower_id));
       } else if (requestedBorrowerId) {
         const [profileRow, eligibility] = await Promise.all([
           originationApi.getFinancialProfile(requestedBorrowerId),
           originationApi.topUpEligibility(requestedBorrowerId, requestedLoanId).catch(() => null),
         ]);
-        applyProfile(profileRow);
+        applyProfile(profileRow, clientRows.find((client) => client.borrower_id === requestedBorrowerId));
         setTopUpEligibility(eligibility);
         if (requestedType === "top_up") {
           setApplicationType("top_up");
@@ -704,7 +715,7 @@ function OriginationWizard() {
                 </div>
                 {applicationType === "top_up" ? <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} /> : null}
                 <div className="grid gap-5 sm:grid-cols-2">
-                  <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); setCdasCollectionEnabled(false); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); setCdasCollectionEnabled(false); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow, clients.find((client) => client.borrower_id === value)); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
                   <Field label="Loan product"><Select value={productId} onValueChange={chooseProduct}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · {interestMethodLabel(product.interest_method)} · {Number(product.interest_rate_percent)}%</SelectItem>)}</SelectContent></Select>{selectedProduct ? <p className="text-xs text-muted-foreground">Allowed {formatMoney(selectedProduct.min_amount)}–{formatMoney(selectedProduct.max_amount)} · {selectedProduct.min_term_months}–{selectedProduct.max_term_months} months</p> : null}</Field>
                   {applicationType === "new_loan" ? <NumberField label="Requested amount" value={requestedAmount} min={selectedProduct ? Number(selectedProduct.min_amount) : 1} max={selectedProduct ? Number(selectedProduct.max_amount) : undefined} onChange={setRequestedAmount} /> : <Field label="Total replacement facility"><Input value={formatMoney(topUpTotal)} disabled /><p className="text-xs text-muted-foreground">Old balance {formatMoney(topUpSettlement)} + extra cash {formatMoney(topUpCashRequested)}</p></Field>}
                   <NumberField label="Term in months" value={termCount} min={selectedProduct?.min_term_months ?? 1} max={selectedProduct?.max_term_months ?? 120} step="1" onChange={setTermCount} />
