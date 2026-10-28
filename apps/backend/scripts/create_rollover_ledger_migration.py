@@ -33,7 +33,18 @@ def generate() -> Path:
     created = command.revision(cfg, message="add loan rollover transfer ledger", autogenerate=True, head=head)
     if created is None:
         raise RuntimeError("Alembic did not create a revision")
-    return Path(created.path)
+    generated_path = Path(created.path)
+    generated_text = generated_path.read_text()
+    # Autogenerate may discover unrelated database drift. Reject any
+    # destructive changes and require the dedicated ledger table.
+    if "loan_rollover_transfers" not in generated_text or any(
+        token in generated_text
+        for token in ("op.drop_table(", "op.drop_column(", "op.alter_column(",
+                      "op.drop_index(", "op.drop_constraint(")
+    ):
+        generated_path.unlink(missing_ok=True)
+        raise RuntimeError("Generated ledger migration includes missing ledger or unsafe schema changes")
+    return generated_path
 
 
 if __name__ == "__main__":
