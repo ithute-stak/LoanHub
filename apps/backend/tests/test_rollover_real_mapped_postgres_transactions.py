@@ -103,10 +103,15 @@ def test_mapped_rollover_transfer_compensation_transaction_postgres():
                             ))
                             db.flush()
 
+                    extra_parent, extra_child = uuid4(), uuid4()
+                    db.execute(
+                        text("INSERT INTO client_company_loan (id) VALUES (:a), (:b)"),
+                        {"a": extra_parent, "b": extra_child},
+                    )
                     with pytest.raises(IntegrityError):
                         with db.begin_nested():
                             db.add(LoanRolloverTransfer(
-                                company_id=company, parent_loan_id=uuid4(), child_loan_id=uuid4(),
+                                company_id=company, parent_loan_id=extra_parent, child_loan_id=extra_child,
                                 source_installment_id=installment, transfer_reference="BAD-SUM",
                                 agreement_reference="TEST", approval_reference="TEST",
                                 transfer_amount=Decimal("100"), principal_component=Decimal("75"),
