@@ -46,7 +46,26 @@ def upgrade():
     )
     op.create_index("ix_loan_rollover_transfers_company_id", "loan_rollover_transfers", ["company_id"])
 
+    # Transfers are accounting evidence: corrections require a separate
+    # compensating entry, never an UPDATE or DELETE of posted evidence.
+    op.execute("""
+        CREATE FUNCTION prevent_rollover_transfer_mutation() RETURNS trigger
+        LANGUAGE plpgsql AS $
+        BEGIN
+            RAISE EXCEPTION 'Rollover transfer ledger is append-only';
+        END;
+        $
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_rollover_transfer_immutable
+        BEFORE UPDATE OR DELETE ON loan_rollover_transfers
+        FOR EACH ROW EXECUTE FUNCTION prevent_rollover_transfer_mutation()
+    """)
+
+
 
 def downgrade():
+    op.execute("DROP TRIGGER IF EXISTS trg_rollover_transfer_immutable ON loan_rollover_transfers")
+    op.execute("DROP FUNCTION IF EXISTS prevent_rollover_transfer_mutation()")
     op.drop_index("ix_loan_rollover_transfers_company_id", table_name="loan_rollover_transfers")
     op.drop_table("loan_rollover_transfers")
