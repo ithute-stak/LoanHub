@@ -300,3 +300,5 @@ from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHisto
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
+
+from database.models.loan_rollover_reversal_approval import LoanRolloverReversalApproval
