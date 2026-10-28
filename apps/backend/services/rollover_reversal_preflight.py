@@ -20,10 +20,12 @@ def validate_rollover_reversal_preflight(*, transfer, parent, child, child_insta
         raise HTTPException(status_code=409, detail="Child balance has changed since transfer")
     if Decimal(str(parent.balance)) != 0:
         raise HTTPException(status_code=409, detail="Parent already has an outstanding balance")
+    if getattr(child, "status", None) is None or str(getattr(child.status, "value", child.status)) != "active":
+        raise HTTPException(status_code=409, detail="Child facility is no longer active")
     if len(child_installments) != 1:
         raise HTTPException(status_code=409, detail="Child schedule was modified")
     installment = child_installments[0]
-    if Decimal(str(installment.paid_amount)) != 0 or Decimal(str(installment.total_due)) != Decimal(str(transfer.transfer_amount)):
+    if installment.is_superseded or Decimal(str(installment.paid_amount)) != 0 or Decimal(str(installment.total_due)) != Decimal(str(transfer.transfer_amount)):
         raise HTTPException(status_code=409, detail="Child installment does not match transfer")
     original = (parent.calculation_breakdown or {}).get("linked_rollover_out") or {}
     if str(original.get("child_loan_id")) != str(child.id):
