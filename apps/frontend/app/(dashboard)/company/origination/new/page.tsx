@@ -273,11 +273,30 @@ function OriginationWizard() {
       bank_statement_months: Number(row.employment.bank_statement_months),
       notes: row.employment.notes,
     } : emptyEmployment);
-    setIncomeSources(row.income_sources.map(({ id: _id, ...item }) => ({ ...item, declared_amount: Number(item.declared_amount), verified_amount: Number(item.verified_amount) })));
-    setExpenses(row.expenses.length ? row.expenses.map(({ id: _id, ...item }) => ({ ...item, monthly_amount: Number(item.monthly_amount) })) : [emptyExpense()]);
+    // Read models include server-managed IDs, tenancy metadata and timestamps.
+    // Build writable input DTOs explicitly instead of echoing read models into the API.
+    setIncomeSources(row.income_sources.map((item) => ({
+      source_type: item.source_type,
+      description: item.description,
+      declared_amount: Number(item.declared_amount),
+      verified_amount: Number(item.verified_amount),
+      frequency: item.frequency,
+      verification_method: item.verification_method,
+      is_verified: item.is_verified,
+    })));
+    setExpenses(row.expenses.length ? row.expenses.map((item) => ({
+      category: item.category,
+      description: item.description,
+      monthly_amount: Number(item.monthly_amount),
+      is_verified: item.is_verified,
+      verification_notes: item.verification_notes,
+    })) : [emptyExpense()]);
     setDebts(row.debts.map((item) => ({
-      ...item,
       id: item.id,
+      creditor: item.creditor,
+      account_reference: item.account_reference,
+      debt_type: item.debt_type,
+      started_on: item.started_on,
       original_amount: Number(item.original_amount),
       current_balance: Number(item.current_balance),
       installment_amount: Number(item.installment_amount ?? item.monthly_installment ?? 0),
@@ -288,6 +307,11 @@ function OriginationWizard() {
       remaining_installments: item.remaining_installments === null ? null : Number(item.remaining_installments),
       settlement_amount: item.settlement_amount === null ? null : Number(item.settlement_amount),
       notes: item.notes ?? null,
+      next_due_date: item.next_due_date,
+      remaining_term_months: item.remaining_term_months,
+      status: item.status,
+      source: item.source,
+      is_verified: item.is_verified,
     })));
     const sharedBanks = row.bank_accounts ?? (row.bank_account ? [row.bank_account] : []);
     setBankAccounts(sharedBanks.map((item) => ({
