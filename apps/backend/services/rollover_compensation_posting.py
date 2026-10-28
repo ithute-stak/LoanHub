@@ -18,7 +18,7 @@ from database.models.enums import LoanStatus, InstallmentStatus
 from database.models.repayment import RepaymentInstallment, PaymentAllocation
 from database.models.payment import PaymentTransaction
 from services.rollover_reversal_preflight import validate_rollover_reversal_preflight
-from services.rollover_checker_identity import verify_rollover_checker_identity
+from services.rollover_reversal_approval import require_rollover_reversal_approval
 
 
 def post_rollover_compensation(
@@ -38,14 +38,13 @@ def post_rollover_compensation(
     if not reference.strip() or not approval_reference.strip() or not reason.strip():
         raise HTTPException(status_code=422, detail="Reversal references and reason are required")
 
-    # Checker identity must be resolved against current tenant membership, never
-    # accepted merely because the request supplied another UUID.
-    verify_rollover_checker_identity(
-        db, company_id=company_id, maker_user_id=actor_user_id,
-        checker_user_id=independent_approver_id,
+    # Fail closed unless this exact transfer has a durable checker decision.
+    # The HTTP 503 at entry remains mandatory until journal certification.
+    require_rollover_reversal_approval(
+        db, company_id=company_id, transfer_id=transfer_id,
+        maker_user_id=actor_user_id, checker_user_id=independent_approver_id,
+        approval_reference=approval_reference,
     )
-    # Identity alone does not certify transaction-specific approval; posting
-    # stays gated pending an independently recorded maker-checker decision.
 
     transfer = db.query(LoanRolloverTransfer).filter(
         LoanRolloverTransfer.id == transfer_id,
