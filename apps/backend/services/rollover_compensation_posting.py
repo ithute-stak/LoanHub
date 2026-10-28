@@ -87,6 +87,12 @@ def post_rollover_compensation(
         child_amount_paid=child.amount_paid,
         original_parent_balance=original.get("balance", "-1"),
     )
+    source = db.query(RepaymentInstallment).filter(
+        RepaymentInstallment.id == transfer.source_installment_id,
+        RepaymentInstallment.loan_id == parent.id,
+    ).with_for_update().one_or_none()
+    if source is None or not source.is_superseded:
+        raise HTTPException(status_code=409, detail="Original installment is not available for restoration")
     # Proposed atomic compensation. Unreachable until the entry-point 503
     # gate is deliberately removed after independent accounting certification.
     amount = Decimal(str(transfer.transfer_amount))
@@ -96,12 +102,6 @@ def post_rollover_compensation(
     child.balance = Decimal("0")
     child.status = LoanStatus.CANCELLED
     child.is_overdue = False
-    source = db.query(RepaymentInstallment).filter(
-        RepaymentInstallment.id == transfer.source_installment_id,
-        RepaymentInstallment.loan_id == parent.id,
-    ).with_for_update().one_or_none()
-    if source is None or not source.is_superseded:
-        raise HTTPException(status_code=409, detail="Original installment is not available for restoration")
     source.is_superseded = False
     source.superseded_at = None
     source.status = InstallmentStatus.PARTIALLY_PAID if Decimal(str(source.paid_amount)) > 0 else InstallmentStatus.PENDING
