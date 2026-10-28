@@ -93,6 +93,26 @@ def post_rollover_compensation(
     ).with_for_update().one_or_none()
     if source is None or not source.is_superseded:
         raise HTTPException(status_code=409, detail="Original installment is not available for restoration")
+    # The source installment must still carry the original unpaid amount.
+    # Do not restore a different schedule or silently double-count historical debt.
+    source_remaining = Decimal(str(source.total_due)) - Decimal(str(source.paid_amount))
+    if source_remaining != Decimal(str(transfer.transfer_amount)):
+        raise HTTPException(
+            status_code=409,
+            detail="Source installment unpaid balance no longer matches rollover transfer",
+        )
+    if any(
+        Decimal(str(getattr(source, field))) != Decimal(str(getattr(transfer, component)))
+        for field, component in (
+            ("principal_due", "principal_component"),
+            ("interest_due", "interest_component"),
+            ("fee_due", "fee_component"),
+        )
+    ) and Decimal(str(source.paid_amount)) == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Source component totals no longer match the rollover ledger",
+        )
     # Proposed atomic compensation. Unreachable until the entry-point 503
     # gate is deliberately removed after independent accounting certification.
     amount = Decimal(str(transfer.transfer_amount))
