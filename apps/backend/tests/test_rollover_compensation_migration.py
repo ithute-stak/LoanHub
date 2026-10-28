@@ -15,7 +15,7 @@ def test_migration_chain_and_proper_pg_trigger():
 
 def test_compensation_requires_original_and_is_unique():
     table=LoanRolloverCompensation.__table__
-    assert "loan_rollover_transfers.id" in str(table.c.transfer_id.foreign_keys)
+    assert any(fk.target_fullname == "loan_rollover_transfers.id" for fk in table.c.transfer_id.foreign_keys)
     assert "uq_rollover_compensation_once" in COMPENSATION
     assert "ck_rollover_compensation_balances" in COMPENSATION
 
