@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from database.models.audit_log import AuditLog
+from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import InstallmentStatus, LoanStatus
 from database.models.repayment import RepaymentInstallment
@@ -200,6 +201,26 @@ def post_final_rollover(
         "original": original,
     }
     parent.calculation_breakdown = previous
+    # Record the receivable transfer in the same SQL transaction as the
+    # loan changes. Both API and service posting gates remain disabled.
+    db.add(LoanRolloverTransfer(
+        company_id=parent.company_id, parent_loan_id=parent.id,
+        child_loan_id=child.id, source_installment_id=row.id,
+        transfer_reference=approval_reference,
+        agreement_reference=agreement_reference,
+        approval_reference=approval_reference,
+        principal_component=carried_principal,
+        interest_component=carried_interest, fee_component=carried_fees,
+        transfer_amount=outstanding, status="posted",
+        posted_by_user_id=actor_user_id,
+        evidence={
+            "original": original,
+            "approved_transfer_amount": str(outstanding),
+            "allocation_evidence": component_evidence if component_count > 1 else None,
+            "no_cash_movement": True,
+            "recorded_at": now.isoformat(),
+        },
+    ))
     db.add(AuditLog(
         user_id=actor_user_id, company_id=parent.company_id, branch_id=parent.branch_id,
         action="loan.final_installment_receivable_transferred", table_name="client_company_loan",

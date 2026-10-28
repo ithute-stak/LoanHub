@@ -1239,6 +1239,16 @@ def reverse_loan_payment(db: Session, payment: PaymentTransaction) -> None:
                 status_code=409,
                 detail="An approved installment carry-forward exists. Reverse the restructuring before reversing historical repayments.",
             )
+        # Also enforce the durable ledger, not only a mutable JSON marker.
+        # This prevents reversal even if the parent's JSON is stale or lost.
+        from database.models.loan_rollover_transfer import LoanRolloverTransfer
+        if db.query(LoanRolloverTransfer.id).filter(
+            LoanRolloverTransfer.parent_loan_id == loan.id
+        ).first():
+            raise HTTPException(
+                status_code=409,
+                detail="A posted linked rollover exists. Historical repayment reversal requires an approved compensating workflow.",
+            )
         allocations = (
             db.query(PaymentAllocation)
             .filter(PaymentAllocation.payment_id == payment.id)
