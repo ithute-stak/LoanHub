@@ -298,3 +298,5 @@ from database.models.pad_signing import ContractPadSigningSession, ContractPadCa
 from database.models.cdas_historical import CdasHistoricalImportBatch, CdasHistoricalImportRow
 
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
+
+from database.models.loan_rollover_compensation import LoanRolloverCompensation
