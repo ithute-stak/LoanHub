@@ -14,7 +14,7 @@ def test_checker_identity_comes_from_authenticated_tenant():
 
 
 def test_maker_anchored_to_prior_transfer_evidence():
-    assert 'maker_id = transfer.posted_by_user_id' in SERVICE
+    assert 'maker_id = request.maker_user_id' in SERVICE
     assert 'verify_rollover_checker_identity(' in SERVICE
     assert 'with_for_update()' in SERVICE
     assert 'Decision already recorded for this transfer' in SERVICE

@@ -109,6 +109,31 @@ class FinalRolloverTransferPlanRequest(BaseModel):
     approval_reference: str = Field(min_length=5, max_length=180)
 
 
+class RolloverMakerRequest(BaseModel):
+    request_reference: str = Field(min_length=5, max_length=180)
+    reason: str = Field(min_length=12, max_length=500)
+
+
+@router.post("/rollover-transfers/{transfer_id}/reversal-request")
+def submit_rollover_reversal_request(
+    transfer_id: UUID,
+    payload: RolloverMakerRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Maker must initiate a request before a separate checker can decide."""
+    require_tenant_roles(context, {
+        UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN,
+        UserRole.FINANCE_OFFICER, UserRole.COMPLIANCE_OFFICER,
+    })
+    from services.rollover_reversal_request import record_rollover_reversal_request
+    return record_rollover_reversal_request(
+        db, company_id=context.company_id, transfer_id=transfer_id,
+        maker_user_id=context.user.id,
+        request_reference=payload.request_reference, reason=payload.reason,
+    )
+
+
 class RolloverCheckerDecisionRequest(BaseModel):
     approval_reference: str = Field(min_length=5, max_length=180)
     decision: str = Field(pattern="^(approved|rejected)$")
