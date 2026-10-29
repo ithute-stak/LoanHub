@@ -900,6 +900,18 @@ def calculate_affordability(
     )
 
     reasons: list[dict[str, str]] = []
+    if max_installment <= 0 and verified_income > 0:
+        reasons.append({
+            "severity": "warning",
+            "code": "zero_affordability_policy_limit",
+            "message": (
+                "The current policy/capacity sets the affordable instalment to zero. "
+                f"Disposable-income limit: LSL {disposable_limit}; "
+                f"debt-to-income limit: LSL {dti_limit}; "
+                f"instalment-to-income limit: LSL {installment_income_limit}. "
+                "Review company policy thresholds, expense buffers and any applicable CDAS limit."
+            ),
+        })
     blocking = False
     referral = False
 
