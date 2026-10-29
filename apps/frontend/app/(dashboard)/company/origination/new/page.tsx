@@ -1150,7 +1150,8 @@ function AffordabilityStep({ calculation, assessment, totalExpenses, totalDebts,
             <p className="mt-3 text-sm text-muted-foreground">If a flag is incorrect, an authorised reviewer must correct the KYC record with supporting evidence and recalculate the assessment. Accepting financial risk does not clear sanctions, fraud or mandatory payroll requirements.</p>
           </div>
           <div className="rounded-2xl border p-4">
-            <p className="text-sm font-semibold">Application recommendation: {titleCase(effectiveDecision ?? "not calculated")}</p>
+            <p className="text-sm font-semibold">{complianceIssues.length && financiallyAffordable ? "Overall status: Compliance review required" : `Application recommendation: ${titleCase(effectiveDecision ?? "not calculated")}`}</p>
+            {complianceIssues.length && financiallyAffordable ? <p className="mt-1 text-sm text-muted-foreground">Financial affordability passed. The recorded overall decision is on hold because of separate identity or compliance checks; it is not a financial rejection.</p> : null}
             {assessment.overridden ? <p className="mt-1 text-sm text-muted-foreground">Original recommendation: {titleCase(assessment.decision)}. The recorded exception is retained for audit.</p> : null}
           </div>
         </div>
