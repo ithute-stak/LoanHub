@@ -685,6 +685,27 @@ function OriginationWizard() {
     }
   }
 
+  async function approveTopUpExceptionFromReview() {
+    if (!application || application.application_type !== "top_up" || !application.top_up_exception_requested || application.top_up_exception_approved || activeRole !== "company_owner") return;
+    const reason = window.prompt("Approve this early top-up exception as Company Owner. Enter the business reason (at least 10 characters). This records your decision but does not disburse the loan.", application.top_up_exception_reason ?? "");
+    if (reason === null) return;
+    if (reason.trim().length < 10) {
+      toast.error("Please enter at least 10 characters explaining the owner exception.");
+      return;
+    }
+    setWorking(true);
+    try {
+      const approved = await originationApi.approveTopUpException(application.id, reason.trim());
+      setApplication(approved);
+      await refreshIntegrationReadiness(approved.id);
+      toast.success("Top-up exception approved", { description: "Owner approval is recorded. You can now submit for manager decision." });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Unable to approve this top-up exception."));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function submitApplication() {
     if (!application) return;
     setWorking(true);
@@ -791,7 +812,19 @@ function OriginationWizard() {
               ) : null}
               {assessment?.overridden ? <p className="text-sm">Recorded decision: {titleCase(assessment.override_decision ?? assessment.decision)}. Owner/manager reason: {assessment.override_reason ?? "Not recorded"}. Original recommendation: {titleCase(assessment.decision)}.</p> : null}
             </> : null}
-            {step === 6 ? <ReviewStep application={application} profile={profile} assessment={assessment} calculation={calculation} product={selectedProduct} totalExpenses={totalExpenses} totalDebts={totalDebts} /> : null}
+            {step === 6 ? <>
+              <ReviewStep application={application} profile={profile} assessment={assessment} calculation={calculation} product={selectedProduct} totalExpenses={totalExpenses} totalDebts={totalDebts} />
+              {application?.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? (
+                <div className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
+                  <p className="font-semibold">Early top-up exception requires owner approval</p>
+                  <p className="text-sm text-muted-foreground">The normal repayment threshold has not been met. This is a business-risk decision, separate from affordability. The Company Owner can approve the exception with a written reason; normal compliance and final loan approval still apply.</p>
+                  {activeRole === "company_owner" ? (
+                    <Button type="button" disabled={working} onClick={() => void approveTopUpExceptionFromReview()}>Approve top-up exception as owner</Button>
+                  ) : <p className="text-sm">Ask the Company Owner to review and approve this exception.</p>}
+                </div>
+              ) : null}
+              {application?.application_type === "top_up" && application.top_up_exception_approved ? <p className="rounded-2xl border border-emerald-500/30 p-3 text-sm">Company-owner top-up exception approved and recorded. You may submit this application for a lending decision.</p> : null}
+            </> : null}
 
             <div className="flex flex-wrap justify-between gap-3 border-t pt-5">
               <Button type="button" variant="outline" disabled={step === 0 || working} onClick={() => setStep((current) => Math.max(current - 1, 0))}><ArrowLeft className="h-4 w-4" />Previous</Button>
@@ -894,7 +927,7 @@ function OriginationWizard() {
               </CardContent>
             </Card>
           ) : null}
-          <Card className="rounded-3xl border-primary/20 bg-gradient-to-br from-primary/10 via-card to-emerald-500/10"><CardHeader><CardTitle className="flex items-center gap-2"><BadgeCheck className="h-5 w-5 text-primary" />Application health</CardTitle></CardHeader><CardContent className="space-y-3"><Health label="Client selected" ok={Boolean(borrowerId)} />{applicationType === "top_up" ? <Health label="Top-up rule or owner exception" ok={Boolean(topUpEligibility?.eligible || topUpEligibility?.requires_owner_exception)} /> : null}<Health label="Loan terms calculated" ok={Boolean(calculation)} /><Health label="KYC verified" ok={kyc.status === "verified"} /><Health label="Income verified" ok={employment.verification_status === "verified" && employment.verified_net_income > 0} /><Health label="Banking captured" ok={bankAccounts.length > 0} /><Health label="Financial instalment within limit" ok={Boolean(assessment && Number(assessment.proposed_installment) <= Number(assessment.maximum_affordable_installment))} /><Health label="Compliance cleared for submission" ok={Boolean(assessment && ["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision))} /></CardContent></Card>
+          <Card className="rounded-3xl border-primary/20 bg-gradient-to-br from-primary/10 via-card to-emerald-500/10"><CardHeader><CardTitle className="flex items-center gap-2"><BadgeCheck className="h-5 w-5 text-primary" />Application health</CardTitle></CardHeader><CardContent className="space-y-3"><Health label="Client selected" ok={Boolean(borrowerId)} />{applicationType === "top_up" ? <Health label="Top-up rule or owner exception" ok={Boolean(topUpEligibility?.eligible || application?.top_up_exception_approved)} /> : null}<Health label="Loan terms calculated" ok={Boolean(calculation)} /><Health label="KYC verified" ok={kyc.status === "verified"} /><Health label="Income verified" ok={employment.verification_status === "verified" && employment.verified_net_income > 0} /><Health label="Banking captured" ok={bankAccounts.length > 0} /><Health label="Financial instalment within limit" ok={Boolean(assessment && Number(assessment.proposed_installment) <= Number(assessment.maximum_affordable_installment))} /><Health label="Compliance cleared for submission" ok={Boolean(assessment && ["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision))} /></CardContent></Card>
           <Card className="rounded-3xl"><CardHeader><CardTitle>Financial snapshot</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><Line label="Verified income" value={formatMoney(employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0))} /><Line label="Household expenses" value={formatMoney(totalExpenses)} /><Line label="Debt instalments" value={formatMoney(totalDebts)} /><Line label="Proposed instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} /><Line label="Affordability limit" value={formatMoney(assessment?.maximum_affordable_installment ?? 0)} /></CardContent></Card>
           <Alert><CircleAlert className="h-4 w-4" /><AlertTitle>Payment-card security</AlertTitle><AlertDescription>LoanHub never captures or stores CVV/CVC, PIN or a full card number. Only provider tokens and masked card details are accepted.</AlertDescription></Alert>
         </div>
