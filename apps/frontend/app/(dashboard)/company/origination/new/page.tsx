@@ -621,7 +621,7 @@ function OriginationWizard() {
   }
 
   async function skipToTopUpOffer() {
-    if (applicationType !== "top_up" || activeRole !== "company_owner" || (application && application.status !== "draft")) return;
+    if (applicationType !== "top_up" || (application && application.status !== "draft")) return;
     setWorking(true);
     try {
       // A top-up offer reuses the existing financial profile. The owner need
@@ -651,7 +651,7 @@ function OriginationWizard() {
           toast.error(getErrorMessage(error, "Top-up offer saved, but approval prerequisites remain."));
         }
       } else {
-        toast.error("Top-up offer saved, but affordability did not pass using existing verified records.");
+        toast.error("Top-up needs review: open the affordability result to see whether saved records need updating or a financial-risk exception is available.");
       }
       setStep(6);
     } catch (error: unknown) {
@@ -736,9 +736,9 @@ function OriginationWizard() {
             <h1 className="mt-2 text-3xl font-black tracking-tight">{application?.application_reference ?? "New credit application"}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{profile?.identity.full_name ?? selectedClient?.full_name ?? "Select an existing company client"} · Step {step + 1} of {steps.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && activeRole === "company_owner" && (!application || application.status === "draft") ? (
+          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && (!application || application.status === "draft") ? (
             <LoadingButton loading={working} loadingText="Preparing top-up offer…" onClick={() => void skipToTopUpOffer()}>
-              <ArrowRight className="h-4 w-4" />Skip forms & offer top-up
+              <ArrowRight className="h-4 w-4" />Use saved records & review top-up
             </LoadingButton>
           ) : null}<Button variant="outline" asChild><Link href="/company/origination"><ArrowLeft className="h-4 w-4" />Origination queue</Link></Button><LoadingButton variant="outline" loading={working} loadingText="Saving…" onClick={() => void saveCurrent()}><Save className="h-4 w-4" />Save progress</LoadingButton></div>
         </div>
