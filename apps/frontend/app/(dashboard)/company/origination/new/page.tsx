@@ -621,7 +621,7 @@ function OriginationWizard() {
   }
 
   async function skipToTopUpOffer() {
-    if (applicationType !== "top_up" || activeRole !== "company_owner" || (application && application.status !== "draft")) return;
+    if (applicationType !== "top_up" || (application && application.status !== "draft")) return;
     setWorking(true);
     try {
       // A top-up offer reuses the existing financial profile. The owner need
@@ -651,7 +651,7 @@ function OriginationWizard() {
           toast.error(getErrorMessage(error, "Top-up offer saved, but approval prerequisites remain."));
         }
       } else {
-        toast.error("Top-up offer saved, but affordability did not pass using existing verified records.");
+        toast.error("Top-up needs review: open the affordability result to see whether saved records need updating or a financial-risk exception is available.");
       }
       setStep(6);
     } catch (error: unknown) {
@@ -736,9 +736,9 @@ function OriginationWizard() {
             <h1 className="mt-2 text-3xl font-black tracking-tight">{application?.application_reference ?? "New credit application"}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{profile?.identity.full_name ?? selectedClient?.full_name ?? "Select an existing company client"} · Step {step + 1} of {steps.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && activeRole === "company_owner" && (!application || application.status === "draft") ? (
+          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && (!application || application.status === "draft") ? (
             <LoadingButton loading={working} loadingText="Preparing top-up offer…" onClick={() => void skipToTopUpOffer()}>
-              <ArrowRight className="h-4 w-4" />Skip forms & offer top-up
+              <ArrowRight className="h-4 w-4" />Use saved records & review top-up
             </LoadingButton>
           ) : null}<Button variant="outline" asChild><Link href="/company/origination"><ArrowLeft className="h-4 w-4" />Origination queue</Link></Button><LoadingButton variant="outline" loading={working} loadingText="Saving…" onClick={() => void saveCurrent()}><Save className="h-4 w-4" />Save progress</LoadingButton></div>
         </div>
@@ -758,7 +758,17 @@ function OriginationWizard() {
                   <button type="button" disabled={Boolean(application)} onClick={() => setApplicationType("new_loan")} className={`rounded-3xl border p-5 text-left ${applicationType === "new_loan" ? "border-primary bg-primary/10" : "bg-card"}`}><p className="font-black">New loan</p><p className="mt-1 text-sm text-muted-foreground">Use when the borrower has no active loan with this company.</p></button>
                   <button type="button" disabled={Boolean(application) || !topUpEligibility?.loan} onClick={() => setApplicationType("top_up")} className={`rounded-3xl border p-5 text-left ${applicationType === "top_up" ? "border-primary bg-primary/10" : "bg-card"}`}><p className="font-black">Top-up existing loan</p><p className="mt-1 text-sm text-muted-foreground">Settle the old balance inside the new facility and pay only the extra cash to the borrower.</p></button>
                 </div>
-                {applicationType === "top_up" ? <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} /> : null}
+                {applicationType === "top_up" ? <>
+                  <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} />
+                  <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
+                    <p className="font-bold">Do you want to go for extra checking?</p>
+                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment, expenses and affordability manually. No: reuse the client&apos;s saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
+                    <div className="flex flex-wrap gap-3">
+                      <Button type="button" variant="outline" disabled={working} onClick={() => setStep(1)}>Yes, extra checking</Button>
+                      <LoadingButton type="button" loading={working} loadingText="Preparing top-up…" onClick={() => void skipToTopUpOffer()}>No, just offer top-up</LoadingButton>
+                    </div>
+                  </div>
+                </> : null}
                 <div className="grid gap-5 sm:grid-cols-2">
                   <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); setCdasCollectionEnabled(false); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow, clients.find((client) => client.borrower_id === value)); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
                   <Field label="Loan product"><Select value={productId} onValueChange={chooseProduct}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · {interestMethodLabel(product.interest_method)} · {Number(product.interest_rate_percent)}%</SelectItem>)}</SelectContent></Select>{selectedProduct ? <p className="text-xs text-muted-foreground">Allowed {formatMoney(selectedProduct.min_amount)}–{formatMoney(selectedProduct.max_amount)} · {selectedProduct.min_term_months}–{selectedProduct.max_term_months} months</p> : null}</Field>
