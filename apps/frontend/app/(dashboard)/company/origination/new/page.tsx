@@ -762,7 +762,7 @@ function OriginationWizard() {
                   <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} />
                   <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
                     <p className="font-bold">Do you want to go for extra checking?</p>
-                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment, expenses and affordability manually. No: reuse the client's saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
+                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment, expenses and affordability manually. No: reuse the client&apos;s saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
                     <div className="flex flex-wrap gap-3">
                       <Button type="button" variant="outline" disabled={working} onClick={() => setStep(1)}>Yes, extra checking</Button>
                       <LoadingButton type="button" loading={working} loadingText="Preparing top-up…" onClick={() => void skipToTopUpOffer()}>No, just offer top-up</LoadingButton>
