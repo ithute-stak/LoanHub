@@ -291,6 +291,7 @@ export type AffordabilityAssessment = {
   maximum_affordable_installment: number;
   proposed_installment: number;
   affordability_headroom: number;
+  input_snapshot?: { proposal?: Record<string, unknown>; [key: string]: unknown };
   result_reasons: AffordabilityReason[];
   overridden: boolean;
   override_decision: string | null;
