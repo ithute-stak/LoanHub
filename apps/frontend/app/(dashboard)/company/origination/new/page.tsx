@@ -1119,7 +1119,46 @@ function BankingStep({
 }
 
 function AffordabilityStep({ calculation, assessment, totalExpenses, totalDebts, verifiedIncome }: { calculation: MicroLoanCalculation | null; assessment: AffordabilityAssessment | null; totalExpenses: number; totalDebts: number; verifiedIncome: number }) {
-  return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Summary label="Verified income" value={formatMoney(verifiedIncome)} /><Summary label="Household expenses" value={formatMoney(totalExpenses)} /><Summary label="Debt instalments" value={formatMoney(totalDebts)} /><Summary label="Proposed instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} accent /></div>{assessment ? <div className={`rounded-3xl border p-6 ${assessment.decision === "eligible" ? "border-emerald-500/30 bg-emerald-500/10" : assessment.decision === "refer" ? "border-amber-500/30 bg-amber-500/10" : "border-red-500/30 bg-red-500/10"}`}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-wider text-muted-foreground">Decision</p><h3 className="mt-1 text-3xl font-black">{titleCase(assessment.overridden ? assessment.override_decision ?? assessment.decision : assessment.decision)}</h3></div><div className="text-right"><p className="text-xs text-muted-foreground">Maximum affordable instalment</p><p className="text-2xl font-black">{formatMoney(assessment.maximum_affordable_installment)}</p><p className="text-sm text-muted-foreground">Headroom {formatMoney(assessment.affordability_headroom)}</p></div></div><div className="mt-5 space-y-2">{assessment.result_reasons.map((reason) => <div key={reason.code} className="flex gap-3 rounded-2xl bg-background/70 p-3"><span>{reason.severity === "pass" ? "✓" : reason.severity === "warning" ? "⚠" : "✕"}</span><p className="text-sm">{reason.message}</p></div>)}</div></div> : <Alert><Calculator className="h-4 w-4" /><AlertTitle>Ready to calculate</AlertTitle><AlertDescription>Select Save and continue. FastAPI will calculate and permanently snapshot the policy, verified income, expenses, debts and the selected interest-method instalment.</AlertDescription></Alert>}</div>;
+  const installment = Number(calculation?.monthly_installment ?? 0);
+  const capacity = Number(assessment?.maximum_affordable_installment ?? 0);
+  const financiallyAffordable = installment > 0 && installment <= capacity;
+  const complianceCodes = new Set(["compliance_block", "enhanced_due_diligence", "kyc_incomplete", "age_missing", "age_outside_policy", "cdas_live_affordability_missing", "cdas_live_affordability_insufficient"]);
+  const complianceIssues = assessment?.result_reasons.filter((reason) => complianceCodes.has(reason.code) && reason.severity !== "pass") ?? [];
+  const financialIssues = assessment?.result_reasons.filter((reason) => !complianceCodes.has(reason.code) && reason.severity !== "pass") ?? [];
+  const effectiveDecision = assessment?.overridden ? assessment.override_decision ?? assessment.decision : assessment?.decision;
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Summary label="Verified income" value={formatMoney(verifiedIncome)} />
+        <Summary label="Household expenses" value={formatMoney(totalExpenses)} />
+        <Summary label="Debt instalments" value={formatMoney(totalDebts)} />
+        <Summary label="Proposed instalment" value={formatMoney(installment)} accent />
+      </div>
+      {assessment ? (
+        <div className="space-y-4">
+          <div className={`rounded-3xl border p-5 ${financiallyAffordable ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/40 bg-amber-500/10"}`}>
+            <p className="text-xs font-bold uppercase tracking-wide">Financial affordability · advisory</p>
+            <h3 className="mt-1 text-2xl font-bold">{financiallyAffordable ? "Within the calculated limit" : "Exceeds the calculated limit"}</h3>
+            <p className="mt-2 text-sm">Maximum recommended instalment: {formatMoney(capacity)} · Proposed: {formatMoney(installment)} · Headroom: {formatMoney(assessment.affordability_headroom)}</p>
+            <p className="mt-2 text-sm text-muted-foreground">This is a financial-risk recommendation, not an automatic loan approval or rejection. An authorised owner may record a reasoned decision to accept credit risk.</p>
+            {financialIssues.length > 0 ? <div className="mt-3 space-y-2">{financialIssues.map((reason) => <p key={reason.code} className="rounded-xl bg-background/70 p-3 text-sm">{reason.message}</p>)}</div> : null}
+          </div>
+          <div className={`rounded-3xl border p-5 ${complianceIssues.length ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
+            <p className="text-xs font-bold uppercase tracking-wide">Identity, KYC and compliance · separate review</p>
+            <h3 className="mt-1 text-xl font-bold">{complianceIssues.length ? "Review required before approval" : "No outstanding compliance alerts in this assessment"}</h3>
+            {complianceIssues.length ? <div className="mt-3 space-y-2">{complianceIssues.map((reason) => <p key={reason.code} className="rounded-xl bg-background/70 p-3 text-sm">{reason.message}</p>)}</div> : null}
+            <p className="mt-3 text-sm text-muted-foreground">If a flag is incorrect, an authorised reviewer must correct the KYC record with supporting evidence and recalculate the assessment. Accepting financial risk does not clear sanctions, fraud or mandatory payroll requirements.</p>
+          </div>
+          <div className="rounded-2xl border p-4">
+            <p className="text-sm font-semibold">Application recommendation: {titleCase(effectiveDecision ?? "not calculated")}</p>
+            {assessment.overridden ? <p className="mt-1 text-sm text-muted-foreground">Original recommendation: {titleCase(assessment.decision)}. The recorded exception is retained for audit.</p> : null}
+          </div>
+        </div>
+      ) : (
+        <Alert><Calculator className="h-4 w-4" /><AlertTitle>Ready to calculate</AlertTitle><AlertDescription>Save and continue to calculate affordability using the recorded income, expenses, debts and company policy.</AlertDescription></Alert>
+      )}
+    </div>
+  );
 }
 
 function ReviewStep({ application, profile, assessment, calculation, product, totalExpenses, totalDebts }: { application: OriginationApplication | null; profile: FinancialProfile | null; assessment: AffordabilityAssessment | null; calculation: MicroLoanCalculation | null; product: LoanProduct | null; totalExpenses: number; totalDebts: number }) {
