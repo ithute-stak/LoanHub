@@ -782,10 +782,10 @@ function OriginationWizard() {
             {step === 4 ? <BankingStep values={bankAccounts} onChange={setBankAccounts} identityName={profile?.identity.full_name ?? selectedClient?.full_name ?? ""} /> : null}
             {step === 5 ? <>
               <AffordabilityStep calculation={calculation} assessment={assessment} totalExpenses={totalExpenses} totalDebts={totalDebts} verifiedIncome={employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0)} />
-              {assessment && !["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision) && activeRole === "company_owner" ? (
+              {assessment && Number(calculation?.monthly_installment ?? 0) > Number(assessment.maximum_affordable_installment) && !assessment.overridden && activeRole === "company_owner" ? (
                 <div className="rounded-2xl border border-amber-400/50 p-4 space-y-3">
                   <p className="font-semibold">Company owner: accept lending risk</p>
-                  <p className="text-sm text-muted-foreground">Affordability is advisory. You may record a reasoned decision to consider this loan or top-up at the company&apos;s risk. The original assessment remains on record; KYC, sanctions and other mandatory safeguards are not waived.</p>
+                  <p className="text-sm text-muted-foreground">The proposed instalment exceeds the recommended financial limit. A company owner may document acceptance of this credit risk, subject to separate KYC and compliance checks.</p>
                   <Button type="button" variant="outline" disabled={working} onClick={() => void acceptAffordabilityRisk()}>Record owner risk acceptance</Button>
                 </div>
               ) : null}
