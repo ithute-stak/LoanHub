@@ -28,6 +28,7 @@ import {
 import {listLoanProducts} from "@/api/loanProducts";
 import {calculateLoan} from "@/api/loans";
 import {professionalApi} from "@/api/professional";
+import {originationApi} from "@/api/origination";
 import {InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates} from "@/components/loans/installment-due-date-fields";
 import {LoanProductDialog} from "@/components/loans/loan-product-dialog";
 import {MicroLoanPreview} from "@/components/loans/micro-loan-preview";
@@ -232,6 +233,24 @@ export function InternalApplicationsWorkspace() {
         });
         setRejectReason("");
         setCalculation(null);
+        if (application.application_type === "top_up" && application.affordability_assessment_id) {
+            // The approval form must begin with the exact terms that were
+            // assessed. Falling back to product defaults silently changes
+            // interest/fees and causes a false "stale affordability" block.
+            void originationApi.getWorkspace(application.id).then((workspace) => {
+                const assessed = workspace.assessments.find((item) => item.id === application.affordability_assessment_id);
+                const proposal = assessed?.input_snapshot?.proposal as Record<string, unknown> | undefined;
+                if (!proposal) return;
+                setApproval((current) => ({
+                    ...current,
+                    approved_amount: Number(proposal.principal ?? current.approved_amount),
+                    interest_rate: Number(proposal.rate_percent ?? current.interest_rate),
+                    processing_fee: Number(proposal.processing_fee ?? current.processing_fee),
+                }));
+            }).catch((error: unknown) => {
+                toast.error(getErrorMessage(error, "Could not load the original top-up assessment terms. Review the rate and fees before approval."));
+            });
+        }
     }
 
     function replaceApplication(updated: DirectLoanApplication) {
