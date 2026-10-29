@@ -108,6 +108,17 @@ function extractMessage(
     }
 
     const record = value as UnknownRecord;
+    // FastAPI approval-readiness errors contain a generic message plus
+    // structured blockers. Show the actual reasons, not only the generic title.
+    if (Array.isArray(record.blockers) && record.blockers.length > 0) {
+        const blockers = record.blockers
+            .filter(isRecord)
+            .map((item) => typeof item.message === "string" ? item.message.trim() : "")
+            .filter(Boolean);
+        if (blockers.length > 0) {
+            return [...new Set(blockers)].join("; ");
+        }
+    }
     const validationMessage = formatValidationIssue(record);
 
     if (validationMessage) {
