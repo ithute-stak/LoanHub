@@ -785,7 +785,7 @@ function OriginationWizard() {
               {assessment && !["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision) && activeRole === "company_owner" ? (
                 <div className="rounded-2xl border border-amber-400/50 p-4 space-y-3">
                   <p className="font-semibold">Company owner: accept lending risk</p>
-                  <p className="text-sm text-muted-foreground">Affordability is advisory. You may record a reasoned decision to consider this loan or top-up at the company's risk. The original assessment remains on record; KYC, sanctions and other mandatory safeguards are not waived.</p>
+                  <p className="text-sm text-muted-foreground">Affordability is advisory. You may record a reasoned decision to consider this loan or top-up at the company&apos;s risk. The original assessment remains on record; KYC, sanctions and other mandatory safeguards are not waived.</p>
                   <Button type="button" variant="outline" disabled={working} onClick={() => void acceptAffordabilityRisk()}>Record owner risk acceptance</Button>
                 </div>
               ) : null}
