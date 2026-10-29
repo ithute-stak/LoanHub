@@ -743,7 +743,7 @@ export function LoanPortfolioWorkspace({
                 className="rounded-t-2xl data-[floating=true]:rounded-2xl data-[floating=true]:border"
             >
             <CardHeader className="rounded-[inherit] border-b bg-gradient-to-r from-muted/30 via-background to-background px-5 py-5 sm:px-6">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-col gap-4">
                     <div className="min-w-0">
                         <div className="flex items-center gap-3">
                             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -763,8 +763,8 @@ export function LoanPortfolioWorkspace({
                             <button type="button" onClick={() => applyQuickFilter("overdue")} aria-label="Show overdue loans" aria-pressed={filters.overdue === "yes"} className="rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 hover:opacity-80" title="Filter portfolio to overdue loans"><Badge variant={overdueCount > 0 ? "destructive" : "outline"} className={`cursor-pointer rounded-full px-3 ${filters.overdue === "yes" ? "ring-2 ring-destructive/50 ring-offset-2" : ""}`}>Overdue {overdueCount}</Badge></button>
                         </div>
                     </div>
-                    <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto xl:min-w-[44rem]">
-                        {searchControl}
+                    <div className="flex w-full flex-wrap items-center gap-2 border-t pt-4">
+                        <div className="w-full min-w-0 lg:max-w-sm lg:flex-1">{searchControl}</div>
                         <label className="flex shrink-0 items-center gap-2 text-xs font-medium" aria-label="Payment report month">
                             <span className="whitespace-nowrap">Payment month</span>
                             <Input aria-label="Select payment report month" type="month" value={reportMonth} onChange={(event) => setReportMonth(event.target.value)} className="h-9 w-37 rounded-xl" />
