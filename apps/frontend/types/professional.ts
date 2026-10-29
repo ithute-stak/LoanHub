@@ -7,6 +7,8 @@ export type DirectLoanApplication = {
   borrower_id: string;
   product_id: string | null;
   application_reference: string;
+  application_type?: "new_loan" | "top_up" | string;
+  affordability_assessment_id?: string | null;
   channel: "internal_client_offer" | string;
   requested_amount: number;
   approved_amount: number | null;
