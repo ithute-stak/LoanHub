@@ -62,11 +62,26 @@ def application_integration_readiness(
         "conditionally_eligible",
     }:
         core_ready = False
+        reason_codes = {
+            reason.get("code")
+            for reason in (assessment.result_reasons or [])
+            if isinstance(reason, dict)
+        } if assessment else set()
+        compliance_hold = bool(reason_codes & {
+            "compliance_block", "kyc_incomplete", "age_missing",
+            "age_outside_policy", "cdas_live_affordability_missing",
+            "cdas_live_affordability_insufficient",
+        })
         blockers.append(
             {
                 "source": "core",
-                "code": "affordability_not_positive",
-                "message": "Core LoanHub requires a positive affordability decision before approval.",
+                "code": "compliance_review_required" if compliance_hold else "affordability_not_positive",
+                "message": (
+                    "Identity, KYC, sanctions/fraud or payroll checks require review before approval. "
+                    "Financial affordability is assessed separately."
+                    if compliance_hold
+                    else "Review the affordability recommendation or record an authorised financial-risk exception."
+                ),
                 "action_path": f"/company/origination/new?application={application.id}",
             }
         )
