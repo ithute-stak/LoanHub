@@ -156,3 +156,13 @@ export async function downloadFolioBookCsv(query: FolioBookQuery | string = {}):
     groupCode ? `LoanHub-Folio-Book-${groupCode}.csv` : "LoanHub-Folio-Book.csv",
   );
 }
+
+export async function downloadFolioDueInstallmentsPdf(groupCode?: string): Promise<void> {
+  const response = await api.get<Blob>("/folio-book/due-installments.pdf", {
+    params: groupCode ? { group_code: groupCode } : {},
+    responseType: "blob",
+  });
+  downloadBlob(response.data, groupCode
+    ? `LoanHub-Due-Installments-${groupCode}.pdf`
+    : "LoanHub-Due-Installments-All-Groups.pdf");
+}
