@@ -732,7 +732,7 @@ export function LegacyCashoutRegister() {
 
   const addHistoryPay = async (record: LegacyCashoutCapture) => {
     const value = Number(historyAmount);
-    if (!Number.isFinite(value) || value <= 0 || !/^\\d+(?:\\.\\d{1,2})?$/.test(historyAmount.trim())) {
+    if (!Number.isFinite(value) || value <= 0 || !/^\d+(?:\.\d{1,2})?$/.test(historyAmount.trim())) {
       toast.error("Enter a positive paid amount with at most two decimal places.");
       return;
     }
