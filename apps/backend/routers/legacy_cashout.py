@@ -208,15 +208,13 @@ def _capture_or_404(
     *,
     context: TenantContext,
     capture_id: UUID,
+    lock: bool = False,
 ) -> LegacyLoanCapture:
-    row = (
-        db.query(LegacyLoanCapture)
-        .filter(
-            LegacyLoanCapture.id == capture_id,
-            LegacyLoanCapture.company_id == _tenant_company_id(context),
-        )
-        .first()
+    query = db.query(LegacyLoanCapture).filter(
+        LegacyLoanCapture.id == capture_id,
+        LegacyLoanCapture.company_id == _tenant_company_id(context),
     )
+    row = (query.with_for_update() if lock else query).first()
     if not row:
         raise HTTPException(status_code=404, detail="Legacy cash-out entry was not found")
     assert_branch_scope(context, row.branch_id)
@@ -720,7 +718,7 @@ def update_legacy_cashout_entry(
     """Continue or correct a draft without exposing the encrypted bank account number."""
 
     require_tenant_roles(context, _CAPTURE_ROLES)
-    capture = _capture_or_404(db, context=context, capture_id=capture_id)
+    capture = _capture_or_404(db, context=context, capture_id=capture_id, lock=True)
     if capture.status not in {"draft", "returned"}:
         raise HTTPException(
             status_code=409,
@@ -837,7 +835,7 @@ def review_legacy_cashout_entry(
     db: Session = Depends(get_db),
 ):
     require_tenant_roles(context, _CAPTURE_ROLES)
-    capture = _capture_or_404(db, context=context, capture_id=capture_id)
+    capture = _capture_or_404(db, context=context, capture_id=capture_id, lock=True)
     if capture.status == "posted":
         raise HTTPException(status_code=409, detail="A posted cash-out entry cannot be reviewed again")
 
@@ -875,7 +873,7 @@ def post_legacy_cashout_entry(
     db: Session = Depends(get_db),
 ):
     require_tenant_roles(context, _POST_ROLES)
-    capture = _capture_or_404(db, context=context, capture_id=capture_id)
+    capture = _capture_or_404(db, context=context, capture_id=capture_id, lock=True)
     if capture.status != "reviewed":
         raise HTTPException(status_code=422, detail="Only a reviewed cash-out entry can be posted")
     if capture.loan_id is not None:
