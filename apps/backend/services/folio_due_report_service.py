@@ -47,7 +47,7 @@ def build_folio_due_pdf(
             cell(row.get("contact_phone")),
             cell(row.get("due_date")),
             money_text(row.get("due_amount") or 0),
-            cell("________________________<br/>________________________"),
+            Paragraph("________________________<br/>________________________", styles["body_small"]),
         ])
     if not rows:
         data.append([cell("No unpaid instalments due for this selection"), "", "", "", "", "", ""])
