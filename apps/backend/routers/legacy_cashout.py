@@ -72,6 +72,21 @@ def _amount(value: Decimal | int | float | None) -> Decimal:
     return Decimal(value or 0).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
+def _duple_morule_terms(
+    principal: Decimal, total_repayable: Decimal, amount_paid: Decimal,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    """Return 2x principal threshold, collectible total, applied paid and excess.
+
+    Full historical receipts remain recorded; excess must be reconciled, not
+    credited as a live loan repayment.
+    """
+    limit = _amount(principal * 2)
+    collectible = min(_amount(total_repayable), limit)
+    applied = min(_amount(amount_paid), collectible)
+    excess = max(_amount(amount_paid) - collectible, Decimal("0.00"))
+    return limit, collectible, applied, excess
+
+
 def _tenant_company_id(context: TenantContext) -> UUID:
     if context.company_id is None:
         raise HTTPException(
@@ -885,10 +900,9 @@ def post_legacy_cashout_entry(
         raise HTTPException(status_code=422, detail="Complete the loan amounts and number of installments before posting")
     # Preserve the full book amount, but never credit more than the
     # collectible obligation into the live loan repayment schedule.
-    duple_limit = _amount(principal * 2)
-    effective_total = min(total_repayable, duple_limit)
-    applied_paid = min(amount_paid, effective_total)
-    excess_paid = max(amount_paid - effective_total, Decimal("0.00"))
+    duple_limit, effective_total, applied_paid, excess_paid = _duple_morule_terms(
+        principal, total_repayable, amount_paid,
+    )
 
     borrower = _find_or_create_borrower(db, capture=capture)
     _ensure_borrower_bank_account(db, capture=capture, borrower=borrower)
