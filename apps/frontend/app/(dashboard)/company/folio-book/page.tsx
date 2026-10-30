@@ -14,6 +14,7 @@ import {
 
 import {
   downloadFolioBookCsv,
+  downloadFolioDueInstallmentsPdf,
   getFolioBook,
   type FolioBookPayload,
   type FolioBookRow,
@@ -35,6 +36,7 @@ export default function FolioBookPage() {
   const [payload, setPayload] = useState<FolioBookPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportingDue, setExportingDue] = useState(false);
   const [search, setSearch] = useState("");
   const [groupCode, setGroupCode] = useState(ALL);
   const [status, setStatus] = useState(ALL);
@@ -75,6 +77,18 @@ export default function FolioBookPage() {
       toast.error(error, { description: "The folio book CSV could not be downloaded." });
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function exportDuePdf() {
+    setExportingDue(true);
+    try {
+      await downloadFolioDueInstallmentsPdf(groupCode === ALL ? undefined : groupCode);
+      toast.success("Due instalments report generated");
+    } catch (error) {
+      toast.error(error, { description: "Could not generate the due instalments report." });
+    } finally {
+      setExportingDue(false);
     }
   }
 
@@ -214,6 +228,12 @@ export default function FolioBookPage() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <p className="text-xs text-muted-foreground">Due report uses the selected work group and includes all unpaid instalments due through today, even if the table has another status or search filter.</p>
+            <Button type="button" disabled={exportingDue} onClick={() => void exportDuePdf()}>
+              <Download className="h-4 w-4" />{exportingDue ? "Generating due PDF…" : "Download due instalments PDF"}
+            </Button>
           </div>
           {(groupCode !== ALL || status !== ALL || search) ? (
             <div className="flex flex-wrap items-center gap-2 pt-2">
