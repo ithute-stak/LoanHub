@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CompanyBrandingSettings } from "./_components/company-branding-settings";
 import { CompanyCdasSettings } from "./_components/company-cdas-settings";
 import { CompanyLoanSettingsPanel } from "./_components/company-loan-settings";
+import { CompanyArrearsPolicySettings } from "./_components/company-arrears-policy-settings";
 import { CompanySettingsForm } from "./_components/company-settings-form";
 import { CompanySettingsHeader } from "./_components/company-settings-header";
 import { CompanySettingsSidebar } from "./_components/company-settings-sidebar";
@@ -170,7 +171,7 @@ export default function CompanySettingsPage() {
                 </TabsContent>
 
                 <TabsContent value="loan-settings">
-                    <CompanyLoanSettingsPanel canManage={settings.canManage} />
+                    <div className="space-y-6"><CompanyLoanSettingsPanel canManage={settings.canManage} /><CompanyArrearsPolicySettings canManage={settings.canManage} /></div>
                 </TabsContent>
 
                 <TabsContent value="top-up-rules">
