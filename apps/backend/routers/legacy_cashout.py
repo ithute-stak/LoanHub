@@ -44,6 +44,7 @@ from services.credential_service import encrypt_credential
 from database.schemas.legacy_cashout import (
     LegacyCashoutCaptureCreate,
     LegacyCashoutCaptureRead,
+    LegacyHistoryPaymentCreate,
     LegacyCashoutReviewCreate,
     normalise_legacy_capture_status,
 )
@@ -214,6 +215,14 @@ def _read(row: LegacyLoanCapture, loan: ClientCompanyLoan | None = None) -> Lega
     snapshot = row.paper_snapshot or {}
     total_repayable = _amount(row.total_repayable or row.borrowed_amount)
     amount_paid = _amount(row.amount_paid)
+    principal = _amount(row.borrowed_amount)
+    duple_limit = _amount(principal * 2)
+    duple_status = (
+        "overcharged" if principal > 0 and amount_paid > duple_limit
+        else "settled" if principal > 0 and amount_paid >= duple_limit
+        else "not_reached"
+    )
+    history = (row.conversion_data or {}).get("receipt_book_payments") or []
     return LegacyCashoutCaptureRead(
         id=row.id,
         folio_number=row.folio_number,
@@ -249,7 +258,10 @@ def _read(row: LegacyLoanCapture, loan: ClientCompanyLoan | None = None) -> Lega
         amount_taken=_amount(row.borrowed_amount),
         total_repayable=total_repayable,
         amount_paid=amount_paid,
-        balance=max(total_repayable - amount_paid, Decimal("0.00")),
+        balance=max(min(total_repayable, duple_limit) - amount_paid, Decimal("0.00")) if principal > 0 else max(total_repayable - amount_paid, Decimal("0.00")),
+        history_payments=history,
+        duple_morule_status=duple_status,
+        overcharge_amount=max(amount_paid - duple_limit, Decimal("0.00")) if principal > 0 else Decimal("0.00"),
         installment_count=int(row.installment_count or 0),
         installment_amount=_amount(row.installment_amount),
         repayment_type=row.repayment_type or RepaymentType.MONTHLY.value,
@@ -708,6 +720,11 @@ def update_legacy_cashout_entry(
         "loan_date": capture.book_date.isoformat() if capture.book_date else None,
         "bank_account_last4": capture.bank_account_number_last4,
     }
+    if (capture.conversion_data or {}).get("receipt_book_payments") and _amount(payload.amount_paid) != _amount(capture.amount_paid):
+        raise HTTPException(
+            status_code=409,
+            detail="Historic receipt payments have been recorded. Add payments using History Pay; the cumulative total cannot be overwritten.",
+        )
     for field, value in _capture_values(payload).items():
         setattr(capture, field, value)
     capture.branch_id = branch_id
@@ -739,6 +756,59 @@ def update_legacy_cashout_entry(
             "bank_account_last4": capture.bank_account_number_last4,
         },
     )
+    db.commit()
+    db.refresh(capture)
+    return _read(capture)
+
+
+@router.post("/{capture_id}/history-pay", response_model=LegacyCashoutCaptureRead)
+def add_legacy_history_payment(
+    capture_id: UUID,
+    payload: LegacyHistoryPaymentCreate,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Record receipt-book evidence without creating a live payment transaction."""
+    require_tenant_roles(context, _CAPTURE_ROLES)
+    capture = (
+        db.query(LegacyLoanCapture)
+        .filter(LegacyLoanCapture.id == capture_id, LegacyLoanCapture.company_id == _tenant_company_id(context))
+        .with_for_update()
+        .first()
+    )
+    if capture is None:
+        raise HTTPException(status_code=404, detail="Legacy cash-out entry was not found")
+    assert_branch_scope(context, capture.branch_id)
+    if capture.status not in {"draft", "returned", "reviewed"} or capture.loan_id is not None:
+        raise HTTPException(status_code=409, detail="History Pay is available only before the entry is posted")
+    receipt = _clean(payload.receipt_number)
+    history = list((capture.conversion_data or {}).get("receipt_book_payments") or [])
+    if receipt and any(str(item.get("receipt_number") or "").casefold() == receipt.casefold() for item in history):
+        raise HTTPException(status_code=409, detail="This receipt number has already been recorded for the folio")
+    before = _amount(capture.amount_paid)
+    after = _amount(before + payload.paid_amount)
+    principal = _amount(capture.borrowed_amount)
+    limit = _amount(principal * 2)
+    history.append({
+        "receipt_number": receipt,
+        "paid_amount": str(_amount(payload.paid_amount)),
+        "total_paid_after": str(after),
+        "recorded_by_user_id": str(context.user.id),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    })
+    capture.amount_paid = after
+    capture.conversion_data = {**(capture.conversion_data or {}), "receipt_book_payments": history}
+    if capture.status == "reviewed":
+        capture.status = "draft"
+        capture.review_notes = None
+        capture.reviewed_at = None
+        capture.reviewed_by_user_id = None
+    _audit(db, context=context, capture=capture, action="legacy_cashout.history_payment_added",
+           description="Historical receipt-book payment recorded; no live payment posted",
+           before={"amount_paid": str(before)},
+           after={"amount_paid": str(after), "receipt_number": receipt,
+                  "payment_amount": str(_amount(payload.paid_amount)),
+                  "duple_morule_status": "overcharged" if principal > 0 and after > limit else "settled" if principal > 0 and after >= limit else "not_reached"})
     db.commit()
     db.refresh(capture)
     return _read(capture)
@@ -813,8 +883,12 @@ def post_legacy_cashout_entry(
     installment_count = int(capture.installment_count or 0)
     if total_repayable <= 0 or principal <= 0 or installment_count <= 0:
         raise HTTPException(status_code=422, detail="Complete the loan amounts and number of installments before posting")
-    if amount_paid > total_repayable:
-        raise HTTPException(status_code=422, detail="Amount paid cannot exceed the recorded total repayable")
+    # Preserve the full book amount, but never credit more than the
+    # collectible obligation into the live loan repayment schedule.
+    duple_limit = _amount(principal * 2)
+    effective_total = min(total_repayable, duple_limit)
+    applied_paid = min(amount_paid, effective_total)
+    excess_paid = max(amount_paid - effective_total, Decimal("0.00"))
 
     borrower = _find_or_create_borrower(db, capture=capture)
     _ensure_borrower_bank_account(db, capture=capture, borrower=borrower)
@@ -867,7 +941,7 @@ def post_legacy_cashout_entry(
     calculation_rate = _amount(calculator_snapshot.get("rate_percent"))
     calculation_fee = _amount(calculator_snapshot.get("processing_fee"))
     calculation_method = _clean(str(calculator_snapshot.get("method") or "")) or capture.calculation_method or "legacy_cashout_book"
-    balance = _amount(total_repayable - amount_paid)
+    balance = _amount(effective_total - applied_paid)
     loan = ClientCompanyLoan(
         company_id=capture.company_id,
         branch_id=capture.branch_id,
@@ -898,7 +972,7 @@ def post_legacy_cashout_entry(
         first_payment_due=first_payment_due,
         preferred_payment_day=capture.book_date.day,
         maturity_date=maturity_date,
-        amount_paid=amount_paid,
+        amount_paid=applied_paid,
         balance=balance,
         status=LoanStatus.COMPLETED if balance == 0 else LoanStatus.ACTIVE,
         risk_level=RiskLevel.LOW,
@@ -917,7 +991,10 @@ def post_legacy_cashout_entry(
         "loan_date": capture.book_date.isoformat(),
         "principal_amount": str(principal),
         "total_repayable": str(total_repayable),
-        "amount_paid_at_migration": str(amount_paid),
+        "amount_paid_at_migration": str(applied_paid),
+        "receipt_book_total_paid": str(amount_paid),
+        "duple_morule_limit": str(duple_limit),
+        "overpayment_for_reconciliation": str(excess_paid),
         "installment_count": installment_count,
         "repayment_type": repayment_type,
         "calculator_method": calculation_method,
@@ -943,9 +1020,9 @@ def post_legacy_cashout_entry(
         loan=loan,
         loan_date=capture.book_date,
         repayment_type=repayment_type,
-        total_repayable=total_repayable,
+        total_repayable=effective_total,
         principal=principal,
-        amount_paid=amount_paid,
+        amount_paid=applied_paid,
         installment_count=installment_count,
         calculator_snapshot=calculator_snapshot,
     )
@@ -960,6 +1037,9 @@ def post_legacy_cashout_entry(
     capture.conversion_data = {
         **(capture.conversion_data or {}),
         "conversion_type": "historical_opening_balance",
+        "receipt_book_total_paid": str(amount_paid),
+        "overpayment_for_reconciliation": str(excess_paid),
+        "duple_morule_settled": bool(principal > 0 and amount_paid >= duple_limit),
         "loan_reference": loan.loan_reference,
         "borrower_profile_created_or_linked": True,
         "company_account_reference": account.account_reference,
