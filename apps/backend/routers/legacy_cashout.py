@@ -933,7 +933,7 @@ def post_legacy_cashout_entry(
     calculator_snapshot = calculator_snapshot if isinstance(calculator_snapshot, dict) else {}
     calculated_rows = _calculator_schedule_rows(
         calculator_snapshot,
-        total_repayable=total_repayable,
+        total_repayable=effective_total,
         installment_count=installment_count,
     )
     first_payment_due = calculated_rows[0]["due_date"] if calculated_rows else _next_due_date(capture.book_date, 1, repayment_type)
@@ -951,7 +951,7 @@ def post_legacy_cashout_entry(
         principal_amount=principal,
         interest_rate=calculation_rate,
         processing_fee=calculation_fee,
-        total_repayable=total_repayable,
+        total_repayable=effective_total,
         repayment_type=RepaymentType(repayment_type),
         repayment_period=installment_count,
         installment_amount=_amount(capture.installment_amount),
