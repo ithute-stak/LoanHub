@@ -117,6 +117,7 @@ class DocumentContext:
 def draw_page_chrome(canvas, doc, context: DocumentContext) -> None:
     """Draw a fixed dual-brand header and footer without touching the content frame."""
     logos = get_company_branding_logos(context.db, context.company)
+    PAGE_WIDTH, PAGE_HEIGHT = doc.pagesize
     canvas.saveState()
 
     # Header logo boxes are deliberately isolated from company metadata so a wide
@@ -321,11 +322,12 @@ def build_document(
     title: str,
     author: str | None = None,
     subject: str | None = None,
+    pagesize: tuple[float, float] = A4,
 ) -> bytes:
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
+        pagesize=pagesize,
         rightMargin=18 * mm,
         leftMargin=18 * mm,
         topMargin=38 * mm,
