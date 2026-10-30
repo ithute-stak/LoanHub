@@ -51,3 +51,11 @@ export async function getLegacyCashoutBankPolicy(): Promise<LegacyCashoutBankRul
   const response = await api.get<LegacyCashoutBankRule[]>(ROOT + "/bank-policy");
   return response.data;
 }
+
+export async function addLegacyHistoryPayment(
+  id: string,
+  payload: { receipt_number?: string | null; paid_amount: number },
+): Promise<LegacyCashoutCapture> {
+  const response = await api.post<LegacyCashoutCapture>(ROOT + "/" + id + "/history-pay", payload);
+  return response.data;
+}
