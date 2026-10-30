@@ -1,6 +1,6 @@
 # database/models/loan_product.py
 from sqlalchemy import Column, String, Text, Numeric, Integer, Boolean, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from database.base import Base
@@ -23,6 +23,8 @@ class LoanProduct(Base):
     interest_method = Column(String(50), nullable=False, default="micro_loan", index=True)
     interest_rate_percent = Column(Numeric(6, 3), nullable=False, default=0)
     processing_fee = Column(Numeric(12, 2), nullable=False, default=0)
+
+    arrears_policy_override = Column(JSONB, nullable=True)
 
     is_active = Column(Boolean, nullable=False, default=True)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Column, ForeignKey, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from database.base import Base
@@ -27,5 +27,7 @@ class CompanyLoanSettings(Base):
         default="loanhub_standard",
         server_default="loanhub_standard",
     )
+
+    arrears_policy = Column(JSONB, nullable=True)
 
     company = relationship("LoanCompany")
