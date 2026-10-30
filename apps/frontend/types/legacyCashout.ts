@@ -74,6 +74,9 @@ export type LegacyCashoutCapture = {
   total_repayable: number;
   amount_paid: number;
   balance: number;
+  history_payments?: Array<{ receipt_number: string | null; paid_amount: string; total_paid_after: string; recorded_at: string }>;
+  duple_morule_status?: "not_reached" | "settled" | "overcharged";
+  overcharge_amount?: number;
   installment_count: number;
   installment_amount: number;
   repayment_type: string;

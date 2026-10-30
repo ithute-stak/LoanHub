@@ -139,6 +139,11 @@ class LegacyCashoutReviewCreate(BaseModel):
         return self
 
 
+class LegacyHistoryPaymentCreate(BaseModel):
+    receipt_number: str | None = Field(default=None, max_length=100)
+    paid_amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+
+
 class LegacyCashoutCaptureRead(BaseModel):
     id: UUID
     folio_number: str
@@ -178,6 +183,9 @@ class LegacyCashoutCaptureRead(BaseModel):
     total_repayable: Decimal
     amount_paid: Decimal
     balance: Decimal
+    history_payments: list[dict] = Field(default_factory=list)
+    duple_morule_status: str = "not_reached"
+    overcharge_amount: Decimal = Decimal("0.00")
     installment_count: int
     installment_amount: Decimal
     repayment_type: str
