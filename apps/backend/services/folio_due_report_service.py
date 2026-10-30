@@ -4,6 +4,7 @@ from html import escape
 from typing import Any
 from datetime import date
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, Table, TableStyle
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ def build_folio_due_pdf(
         styles=styles))
     def cell(value: object) -> Paragraph:
         return Paragraph(escape(str(value if value not in (None, "") else "Not recorded")), styles["body_small"])
-    data: list[list[Any]] = [["Folio", "Name / surname", "Occupation", "Contacts", "Due date", "Due instalment"]]
+    data: list[list[Any]] = [["Folio", "Name / surname", "Occupation", "Contacts", "Due date", "Due instalment", "Comments / follow-up"]]
     for row in rows:
         data.append([
             cell(row.get("folio_number") or row.get("loan_reference")),
@@ -46,10 +47,11 @@ def build_folio_due_pdf(
             cell(row.get("contact_phone")),
             cell(row.get("due_date")),
             money_text(row.get("due_amount") or 0),
+            Paragraph("________________________<br/>________________________", styles["body_small"]),
         ])
     if not rows:
-        data.append([cell("No unpaid instalments due for this selection"), "", "", "", "", ""])
-    table = Table(data, colWidths=[32*mm, 42*mm, 34*mm, 27*mm, 22*mm, 28*mm], repeatRows=1, hAlign="LEFT")
+        data.append([cell("No unpaid instalments due for this selection"), "", "", "", "", "", ""])
+    table = Table(data, colWidths=[32*mm, 43*mm, 34*mm, 31*mm, 24*mm, 30*mm, 64*mm], repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), NAVY),
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
@@ -59,6 +61,7 @@ def build_folio_due_pdf(
         ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F6F8FB")]),
         ("LINEBELOW", (0,0), (-1,-1), 0.3, BORDER),
+        ("LINEBEFORE", (-1,0), (-1,-1), 0.8, BORDER),
         ("LEFTPADDING", (0,0), (-1,-1), 4),
         ("RIGHTPADDING", (0,0), (-1,-1), 4),
         ("TOPPADDING", (0,0), (-1,-1), 5),
@@ -74,4 +77,5 @@ def build_folio_due_pdf(
             footer_note=generated_timestamp(), confidential=True,
         ),
         title="LoanHub Folio Due Instalments",
+        pagesize=landscape(A4),
     )
