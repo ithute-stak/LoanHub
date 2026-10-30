@@ -19,6 +19,8 @@ from database.models.user import User
 from database.schemas.loan_product import LoanProductCreate, LoanProductRead, LoanProductUpdate
 from database.session import get_db
 from services.billing_service import enforce_company_limit
+from payment_engine.schemas import ArrearsPolicyPayload
+from payment_engine.persistence import company_policy, set_company_policy, set_product_policy, selected_policy
 
 
 router = APIRouter(prefix="/loan-products", tags=["Loan Products"])
@@ -228,4 +230,76 @@ def delete_product(
     product = product_or_404(db, product_id)
     assert_company_scope(context, product.company_id)
     db.delete(product)
+    db.commit()
+
+
+# These settings apply only to future loan policy selection. No live loan
+# recalculation or interest accrual is performed by these endpoints.
+@router.get("/policy/company", response_model=ArrearsPolicyPayload)
+def read_company_arrears_policy(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    if context.company_id is None:
+        raise HTTPException(status_code=403, detail="Select a loan company")
+    policy = company_policy(db, company_id=context.company_id)
+    return ArrearsPolicyPayload(**(policy.snapshot() if policy else {}))
+
+
+@router.put("/policy/company", response_model=ArrearsPolicyPayload)
+def save_company_arrears_policy(
+    payload: ArrearsPolicyPayload,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    if context.company_id is None:
+        raise HTTPException(status_code=403, detail="Select a loan company")
+    set_company_policy(db, company_id=context.company_id, policy=payload.to_selection())
+    db.commit()
+    return payload
+
+
+@router.get("/policy/products/{product_id}")
+def read_product_arrears_policy(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    product = product_or_404(db, product_id)
+    assert_company_scope(context, product.company_id)
+    override = product.arrears_policy_override
+    selected = selected_policy(db, company_id=product.company_id, product_id=product.id)
+    return {
+        "override": ArrearsPolicyPayload(**override) if override else None,
+        "effective": ArrearsPolicyPayload(**selected.snapshot()),
+        "source": "product" if override else ("company" if company_policy(db, company_id=product.company_id) else "system"),
+    }
+
+
+@router.put("/policy/products/{product_id}", response_model=ArrearsPolicyPayload)
+def save_product_arrears_policy(
+    product_id: UUID,
+    payload: ArrearsPolicyPayload,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    product = product_or_404(db, product_id)
+    assert_company_scope(context, product.company_id)
+    set_product_policy(db, company_id=product.company_id, product_id=product.id, policy=payload.to_selection())
+    db.commit()
+    return payload
+
+
+@router.delete("/policy/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_product_arrears_policy(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    product = product_or_404(db, product_id)
+    assert_company_scope(context, product.company_id)
+    set_product_policy(db, company_id=product.company_id, product_id=product.id, policy=None)
     db.commit()
