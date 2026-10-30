@@ -22,6 +22,7 @@ import { checkCompanyClientExistingLoans, getCompanyClientProfile } from "@/api/
 import type { CompanyClientExistingLoanCheck } from "@/types/companyClient";
 import {
   createLegacyCashoutCapture,
+  addLegacyHistoryPayment,
   getLegacyCashoutBankPolicy,
   type LegacyCashoutBankRule,
   listLegacyCashoutCaptures,
@@ -33,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
@@ -333,6 +335,9 @@ export function LegacyCashoutRegister() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
+  const [historyReceipt, setHistoryReceipt] = useState("");
+  const [historyAmount, setHistoryAmount] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [calculating, setCalculating] = useState(false);
   const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
@@ -720,6 +725,30 @@ export function LegacyCashoutRegister() {
       toast.success("Entry approved for posting");
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not approve this entry"));
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  const addHistoryPay = async (record: LegacyCashoutCapture) => {
+    const value = Number(historyAmount);
+    if (!Number.isFinite(value) || value <= 0 || !/^\\d+(?:\\.\\d{1,2})?$/.test(historyAmount.trim())) {
+      toast.error("Enter a positive paid amount with at most two decimal places.");
+      return;
+    }
+    setActingId(record.id);
+    try {
+      const updated = await addLegacyHistoryPayment(record.id, {
+        receipt_number: historyReceipt.trim() || null,
+        paid_amount: value,
+      });
+      replaceRecord(updated);
+      setHistoryOpenId(null);
+      setHistoryReceipt("");
+      setHistoryAmount("");
+      toast.success("Receipt-book payment added to historic total");
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Unable to add this historic payment."));
     } finally {
       setActingId(null);
     }
@@ -1177,6 +1206,7 @@ export function LegacyCashoutRegister() {
                               <p className="font-black">{formatMoney(record.amount_taken)}</p>
                               <p className="mt-1 text-xs text-muted-foreground">{record.installment_count} {titleCase(record.repayment_type)} installments · paid {formatMoney(record.amount_paid)} · balance {formatMoney(record.balance)}</p>
                               {record.loan_reference ? <p className="mt-1 text-xs font-black text-primary">Loan {record.loan_reference}</p> : null}
+                              {record.duple_morule_status && record.duple_morule_status !== "not_reached" ? <p className="mt-1 text-xs font-semibold text-amber-700">Duple Morule: {record.duple_morule_status === "overcharged" ? `Overcharged · excess ${formatMoney(record.overcharge_amount ?? 0)}` : "Settled"}</p> : null}
                             </td>
                             <td className="px-5 py-4 align-top">
                               <Badge className={statusTone(record.status)} variant="outline">{titleCase(record.status)}</Badge>
@@ -1186,6 +1216,21 @@ export function LegacyCashoutRegister() {
                               <div className="flex flex-wrap gap-2">
                                 {record.status === "draft" || record.status === "returned" ? <Button size="sm" variant="outline" disabled={actingId === record.id || saving} onClick={() => continueEntry(record)}><BookOpenCheck className="h-3.5 w-3.5" />Continue entry</Button> : null}
                                 {record.status === "draft" || record.status === "returned" ? <Button size="sm" variant="outline" disabled={actingId === record.id} onClick={() => void approve(record)}><ClipboardCheck className="h-3.5 w-3.5" />Review & approve</Button> : null}
+                                {record.status !== "posted" ? (
+                                  <Popover open={historyOpenId === record.id} onOpenChange={(open) => { setHistoryOpenId(open ? record.id : null); setHistoryReceipt(""); setHistoryAmount(""); }}>
+                                    <PopoverTrigger asChild><Button size="sm" variant="outline" disabled={actingId === record.id}>History Pay</Button></PopoverTrigger>
+                                    <PopoverContent className="w-80 space-y-3" align="end">
+                                      <p className="font-semibold">Add receipt-book payment</p>
+                                      <p className="text-xs text-muted-foreground">{record.borrower_name} · {record.folio_number}</p>
+                                      <p className="text-sm">Already paid: <strong>{formatMoney(record.amount_paid)}</strong></p>
+                                      <div className="space-y-1"><Label>Receipt number (optional)</Label><Input maxLength={100} value={historyReceipt} onChange={(event) => setHistoryReceipt(event.target.value)} placeholder="Receipt book reference" /></div>
+                                      <div className="space-y-1"><Label>Amount paid</Label><Input inputMode="decimal" type="number" min="0.01" step="0.01" value={historyAmount} onChange={(event) => setHistoryAmount(event.target.value)} placeholder="0.00" /></div>
+                                      {record.duple_morule_status && record.duple_morule_status !== "not_reached" ? <p className="text-xs font-semibold text-amber-700">Duple Morule: {record.duple_morule_status}. Review any overcharge for reconciliation before posting.</p> : null}
+                                      <Button size="sm" className="w-full" disabled={actingId === record.id} onClick={() => void addHistoryPay(record)}>Add to paid history</Button>
+                                      {(record.history_payments?.length ?? 0) > 0 ? <div className="max-h-32 space-y-1 overflow-y-auto border-t pt-2 text-xs">{record.history_payments?.slice().reverse().map((item, index) => <p key={index}>{item.receipt_number || "No receipt"} · {formatMoney(Number(item.paid_amount))}</p>)}</div> : null}
+                                    </PopoverContent>
+                                  </Popover>
+                                ) : null}
                                 {record.status === "reviewed" ? <Button size="sm" disabled={actingId === record.id} onClick={() => void post(record)}>{actingId === record.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}Post live loan</Button> : null}
                                 {record.status === "posted" ? <Button asChild size="sm" variant="outline"><Link href="/company/clients">Open borrower profiles</Link></Button> : null}
                               </div>
