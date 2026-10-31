@@ -288,6 +288,15 @@ def accept_offer(
     for competing_offer in competing_offers:
         competing_offer.status = OfferStatus.REJECTED
 
+    # Snapshot the versioned company default selected when the accepted-offer
+    # loan is created. Existing loans remain unchanged. No arrears charging yet.
+    from payment_engine.persistence import selected_policy
+    arrears_policy_snapshot = selected_policy(
+        db, company_id=offer.company_id, product_id=None,
+    ).snapshot()
+    offer_breakdown = dict(offer.calculation_breakdown or {})
+    offer_breakdown["payment_engine_arrears_policy"] = arrears_policy_snapshot
+
     loan = ClientCompanyLoan(
         loan_request_id=request.id,
         loan_offer_id=offer.id,
@@ -304,7 +313,7 @@ def accept_offer(
         repayment_period=offer.term_months,
         installment_amount=offer.monthly_repayment,
         calculation_method=offer.calculation_method or "micro_loan",
-        calculation_breakdown=offer.calculation_breakdown or {},
+        calculation_breakdown=offer_breakdown,
         approved_at=now,
         approved_by_user_id=offer.offered_by_user_id,
         amount_paid=0,
