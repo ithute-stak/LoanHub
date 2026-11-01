@@ -27,6 +27,18 @@ def validate_rollover_reversal_preflight(*, transfer, parent, child, child_insta
     installment = child_installments[0]
     if installment.is_superseded or Decimal(str(installment.paid_amount)) != 0 or Decimal(str(installment.total_due)) != Decimal(str(transfer.transfer_amount)):
         raise HTTPException(status_code=409, detail="Child installment does not match transfer")
+    # A schedule can retain the same total while quietly moving debt between
+    # principal, earned interest and fees. That is not a valid compensation.
+    for schedule_field, ledger_field in (
+        ("principal_due", "principal_component"),
+        ("interest_due", "interest_component"),
+        ("fee_due", "fee_component"),
+    ):
+        if Decimal(str(getattr(installment, schedule_field))) != Decimal(str(getattr(transfer, ledger_field))):
+            raise HTTPException(
+                status_code=409,
+                detail="Child installment component classification changed since rollover",
+            )
     original = (parent.calculation_breakdown or {}).get("linked_rollover_out") or {}
     if str(original.get("child_loan_id")) != str(child.id):
         raise HTTPException(status_code=409, detail="Original transfer evidence is missing")
