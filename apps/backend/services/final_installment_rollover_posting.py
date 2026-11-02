@@ -132,6 +132,8 @@ def post_final_rollover(
         raise HTTPException(status_code=409, detail="Other open installments require reconciliation")
     original = {
         "balance": str(parent.balance),
+        "loan_status": parent.status.value,
+        "loan_is_overdue": bool(parent.is_overdue),
         "total_repayable": str(parent.total_repayable),
         "installment_total_due": str(row.total_due),
         "installment_paid_amount": str(row.paid_amount),
