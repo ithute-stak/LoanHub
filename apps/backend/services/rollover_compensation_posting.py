@@ -35,6 +35,21 @@ def validate_rollover_source_history(*, source, original):
         raise HTTPException(status_code=409, detail="Invalid original installment evidence") from exc
     if expected_total != current_total or expected_paid != current_paid:
         raise HTTPException(status_code=409, detail="Original installment repayment history changed")
+    for field, evidence_key in (
+        ("principal_due", "installment_principal_due"),
+        ("interest_due", "installment_interest_due"),
+        ("fee_due", "installment_fee_due"),
+    ):
+        if evidence_key not in original:
+            raise HTTPException(status_code=409, detail="Original installment component evidence is missing")
+        try:
+            actual = Decimal(str(getattr(source, field)))
+            expected = Decimal(str(original[evidence_key]))
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            raise HTTPException(status_code=409, detail="Invalid original installment component evidence") from exc
+        if not actual.is_finite() or not expected.is_finite() or actual != expected:
+            raise HTTPException(status_code=409, detail="Original installment component history changed")
+
 
 def post_rollover_compensation(
     db: Session, *, company_id: UUID, transfer_id: UUID, actor_user_id: UUID,
@@ -137,18 +152,6 @@ def post_rollover_compensation(
         raise HTTPException(
             status_code=409,
             detail="Source installment unpaid balance no longer matches rollover transfer",
-        )
-    if any(
-        Decimal(str(getattr(source, field))) != Decimal(str(getattr(transfer, component)))
-        for field, component in (
-            ("principal_due", "principal_component"),
-            ("interest_due", "interest_component"),
-            ("fee_due", "fee_component"),
-        )
-    ) and Decimal(str(source.paid_amount)) == 0:
-        raise HTTPException(
-            status_code=409,
-            detail="Source component totals no longer match the rollover ledger",
         )
     # Proposed atomic compensation. Unreachable until the entry-point 503
     # gate is deliberately removed after independent accounting certification.
