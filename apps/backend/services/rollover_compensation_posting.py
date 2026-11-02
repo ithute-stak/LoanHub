@@ -68,7 +68,7 @@ def restore_original_rollover_parent_state(original):
         overdue = original["loan_is_overdue"]
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=409, detail="Original parent loan state evidence missing") from exc
-    if status not in (LoanStatus.ACTIVE, LoanStatus.OVERDUE):
+    if status != LoanStatus.ACTIVE:
         raise HTTPException(status_code=409, detail="Original parent loan status not eligible for restoration")
     if type(overdue) is not bool:
         raise HTTPException(status_code=409, detail="Invalid original parent overdue evidence")
