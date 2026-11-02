@@ -61,6 +61,19 @@ def restore_original_rollover_installment_status(original):
         raise HTTPException(status_code=409, detail="Original installment was not an eligible open installment")
     return status
 
+def restore_original_rollover_parent_state(original):
+    """Restore exact loan status and delinquency state recorded at transfer."""
+    try:
+        status = LoanStatus(original["loan_status"])
+        overdue = original["loan_is_overdue"]
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail="Original parent loan state evidence missing") from exc
+    if status not in (LoanStatus.ACTIVE, LoanStatus.OVERDUE):
+        raise HTTPException(status_code=409, detail="Original parent loan status not eligible for restoration")
+    if type(overdue) is not bool:
+        raise HTTPException(status_code=409, detail="Invalid original parent overdue evidence")
+    return status, overdue
+
 def post_rollover_compensation(
     db: Session, *, company_id: UUID, transfer_id: UUID, actor_user_id: UUID,
     independent_approver_id: UUID, reference: str, approval_reference: str,
@@ -168,8 +181,7 @@ def post_rollover_compensation(
     before_parent_balance, before_child_balance = parent.balance, child.balance
     amount = Decimal(str(transfer.transfer_amount))
     parent.balance = amount
-    parent.status = LoanStatus.ACTIVE
-    parent.is_overdue = False
+    parent.status, parent.is_overdue = restore_original_rollover_parent_state(original)
     child.balance = Decimal("0")
     child.status = LoanStatus.CANCELLED
     child.is_overdue = False
