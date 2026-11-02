@@ -17,6 +17,7 @@ from database.models.enums import InstallmentStatus
 from database.models.repayment import RepaymentInstallment
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
+from services.rollover_accounting_reconciliation import reconcile_rollover_accounting
 
 
 def test_partial_final_installment_transfer_and_compensation_conserve_receivables():
@@ -86,6 +87,18 @@ def test_partial_final_installment_transfer_and_compensation_conserve_receivable
                     db.add(transfer)
                     db.flush()
                     assert db.execute(text('SELECT SUM(balance) FROM client_company_loan')).scalar_one() == before
+                    forward = reconcile_rollover_accounting(
+                        transfer=transfer, company_id=company,
+                        parent_before=Decimal("60"), parent_after=Decimal("0"),
+                        child_before=Decimal("0"), child_after=Decimal("60"),
+                    )
+                    assert forward["balanced"] is True
+                    assert forward["no_cash_movement"] is True
+                    assert forward["no_new_income"] is True
+                    assert forward["company_gl_net_change"] == "0.00"
+                    assert forward["transferred_components"] == {
+                        "principal": "60", "interest": "0", "fees": "0",
+                    }
                     db.expire(source)
                     assert db.get(RepaymentInstallment, source.id).paid_amount == Decimal("40")
                     assert db.get(RepaymentInstallment, source.id).is_superseded is True
@@ -104,6 +117,14 @@ def test_partial_final_installment_transfer_and_compensation_conserve_receivable
                     ))
                     db.flush()
                     assert db.execute(text('SELECT SUM(balance) FROM client_company_loan')).scalar_one() == before
+                    reverse = reconcile_rollover_accounting(
+                        transfer=transfer, company_id=company,
+                        parent_before=Decimal("60"), parent_after=Decimal("0"),
+                        child_before=Decimal("0"), child_after=Decimal("60"),
+                    )
+                    assert reverse["balanced"] is True
+                    assert reverse["company_gl_net_change"] == "0.00"
+                    assert reverse["no_cash_movement"] is True
                     db.expire_all()
                     assert db.get(RepaymentInstallment, source.id).paid_amount == Decimal("40")
                     assert db.get(RepaymentInstallment, source.id).is_superseded is False
