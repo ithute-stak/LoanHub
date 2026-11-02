@@ -66,3 +66,15 @@ def test_legacy_missing_component_snapshot_fails_closed(original):
     with pytest.raises(HTTPException) as exc:
         validate_rollover_source_history(source=source, original=original)
     assert exc.value.status_code == 409
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", "-1"])
+@pytest.mark.parametrize("field", ["installment_total_due", "installment_paid_amount"])
+def test_invalid_recorded_history_amount_rejected(original, value, field):
+    original[field] = value
+    source = SimpleNamespace(total_due=Decimal("100"), paid_amount=Decimal("40"),
+                             principal_due=Decimal("70"), interest_due=Decimal("20"),
+                             fee_due=Decimal("10"))
+    with pytest.raises(HTTPException) as exc:
+        validate_rollover_source_history(source=source, original=original)
+    assert exc.value.status_code == 409

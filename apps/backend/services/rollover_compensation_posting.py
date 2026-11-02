@@ -33,6 +33,8 @@ def validate_rollover_source_history(*, source, original):
         current_paid = Decimal(str(source.paid_amount))
     except (ValueError, TypeError, ArithmeticError) as exc:
         raise HTTPException(status_code=409, detail="Invalid original installment evidence") from exc
+    if not all(v.is_finite() and v >= 0 for v in (expected_total, expected_paid, current_total, current_paid)):
+        raise HTTPException(status_code=409, detail="Non-finite or negative original installment amounts")
     if expected_total != current_total or expected_paid != current_paid:
         raise HTTPException(status_code=409, detail="Original installment repayment history changed")
     for field, evidence_key in (
