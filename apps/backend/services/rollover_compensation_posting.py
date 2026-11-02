@@ -51,6 +51,16 @@ def validate_rollover_source_history(*, source, original):
             raise HTTPException(status_code=409, detail="Original installment component history changed")
 
 
+def restore_original_rollover_installment_status(original):
+    """Return the exact posting-time installment status or fail closed."""
+    try:
+        status = InstallmentStatus(original["installment_status"])
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail="Original installment status evidence is invalid") from exc
+    if status not in (InstallmentStatus.PENDING, InstallmentStatus.PARTIALLY_PAID, InstallmentStatus.OVERDUE):
+        raise HTTPException(status_code=409, detail="Original installment was not an eligible open installment")
+    return status
+
 def post_rollover_compensation(
     db: Session, *, company_id: UUID, transfer_id: UUID, actor_user_id: UUID,
     independent_approver_id: UUID, reference: str, approval_reference: str,
@@ -167,10 +177,7 @@ def post_rollover_compensation(
     source.superseded_at = None
     # Restore the exact posting-time state, not a status inferred from the paid
     # amount: overdue/pending classifications carry distinct operational meaning.
-    try:
-        source.status = InstallmentStatus(original["installment_status"])
-    except (KeyError, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=409, detail="Original installment status evidence is invalid") from exc
+    source.status = restore_original_rollover_installment_status(original)
     child_installment = installments[0]
     child_installment.is_superseded = True
     child_installment.superseded_at = datetime.now(timezone.utc)
