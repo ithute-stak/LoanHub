@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.orm import Session
 
@@ -131,6 +132,30 @@ def test_partial_final_installment_transfer_and_compensation_conserve_receivable
                     assert db.get(RepaymentInstallment, child_row.id).is_superseded is True
                     assert db.query(LoanRolloverTransfer).count() == 1
                     assert db.query(LoanRolloverCompensation).count() == 1
+
+                    # The compensation must be immutable and exactly-once.
+                    # A second reversal against this transfer cannot create a
+                    # second ledger row, even when its reference differs.
+                    with pytest.raises(IntegrityError):
+                        with db.begin_nested():
+                            db.add(LoanRolloverCompensation(
+                                company_id=company, transfer_id=transfer.id,
+                                reference="LIFECYCLE-UNDO-REPLAY",
+                                approval_reference="TEST-APPROVED-REPLAY",
+                                reason="Duplicate compensation must be rejected",
+                                amount=Decimal("60"), principal_component=Decimal("60"),
+                                interest_component=Decimal("0"), fee_component=Decimal("0"),
+                                approved_by_user_id=actor,
+                                evidence={"no_cash_movement": True},
+                            ))
+                            db.flush()
+                    db.expire_all()
+                    assert db.query(LoanRolloverCompensation).count() == 1
+                    assert db.query(LoanRolloverTransfer).count() == 1
+                    assert db.execute(text('SELECT SUM(balance) FROM client_company_loan')).scalar_one() == before
+                    assert db.get(RepaymentInstallment, source.id).paid_amount == Decimal("40")
+                    assert db.get(RepaymentInstallment, source.id).is_superseded is False
+
             finally:
                 outer.rollback()
     finally:
