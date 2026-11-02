@@ -11,6 +11,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
+from services.final_installment_rollover_posting import post_final_rollover
+from services.rollover_compensation_posting import post_rollover_compensation
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.orm import Session
 
@@ -65,6 +68,39 @@ def test_partial_final_installment_transfer_and_compensation_conserve_receivable
                     db.add(source)
                     db.flush()
                     assert source.total_due - source.paid_amount == Decimal("60")
+                    # Call both *real* production entrypoints with an actual
+                    # PostgreSQL Session: the hard gates must reject even
+                    # correctly shaped requests before mutating mapped rows.
+                    with pytest.raises(HTTPException) as posting_denied:
+                        post_final_rollover(
+                            db, company_id=company, parent_id=parent,
+                            installment_id=source.id,
+                            approved_amount=Decimal("60"),
+                            due_date=__import__("datetime").date(2026, 12, 1),
+                            agreement_reference="SIGNED-TEST",
+                            approval_reference="APPROVAL-TEST",
+                            actor_user_id=actor, actor_role="owner",
+                            as_of=__import__("datetime").date(2026, 11, 2),
+                        )
+                    assert posting_denied.value.status_code == 503
+                    with pytest.raises(HTTPException) as reversal_denied:
+                        post_rollover_compensation(
+                            db, company_id=company, transfer_id=uuid4(),
+                            actor_user_id=actor, independent_approver_id=uuid4(),
+                            reference="REJECTED-GATE",
+                            approval_reference="REJECTED-APPROVAL",
+                            reason="Safety test",
+                        )
+                    assert reversal_denied.value.status_code == 503
+                    db.flush()
+                    db.expire_all()
+                    assert db.query(LoanRolloverTransfer).count() == 0
+                    assert db.query(LoanRolloverCompensation).count() == 0
+                    assert db.query(RepaymentInstallment).count() == 1
+                    assert db.get(RepaymentInstallment, source.id).paid_amount == Decimal("40")
+                    assert db.get(RepaymentInstallment, source.id).is_superseded is False
+                    assert db.execute(text('SELECT SUM(balance) FROM client_company_loan')).scalar_one() == Decimal("60")
+
                     before = db.execute(text('SELECT SUM(balance) FROM client_company_loan')).scalar_one()
                     assert before == Decimal("60")
                     source.is_superseded = True
