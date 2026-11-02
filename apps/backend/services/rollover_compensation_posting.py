@@ -165,7 +165,12 @@ def post_rollover_compensation(
     child.is_overdue = False
     source.is_superseded = False
     source.superseded_at = None
-    source.status = InstallmentStatus.PARTIALLY_PAID if Decimal(str(source.paid_amount)) > 0 else InstallmentStatus.PENDING
+    # Restore the exact posting-time state, not a status inferred from the paid
+    # amount: overdue/pending classifications carry distinct operational meaning.
+    try:
+        source.status = InstallmentStatus(original["installment_status"])
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail="Original installment status evidence is invalid") from exc
     child_installment = installments[0]
     child_installment.is_superseded = True
     child_installment.superseded_at = datetime.now(timezone.utc)
