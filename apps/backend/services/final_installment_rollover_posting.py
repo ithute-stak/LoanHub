@@ -135,6 +135,9 @@ def post_final_rollover(
         "total_repayable": str(parent.total_repayable),
         "installment_total_due": str(row.total_due),
         "installment_paid_amount": str(row.paid_amount),
+        "installment_principal_due": str(row.principal_due),
+        "installment_interest_due": str(row.interest_due),
+        "installment_fee_due": str(row.fee_due),
         "installment_status": row.status.value,
         "original_interest_rate": str(parent.interest_rate),
     }
