@@ -10,6 +10,8 @@ import (
     "net"
     "net/http"
     "net/url"
+    "path/filepath"
+    "strings"
     "os"
     "time"
 )
@@ -21,6 +23,7 @@ type deviceStatus struct {
     Protocol  string `json:"protocol"`
     Connected bool   `json:"connected"`
     Model     string `json:"model,omitempty"`
+    USBDetected bool `json:"usb_detected"`
 }
 
 func allowedOrigin(origin string) bool {
@@ -38,6 +41,25 @@ func allowedOrigin(origin string) bool {
 
 func allowedHost(host string) bool {
     return host == "127.0.0.1:8765"
+}
+
+// USB identification is diagnostic only: it does not mean SDK access,
+// pen capture, borrower consent or signing is available.
+func findSTU540(root string) bool {
+    entries, err := os.ReadDir(root)
+    if err != nil { return false }
+    for _, entry := range entries {
+        if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 { continue }
+        base := filepath.Join(root, entry.Name())
+        vendor, errV := os.ReadFile(filepath.Join(base, "idVendor"))
+        product, errP := os.ReadFile(filepath.Join(base, "idProduct"))
+        if errV == nil && errP == nil &&
+            strings.EqualFold(strings.TrimSpace(string(vendor)), "056a") &&
+            strings.EqualFold(strings.TrimSpace(string(product)), "00a8") {
+            return true
+        }
+    }
+    return false
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +85,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(deviceStatus{Protocol: protocol, Connected: false})
+    detected := findSTU540("/sys/bus/usb/devices")
+    status := deviceStatus{Protocol: protocol, Connected: false, USBDetected: detected}
+    if detected { status.Model = "STU-540" }
+    _ = json.NewEncoder(w).Encode(status)
 }
 
 func serve() error {
