@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import re
 import secrets
 import uuid
@@ -1186,6 +1188,22 @@ def allocate_repayment(db: Session, payment: PaymentTransaction) -> None:
         .all()
     )
 
+    # Optional read-only shadow: take an in-memory snapshot before the
+    # authoritative allocation changes installment balances.
+    shadow_enabled = os.getenv("LOANHUB_PAYMENT_ENGINE_ALLOCATION_SHADOW", "").strip().lower() in {"1", "true", "yes"}
+    shadow_before = ()
+    shadow_actual: list[tuple[str, Decimal]] = []
+    if shadow_enabled:
+        try:
+            from payment_engine.allocation_shadow import InstallmentSnapshot
+            shadow_before = tuple(InstallmentSnapshot(
+                installment_id=str(row.id), total_due=Decimal(row.total_due),
+                already_paid=Decimal(row.paid_amount),
+            ) for row in installments)
+        except Exception:
+            logging.getLogger(__name__).exception("payment_engine.allocation_shadow snapshot failed")
+            shadow_enabled = False
+
     for installment in installments:
         if remaining <= 0:
             break
@@ -1194,11 +1212,33 @@ def allocate_repayment(db: Session, payment: PaymentTransaction) -> None:
         installment.paid_amount = money(Decimal(installment.paid_amount) + allocated)
         remaining = money(remaining - allocated)
         db.add(PaymentAllocation(payment_id=payment.id, installment_id=installment.id, amount=allocated))
+        if shadow_enabled:
+            shadow_actual.append((str(installment.id), allocated))
         if Decimal(installment.paid_amount) >= Decimal(installment.total_due):
             installment.status = InstallmentStatus.PAID
             installment.paid_at = payment.completed_at or datetime.now(timezone.utc)
         else:
             installment.status = InstallmentStatus.PARTIALLY_PAID
+
+    if shadow_enabled:
+        try:
+            from payment_engine.allocation_shadow import compare_allocation
+            shadow = compare_allocation(
+                received=Decimal(payment.amount),
+                before=shadow_before,
+                actual=tuple(shadow_actual),
+            )
+            logging.getLogger(__name__).info(
+                "payment_engine.allocation_shadow result=%s payment_id=%s unapplied=%s reason=%s",
+                shadow.result, str(payment.id), str(shadow.unapplied_amount),
+                shadow.reason or "",
+            )
+        except Exception:
+            # This comparison is advisory. Never alter authoritative posting.
+            logging.getLogger(__name__).exception(
+                "payment_engine.allocation_shadow comparison failed payment_id=%s",
+                str(payment.id),
+            )
 
     loan.amount_paid = money(Decimal(loan.amount_paid) + Decimal(payment.amount))
     loan.balance = money(max(Decimal(loan.total_repayable) - Decimal(loan.amount_paid), Decimal("0")))
