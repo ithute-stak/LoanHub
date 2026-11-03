@@ -25,6 +25,10 @@ from database.models.enums import InstallmentStatus, LoanStatus
 from database.models.repayment import RepaymentInstallment
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
+from database.models.loan_rollover_reversal_request import LoanRolloverReversalRequest
+from database.models.loan_rollover_reversal_approval import LoanRolloverReversalApproval
+from services.rollover_reversal_approval import require_rollover_reversal_approval
+from services import rollover_reversal_approval as approval_service
 from services import rollover_compensation_posting as posting
 
 
@@ -70,7 +74,7 @@ def isolated_compensation(*, reconciliation=None):
         "ClientCompanyLoan": TestLoan,
         "PaymentTransaction": TestPayment,
         "PaymentAllocation": TestAllocation,
-        "require_rollover_reversal_approval": lambda *args, **kwargs: None,
+        "require_rollover_reversal_approval": require_rollover_reversal_approval,
     })
     if reconciliation is not None:
         namespace["reconcile_rollover_accounting"] = reconciliation
@@ -79,7 +83,7 @@ def isolated_compensation(*, reconciliation=None):
 
 
 @pytest.mark.parametrize("reject_accounting", [False, True])
-def test_real_session_compensation_restores_persisted_parent_child_and_history(reject_accounting):
+def test_real_session_compensation_restores_persisted_parent_child_and_history(reject_accounting, monkeypatch):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("PostgreSQL integration URL not configured")
@@ -108,6 +112,8 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                 RepaymentInstallment.__table__.create(bind=conn)
                 LoanRolloverTransfer.__table__.create(bind=conn)
                 LoanRolloverCompensation.__table__.create(bind=conn)
+                LoanRolloverReversalRequest.__table__.create(bind=conn)
+                LoanRolloverReversalApproval.__table__.create(bind=conn)
                 conn.execute(text('INSERT INTO loan_companies VALUES (:id)'), {"id": company})
                 for user in (maker, checker):
                     conn.execute(text('INSERT INTO users VALUES (:id)'), {"id": user})
@@ -162,6 +168,47 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                     db.add(transfer)
                     db.flush()
                     transfer_id, source_id, child_row_id = transfer.id, source.id, child_row.id
+                    # Use the real service authorization query against actual
+                    # immutable maker-request and checker-decision ORM rows.
+                    request = LoanRolloverReversalRequest(
+                        company_id=company, transfer_id=transfer.id,
+                        maker_user_id=maker, request_reference="SESSION-REQUEST",
+                        reason="Request the restoration of mistaken rollover",
+                    )
+                    db.add(request)
+                    db.flush()
+                    decision = LoanRolloverReversalApproval(
+                        company_id=company, transfer_id=transfer.id,
+                        maker_user_id=maker, checker_user_id=checker,
+                        approval_reference="CHECKER-APPROVED",
+                        decision="approved",
+                        reason="Independent financial review is completed",
+                        evidence={"maker_request_id": str(request.id)},
+                    )
+                    db.add(decision)
+                    db.flush()
+
+                    # Company-staff membership itself is separately certified;
+                    # only that identity lookup is stubbed for this test.
+                    identities = []
+                    monkeypatch.setattr(
+                        approval_service, "verify_rollover_checker_identity",
+                        lambda *args, **kwargs: identities.append(kwargs),
+                    )
+                    assert require_rollover_reversal_approval(
+                        db, company_id=company, transfer_id=transfer.id,
+                        maker_user_id=maker, checker_user_id=checker,
+                        approval_reference="CHECKER-APPROVED",
+                    ) is decision
+                    assert len(identities) == 1
+                    with pytest.raises(HTTPException) as wrong_checker_approval:
+                        require_rollover_reversal_approval(
+                            db, company_id=company, transfer_id=transfer.id,
+                            maker_user_id=maker, checker_user_id=checker,
+                            approval_reference="WRONG-CHECKER-REFERENCE",
+                        )
+                    assert wrong_checker_approval.value.status_code == 409
+
                     # Calls actual service SQLAlchemy query/locking/mutation/flush/
                     # accounting/commit logic, not a mocked query/result iterator.
                     if reject_accounting:
