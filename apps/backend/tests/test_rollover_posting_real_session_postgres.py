@@ -214,7 +214,7 @@ def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers(
                         as_of=date(2026, 11, 3),
                     )
                     assert result["cash_disbursement"] == "0.00"
-                    assert result["transferred_amount"] == "60"
+                    assert Decimal(result["transferred_amount"]) == Decimal("60.00")
                     child_id = __import__("uuid").UUID(result["child_loan_id"])
                     db.expire_all()
                     saved_parent = db.get(TestLoan, parent_id)
