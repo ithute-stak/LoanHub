@@ -57,16 +57,16 @@ def _contract(
     contract_id: UUID,
     lock: bool = False,
 ) -> LoanContract:
-    query = (
-        db.query(LoanContract)
-        .options(joinedload(LoanContract.loan))
-        .filter(
-            LoanContract.id == contract_id,
-            LoanContract.company_id == context.company_id,
-        )
+    query = db.query(LoanContract).filter(
+        LoanContract.id == contract_id,
+        LoanContract.company_id == context.company_id,
     )
     if lock:
-        query = query.with_for_update()
+        # PostgreSQL disallows FOR UPDATE on the nullable side of an OUTER JOIN.
+        # Keep the locked query to the contract row; load its loan afterwards.
+        query = query.with_for_update(of=LoanContract)
+    else:
+        query = query.options(joinedload(LoanContract.loan))
     contract = query.first()
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
