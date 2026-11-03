@@ -19,11 +19,15 @@ import (
 const listenAddr = "127.0.0.1:8765"
 const protocol = "loanhub-wacom-v1"
 
+// Startup-only SDK enumeration. Does not enable SDK capture or tablet access.
+var startupSDKDetected bool
+
 type deviceStatus struct {
     Protocol  string `json:"protocol"`
     Connected bool   `json:"connected"`
     Model     string `json:"model,omitempty"`
     USBDetected bool `json:"usb_detected"`
+    SDKDetected bool `json:"sdk_detected"`
 }
 
 func allowedOrigin(origin string) bool {
@@ -86,7 +90,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
     }
     w.Header().Set("Content-Type", "application/json")
     detected := findSTU540("/sys/bus/usb/devices")
-    status := deviceStatus{Protocol: protocol, Connected: false, USBDetected: detected}
+    status := deviceStatus{Protocol: protocol, Connected: false, USBDetected: detected, SDKDetected: detected && startupSDKDetected}
     if detected { status.Model = "STU-540" }
     _ = json.NewEncoder(w).Encode(status)
 }
@@ -115,10 +119,20 @@ func serve() error {
 
 func main() {
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     flag.Parse()
     if !*diagnostics || len(flag.Args()) != 0 {
         log.Println("Native device capture is unavailable. Start with --diagnostics for status-only mode.")
         os.Exit(2)
+    }
+    if *sdkEnumerator != "" {
+        detected, err := probeSDK(*sdkEnumerator)
+        if err != nil {
+            log.Printf("SDK device enumeration unavailable: %v (capture remains disabled)", err)
+        } else {
+            startupSDKDetected = detected
+            log.Printf("Official SDK enumeration found STU-540: %t", detected)
+        }
     }
     log.Printf("LoanHub Wacom diagnostics listening on %s (no hardware signing enabled)", listenAddr)
     if err := serve(); err != nil {
