@@ -23,10 +23,10 @@ func TestUSBIdentificationIsOnlyDiagnostic(t *testing.T) {
     root := t.TempDir()
     device := filepath.Join(root, "1-5")
     if err := os.Mkdir(device, 0700); err != nil { t.Fatal(err) }
-    if err := os.WriteFile(filepath.Join(device, "idVendor"), []byte("056a\\n"), 0600); err != nil { t.Fatal(err) }
-    if err := os.WriteFile(filepath.Join(device, "idProduct"), []byte("00a8\\n"), 0600); err != nil { t.Fatal(err) }
+    if err := os.WriteFile(filepath.Join(device, "idVendor"), []byte("056a\n"), 0600); err != nil { t.Fatal(err) }
+    if err := os.WriteFile(filepath.Join(device, "idProduct"), []byte("00a8\n"), 0600); err != nil { t.Fatal(err) }
     if !findSTU540(root) { t.Fatal("STU-540 USB device not recognized") }
-    if err := os.WriteFile(filepath.Join(device, "idProduct"), []byte("00a9\\n"), 0600); err != nil { t.Fatal(err) }
+    if err := os.WriteFile(filepath.Join(device, "idProduct"), []byte("00a9\n"), 0600); err != nil { t.Fatal(err) }
     if findSTU540(root) { t.Fatal("Other model must not be mistaken for STU-540") }
     if findSTU540(filepath.Join(root, "absent")) { t.Fatal("Missing USB tree must fail closed") }
 }
