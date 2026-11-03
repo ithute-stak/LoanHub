@@ -75,7 +75,7 @@ class TestLoan(TestBase):
         return None
 
 
-def isolated_posting():
+def isolated_posting(*, reconciliation=None):
     tree = ast.parse(textwrap.dedent(inspect.getsource(posting.post_final_rollover)))
     fn = tree.body[0]
     gate = fn.body[0]
@@ -93,11 +93,14 @@ def isolated_posting():
         "validate_rollover_receivable_transfer": lambda **kwargs: None,
         "generate_loan_reference": lambda *args: "SESSION-CHILD",
     })
+    if reconciliation is not None:
+        namespace["reconcile_rollover_accounting"] = reconciliation
     exec(compile(tree, inspect.getfile(posting.post_final_rollover), "exec"), namespace)
     return namespace["post_final_rollover"]
 
 
-def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers():
+@pytest.mark.parametrize("reject_accounting", [False, True])
+def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers(reject_accounting):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("PostgreSQL integration URL not configured")
@@ -146,6 +149,46 @@ def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers(
                     db.add(source)
                     db.flush()
                     source_id = source.id
+                    if reject_accounting:
+                        # The test-only failure is thrown after the real
+                        # service has inserted the child, schedule, transfer
+                        # and audit and called its final db.flush(), but
+                        # before the production db.commit() line.
+                        def reject_after_flush(**kwargs):
+                            assert db.query(LoanRolloverTransfer).count() == 1
+                            assert db.query(AuditLog).count() == 1
+                            assert db.query(TestLoan).count() == 2
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Simulated accounting reconciliation failure",
+                            )
+
+                        with pytest.raises(HTTPException, match="Simulated accounting"):
+                            with db.begin_nested():
+                                isolated_posting(reconciliation=reject_after_flush)(
+                                    db, company_id=company, parent_id=parent_id,
+                                    installment_id=source_id,
+                                    approved_amount=Decimal("60"),
+                                    due_date=date(2026, 12, 1),
+                                    agreement_reference="SIGNED-AGREEMENT",
+                                    approval_reference="APPROVED-TRANSFER",
+                                    actor_user_id=maker, actor_role="owner",
+                                    as_of=date(2026, 11, 3),
+                                )
+                        db.expire_all()
+                        persisted_parent = db.get(TestLoan, parent_id)
+                        persisted_source = db.get(RepaymentInstallment, source_id)
+                        assert persisted_parent.balance == Decimal("60")
+                        assert persisted_parent.status == LoanStatus.ACTIVE
+                        assert persisted_parent.is_overdue is True
+                        assert "linked_rollover_out" not in persisted_parent.calculation_breakdown
+                        assert persisted_source.paid_amount == Decimal("40")
+                        assert persisted_source.is_superseded is False
+                        assert db.query(TestLoan).count() == 1
+                        assert db.query(RepaymentInstallment).count() == 1
+                        assert db.query(LoanRolloverTransfer).count() == 0
+                        assert db.query(AuditLog).count() == 0
+                        return
                     result = isolated_posting()(
                         db, company_id=company, parent_id=parent_id,
                         installment_id=source_id, approved_amount=Decimal("60"),
