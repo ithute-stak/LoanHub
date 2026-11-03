@@ -8,7 +8,7 @@
  */
 export type WacomConnectionStatus =
   | { state: "available"; model: string; firmware?: string }
-  | { state: "usb_detected"; model: "STU-540"; reason: string }
+  | { state: "usb_detected"; model: "STU-540"; sdkDetected: boolean; reason: string }
   | { state: "unavailable"; reason: string };
 
 export const WACOM_LOCAL_CONNECTOR = "http://127.0.0.1:8765";
@@ -17,6 +17,7 @@ type DeviceHealth = {
   protocol: "loanhub-wacom-v1";
   connected: boolean;
   usb_detected?: boolean;
+  sdk_detected?: boolean;
   model?: string;
   firmware?: string;
 };
@@ -49,7 +50,10 @@ export async function checkWacomConnector(
       return {
         state: "usb_detected",
         model: "STU-540",
-        reason: "USB detected. Wacom SDK capture and contract signing are not enabled.",
+        sdkDetected: result.sdk_detected === true,
+        reason: result.sdk_detected === true
+          ? "USB and official SDK enumeration passed. Pen capture and signing remain disabled."
+          : "USB detected. Official SDK enumeration not confirmed; signing disabled.",
       };
     }
     if (result.connected === false) {
