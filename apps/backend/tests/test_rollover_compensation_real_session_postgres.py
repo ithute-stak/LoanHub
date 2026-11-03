@@ -236,6 +236,8 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                     # records and the real independent checker verifier. Every
                     # denial must occur before a compensation journal exists.
                     checker_user = db.get(User, checker)
+                    unrelated_company = uuid4()
+                    db.execute(text("INSERT INTO loan_companies (id) VALUES (:id)"), {"id": unrelated_company})
                     denial_cases = (
                         ("unverified", lambda: setattr(checker_user, "is_verified", False),
                          lambda: setattr(checker_user, "is_verified", True)),
@@ -243,7 +245,7 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                          lambda: setattr(checker_user, "is_active", True)),
                         ("unauthorized_role", lambda: setattr(membership, "role", UserRole.COLLECTIONS_OFFICER),
                          lambda: setattr(membership, "role", UserRole.FINANCE_OFFICER)),
-                        ("wrong_company", lambda: setattr(membership, "company_id", uuid4()),
+                        ("wrong_company", lambda: setattr(membership, "company_id", unrelated_company),
                          lambda: setattr(membership, "company_id", company)),
                     )
                     for case_name, deny, restore in denial_cases:
