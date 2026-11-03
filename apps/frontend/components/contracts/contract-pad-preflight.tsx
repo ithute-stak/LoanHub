@@ -57,8 +57,14 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
         `/contract-signing/contracts/${contractId}/pad/sessions`,
       );
       if (data.contract_hash !== check.contract_hash || data.contract_id !== contractId) {
+        // Best-effort cleanup of an unusable session; never accept mismatched
+        // evidence, even if the cancellation request also fails.
+        try {
+          await api.post(`/contract-signing/contracts/${encodeURIComponent(data.contract_id)}/pad/sessions/${encodeURIComponent(data.session_id)}/cancel`);
+        } catch {
+          // The server expires unconsumed preparation sessions after ten minutes.
+        }
         setError("Signing preparation did not match the current contract. Reload the agreement.");
-        // Do not accept a mismatched session as valid.
         return;
       }
       setSession(data);
