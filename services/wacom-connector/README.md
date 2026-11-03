@@ -53,3 +53,41 @@ reviewed SDK adapter is implemented, `connected` MUST remain `false`.
 
 The LoanHub browser app distinguishes `usb_detected` from SDK connectivity:
 USB presence cannot authorize a signature, identity proof or legal completion.
+
+## Optional official SDK enumeration (STU-540, Ubuntu)
+
+The workstation administrator has verified Wacom STU SDK 2.16.1 and its
+`getUsbDevices` example can enumerate `056a:00a8:0108`. To let LoanHub
+show that *additional diagnostic*, stop the old connector (Ctrl+C), then:
+
+```sh
+cd ~/LoanHub-Wacom
+git fetch origin
+git switch feat/wacom-sdk-enumeration-20261103
+git pull --ff-only
+cd services/wacom-connector
+go test ./...
+go build -o loanhub-wacom-connector .
+./loanhub-wacom-connector --diagnostics \
+  --sdk-enumerator="$HOME/wacom-stu-sdk/sdk-extracted/Linux/x86_64/getUsbDevices"
+```
+
+From another terminal on the same workstation:
+
+```sh
+curl http://127.0.0.1:8765/v1/device/status
+```
+
+Expected when the STU-540 is present and the SDK sample enumerates it:
+
+```json
+{"protocol":"loanhub-wacom-v1","connected":false,"model":"STU-540","usb_detected":true,"sdk_detected":true}
+```
+
+`sdk_detected` is a **startup snapshot**, not proof of an open SDK session or
+available pen input. Restart after unplugging/replugging to refresh the SDK
+snapshot. If the executable is absent, fails, times out or reports another
+device, the status remains `sdk_detected:false`. The executable must be the
+vendor-provided SDK sample on disk: no SDK binary is checked into GitHub.
+`connected` remains `false` until a separately audited capture implementation
+exists. The service runs on the Ubuntu desktop, not the VPS.
