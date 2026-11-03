@@ -94,6 +94,7 @@ def _certify_migrated_posting(engine):
     import textwrap
     from datetime import date
     from decimal import Decimal
+    from uuid import UUID
     from fastapi import HTTPException
     from sqlalchemy.orm import Session
     import database.models  # noqa: F401
@@ -196,7 +197,7 @@ def _certify_migrated_posting(engine):
             posting.post_final_rollover(db, **arguments(good))
         assert disabled.value.status_code == 503
         result = test_only_post(db, **arguments(good))
-        child_id = result["child_loan_id"]
+        child_id = UUID(result["child_loan_id"])
         assert Decimal(result["transferred_amount"]) == Decimal("60")
         assert Decimal(result["cash_disbursement"]) == 0
     # Verify persisted state using a *new* independent database connection.
