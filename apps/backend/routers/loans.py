@@ -1057,6 +1057,7 @@ def print_payment_history(
 def list_loans(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    borrower_id: UUID | None = Query(default=None),
     x_company_id: str | None = Header(default=None, alias="X-Company-ID"),
     x_active_role: str | None = Header(default=None, alias="X-Active-Role"),
     db: Session = Depends(get_db),
@@ -1078,7 +1079,9 @@ def list_loans(
         # restricted to their active branch.
         if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES:
             query = query.filter(ClientCompanyLoan.branch_id == context.branch_id)
-    return query.order_by(ClientCompanyLoan.created_at.desc()).offset(skip).limit(limit).all()
+    if borrower_id is not None:
+        query = query.filter(ClientCompanyLoan.borrower_id == borrower_id)
+    return query.order_by(ClientCompanyLoan.created_at.desc(), ClientCompanyLoan.id.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/reports/loan-cash-statement.pdf")
