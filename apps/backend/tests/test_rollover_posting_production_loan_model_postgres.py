@@ -3,9 +3,9 @@
 The live 503 protection is deliberately untouched. This test-only compilation
 removes only that first guard. All financial planning, accounting, transfer,
 audit, loan, and repayment mappings run as written in the application; only
-loan-reference generation is substituted. The disposable schema uses production
-columns/constraints with abbreviated external FK target tables, so this is not
-yet full migration-backed, end-to-end production certification.
+loan-reference generation is substituted. The disposable schema retains real
+foreign-key constraints with abbreviated external reference tables; this is
+still not full migration-backed, end-to-end production certification.
 """
 import ast
 import inspect
@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import Enum as SAEnum, create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
@@ -70,6 +71,9 @@ def test_posting_body_real_client_company_loan_mapping(reject_accounting):
                 conn.execute(text("CREATE TABLE users (id uuid PRIMARY KEY)"))
                 conn.execute(text("CREATE TABLE company_branches (id uuid PRIMARY KEY)"))
                 conn.execute(text("CREATE TABLE loan_renewal_cycles (id uuid PRIMARY KEY)"))
+                conn.execute(text("CREATE TABLE loan_requests (id uuid PRIMARY KEY)"))
+                conn.execute(text("CREATE TABLE loan_offers (id uuid PRIMARY KEY)"))
+                conn.execute(text("CREATE TABLE direct_loan_applications (id uuid PRIMARY KEY)"))
                 # The actual production columns/constraints and typed enums
                 # are used for every model participating in the posting body.
                 models = (
@@ -80,9 +84,9 @@ def test_posting_body_real_client_company_loan_mapping(reject_accounting):
                     for column in model.__table__.columns:
                         if isinstance(column.type, SAEnum):
                             column.type.create(bind=conn, checkfirst=True)
-                    conn.execute(CreateTable(
-                        model.__table__, include_foreign_key_constraints=[],
-                    ))
+                    # Keep the real production FK constraints active;
+                    # minimal reference tables above satisfy external edges.
+                    conn.execute(CreateTable(model.__table__))
 
                 with Session(bind=conn, expire_on_commit=False) as db:
                     company = LoanCompany(
@@ -221,6 +225,27 @@ def test_posting_body_real_client_company_loan_mapping(reject_accounting):
                     assert transfer.transfer_amount == Decimal("60")
                     assert db.query(AuditLog).count() == 1
                     assert saved_parent.balance + child.balance == Decimal("60")
+
+                    # A linked child must never reference a nonexistent
+                    # parent even after the service successfully commits.
+                    with pytest.raises(IntegrityError):
+                        with db.begin_nested():
+                            db.execute(text(
+                                "UPDATE client_company_loan SET parent_loan_id = :missing "
+                                "WHERE id = :child"
+                            ), {"missing": uuid4(), "child": child_id})
+                    db.expire_all()
+                    assert db.get(ClientCompanyLoan, child_id).parent_loan_id == original_parent_id
+                    fk_count = db.execute(text(
+                        "SELECT COUNT(*) FROM pg_constraint c "
+                        "JOIN pg_class t ON t.oid = c.conrelid "
+                        "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                        "WHERE n.nspname = :schema AND c.contype = 'f' "
+                        "AND t.relname IN "
+                        "('client_company_loan', 'repayment_installments', "
+                        "'loan_rollover_transfers', 'audit_logs')"
+                    ), {"schema": schema}).scalar_one()
+                    assert fk_count >= 10
                     with pytest.raises(HTTPException) as disabled:
                         posting.post_final_rollover(
                             db, company_id=company_id, parent_id=original_parent_id,
