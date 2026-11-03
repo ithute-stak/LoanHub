@@ -5,13 +5,11 @@ mutates the database; an inconsistency is only reported for investigation.
 """
 from __future__ import annotations
 
-import logging
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
 from database.models.accounting import JournalEntry
-from database.models.enums import PaymentStatus
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from payment_engine.reversal import (
@@ -19,9 +17,6 @@ from payment_engine.reversal import (
     ReversalRequest,
     preview_cash_reversal,
 )
-
-logger = logging.getLogger(__name__)
-
 
 def inspect_cash_reversal_shadow(
     db: Session, *, loan, payment, treasury_entry, is_latest: bool
