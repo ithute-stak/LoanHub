@@ -144,7 +144,13 @@ export function ContractSignatureCapture({ contractId, disabled = false, onCaptu
         <Button type="button" variant="outline" onClick={() => void detectDevice()} disabled={checkingDevice || disabled}>
           {checkingDevice ? "Checking Wacom..." : "Detect Wacom pad"}
         </Button>
-        {device ? <p role="status" className="text-xs text-muted-foreground">{device.state === "available" ? `Connector reports: ${device.model}. Hardware signing is not enabled.` : device.reason}</p> : null}
+        {device ? <p role="status" className="text-xs text-muted-foreground">
+          {device.state === "available"
+            ? `Connector reports ${device.model}. Hardware signing remains disabled.`
+            : device.state === "usb_detected"
+              ? `${device.model}: ${device.reason}`
+              : device.reason}
+        </p> : null}
       </div>
       <canvas
         ref={canvas}
