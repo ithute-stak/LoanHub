@@ -56,6 +56,28 @@ export async function listLoans(): Promise<Loan[]> {
   return (await api.get<Loan[]>("/loans/")).data.map(normalizeLoanCurrentState);
 }
 
+/** Retrieve the full tenant-authorised history for one borrower, not just page one. */
+export async function listBorrowerLoans(borrowerId: string): Promise<Loan[]> {
+  const pageSize = 500;
+  const loans: Loan[] = [];
+  const seen = new Set<string>();
+  for (let skip = 0; ; skip += pageSize) {
+    const {data} = await api.get<Loan[]>("/loans/", {
+      params: {borrower_id: borrowerId, skip, limit: pageSize},
+    });
+    for (const loan of data) {
+      if (loan.borrower_id !== borrowerId) {
+        throw new Error("Borrower loan history returned an inconsistent borrower identifier.");
+      }
+      if (!seen.has(loan.id)) {
+        seen.add(loan.id);
+        loans.push(normalizeLoanCurrentState(loan));
+      }
+    }
+    if (data.length < pageSize) return loans;
+  }
+}
+
 export async function getLoan(loanId: string): Promise<Loan> {
   return normalizeLoanCurrentState((await api.get<Loan>(`/loans/${loanId}`)).data);
 }
