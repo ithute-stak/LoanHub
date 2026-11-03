@@ -56,7 +56,7 @@ class TestAllocation(TestBase):
     installment_id = Column(UUID(as_uuid=True), primary_key=True)
 
 
-def isolated_compensation():
+def isolated_compensation(*, reconciliation=None):
     tree = ast.parse(textwrap.dedent(inspect.getsource(posting.post_rollover_compensation)))
     fn = tree.body[0]
     gate = fn.body[0]
@@ -72,11 +72,14 @@ def isolated_compensation():
         "PaymentAllocation": TestAllocation,
         "require_rollover_reversal_approval": lambda *args, **kwargs: None,
     })
+    if reconciliation is not None:
+        namespace["reconcile_rollover_accounting"] = reconciliation
     exec(compile(tree, inspect.getfile(posting.post_rollover_compensation), "exec"), namespace)
     return namespace["post_rollover_compensation"]
 
 
-def test_real_session_compensation_restores_persisted_parent_child_and_history():
+@pytest.mark.parametrize("reject_accounting", [False, True])
+def test_real_session_compensation_restores_persisted_parent_child_and_history(reject_accounting):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("PostgreSQL integration URL not configured")
@@ -161,6 +164,47 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history()
                     transfer_id, source_id, child_row_id = transfer.id, source.id, child_row.id
                     # Calls actual service SQLAlchemy query/locking/mutation/flush/
                     # accounting/commit logic, not a mocked query/result iterator.
+                    if reject_accounting:
+                        # Force a failure after the actual compensation service
+                        # has mutated the parent/child/schedules and flushed
+                        # a mapped compensation row, but before db.commit().
+                        def reject_after_flush(**kwargs):
+                            assert db.query(LoanRolloverCompensation).count() == 1
+                            assert db.get(TestLoan, parent_id).balance == Decimal("60")
+                            assert db.get(TestLoan, child_id).balance == Decimal("0")
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Simulated compensation accounting failure",
+                            )
+
+                        with pytest.raises(HTTPException, match="Simulated compensation"):
+                            with db.begin_nested():
+                                isolated_compensation(reconciliation=reject_after_flush)(
+                                    db, company_id=company, transfer_id=transfer_id,
+                                    actor_user_id=maker, independent_approver_id=checker,
+                                    reference="SESSION-UNDO-FAILED",
+                                    approval_reference="CHECKER-APPROVED",
+                                    reason="Rollback regression after compensation flush",
+                                )
+                        db.expire_all()
+                        parent_after = db.get(TestLoan, parent_id)
+                        child_after = db.get(TestLoan, child_id)
+                        source_after = db.get(RepaymentInstallment, source_id)
+                        child_row_after = db.get(RepaymentInstallment, child_row_id)
+                        assert parent_after.balance == Decimal("0")
+                        assert parent_after.status == LoanStatus.COMPLETED
+                        assert parent_after.is_overdue is False
+                        assert "linked_rollover_compensated" not in parent_after.calculation_breakdown
+                        assert child_after.balance == Decimal("60")
+                        assert child_after.status == LoanStatus.ACTIVE
+                        assert source_after.is_superseded is True
+                        assert source_after.paid_amount == Decimal("40")
+                        assert source_after.status == InstallmentStatus.OVERDUE
+                        assert child_row_after.is_superseded is False
+                        assert db.query(LoanRolloverCompensation).count() == 0
+                        assert db.query(LoanRolloverTransfer).count() == 1
+                        assert parent_after.balance + child_after.balance == Decimal("60")
+                        return
                     result = isolated_compensation()(
                         db, company_id=company, transfer_id=transfer_id,
                         actor_user_id=maker, independent_approver_id=checker,
