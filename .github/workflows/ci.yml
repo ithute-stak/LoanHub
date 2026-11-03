@@ -111,6 +111,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
           cargo build --manifest-path apps/frontend/wasm/loanhub-compute/Cargo.toml --target wasm32-unknown-unknown --release
           (cd services/worker-go && go test ./... && go build ./...)
+          (cd services/wacom-connector && go test ./... && go build ./...)
           mvn -q -f services/worker-java/pom.xml test package
           sudo apt-get update
           sudo apt-get install -y libboost-dev
