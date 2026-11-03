@@ -49,8 +49,12 @@ def isolated_real_model_posting():
     return namespace["post_final_rollover"]
 
 
-@pytest.mark.parametrize("reject_accounting", [False, True])
-def test_posting_body_real_client_company_loan_mapping(reject_accounting):
+@pytest.mark.parametrize("case", [
+    "success", "accounting_failure", "wrong_company", "wrong_amount",
+    "cdas_enabled", "already_transferred", "not_partially_paid",
+    "expired_due_date", "invalid_agreement",
+])
+def test_posting_body_real_client_company_loan_mapping(case):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("PostgreSQL integration URL not configured")
@@ -145,7 +149,64 @@ def test_posting_body_real_client_company_loan_mapping(reject_accounting):
                     source_id = source.id
 
                     fn = isolated_real_model_posting()
-                    if reject_accounting:
+                    if case not in ("success", "accounting_failure"):
+                        # All denial scenarios use production ClientCompanyLoan,
+                        # RepaymentInstallment, real preview and real plan checks.
+                        arguments = dict(
+                            company_id=company_id,
+                            parent_id=original_parent_id,
+                            installment_id=source_id,
+                            approved_amount=Decimal("60"),
+                            due_date=date(2026, 12, 20),
+                            agreement_reference="REAL-SIGNED-AGREEMENT",
+                            approval_reference="REAL-CREDIT-APPROVAL",
+                            actor_user_id=maker_id,
+                            actor_role="company_owner",
+                            as_of=date(2026, 11, 3),
+                        )
+                        if case == "wrong_company":
+                            arguments["company_id"] = uuid4()
+                        elif case == "wrong_amount":
+                            arguments["approved_amount"] = Decimal("61")
+                        elif case == "cdas_enabled":
+                            parent.cdas_collection_enabled = True
+                        elif case == "already_transferred":
+                            parent.calculation_breakdown = {
+                                "linked_rollover_out": {"child_loan_id": str(uuid4())}
+                            }
+                        elif case == "not_partially_paid":
+                            source.paid_amount = Decimal("0")
+                        elif case == "expired_due_date":
+                            arguments["due_date"] = date(2026, 11, 3)
+                        elif case == "invalid_agreement":
+                            arguments["agreement_reference"] = "bad"
+                        db.flush()
+                        db.expire_all()
+                        initial_parent = db.get(ClientCompanyLoan, original_parent_id)
+                        initial_row = db.get(RepaymentInstallment, source_id)
+                        initial_balance = initial_parent.balance
+                        initial_breakdown = initial_parent.calculation_breakdown
+                        initial_paid = initial_row.paid_amount
+                        initial_cdas = initial_parent.cdas_collection_enabled
+                        with pytest.raises(HTTPException) as denied:
+                            fn(db, **arguments)
+                        assert denied.value.status_code in (404, 409, 422)
+                        db.expire_all()
+                        checked_parent = db.get(ClientCompanyLoan, original_parent_id)
+                        checked_row = db.get(RepaymentInstallment, source_id)
+                        assert checked_parent.balance == initial_balance
+                        assert checked_parent.calculation_breakdown == initial_breakdown
+                        assert checked_parent.cdas_collection_enabled == initial_cdas
+                        assert checked_parent.status == LoanStatus.ACTIVE
+                        assert checked_row.paid_amount == initial_paid
+                        assert checked_row.is_superseded is False
+                        assert db.query(ClientCompanyLoan).count() == 1
+                        assert db.query(RepaymentInstallment).count() == 1
+                        assert db.query(LoanRolloverTransfer).count() == 0
+                        assert db.query(AuditLog).count() == 0
+                        assert not db.new and not db.dirty and not db.deleted
+                        return
+                    if case == "accounting_failure":
                         def reject_after_flush(**kwargs):
                             assert db.query(ClientCompanyLoan).count() == 2
                             assert db.query(LoanRolloverTransfer).count() == 1
