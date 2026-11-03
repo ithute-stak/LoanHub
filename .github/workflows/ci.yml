@@ -153,6 +153,15 @@ jobs:
           python -m alembic heads --verbose
           python -m pytest -q tests/test_rollover_migration_generator.py
 
+      - name: Certify rollover schema on fully Alembic-migrated disposable PostgreSQL
+        working-directory: apps/backend
+        env:
+          CI: 'true'
+          LOANHUB_MIGRATION_CERTIFICATION_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_rollover_alembic_migrated_schema_postgres.py
+
       - name: Verify PostgreSQL tenant isolation
         working-directory: apps/backend
         run: |
