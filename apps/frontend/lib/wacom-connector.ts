@@ -8,6 +8,7 @@
  */
 export type WacomConnectionStatus =
   | { state: "available"; model: string; firmware?: string }
+  | { state: "usb_detected"; model: "STU-540"; reason: string }
   | { state: "unavailable"; reason: string };
 
 export const WACOM_LOCAL_CONNECTOR = "http://127.0.0.1:8765";
@@ -15,6 +16,7 @@ export const WACOM_LOCAL_CONNECTOR = "http://127.0.0.1:8765";
 type DeviceHealth = {
   protocol: "loanhub-wacom-v1";
   connected: boolean;
+  usb_detected?: boolean;
   model?: string;
   firmware?: string;
 };
@@ -39,13 +41,26 @@ export async function checkWacomConnector(
     if (
       typeof body !== "object" || body === null ||
       !("protocol" in body) || body.protocol !== "loanhub-wacom-v1" ||
-      !("connected" in body) || body.connected !== true ||
-      !("model" in body) || typeof body.model !== "string" || !body.model.trim()
-    ) return { state: "unavailable", reason: "No compatible Wacom device reported" };
+      !("connected" in body) || typeof body.connected !== "boolean"
+    ) return { state: "unavailable", reason: "Invalid Wacom connector response" };
     const result = body as DeviceHealth;
+    // USB enumeration is not SDK connectivity, signature capture or identity proof.
+    if (result.connected === false && result.usb_detected === true && result.model === "STU-540") {
+      return {
+        state: "usb_detected",
+        model: "STU-540",
+        reason: "USB detected. Wacom SDK capture and contract signing are not enabled.",
+      };
+    }
+    if (result.connected === false) {
+      return { state: "unavailable", reason: "No SDK-connected Wacom signature pad. Check USB and local connector." };
+    }
+    if (typeof result.model !== "string" || !result.model.trim()) {
+      return { state: "unavailable", reason: "Connector did not report a valid device model" };
+    }
     return {
       state: "available",
-      model: result.model!.slice(0, 100),
+      model: result.model.slice(0, 100),
       ...(typeof result.firmware === "string" ? { firmware: result.firmware.slice(0, 100) } : {}),
     };
   } catch {
