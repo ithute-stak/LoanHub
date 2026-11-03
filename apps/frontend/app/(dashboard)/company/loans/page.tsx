@@ -35,6 +35,7 @@ import {
     getLoan,
     getDisbursementIntegrityPreview,
     listLoanPaymentSlips,
+    listBorrowerLoans,
     listLoans,
     payLoanInstallment,
     openLoanDocumentPdf,
@@ -156,6 +157,9 @@ export default function CompanyLoansPage() {
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState<WorkspaceTab>("portfolio");
     const [historyBorrowerId, setHistoryBorrowerId] = useState<string | null>(null);
+    const [borrowerHistoryLoans, setBorrowerHistoryLoans] = useState<Loan[]>([]);
+    const [borrowerHistoryLoading, setBorrowerHistoryLoading] = useState(false);
+    const [borrowerHistoryError, setBorrowerHistoryError] = useState<string | null>(null);
 
     const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
     const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -343,7 +347,28 @@ export default function CompanyLoansPage() {
         [clients],
     );
 
-    const historyLoans = useMemo(() => historyBorrowerId ? loans.filter((loan) => loan.borrower_id === historyBorrowerId) : loans, [loans, historyBorrowerId]);
+    useEffect(() => {
+        if (!historyBorrowerId) {
+            setBorrowerHistoryLoans([]);
+            setBorrowerHistoryError(null);
+            setBorrowerHistoryLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setBorrowerHistoryLoading(true);
+        setBorrowerHistoryError(null);
+        setBorrowerHistoryLoans([]);
+        void listBorrowerLoans(historyBorrowerId).then((rows) => {
+            if (!cancelled) setBorrowerHistoryLoans(rows);
+        }).catch((error: unknown) => {
+            if (!cancelled) setBorrowerHistoryError(getErrorMessage(error, "Borrower loan history could not be loaded."));
+        }).finally(() => {
+            if (!cancelled) setBorrowerHistoryLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, [historyBorrowerId]);
+
+    const historyLoans = historyBorrowerId ? borrowerHistoryLoans : loans;
     const historyClient = historyBorrowerId ? clientByBorrower.get(historyBorrowerId) : null;
 
     const signedContractRequired = originationPolicy?.require_signed_contract ?? true;
@@ -913,10 +938,10 @@ export default function CompanyLoansPage() {
 
                 <TabsContent value="portfolio" className="space-y-5">
                     {historyBorrowerId ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                        <div><p className="text-sm font-black">Loan history — {historyClient?.full_name ?? "Selected borrower"}</p><p className="text-xs text-muted-foreground">{historyLoans.length} recorded loan{historyLoans.length === 1 ? "" : "s"}, including settled and historical loans where available.</p></div>
+                        <div><p className="text-sm font-black">Loan history — {historyClient?.full_name ?? "Selected borrower"}</p><p className="text-xs text-muted-foreground">{borrowerHistoryLoading ? "Loading borrower loan history…" : borrowerHistoryError ? "Loan history unavailable — please retry." : `${historyLoans.length} recorded loan${historyLoans.length === 1 ? "" : "s"}, including settled and historical loans where available.`}</p></div>
                         <Button type="button" variant="outline" onClick={() => { setHistoryBorrowerId(null); router.replace("/company/loans"); }}>Show all company loans</Button>
                     </div> : null}
-                    <LoanPortfolioWorkspace
+                    {borrowerHistoryError ? <Alert variant="destructive"><AlertTitle>Unable to load borrower loans</AlertTitle><AlertDescription>{borrowerHistoryError}</AlertDescription></Alert> : borrowerHistoryLoading ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading full borrower history…</p> : <LoanPortfolioWorkspace
                         loans={historyLoans}
                         clients={clients}
                         contracts={contracts}
@@ -926,7 +951,7 @@ export default function CompanyLoansPage() {
                         onOpenDocuments={(loan) => void openDocuments(loan)}
                         onOpenDisbursement={openDisbursement}
                         onStartCall={(loan) => router.push(`/company/calls?borrower=${encodeURIComponent(loan.borrower_id)}&loan=${encodeURIComponent(loan.id)}`)}
-                    />
+                    />}
                 </TabsContent>
 
                 {canManageContracts ? <TabsContent value="contracts" className="space-y-5">
