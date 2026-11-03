@@ -2,8 +2,8 @@
 
 The production 503 remains intact. A test-only compiled copy removes just
 that initial guard, and uses real ORM loan/repayment/transfer/audit persistence.
-The loan model is deliberately schema-minimal, while planning and reference
-services are replaced to isolate the posting transaction. Therefore this is
+The loan model is deliberately schema-minimal, while only the child-reference generator is substituted; the real preview,
+rollover plan, receivable reconciliation and posting body all execute. Therefore this is
 service-body transaction evidence, not complete production certification.
 """
 import ast
@@ -87,10 +87,6 @@ def isolated_posting(*, reconciliation=None):
     namespace = vars(posting).copy()
     namespace.update({
         "ClientCompanyLoan": TestLoan,
-        "prepare_linked_rollover": lambda *args, **kwargs: {
-            "approved_transfer_amount": "60"
-        },
-        "validate_rollover_receivable_transfer": lambda **kwargs: None,
         "generate_loan_reference": lambda *args: "SESSION-CHILD",
     })
     if reconciliation is not None:
@@ -149,6 +145,25 @@ def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers(
                     db.add(source)
                     db.flush()
                     source_id = source.id
+                    # Real preview/plan/reconciliation must reject an
+                    # improperly approved transfer before adding any child
+                    # or ledger records, even in the isolated service body.
+                    with pytest.raises(HTTPException) as wrong_amount:
+                        isolated_posting()(
+                            db, company_id=company, parent_id=parent_id,
+                            installment_id=source_id,
+                            approved_amount=Decimal("61"),
+                            due_date=date(2026, 12, 1),
+                            agreement_reference="SIGNED-AGREEMENT",
+                            approval_reference="APPROVED-TRANSFER",
+                            actor_user_id=maker, actor_role="owner",
+                            as_of=date(2026, 11, 3),
+                        )
+                    assert wrong_amount.value.status_code == 409
+                    db.expire_all()
+                    assert db.query(TestLoan).count() == 1
+                    assert db.query(LoanRolloverTransfer).count() == 0
+                    assert db.get(RepaymentInstallment, source_id).paid_amount == Decimal("40")
                     if reject_accounting:
                         # The test-only failure is thrown after the real
                         # service has inserted the child, schedule, transfer
@@ -199,7 +214,7 @@ def test_posting_service_body_commits_actual_postgres_loan_schedule_and_ledgers(
                         as_of=date(2026, 11, 3),
                     )
                     assert result["cash_disbursement"] == "0.00"
-                    assert result["transferred_amount"] == "60"
+                    assert Decimal(result["transferred_amount"]) == Decimal("60.00")
                     child_id = __import__("uuid").UUID(result["child_loan_id"])
                     db.expire_all()
                     saved_parent = db.get(TestLoan, parent_id)
