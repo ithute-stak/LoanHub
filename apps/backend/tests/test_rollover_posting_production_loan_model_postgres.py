@@ -53,6 +53,7 @@ def isolated_real_model_posting():
     "success", "accounting_failure", "wrong_company", "wrong_amount",
     "cdas_enabled", "already_transferred", "not_partially_paid",
     "expired_due_date", "invalid_agreement",
+    "mixed_missing_evidence", "mixed_invalid_evidence", "mixed_valid_evidence",
 ])
 def test_posting_body_real_client_company_loan_mapping(case):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
@@ -149,7 +150,11 @@ def test_posting_body_real_client_company_loan_mapping(case):
                     source_id = source.id
 
                     fn = isolated_real_model_posting()
-                    if case not in ("success", "accounting_failure"):
+                    if case == "mixed_valid_evidence":
+                        source.principal_due = Decimal("70")
+                        source.interest_due = Decimal("30")
+                        db.flush()
+                    if case not in ("success", "accounting_failure", "mixed_valid_evidence"):
                         # All denial scenarios use production ClientCompanyLoan,
                         # RepaymentInstallment, real preview and real plan checks.
                         arguments = dict(
@@ -180,6 +185,17 @@ def test_posting_body_real_client_company_loan_mapping(case):
                             arguments["due_date"] = date(2026, 11, 3)
                         elif case == "invalid_agreement":
                             arguments["agreement_reference"] = "bad"
+                        elif case in ("mixed_missing_evidence", "mixed_invalid_evidence"):
+                            source.principal_due = Decimal("70")
+                            source.interest_due = Decimal("30")
+                            if case == "mixed_invalid_evidence":
+                                arguments["component_evidence"] = {
+                                    "source_reference": "PAYMENT-LEDGER-VALIDATION",
+                                    "verified_by": "INDEPENDENT-REVIEWER",
+                                    "principal_paid": "40",
+                                    "interest_paid": "40",
+                                    "fee_paid": "0",
+                                }
                         db.flush()
                         db.expire_all()
                         initial_parent = db.get(ClientCompanyLoan, original_parent_id)
@@ -246,6 +262,16 @@ def test_posting_body_real_client_company_loan_mapping(case):
                         assert db.query(AuditLog).count() == 0
                         return
 
+                    component_evidence = (
+                        {
+                            "source_reference": "INDEPENDENT-ALLOCATION-REF",
+                            "verified_by": "FINANCE-REVIEWER",
+                            "principal_paid": "30",
+                            "interest_paid": "10",
+                            "fee_paid": "0",
+                        }
+                        if case == "mixed_valid_evidence" else None
+                    )
                     result = fn(
                         db, company_id=company_id, parent_id=original_parent_id,
                         installment_id=source_id,
@@ -256,6 +282,7 @@ def test_posting_body_real_client_company_loan_mapping(case):
                         actor_user_id=maker_id,
                         actor_role="company_owner",
                         as_of=date(2026, 11, 3),
+                        component_evidence=component_evidence,
                     )
                     assert Decimal(result["transferred_amount"]) == Decimal("60")
                     assert Decimal(result["cash_disbursement"]) == Decimal("0")
@@ -271,19 +298,33 @@ def test_posting_body_real_client_company_loan_mapping(case):
                     assert source.paid_amount == Decimal("40")
                     assert child.parent_loan_id == original_parent_id
                     assert child.balance == Decimal("60")
-                    assert child.principal_amount == Decimal("60")
+                    assert child.principal_amount == (
+                        Decimal("40") if case == "mixed_valid_evidence"
+                        else Decimal("60")
+                    )
                     assert child.status == LoanStatus.ACTIVE
                     assert child.folio_number == "BFS-Force-00002"
                     assert child.folio_number != saved_parent.folio_number
                     child_schedule = db.query(RepaymentInstallment).filter(
                         RepaymentInstallment.loan_id == child_id,
                     ).one()
-                    assert child_schedule.principal_due == Decimal("60")
+                    assert child_schedule.principal_due == (
+                        Decimal("40") if case == "mixed_valid_evidence"
+                        else Decimal("60")
+                    )
+                    assert child_schedule.interest_due == (
+                        Decimal("20") if case == "mixed_valid_evidence"
+                        else Decimal("0")
+                    )
                     assert child_schedule.paid_amount == Decimal("0")
                     transfer = db.query(LoanRolloverTransfer).one()
                     assert transfer.parent_loan_id == original_parent_id
                     assert transfer.child_loan_id == child_id
                     assert transfer.transfer_amount == Decimal("60")
+                    assert transfer.principal_component == child_schedule.principal_due
+                    assert transfer.interest_component == child_schedule.interest_due
+                    if case == "mixed_valid_evidence":
+                        assert transfer.evidence["allocation_evidence"] == component_evidence
                     assert db.query(AuditLog).count() == 1
                     assert saved_parent.balance + child.balance == Decimal("60")
 
