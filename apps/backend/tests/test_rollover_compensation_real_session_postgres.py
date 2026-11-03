@@ -232,6 +232,42 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                     assert inactive_checker.value.status_code == 409
                     membership.is_active = True
                     db.flush()
+                    # All of these use the real mapped User and CompanyStaff
+                    # records and the real independent checker verifier. Every
+                    # denial must occur before a compensation journal exists.
+                    checker_user = db.get(User, checker)
+                    denial_cases = (
+                        ("unverified", lambda: setattr(checker_user, "is_verified", False),
+                         lambda: setattr(checker_user, "is_verified", True)),
+                        ("disabled_user", lambda: setattr(checker_user, "is_active", False),
+                         lambda: setattr(checker_user, "is_active", True)),
+                        ("unauthorized_role", lambda: setattr(membership, "role", UserRole.COLLECTIONS_OFFICER),
+                         lambda: setattr(membership, "role", UserRole.FINANCE_OFFICER)),
+                        ("wrong_company", lambda: setattr(membership, "company_id", uuid4()),
+                         lambda: setattr(membership, "company_id", company)),
+                    )
+                    for case_name, deny, restore in denial_cases:
+                        deny()
+                        db.flush()
+                        with pytest.raises(HTTPException) as denied:
+                            require_rollover_reversal_approval(
+                                db, company_id=company, transfer_id=transfer.id,
+                                maker_user_id=maker, checker_user_id=checker,
+                                approval_reference="CHECKER-APPROVED",
+                            )
+                        assert denied.value.status_code == 409, case_name
+                        assert db.query(LoanRolloverCompensation).count() == 0
+                        assert db.get(TestLoan, parent_id).balance == Decimal("0")
+                        assert db.get(TestLoan, child_id).balance == Decimal("60")
+                        restore()
+                        db.flush()
+                    with pytest.raises(HTTPException) as same_user:
+                        require_rollover_reversal_approval(
+                            db, company_id=company, transfer_id=transfer.id,
+                            maker_user_id=maker, checker_user_id=maker,
+                            approval_reference="CHECKER-APPROVED",
+                        )
+                    assert same_user.value.status_code == 409
                     assert require_rollover_reversal_approval(
                         db, company_id=company, transfer_id=transfer.id,
                         maker_user_id=maker, checker_user_id=checker,
