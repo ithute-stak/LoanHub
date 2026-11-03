@@ -1,7 +1,7 @@
 # LoanHub Wacom workstation connector — diagnostics foundation
 
 This is a **diagnostics-only** Go executable, not a functioning Wacom hardware driver.
-It always returns `connected:false` and cannot collect signatures or finalize contracts.
+It always returns `connected:false` and cannot collect signatures or finalize contracts. On Linux, it can identify USB device ID `056a:00a8` (STU-540) as `usb_detected:true` without claiming that the device is usable for signing.
 No Wacom SDK, USB driver or native capture library is bundled.
 
 ## Build and test on the signing workstation
@@ -21,7 +21,7 @@ The service binds only to `127.0.0.1:8765`. In another shell:
 curl -i http://127.0.0.1:8765/v1/device/status
 ```
 
-Expected: `{"protocol":"loanhub-wacom-v1","connected":false}`.
+Expected when the STU-540 is plugged in: `{"protocol":"loanhub-wacom-v1","connected":false,"model":"STU-540","usb_detected":true}`. Without an attached STU-540, `usb_detected` is `false` and `model` is omitted.
 
 Only `https://loanhub.co.ls` is accepted as a browser Origin; no origin is allowed for direct local diagnostics. No raw pen data, device IDs, customer information or contract details leave the workstation.
 
