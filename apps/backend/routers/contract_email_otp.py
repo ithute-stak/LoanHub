@@ -57,16 +57,16 @@ def _contract(
     contract_id: UUID,
     lock: bool = False,
 ) -> LoanContract:
-    query = (
-        db.query(LoanContract)
-        .options(joinedload(LoanContract.loan))
-        .filter(
-            LoanContract.id == contract_id,
-            LoanContract.company_id == context.company_id,
-        )
+    query = db.query(LoanContract).filter(
+        LoanContract.id == contract_id,
+        LoanContract.company_id == context.company_id,
     )
     if lock:
-        query = query.with_for_update()
+        # PostgreSQL disallows FOR UPDATE on the nullable side of an OUTER JOIN.
+        # Keep the locked query to the contract row; load its loan afterwards.
+        query = query.with_for_update(of=LoanContract)
+    else:
+        query = query.options(joinedload(LoanContract.loan))
     contract = query.first()
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
@@ -211,11 +211,44 @@ def pad_signing_session_status(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Signing session not found")
-    expired = datetime.now(timezone.utc) >= row.expires_at
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    expired = datetime.now(timezone.utc) >= expires_at
     return {
         "session_id": str(row.id),
         "contract_id": str(row.contract_id),
-        "status": "expired" if expired and row.status == "created" else row.status,
-        "expires_at": row.expires_at.isoformat() + "Z",
+        "status": "expired" if expired and row.status in ("created", "consented") else row.status,
+        "expires_at": expires_at.isoformat(),
         "capture_enabled": False,
     }
+
+
+@router.post("/contracts/{contract_id}/pad/sessions/{session_id}/cancel")
+def cancel_pad_signing_session(
+    contract_id: UUID,
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Close an operator-owned candidate session without signing the agreement."""
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    _contract(db, context=context, contract_id=contract_id)
+    row = (
+        db.query(ContractPadSigningSession)
+        .filter(
+            ContractPadSigningSession.id == session_id,
+            ContractPadSigningSession.company_id == context.company_id,
+            ContractPadSigningSession.contract_id == contract_id,
+            ContractPadSigningSession.operator_user_id == context.user.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Signing session not found")
+    if row.status not in ("created", "consented"):
+        raise HTTPException(status_code=409, detail="Signing session cannot be cancelled")
+    row.status = "cancelled"
+    db.commit()
+    return {"session_id": str(row.id), "status": "cancelled", "capture_enabled": False}
