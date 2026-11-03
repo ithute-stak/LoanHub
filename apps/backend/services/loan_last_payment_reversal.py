@@ -6,6 +6,8 @@ periods require a separate reconciliation process.
 """
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -20,6 +22,8 @@ from database.models.treasury import TreasuryEntry
 from services.accounting_service import record_reversal_accounting
 from services.loan_service import reverse_loan_payment
 from services.treasury_service import void_treasury_entry
+
+_logger = logging.getLogger(__name__)
 
 
 def _last_payment_query(db: Session, loan: ClientCompanyLoan):
@@ -132,6 +136,28 @@ def reverse_latest_cash_repayment(
             status_code=409,
             detail="This loan has an approved installment carry-forward; reverse the restructuring before reversing payments",
         )
+
+    # Advisory shadow mode: never blocks or modifies the authoritative reversal.
+    # Disabled by default, including on production.
+    if os.getenv("LOANHUB_PAYMENT_ENGINE_REVERSAL_SHADOW", "").strip().lower() in {"1", "true", "yes"}:
+        try:
+            from payment_engine.reversal_shadow import inspect_cash_reversal_shadow
+
+            shadow = inspect_cash_reversal_shadow(
+                db, loan=loan, payment=payment, treasury_entry=treasury_entry,
+                is_latest=latest.id == payment.id,
+            )
+            _logger.info(
+                "payment_engine.reversal_shadow result=%s payment_id=%s reason=%s",
+                shadow["result"], str(payment.id), shadow.get("reason", ""),
+            )
+        except Exception:
+            # Shadow observation must not interrupt an otherwise valid
+            # reversal. Preserve details in internal logs for investigation.
+            _logger.exception(
+                "payment_engine.reversal_shadow inspection failed payment_id=%s",
+                str(payment.id),
+            )
 
     before_balance = str(loan.balance)
     before_paid = str(loan.amount_paid)
