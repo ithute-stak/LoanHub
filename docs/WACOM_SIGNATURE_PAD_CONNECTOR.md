@@ -1,6 +1,6 @@
 # LoanHub Wacom STU native connector protocol (design contract)
 
-This phase adds **browser detection only**. It does not include a native daemon,
+This phase adds browser diagnostics and a local Go diagnostics-only connector. It does not include a Wacom SDK-backed native capture daemon,
 Wacom vendor SDK binaries, capture over USB, signature submission, or contract finalization.
 
 ## Browser check
@@ -12,7 +12,7 @@ when staff press "Detect Wacom pad". A compatible local connector should return:
 {"protocol":"loanhub-wacom-v1","connected":true,"model":"STU-430","firmware":"optional"}
 ```
 
-The endpoint conveys diagnostic status only. It is never evidence of identity,
+For a locally attached STU-540 (USB vendor/product ID `056a:00a8`) the Go connector can return `usb_detected:true` with `model:"STU-540"`, while retaining `connected:false` until SDK connectivity is supported.\n\nThe endpoint conveys diagnostic status only. It is never evidence of identity,
 borrower consent, or authority to sign.
 
 ## Native connector requirements (not yet implemented)
