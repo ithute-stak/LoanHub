@@ -4,8 +4,9 @@ Test-only AST extraction removes the first unconditional 503 statement in an
 isolated function object; the production function and HTTP routes remain gated.
 The transfer, compensation and repayment schedule use real application mapped
 ORM classes. The minimal loan/payment models isolate unrelated schema setup.
-The external maker-checker decision is stubbed here; its own tests remain
-necessary, so this test does NOT certify authorization or production activation.
+The mapped maker request, checker decision and active company-role identity
+are exercised with PostgreSQL. The loan/payment fixtures remain simplified;
+this is not complete production activation certification.
 """
 import ast
 import inspect
@@ -21,8 +22,10 @@ from sqlalchemy import Boolean, Column, Enum, Numeric, create_engine, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Session, declarative_base
 
-from database.models.enums import InstallmentStatus, LoanStatus
+from database.models.enums import InstallmentStatus, LoanStatus, UserRole
 from database.models.repayment import RepaymentInstallment
+from database.models.user import User
+from database.models.company_staff import CompanyStaff
 from database.models.loan_rollover_transfer import LoanRolloverTransfer
 from database.models.loan_rollover_compensation import LoanRolloverCompensation
 from database.models.loan_rollover_reversal_request import LoanRolloverReversalRequest
@@ -83,7 +86,7 @@ def isolated_compensation(*, reconciliation=None):
 
 
 @pytest.mark.parametrize("reject_accounting", [False, True])
-def test_real_session_compensation_restores_persisted_parent_child_and_history(reject_accounting, monkeypatch):
+def test_real_session_compensation_restores_persisted_parent_child_and_history(reject_accounting):
     url = os.getenv("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("PostgreSQL integration URL not configured")
@@ -104,7 +107,9 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                 conn.execute(text(f'CREATE SCHEMA "{schema}"'))
                 conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
                 conn.execute(text('CREATE TABLE loan_companies (id uuid PRIMARY KEY)'))
-                conn.execute(text('CREATE TABLE users (id uuid PRIMARY KEY)'))
+                conn.execute(text('CREATE TABLE company_branches (id uuid PRIMARY KEY)'))
+                User.__table__.create(bind=conn)
+                CompanyStaff.__table__.create(bind=conn)
                 conn.execute(text('CREATE TABLE loan_renewal_cycles (id uuid PRIMARY KEY)'))
                 TestLoan.__table__.create(bind=conn)
                 TestPayment.__table__.create(bind=conn)
@@ -115,8 +120,26 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                 LoanRolloverReversalRequest.__table__.create(bind=conn)
                 LoanRolloverReversalApproval.__table__.create(bind=conn)
                 conn.execute(text('INSERT INTO loan_companies VALUES (:id)'), {"id": company})
-                for user in (maker, checker):
-                    conn.execute(text('INSERT INTO users VALUES (:id)'), {"id": user})
+                with Session(bind=conn) as identities:
+                    identities.add_all([
+                        User(id=maker, phone="maker-" + maker.hex[:12],
+                             password_hash="test-not-an-account",
+                             role=UserRole.COMPANY_OWNER,
+                             is_active=True, is_verified=True),
+                        User(id=checker, phone="checker-" + checker.hex[:12],
+                             password_hash="test-not-an-account",
+                             role=UserRole.FINANCE_OFFICER,
+                             is_active=True, is_verified=True),
+                    ])
+                    identities.flush()
+                    identities.add(CompanyStaff(
+                        user_id=checker, company_id=company,
+                        role=UserRole.FINANCE_OFFICER, is_active=True,
+                        is_primary=True,
+                    ))
+                    identities.flush()
+                    # Bound connection remains in the isolated outer transaction.
+
 
                 with Session(bind=conn, expire_on_commit=False) as db:
                     parent = TestLoan(
@@ -188,19 +211,32 @@ def test_real_session_compensation_restores_persisted_parent_child_and_history(r
                     db.add(decision)
                     db.flush()
 
-                    # Company-staff membership itself is separately certified;
-                    # only that identity lookup is stubbed for this test.
-                    identities = []
-                    monkeypatch.setattr(
-                        approval_service, "verify_rollover_checker_identity",
-                        lambda *args, **kwargs: identities.append(kwargs),
-                    )
+                    # Verify real active/verified company staff eligibility.
+                    from services.rollover_checker_identity import verify_rollover_checker_identity
+                    assert verify_rollover_checker_identity(
+                        db, company_id=company,
+                        maker_user_id=maker, checker_user_id=checker,
+                    ) == checker
+                    membership = db.query(CompanyStaff).filter(
+                        CompanyStaff.user_id == checker,
+                        CompanyStaff.company_id == company,
+                    ).one()
+                    membership.is_active = False
+                    db.flush()
+                    with pytest.raises(HTTPException) as inactive_checker:
+                        require_rollover_reversal_approval(
+                            db, company_id=company, transfer_id=transfer.id,
+                            maker_user_id=maker, checker_user_id=checker,
+                            approval_reference="CHECKER-APPROVED",
+                        )
+                    assert inactive_checker.value.status_code == 409
+                    membership.is_active = True
+                    db.flush()
                     assert require_rollover_reversal_approval(
                         db, company_id=company, transfer_id=transfer.id,
                         maker_user_id=maker, checker_user_id=checker,
                         approval_reference="CHECKER-APPROVED",
                     ) is decision
-                    assert len(identities) == 1
                     with pytest.raises(HTTPException) as wrong_checker_approval:
                         require_rollover_reversal_approval(
                             db, company_id=company, transfer_id=transfer.id,
