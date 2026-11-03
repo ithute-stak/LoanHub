@@ -11,7 +11,6 @@ import (
     "net/http"
     "net/url"
     "os"
-    "strings"
     "time"
 )
 
@@ -102,6 +101,3 @@ func main() {
     }
 }
 
-// Avoid accidental future expansion: no env-based bind overrides, no remote
-// access, no device serial numbers and no user or contract data in diagnostics.
-var _ = strings.TrimSpace
