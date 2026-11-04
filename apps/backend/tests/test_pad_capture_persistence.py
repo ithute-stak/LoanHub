@@ -67,7 +67,8 @@ def setup():
     )
     session = SimpleNamespace(
         id=session_id, company_id=company, contract_id=contract_id,
-        operator_user_id=operator, expires_at=now+timedelta(minutes=5),
+        operator_user_id=operator, contract_hash="a" * 64,
+        expires_at=now+timedelta(minutes=5),
         status="consented", verified_identity_at=now-timedelta(minutes=2),
         consent_at=now-timedelta(minutes=1), consent_version="v1",
         evidence_sha256=None, evidence=None,
