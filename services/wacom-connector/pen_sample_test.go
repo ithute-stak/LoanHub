@@ -77,7 +77,12 @@ func TestPTYReceivesFakeVendorOutputWithoutEarlyStdinEOF(t *testing.T) {
     sample := filepath.Join(t.TempDir(), "fake-simpleInterface")
     // A mock vendor executable that prints a few numeric lines before
     // sleeping. No Wacom hardware or borrower data is involved.
-    source := "#!/bin/sh\\nprintf 'Connected!\\\\n'\\nprintf '1 1 100 200 300 400 1\\\\n'\\nprintf '1 1 101 201 301 401 2\\\\n'\\nsleep 2\\n"
+    source := `#!/bin/sh
+printf 'Connected!\n'
+printf '1 1 100 200 300 400 1\n'
+printf '1 1 101 201 301 401 2\n'
+sleep 2
+`
     if err := os.WriteFile(sample, []byte(source), 0700); err != nil {
         t.Fatal(err)
     }
