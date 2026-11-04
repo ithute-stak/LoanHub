@@ -121,6 +121,15 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 // Output is discarded except for counts, and never crosses localhost.
 var safeSamplePath = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
 
+
+// isOperatorTerminalStdin recognizes Linux controlling terminal fds without
+// reading input or invoking an external process. A /dev/null stdin must not
+// be mistaken for an interactive terminal. Only used for the local CLI.
+func isOperatorTerminalStdin() bool {
+    target, err := os.Readlink("/proc/self/fd/0")
+    return err == nil && (strings.HasPrefix(target, "/dev/pts/") || target == "/dev/tty" || strings.HasPrefix(target, "/dev/tty"))
+}
+
 func testWacomPenSample(executable string, duration time.Duration) (int, error) {
     return testWacomSampleWithHandler(executable, duration, nil)
 }
@@ -144,16 +153,22 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     script, err := exec.LookPath("script")
     if err != nil { return 0, fmt.Errorf("util-linux script required: %w", err) }
     command := exec.CommandContext(ctx, script, "-q", "-f", "-e", "-c", "exec "+executable, "/dev/null")
-    // Keep the diagnostic attached to the calling terminal. Without this,
-    // os/exec supplies /dev/null as stdin and util-linux script can close
-    // its interactive session before the operator draws any pen strokes.
-    // Keep stdin open: util-linux script treats EOF as end of its recording
-    // and may close the PTY before a pen stroke can be delivered.
-    stdinReader, stdinWriter, err := os.Pipe()
-    if err != nil { return 0, err }
-    defer stdinReader.Close()
-    defer stdinWriter.Close()
-    command.Stdin = stdinReader
+    // Reproduce the known-working operator pipeline:
+    //   script ... /dev/null | awk ...
+    // The operator's *real TTY stdin* is inherited by script while its
+    // output is piped. Our previous synthetic os.Pipe stdin allowed the
+    // SDK to initialize but repeatedly returned zero pen events. For
+    // noninteractive CI mock tests, keep the prior open-pipe fallback.
+    var stdinReader, stdinWriter *os.File
+    if isOperatorTerminalStdin() {
+        command.Stdin = os.Stdin
+    } else {
+        stdinReader, stdinWriter, err = os.Pipe()
+        if err != nil { return 0, err }
+        defer stdinReader.Close()
+        defer stdinWriter.Close()
+        command.Stdin = stdinReader
+    }
     command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
     // On deadline, request orderly PTY shutdown before the final forced kill.
     command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGTERM) }
@@ -167,7 +182,7 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     if err := command.Start(); err != nil { return 0, err }
     // The child has inherited its stdin file descriptor; parent can drop its
     // reader copy while retaining the writer to prevent an early EOF.
-    _ = stdinReader.Close()
+    if stdinReader != nil { _ = stdinReader.Close() }
     // CommandContext kills the PTY parent on timeout. Ensure any vendor
     // child in the separate process group is also terminated.
     defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
