@@ -8,6 +8,7 @@ import (
     "os"
     "os/exec"
     "path/filepath"
+    "strings"
     "time"
 )
 
@@ -34,6 +35,15 @@ func queryLocalSDKCalibration(executable string) (deviceCalibration, error) {
     runErr := command.Run()
     if ctx.Err() != nil { return deviceCalibration{}, fmt.Errorf("SDK query timed out or was cancelled: %w",ctx.Err()) }
     if stdout.overflow || stderr.overflow { return deviceCalibration{}, errors.New("SDK query output exceeded safe limit") }
+    // Wacom's query utility can print a libusb failure and still exit 0.
+    // Interpret these known SDK failure markers without echoing raw output.
+    output := stdout.buf.String() + "\\n" + stderr.buf.String()
+    if strings.Contains(output, "libusb:-6") || strings.Contains(strings.ToLower(output), "libusb_error_busy") {
+        return deviceCalibration{}, errors.New("Wacom tablet USB interface is busy (libusb:-6); stop other SDK programs and retry")
+    }
+    if strings.Contains(output, "Failed to connect") {
+        return deviceCalibration{}, errors.New("official Wacom SDK could not connect to the tablet; calibration unavailable")
+    }
     if runErr != nil {
         return deviceCalibration{}, fmt.Errorf("SDK query failed (output withheld): %w",runErr)
     }
