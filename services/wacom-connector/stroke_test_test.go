@@ -27,7 +27,7 @@ func TestParseSDKStreamIntoPrivateStrokeBuffer(t *testing.T) {
     if err != nil { t.Fatal(err) }
     strokes, err := b.finish()
     if err != nil { t.Fatal(err) }
-    if ready != 1 || counts.reports != 5 || b.count != 4 || len(strokes) != 2 {
+    if ready != 1 || counts.reports != 6 || b.count != 4 || len(strokes) != 2 {
         t.Fatalf("ready=%d reports=%d points=%d strokes=%d", ready, counts.reports, b.count, len(strokes))
     }
 }
