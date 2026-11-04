@@ -72,3 +72,18 @@ pipeline. Noninteractive CI mock tests retain the open pipe fallback.
 
 This is a candidate fix. It must still pass the operator's STU-540
 calibrated stroke test; do not mark live capture complete from CI alone.
+
+## Linux controlling terminal and process-group correction
+
+After the real-terminal stdin change, the workstation reported zero
+stdout lines and `sdk_ready=false`. On Linux, placing a child into
+a separate process group while it reads the operator's controlling TTY
+can cause the kernel to suspend that background group with `SIGTTIN`.
+The launcher therefore keeps the locally invoked, interactive `script`
+process in the foreground terminal process group; it only isolates
+noninteractive fallback processes for group cleanup. Interactive
+timeouts send signals to the specific child PID, **never to the
+operator's terminal process group**.
+
+This is a root-cause hypothesis pending a live hardware retest.
+Never infer signing readiness from an SDK-ready message alone.
