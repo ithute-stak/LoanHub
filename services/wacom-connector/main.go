@@ -118,6 +118,7 @@ func serve() error {
 }
 
 func main() {
+    initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
@@ -127,6 +128,25 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *initWorkstation != "" {
+        if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
+            *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--init-workstation requires an existing private directory and no other modes")
+            os.Exit(2)
+        }
+        identity, err := initializeWorkstationIdentity(*initWorkstation)
+        if err != nil {
+            log.Printf("Wacom workstation initialization failed: %v", err)
+            os.Exit(1)
+        }
+        // Only the public registration JSON appears on stdout.
+        if err := json.NewEncoder(os.Stdout).Encode(identity); err != nil {
+            log.Printf("Wacom public registration output failed: %v",err)
+            os.Exit(1)
+        }
+        return
+    }
     if *calibrationTest {
         if *calibratedStrokeTest || *diagnostics || *penTest || *strokeTest || *sdkEnumerator != "" || *sdkPenSample != "" || *sdkQuery == "" || len(flag.Args()) != 0 {
             log.Println("Use --calibration-test --sdk-query=/absolute/path/to/query")
