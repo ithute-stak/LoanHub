@@ -139,6 +139,21 @@ def create_wacom_workstation_challenge(
         db, context=context, workstation_id=payload.workstation_id,
     )
     now = datetime.now(timezone.utc)
+    # Limit outstanding challenges per enrolled workstation/session to
+    # constrain unauthenticated workstation attempts and nonce storage.
+    outstanding = (
+        db.query(WacomWorkstationChallengeRecord)
+        .filter(
+            WacomWorkstationChallengeRecord.company_id == context.company_id,
+            WacomWorkstationChallengeRecord.enrollment_id == enrollment.id,
+            WacomWorkstationChallengeRecord.session_id == session_id,
+            WacomWorkstationChallengeRecord.consumed_at.is_(None),
+            WacomWorkstationChallengeRecord.expires_at > now,
+        )
+        .count()
+    )
+    if outstanding >= 3:
+        raise HTTPException(429, "Too many active workstation challenges")
     nonce = secrets.token_bytes(32)
     challenge_id = uuid4()
     expires_at = now + timedelta(seconds=30)
