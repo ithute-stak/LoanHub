@@ -73,7 +73,11 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     }
     ctx, cancel := context.WithTimeout(context.Background(), duration)
     defer cancel()
-    command := exec.CommandContext(ctx, executable)
+    // The vendor sample may block-buffer stdout when launched through a pipe.
+    // Request line buffering without using a shell or reading pen data into logs.
+    stdbuf, err := exec.LookPath("stdbuf")
+    if err != nil { return 0, fmt.Errorf("coreutils stdbuf required: %w", err) }
+    command := exec.CommandContext(ctx, stdbuf, "-oL", executable)
     pipe, err := command.StdoutPipe()
     if err != nil { return 0, err }
     // Avoid collecting or printing pen coordinates to logs.
