@@ -103,3 +103,20 @@ func TestReadySignalDoesNotExposePenData(t *testing.T) {
         t.Fatalf("ready=%d counts=%+v error=%v", invoked, counts, err)
     }
 }
+
+func TestReadinessIsNotMistakenForPenContact(t *testing.T) {
+    ready := 0
+    text := "Connected!\n(use stylus, press CTRL-C to quit)\nrdy sw x y pres time seq\n"
+    counts, err := summarizeSampleCountsWithReady(strings.NewReader(text), 10, func() { ready++ })
+    if err != nil || !counts.ready || ready != 1 || counts.reports != 0 || counts.contactReports != 0 {
+        t.Fatalf("startup must not count as pen: counts=%+v ready=%d err=%v", counts, ready, err)
+    }
+}
+
+func TestContactCountsExcludeHoverAndPenUp(t *testing.T) {
+    stream := "1 0 0 9000 2000 1000 1\n1 1 120 9000 2000 1005 2\n1 1 120 9001 2001 1010 3\n1 0 0 9002 2002 1015 4\n"
+    counts, err := summarizeSampleCounts(strings.NewReader(stream), 10)
+    if err != nil || counts.reports != 4 || counts.contactReports != 2 {
+        t.Fatalf("incorrect pen contact accounting: %+v %v", counts, err)
+    }
+}
