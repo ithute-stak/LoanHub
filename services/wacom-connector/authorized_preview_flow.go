@@ -22,6 +22,12 @@ type previewFrameSink interface {
     DeliverPreview(ctx context.Context, scope previewTicketScope, strokes [][]previewPoint) error
 }
 
+// Optional streaming sink. Only use after full admission, with independently
+// revalidated backend session before each emitted frame.
+type previewLiveFrameSink interface {
+    DeliverLivePreview(ctx context.Context, scope previewTicketScope, strokes [][]previewPoint) error
+}
+
 type authorizedPreviewConfig struct {
     Admission previewAdmissionDependencies
     Calibration deviceCalibration
@@ -86,9 +92,27 @@ func runEphemeralAuthorizedPreview(
         return nil
     }
     if err := checkActive(true); err != nil { return err }
+    lastLiveFrame := time.Time{}
     err = config.Source.CollectPreview(bounded, func(report penSample) error {
         if err := checkActive(false); err != nil { return err }
-        return buffer.accept(report)
+        if err := buffer.accept(report); err != nil { return err }
+        live, supportsLive := config.Sink.(previewLiveFrameSink)
+        if !supportsLive || buffer.count < 2 || report.Switch != 1 ||
+            (!lastLiveFrame.IsZero() && time.Since(lastLiveFrame) < 100*time.Millisecond) {
+            return nil
+        }
+        // Recheck before every live delivery, even when the last cached
+        // revocation check was recent. Copy the active stroke in memory;
+        // do not seal the capture buffer while SDK reports continue.
+        if err := checkActive(true); err != nil { return err }
+        snapshot := make([][]nativePenPoint, 0, len(buffer.strokes)+1)
+        snapshot = append(snapshot, buffer.strokes...)
+        if len(buffer.active) > 0 { snapshot = append(snapshot, buffer.active) }
+        mapped, err := toPreviewStrokes(snapshot, config.Calibration)
+        if err != nil { return err }
+        if err := live.DeliverLivePreview(bounded, expected, mapped); err != nil { return err }
+        lastLiveFrame = time.Now()
+        return nil
     })
     if err != nil { return err }
     if err := checkActive(true); err != nil { return err }
