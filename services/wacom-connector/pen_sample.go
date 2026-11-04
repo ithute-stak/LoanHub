@@ -17,8 +17,11 @@ import (
     "time"
 )
 
-// Wacom SDK simpleInterface diagnostic output contains seven numeric columns:
-// rdy sw x y pres time seq. Values are UNCALIBRATED, NOT signature evidence.
+// The official Wacom SDK simpleInterface emits seven numeric values in the
+// order rdy, sw, pressure, x, y, time, sequence. Its displayed column header
+// is misleading: observed rows such as '1 0 0 10091 4944 8160 1' would
+// otherwise imply impossible pressure 4944 (> device maximum 1023).
+// Values are NOT signature evidence.
 // This code deliberately does not export, render or persist handwriting.
 type penSample struct {
     Ready int
@@ -41,8 +44,8 @@ func parsePenSample(line string) (penSample, bool) {
     }
     if values[0] > 1 || values[1] > 1 { return penSample{}, false }
     return penSample{
-        Ready: values[0], Switch: values[1], X: values[2], Y: values[3],
-        Pressure: values[4], Time: values[5], Sequence: values[6],
+        Ready: values[0], Switch: values[1], Pressure: values[2],
+        X: values[3], Y: values[4], Time: values[5], Sequence: values[6],
     }, true
 }
 
