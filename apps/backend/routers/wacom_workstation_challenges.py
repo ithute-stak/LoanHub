@@ -219,7 +219,9 @@ def verify_wacom_workstation_proof(
         workstation_id=enrollment.workstation_id,
         session_id=row.session_id,
         nonce=base64.urlsafe_b64encode(bytes(row.nonce)).decode("ascii").rstrip("="),
-        issued_at=_aware(row.created_at),
+        # The persisted expiry is timezone-aware; deriving issuance from the
+        # fixed 30s validity avoids trusting the generic naive audit timestamp.
+        issued_at=_aware(row.expires_at) - timedelta(seconds=30),
         expires_at=_aware(row.expires_at),
     )
     try:
