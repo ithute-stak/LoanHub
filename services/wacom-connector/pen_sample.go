@@ -6,6 +6,7 @@ import (
     "errors"
     "fmt"
     "io"
+    "log"
     "os"
     "os/exec"
     "path/filepath"
@@ -56,13 +57,24 @@ type sampleCounts struct {
 // Count only. Neither the report coordinates nor rejected lines are logged.
 // When the SDK fails, diagnostics distinguish no output from non-pen output.
 func summarizeSampleCounts(source io.Reader, maxLines int) (sampleCounts, error) {
+    return summarizeSampleCountsWithReady(source, maxLines, nil)
+}
+
+// onReady is invoked once when the official SDK sample instructs the operator
+// to use the stylus. No capture point data is logged.
+func summarizeSampleCountsWithReady(source io.Reader, maxLines int, onReady func()) (sampleCounts, error) {
     var counts sampleCounts
     if maxLines < 1 || maxLines > 10000 {
         return counts, errors.New("invalid line budget")
     }
     scanner := bufio.NewScanner(source)
     scanner.Buffer(make([]byte, 4096), 4096)
+    ready := false
     for scanner.Scan() {
+        if !ready && strings.Contains(scanner.Text(), "use stylus") {
+            ready = true
+            if onReady != nil { onReady() }
+        }
         counts.lines++
         if counts.lines > maxLines {
             return sampleCounts{}, errors.New("Wacom diagnostic output limit exceeded")
@@ -97,7 +109,7 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     if !filepath.IsAbs(executable) || !safeSamplePath.MatchString(executable) {
         return 0, errors.New("sample executable path must be absolute and contain no shell metacharacters")
     }
-    if duration < time.Second || duration > 15*time.Second { return 0, errors.New("invalid diagnostic duration") }
+    if duration < time.Second || duration > 30*time.Second { return 0, errors.New("invalid diagnostic duration") }
     stat, err := os.Stat(executable)
     if err != nil { return 0, err }
     if !stat.Mode().IsRegular() || stat.Mode().Perm()&0111 == 0 {
@@ -149,7 +161,9 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
         case <-readerClosed:
         }
     }()
-    counts, parseErr := summarizeSampleCounts(pipe, 10000)
+    counts, parseErr := summarizeSampleCountsWithReady(pipe, 10000, func() {
+        log.Println("Wacom SDK ready: draw TEST strokes on the STU-540 now.")
+    })
     close(readerClosed)
     waitErr := command.Wait()
     if parseErr != nil && ctx.Err() == nil { return 0, parseErr }
