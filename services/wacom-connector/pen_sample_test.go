@@ -41,3 +41,16 @@ func TestNoArbitraryRelativeCommandsOrUnboundedTest(t *testing.T) {
         t.Fatal("unbounded diagnostic duration allowed")
     }
 }
+
+func TestSamplePathRejectsShellMetacharacters(t *testing.T) {
+    for _, value := range []string{
+        "/tmp/a b", "/tmp/a;touch", "/tmp/a$(id)", "/tmp/a'bad", "/tmp/a\"bad",
+    } {
+        if safeSamplePath.MatchString(value) {
+            t.Errorf("shell-unsafe executable path was accepted: %q", value)
+        }
+    }
+    if !safeSamplePath.MatchString("/home/selemela/wacom-stu-sdk/sdk-extracted/Linux/x86_64/simpleInterface") {
+        t.Fatal("actual SDK executable path rejected")
+    }
+}
