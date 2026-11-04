@@ -115,6 +115,9 @@ func(s *localWacomWSServer) ServeHTTP(w http.ResponseWriter,r *http.Request){
  binding,err:=s.Authority.AuthorizeWebSocketPreview(ctx,req.PreviewTicket)
  if err!=nil{return}
  if binding.FieldID!=req.FieldID||binding.SessionKey==""||len(binding.SessionKey)>256{return}
+ // Fail closed unless the backend-approved source is the known cancellable
+ // official SDK adapter. No browser-selected source or mock path is allowed.
+ if _, ok := binding.Config.Source.(wacomSDKPreviewSource); !ok {return}
  // Coordinator independently verifies ticket signature/scope and durable
  // one-use replay, enrollment, and active backend revocation state.
  sink:=&oneShotPreviewWSSink{ctx:ctx,conn:conn,binding:binding}
