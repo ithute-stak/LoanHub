@@ -52,6 +52,8 @@ type sampleCounts struct {
     reports int
     lines int
     other int
+    ready bool
+    contactReports int
 }
 
 // Count only. Neither the report coordinates nor rejected lines are logged.
@@ -79,6 +81,7 @@ func summarizeSampleCountsWithHandler(source io.Reader, maxLines int, onReady fu
     for scanner.Scan() {
         if !ready && strings.Contains(scanner.Text(), "use stylus") {
             ready = true
+            counts.ready = true
             if onReady != nil { onReady() }
         }
         counts.lines++
@@ -87,6 +90,7 @@ func summarizeSampleCountsWithHandler(source io.Reader, maxLines int, onReady fu
         }
         if report, ok := parsePenSample(scanner.Text()); ok {
             counts.reports++
+            if report.Ready == 1 && report.Switch == 1 { counts.contactReports++ }
             if onPen != nil {
                 if err := onPen(report); err != nil { return counts, err }
             }
@@ -181,7 +185,7 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     waitErr := command.Wait()
     if parseErr != nil && ctx.Err() == nil { return 0, parseErr }
     if counts.reports == 0 {
-        return 0, fmt.Errorf("no pen reports: %d stdout lines, %d non-report lines, %d stderr bytes, exit=%v (values not recorded)", counts.lines, counts.other, diagnosticErr.count, waitErr)
+        return 0, fmt.Errorf("no pen reports: sdk_ready=%t, %d stdout lines, %d non-report lines, %d stderr bytes, exit=%v (values not recorded)", counts.ready, counts.lines, counts.other, diagnosticErr.count, waitErr)
     }
     if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, ctx.Err()
@@ -189,5 +193,6 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     if waitErr != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, fmt.Errorf("vendor pen sample exited unsuccessfully: %w", waitErr)
     }
+    log.Printf("Wacom diagnostic: sdk_ready=%t, %d total pen reports, %d pen-contact reports.", counts.ready, counts.reports, counts.contactReports)
     return counts.reports, nil
 }
