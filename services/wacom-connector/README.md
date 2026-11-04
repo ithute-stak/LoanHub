@@ -121,3 +121,15 @@ the vendor SDK buffers its output when piped, you might see zero reports
 despite working pen hardware; we will then need to link the documented
 native SDK directly. Do **not** use this feature to sign real borrower
 contracts or store test strokes as signatures.
+
+### Wacom stdout buffering fix
+
+The first hardware test reported zero even though running the SDK sample
+interactively had already streamed pen data. This can happen because a program
+that prints to a terminal may buffer stdout when redirected to a pipe. The
+Go diagnostic now invokes the vendor sample through Ubuntu's `stdbuf -oL`
+(coreutils) to request line-buffered output; no shell is involved.
+If the device still reports zero, first verify that `simpleInterface` works
+interactively. The vendor SDK may override the requested buffering; in that
+case a documented SDK integration or pseudo-terminal is needed, not an
+assumption that pen hardware failed. Test signatures only.
