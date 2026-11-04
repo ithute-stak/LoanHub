@@ -4,6 +4,7 @@ import (
     "os"
     "path/filepath"
     "testing"
+    "strings"
 )
 
 func TestLocalSDKQueryWithSyntheticExecutable(t *testing.T) {
@@ -31,4 +32,15 @@ func TestSDKQueryRejectsInvalidAndOversizedOutput(t *testing.T) {
     noCaps:=filepath.Join(dir,"empty")
     if err:=os.WriteFile(noCaps,[]byte("#!/bin/sh\nprintf 'No USB devices found\\n'\n"),0700);err!=nil {t.Fatal(err)}
     if _,err:=queryLocalSDKCalibration(noCaps);err==nil {t.Fatal("accepted missing capabilities")}
+}
+
+func TestSDKQueryExplainsLibusbBusyEvenOnZeroExit(t *testing.T) {
+    dir := t.TempDir()
+    executable := filepath.Join(dir, "query-busy")
+    content := "#!/bin/sh\nprintf 'STU query sample\\nDevice: 056a:00a8:0108\\nFailed to connect:libusb:-6\\n'\n"
+    if err := os.WriteFile(executable, []byte(content), 0700); err != nil { t.Fatal(err) }
+    _, err := queryLocalSDKCalibration(executable)
+    if err == nil || !strings.Contains(err.Error(), "busy") {
+        t.Fatalf("expected explicit device busy error, got %v", err)
+    }
 }
