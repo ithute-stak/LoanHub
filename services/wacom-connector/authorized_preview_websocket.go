@@ -78,11 +78,15 @@ func(s *oneShotPreviewWSSink) write(frame wsPreviewFrame)error{
  if err:=s.conn.SetWriteDeadline(time.Now().Add(2*time.Second));err!=nil{return err}
  return s.conn.WriteJSON(frame)
 }
+func(s *oneShotPreviewWSSink) DeliverLivePreview(ctx context.Context, _ previewTicketScope, strokes [][]previewPoint)error {
+ if err:=ctx.Err();err!=nil{return err}
+ return s.write(wsPreviewFrame{Type:"preview_strokes",SessionKey:s.binding.SessionKey,FieldID:s.binding.FieldID,Strokes:strokes})
+}
+
 func(s *oneShotPreviewWSSink) DeliverPreview(ctx context.Context, scope previewTicketScope, strokes [][]previewPoint)error{
  if err:=ctx.Err();err!=nil{return err}
  if s.delivered {return errors.New("preview already delivered")}
- // Source is already validated and calibrated by the authorized coordinator.
- // No partial/unverified pen frames may reach the browser.
+ // Source and calibration are checked by the authorized coordinator.
  if err:=s.write(wsPreviewFrame{Type:"preview_strokes",SessionKey:s.binding.SessionKey,FieldID:s.binding.FieldID,Strokes:strokes});err!=nil{return err}
  s.delivered=true
  return nil
