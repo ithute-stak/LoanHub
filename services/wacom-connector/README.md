@@ -109,8 +109,7 @@ go build -o loanhub-wacom-connector .
   --sdk-pen-sample="$HOME/wacom-stu-sdk/sdk-extracted/Linux/x86_64/simpleInterface"
 ```
 
-Draw only disposable test strokes when prompted. The test runs for **eight
-seconds**, shuts down the vendor sample and prints only how many numeric pen
+Draw only disposable test strokes when prompted. The test runs for **up to 25 seconds**, including SDK initialization, shuts down the vendor sample and prints only how many numeric pen
 reports were observed. It does not return raw coordinates, pen pressure,
 a reusable signature, images, or contract data. It does not contact the
 LoanHub backend or create any signing session. It requires no VPS changes.
@@ -144,5 +143,16 @@ Install `util-linux` if the `script` command is unavailable.
 
 The diagnostic remains explicitly non-signing: do not enter a real borrower's
 signature. The sample path is validated and not accepted from HTTP requests.
-The process is killed after eight seconds; confirm the pad is released before
+The process is killed after at most 25 seconds; confirm the pad is released before
 launching another SDK program.
+
+### SDK startup timing (Nov 4, 2026)
+
+A real STU-540 workstation test returned 15 non-report stdout lines
+and 49 stderr bytes before the original eight-second test deadline.
+Those lines can include SDK connection and tablet setup output; they
+must not be mistaken for handwritten pen data. The CLI now allows up to
+25 seconds and prints a readiness prompt when the SDK outputs
+`use stylus`. Draw disposable test strokes **after that prompt**.
+If the prompt never appears, check for another program already using
+the STU-540. Do not run multiple Wacom samples concurrently.
