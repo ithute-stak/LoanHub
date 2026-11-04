@@ -133,3 +133,16 @@ If the device still reports zero, first verify that `simpleInterface` works
 interactively. The vendor SDK may override the requested buffering; in that
 case a documented SDK integration or pseudo-terminal is needed, not an
 assumption that pen hardware failed. Test signatures only.
+
+### Pseudo-terminal diagnostic update
+
+Direct `simpleInterface` access worked on the STU-540, but running that
+sample through a Go output pipe produced zero reports, even with `stdbuf`.
+The CLI now starts the installed sample through a util-linux pseudo-terminal
+(`script -q -f -e`), preserving the terminal behavior of the working sample.
+Install `util-linux` if the `script` command is unavailable.
+
+The diagnostic remains explicitly non-signing: do not enter a real borrower's
+signature. The sample path is validated and not accepted from HTTP requests.
+The process is killed after eight seconds; confirm the pad is released before
+launching another SDK program.
