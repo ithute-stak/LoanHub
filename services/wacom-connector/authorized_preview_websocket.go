@@ -5,7 +5,6 @@ package main
 // trusted backend-backed authorizer is wired by the composition root.
 import (
  "context"
- "encoding/json"
  "errors"
  "net/http"
  "strings"
@@ -119,9 +118,7 @@ func(s *localWacomWSServer) ServeHTTP(w http.ResponseWriter,r *http.Request){
  if binding.Config.MaxDuration<=0||binding.Config.MaxDuration>12*time.Second{return}
  // After the first message the only client command accepted is cancellation.
  // This goroutine must never write to the socket; it only cancels SDK work.
- readerDone:=make(chan struct{})
  go func(){
-  defer close(readerDone)
   for {
    _=conn.SetReadDeadline(time.Now().Add(15*time.Second))
    var command wsPreviewRequest
