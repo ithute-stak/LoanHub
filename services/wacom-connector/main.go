@@ -120,8 +120,22 @@ func serve() error {
 func main() {
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
+    penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
+    sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
-    if !*diagnostics || len(flag.Args()) != 0 {
+    if *penTest {
+        if *diagnostics || *sdkEnumerator != "" || *sdkPenSample == "" || len(flag.Args()) != 0 {
+            log.Println("Use --pen-test --sdk-pen-sample=/absolute/path/to/simpleInterface")
+            os.Exit(2)
+        }
+        log.Println("Local Wacom pen diagnostic: draw TEST strokes for 8 seconds; nothing is saved.")
+        count, err := testWacomPenSample(*sdkPenSample, 8*time.Second)
+        if err != nil { log.Printf("Wacom test failed: %v", err); os.Exit(1) }
+        log.Printf("Observed %d vendor SDK pen reports (not a contract signature).", count)
+        if count == 0 { os.Exit(1) }
+        return
+    }
+    if !*diagnostics || *sdkPenSample != "" || len(flag.Args()) != 0 {
         log.Println("Native device capture is unavailable. Start with --diagnostics for status-only mode.")
         os.Exit(2)
     }
