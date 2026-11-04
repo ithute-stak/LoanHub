@@ -128,8 +128,8 @@ func main() {
             log.Println("Use --pen-test --sdk-pen-sample=/absolute/path/to/simpleInterface")
             os.Exit(2)
         }
-        log.Println("Local Wacom pen diagnostic: draw TEST strokes for 8 seconds; nothing is saved.")
-        count, err := testWacomPenSample(*sdkPenSample, 8*time.Second)
+        log.Println("Local Wacom pen diagnostic: wait for SDK ready, then draw TEST strokes; 25-second maximum, nothing saved.")
+        count, err := testWacomPenSample(*sdkPenSample, 25*time.Second)
         if err != nil { log.Printf("Wacom test failed: %v", err); os.Exit(1) }
         log.Printf("Observed %d vendor SDK pen reports (not a contract signature).", count)
         if count == 0 { os.Exit(1) }
