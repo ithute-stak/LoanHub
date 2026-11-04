@@ -139,9 +139,20 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     // CommandContext kills the PTY parent on timeout. Ensure any vendor
     // child in the separate process group is also terminated.
     defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
+    // A descendant can keep the PTY output pipe open after script exits.
+    // Explicitly close our reader on the deadline to avoid indefinite hangs.
+    readerClosed := make(chan struct{})
+    go func() {
+        select {
+        case <-ctx.Done():
+            _ = pipe.Close()
+        case <-readerClosed:
+        }
+    }()
     counts, parseErr := summarizeSampleCounts(pipe, 10000)
+    close(readerClosed)
     waitErr := command.Wait()
-    if parseErr != nil { return 0, parseErr }
+    if parseErr != nil && ctx.Err() == nil { return 0, parseErr }
     if counts.reports == 0 {
         return 0, fmt.Errorf("no pen reports: %d stdout lines, %d non-report lines, %d stderr bytes, exit=%v (values not recorded)", counts.lines, counts.other, diagnosticErr.count, waitErr)
     }
