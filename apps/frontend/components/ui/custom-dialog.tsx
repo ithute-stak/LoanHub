@@ -19,6 +19,7 @@ type CustomDialogProps = {
   description?: React.ReactNode;
   banner?: string;
   bannerAlt?: string;
+  solidHeader?: boolean;
   children: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -32,6 +33,7 @@ export function CustomDialog({
   description,
   banner = "/loanhub-horizontal-logo.png",
   bannerAlt = "LoanHub dialog banner",
+  solidHeader = false,
   children,
   open,
   onOpenChange,
@@ -49,16 +51,16 @@ export function CustomDialog({
           contentClassName,
         )}
       >
-        <div className="relative h-32 w-full shrink-0 overflow-hidden">
-          <Image
+        <div className={cn("relative h-32 w-full shrink-0 overflow-hidden", solidHeader && "bg-slate-950")}>
+          {!solidHeader ? <Image
             src={banner}
             alt={bannerAlt}
             fill
             sizes="(max-width: 768px) 100vw, 896px"
             className="object-cover"
             preload
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/60 to-primary/25" />
+          /> : null}
+          {!solidHeader ? <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/60 to-primary/25" /> : null}
           <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-5 text-left sm:px-8">
             <DialogHeader className="gap-1 pr-10">
               <DialogTitle className="text-2xl font-black tracking-tight text-white">
