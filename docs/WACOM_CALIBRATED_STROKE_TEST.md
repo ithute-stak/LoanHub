@@ -37,3 +37,22 @@ contract data, network upload, or signed PDF** is created.
 This is not yet live browser preview, authenticated borrower consent, or
 a signing-ready hardware driver. Existing localhost status remains
 diagnostics-only and existing email OTP signing is unchanged.
+
+## Pen tuple ordering verified from physical STU-540 output
+
+The vendor sample's displayed header is misleading. Observed numeric
+rows such as `1 0 0 10091 4944 8160 1` map to
+`ready=1, switch=0, pressure=0, x=10091, y=4944, time=8160, sequence=1`.
+Parsing them as X/Y/pressure puts pressure at 4944, impossible for the
+verified STU-540 maximum of 1023. The local parser has been corrected;
+the raw device coordinate ranges are enforced separately during
+calibrated validation.
+
+A row with `switch=0, pressure=0` reflects pen proximity/hover, **not
+confirmed pen-tip contact**. For contact, the official SDK should report
+`switch=1` with positive pressure.
+
+An SDK readiness prompt alone only proves initialization, not a capture.
+If the Go diagnostic reports zero reports, check direct SDK output and
+ensure no other Wacom process owns the tablet. No borrower signatures
+should be used during tests.
