@@ -122,12 +122,13 @@ func main() {
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
     calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
+    calibratedStrokeTest := flag.Bool("calibrated-stroke-test", false, "Validate disposable native strokes against verified SDK calibration (no signing)")
     sdkQuery := flag.String("sdk-query", "", "Absolute path to official Wacom SDK query executable")
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
     if *calibrationTest {
-        if *diagnostics || *penTest || *strokeTest || *sdkEnumerator != "" || *sdkPenSample != "" || *sdkQuery == "" || len(flag.Args()) != 0 {
+        if *calibratedStrokeTest || *diagnostics || *penTest || *strokeTest || *sdkEnumerator != "" || *sdkPenSample != "" || *sdkQuery == "" || len(flag.Args()) != 0 {
             log.Println("Use --calibration-test --sdk-query=/absolute/path/to/query")
             os.Exit(2)
         }
@@ -136,7 +137,20 @@ func main() {
         log.Printf("Wacom SDK calibration: tabletMaxX=%d tabletMaxY=%d tabletMaxPressure=%d (local diagnostic only; no signing).",calibration.MaxX,calibration.MaxY,calibration.MaxPressure)
         return
     }
-    if *sdkQuery != "" { log.Println("--sdk-query is only allowed with --calibration-test"); os.Exit(2) }
+    if *calibratedStrokeTest {
+        if *diagnostics || *penTest || *strokeTest || *sdkEnumerator != "" || *sdkPenSample == "" || *sdkQuery == "" || len(flag.Args()) != 0 {
+            log.Println("Use --calibrated-stroke-test --sdk-query=/absolute/path/to/query --sdk-pen-sample=/absolute/path/to/simpleInterface")
+            os.Exit(2)
+        }
+        log.Println("Local calibrated Wacom test: vendor calibration first, then draw disposable TEST strokes after SDK ready (no signing, no persistence).")
+        summary, err := testCalibratedLocalStrokes(*sdkQuery, *sdkPenSample, 25*time.Second)
+        if err != nil { log.Printf("Wacom calibrated stroke test failed: %v", err); os.Exit(1) }
+        log.Printf("Calibrated local test passed: tabletMaxX=%d tabletMaxY=%d tabletMaxPressure=%d, %d SDK reports, %d contact points, %d strokes, %d valid preview points (nothing saved or uploaded).",
+            summary.Calibration.MaxX, summary.Calibration.MaxY, summary.Calibration.MaxPressure,
+            summary.PenReports, summary.ContactPoints, summary.Strokes, summary.PreviewPoints)
+        return
+    }
+    if *sdkQuery != "" { log.Println("--sdk-query is only allowed with --calibration-test or --calibrated-stroke-test"); os.Exit(2) }
     if *penTest && *strokeTest {
         log.Println("Choose exactly one of --pen-test or --stroke-test")
         os.Exit(2)
