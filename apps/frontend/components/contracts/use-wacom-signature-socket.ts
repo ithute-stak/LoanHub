@@ -129,6 +129,7 @@ export function useWacomSignatureSocket(sessionKey: string) {
       } else if (frame.type === "preview_strokes") {
         const valid = validateWacomPreviewStrokes(frame.strokes);
         if (!valid) { close(); setStatus("error"); return; }
+        setStatus("capturing");
         setStrokes(valid);
       } else if (frame.type === "complete") {
         // A preview complete event is NOT a legally executed signature.
