@@ -121,8 +121,24 @@ func main() {
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
+    strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *penTest && *strokeTest {
+        log.Println("Choose exactly one of --pen-test or --stroke-test")
+        os.Exit(2)
+    }
+    if *strokeTest {
+        if *diagnostics || *sdkEnumerator != "" || *sdkPenSample == "" || len(flag.Args()) != 0 {
+            log.Println("Use --stroke-test --sdk-pen-sample=/absolute/path/to/simpleInterface")
+            os.Exit(2)
+        }
+        log.Println("Local stroke test: draw disposable strokes after SDK ready; no handwriting saved.")
+        summary, err := testLocalStrokes(*sdkPenSample, 25*time.Second)
+        if err != nil { log.Printf("Wacom stroke test failed: %v", err); os.Exit(1) }
+        log.Printf("Local stroke test: %d SDK reports, %d contact points, %d strokes (no signing).", summary.PenReports, summary.ContactPoints, summary.Strokes)
+        return
+    }
     if *penTest {
         if *diagnostics || *sdkEnumerator != "" || *sdkPenSample == "" || len(flag.Args()) != 0 {
             log.Println("Use --pen-test --sdk-pen-sample=/absolute/path/to/simpleInterface")
