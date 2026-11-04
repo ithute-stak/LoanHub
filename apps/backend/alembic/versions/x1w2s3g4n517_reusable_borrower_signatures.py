@@ -1,14 +1,14 @@
 """Borrower signature vault metadata and contract-specific consent grants.
 
 Revision ID: x1w2s3g4n517
-Revises: w1p2a3d4s516
+Revises: w1p2a3d4s516, p6a1r2p3o901
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "x1w2s3g4n517"
-down_revision = "w1p2a3d4s516"
+down_revision = ("w1p2a3d4s516", "p6a1r2p3o901")
 branch_labels = None
 depends_on = None
 
