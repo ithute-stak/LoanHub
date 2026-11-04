@@ -169,9 +169,22 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
         defer stdinWriter.Close()
         command.Stdin = stdinReader
     }
-    command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-    // On deadline, request orderly PTY shutdown before the final forced kill.
-    command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGTERM) }
+    // A separate process group reading the operator's controlling TTY may
+    // be suspended by Linux SIGTTIN before producing any SDK output.
+    // Do not create a background group when sharing the real terminal.
+    // In the fallback pipe mode, retain a private group for bounded cleanup.
+    interactive := isOperatorTerminalStdin()
+    if !interactive {
+        command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+    }
+    command.Cancel = func() error {
+        if interactive {
+            // NEVER send a negative PID signal when sharing the user's
+            // foreground process group; that could terminate their shell.
+            return command.Process.Signal(syscall.SIGTERM)
+        }
+        return syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+    }
     command.WaitDelay = 2 * time.Second
     pipe, err := command.StdoutPipe()
     if err != nil { return 0, err }
@@ -185,7 +198,9 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     if stdinReader != nil { _ = stdinReader.Close() }
     // CommandContext kills the PTY parent on timeout. Ensure any vendor
     // child in the separate process group is also terminated.
-    defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
+    if !interactive {
+        defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
+    }
     // A descendant can keep the PTY output pipe open after script exits.
     // Explicitly close our reader on the deadline to avoid indefinite hangs.
     readerClosed := make(chan struct{})
