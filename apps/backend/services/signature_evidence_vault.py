@@ -63,7 +63,7 @@ def decrypt_signature_evidence(
         raise ValueError("Invalid signature evidence envelope")
     key = _key_from_b64(key_b64)
     aad = _aad(company_id=company_id, borrower_id=borrower_id, session_id=session_id, contract_hash=contract_hash)
-    return AESGCM(key).decrypt(blob[17:29], blob[29:], aad)
+    return AESGCM(key).decrypt(blob[5:17], blob[17:], aad)
 
 
 def store_encrypted_signature_evidence(
