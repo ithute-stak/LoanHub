@@ -47,18 +47,38 @@ func parsePenSample(line string) (penSample, bool) {
 
 // summarizeSamples discards raw pen coordinates, pressure, timestamps and
 // sequence numbers. The summary is for local hardware diagnostics only.
-func summarizeSamples(source io.Reader, maxLines int) (int, error) {
-    if maxLines < 1 || maxLines > 10000 { return 0, errors.New("invalid line budget") }
+type sampleCounts struct {
+    reports int
+    lines int
+    other int
+}
+
+// Count only. Neither the report coordinates nor rejected lines are logged.
+// When the SDK fails, diagnostics distinguish no output from non-pen output.
+func summarizeSampleCounts(source io.Reader, maxLines int) (sampleCounts, error) {
+    var counts sampleCounts
+    if maxLines < 1 || maxLines > 10000 {
+        return counts, errors.New("invalid line budget")
+    }
     scanner := bufio.NewScanner(source)
     scanner.Buffer(make([]byte, 4096), 4096)
-    count := 0
-    lines := 0
     for scanner.Scan() {
-        lines++
-        if lines > maxLines { return 0, errors.New("Wacom diagnostic output limit exceeded") }
-        if _, ok := parsePenSample(scanner.Text()); ok { count++ }
+        counts.lines++
+        if counts.lines > maxLines {
+            return sampleCounts{}, errors.New("Wacom diagnostic output limit exceeded")
+        }
+        if _, ok := parsePenSample(scanner.Text()); ok {
+            counts.reports++
+        } else {
+            counts.other++
+        }
     }
-    return count, scanner.Err()
+    return counts, scanner.Err()
+}
+
+func summarizeSamples(source io.Reader, maxLines int) (int, error) {
+    counts, err := summarizeSampleCounts(source, maxLines)
+    return counts.reports, err
 }
 
 // testWacomPenSample is explicitly operator-initiated, bounded and local.
@@ -91,6 +111,7 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     // its interactive session before the operator draws any pen strokes.
     command.Stdin = os.Stdin
     command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+    command.WaitDelay = 2 * time.Second
     pipe, err := command.StdoutPipe()
     if err != nil { return 0, err }
     // Avoid collecting or printing pen coordinates to logs.
@@ -99,14 +120,17 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     // CommandContext kills the PTY parent on timeout. Ensure any vendor
     // child in the separate process group is also terminated.
     defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
-    count, parseErr := summarizeSamples(pipe, 10000)
+    counts, parseErr := summarizeSampleCounts(pipe, 10000)
     waitErr := command.Wait()
     if parseErr != nil { return 0, parseErr }
+    if counts.reports == 0 {
+        return 0, fmt.Errorf("no pen reports: %d total output lines, %d non-report lines (values not recorded)", counts.lines, counts.other)
+    }
     if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, ctx.Err()
     }
     if waitErr != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, fmt.Errorf("vendor pen sample exited unsuccessfully: %w", waitErr)
     }
-    return count, nil
+    return counts.reports, nil
 }
