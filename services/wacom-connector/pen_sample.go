@@ -86,6 +86,10 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     script, err := exec.LookPath("script")
     if err != nil { return 0, fmt.Errorf("util-linux script required: %w", err) }
     command := exec.CommandContext(ctx, script, "-q", "-f", "-e", "-c", "exec "+executable, "/dev/null")
+    // Keep the diagnostic attached to the calling terminal. Without this,
+    // os/exec supplies /dev/null as stdin and util-linux script can close
+    // its interactive session before the operator draws any pen strokes.
+    command.Stdin = os.Stdin
     command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
     pipe, err := command.StdoutPipe()
     if err != nil { return 0, err }
