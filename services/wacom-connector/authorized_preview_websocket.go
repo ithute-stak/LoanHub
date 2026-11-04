@@ -127,7 +127,6 @@ func(s *localWacomWSServer) ServeHTTP(w http.ResponseWriter,r *http.Request){
    cancel();return
   }
  }()
- if err:=sink.write(wsPreviewFrame{Type:"authorized",SessionKey:binding.SessionKey,FieldID:binding.FieldID});err!=nil{return}
  err=runEphemeralAuthorizedPreview(ctx,req.PreviewTicket,binding.Scope,time.Now().UTC(),binding.Config)
  if err!=nil||ctx.Err()!=nil{return}
  _=sink.write(wsPreviewFrame{Type:"complete",SessionKey:binding.SessionKey,FieldID:binding.FieldID})
