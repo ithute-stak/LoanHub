@@ -227,6 +227,51 @@ def _certify_migrated_posting(engine):
             action="loan.final_installment_receivable_transferred",
         ).count() == 1
 
+    # A duplicate attempt must not create a second child, transfer, or audit event.
+    with Session(engine) as db:
+        with pytest.raises(HTTPException) as rejected:
+            test_only_post(db, **arguments(good))
+        assert rejected.value.status_code == 409
+        db.rollback()
+    with Session(engine) as verify:
+        assert verify.query(ClientCompanyLoan).filter_by(
+            parent_loan_id=good[1]
+        ).count() == 1
+        assert verify.query(LoanRolloverTransfer).filter_by(
+            parent_loan_id=good[1]
+        ).count() == 1
+        assert verify.query(AuditLog).filter_by(
+            record_id=good[1],
+            action="loan.final_installment_receivable_transferred",
+        ).count() == 1
+
+    # A loan belonging to another company must be invisible to the caller.
+    with Session(engine, expire_on_commit=False) as db:
+        tenant = seed(db, "cross-tenant")
+        cross_company = arguments(tenant)
+        cross_company["company_id"] = good[0]
+        with pytest.raises(HTTPException) as rejected:
+            test_only_post(db, **cross_company)
+        assert rejected.value.status_code == 404
+        db.rollback()
+    with Session(engine) as verify:
+        tenant_loan = verify.get(ClientCompanyLoan, tenant[1])
+        tenant_row = verify.get(RepaymentInstallment, tenant[2])
+        assert tenant_loan.balance == Decimal("60")
+        assert tenant_loan.status == LoanStatus.ACTIVE
+        assert tenant_row.paid_amount == Decimal("40")
+        assert not tenant_row.is_superseded
+        assert verify.query(ClientCompanyLoan).filter_by(
+            parent_loan_id=tenant[1]
+        ).count() == 0
+        assert verify.query(LoanRolloverTransfer).filter_by(
+            parent_loan_id=tenant[1]
+        ).count() == 0
+        assert verify.query(AuditLog).filter_by(
+            record_id=tenant[1],
+            action="loan.final_installment_receivable_transferred",
+        ).count() == 0
+
     with Session(engine, expire_on_commit=False) as db:
         failed = seed(db, "rollback")
         def fail_after_financial_flush(**_kwargs):
