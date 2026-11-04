@@ -11,7 +11,7 @@ import (
 
 func TestParseVendorSample(t *testing.T) {
     sample, ok := parsePenSample("  1   0     0  6093  3975 14080     1")
-    if !ok || sample.Ready != 1 || sample.Y != 6093 || sample.Pressure != 3975 || sample.Sequence != 1 {
+    if !ok || sample.Ready != 1 || sample.X != 6093 || sample.Y != 3975 || sample.Pressure != 0 || sample.Sequence != 1 {
         t.Fatalf("vendor sample did not parse correctly: %+v, %t", sample, ok)
     }
 }
@@ -118,5 +118,25 @@ func TestContactCountsExcludeHoverAndPenUp(t *testing.T) {
     counts, err := summarizeSampleCounts(strings.NewReader(stream), 10)
     if err != nil || counts.reports != 4 || counts.contactReports != 2 {
         t.Fatalf("incorrect pen contact accounting: %+v %v", counts, err)
+    }
+}
+
+func TestVendorRowPressureBeforeCoordinatesAgainstRealCalibration(t *testing.T) {
+    // Observed on connected STU-540 running official SDK simpleInterface.
+    // The SDK header's apparent x/y/pressure order does not match numeric
+    // values: field 3 is pressure and fields 4/5 are X/Y.
+    for _, line := range []string{
+        "1 0 0 10091 4944 8160 1",
+        "1 1 119 9154 2465 5985 9",
+    } {
+        p, ok := parsePenSample(line)
+        if !ok { t.Fatalf("could not parse observed vendor row %q",line) }
+        if p.X > 10800 || p.Y > 6480 || p.Pressure > 1023 {
+            t.Fatalf("parsed impossible device coordinates from %q: %+v",line,p)
+        }
+    }
+    contact, _ := parsePenSample("1 1 119 9154 2465 5985 9")
+    if contact.Pressure != 119 || contact.X != 9154 || contact.Y != 2465 {
+        t.Fatalf("pressure and device coordinates were permuted: %+v", contact)
     }
 }
