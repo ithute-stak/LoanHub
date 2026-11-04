@@ -94,3 +94,12 @@ sleep 2
         t.Fatalf("expected two mock numeric reports, got %d", count)
     }
 }
+
+func TestReadySignalDoesNotExposePenData(t *testing.T) {
+    invoked := 0
+    input := strings.NewReader("Connected!\n(use stylus, press CTRL-C to quit)\n1 1 100 200 300 400 1\n")
+    counts, err := summarizeSampleCountsWithReady(input, 10, func() { invoked++ })
+    if err != nil || invoked != 1 || counts.reports != 1 || counts.other != 2 {
+        t.Fatalf("ready=%d counts=%+v error=%v", invoked, counts, err)
+    }
+}
