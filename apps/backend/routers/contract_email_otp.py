@@ -18,6 +18,7 @@ from core.access_control import (
 from database.models.enums import UserRole
 from database.models.origination import LoanContract
 from database.models.pad_signing import ContractPadSigningSession
+from database.models.borrower_signature import BorrowerSavedSignature
 from database.session import get_db
 from services.contract_email_otp_service import (
     request_signing_code,
@@ -252,3 +253,84 @@ def cancel_pad_signing_session(
     row.status = "cancelled"
     db.commit()
     return {"session_id": str(row.id), "status": "cancelled", "capture_enabled": False}
+
+
+@router.get("/contracts/{contract_id}/pad/saved-signatures")
+def list_borrower_saved_signatures(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """List metadata for saved signatures of this contract's borrower only.
+
+    No image, biometric pen data, encryption key or reusable approval is returned.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    rows = (
+        db.query(BorrowerSavedSignature)
+        .filter(
+            BorrowerSavedSignature.company_id == context.company_id,
+            BorrowerSavedSignature.borrower_id == contract.borrower_id,
+        )
+        .order_by(BorrowerSavedSignature.created_at.desc())
+        .limit(25)
+        .all()
+    )
+    return {
+        "contract_id": str(contract.id),
+        "borrower_id": str(contract.borrower_id),
+        "signatures": [
+            {
+                "id": str(row.id),
+                "status": row.status,
+                "capture_source": row.capture_source,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "reuse_opt_in_at": row.reuse_opt_in_at.isoformat(),
+                "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
+            }
+            for row in rows
+        ],
+        "automatic_reuse_enabled": False,
+        "requires_fresh_contract_consent": True,
+    }
+
+
+@router.post("/contracts/{contract_id}/pad/saved-signatures/{signature_id}/revoke")
+def revoke_borrower_saved_signature(
+    contract_id: UUID,
+    signature_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Disable future signature reuse, never alter any completed loan agreement.
+
+    Authorization is tenant-scoped, borrower-scoped and branch-checked through
+    the existing contract access guard. No signature is applied or exported.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    row = (
+        db.query(BorrowerSavedSignature)
+        .filter(
+            BorrowerSavedSignature.id == signature_id,
+            BorrowerSavedSignature.company_id == context.company_id,
+            BorrowerSavedSignature.borrower_id == contract.borrower_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Saved signature not found")
+    if row.status != "active":
+        raise HTTPException(status_code=409, detail="Saved signature is not active")
+    row.status = "revoked"
+    row.revoked_at = datetime.now(timezone.utc)
+    row.updated_by = str(context.user.id)
+    db.commit()
+    return {
+        "id": str(row.id),
+        "status": "revoked",
+        "future_reuse_allowed": False,
+        "existing_contracts_unchanged": True,
+    }
