@@ -121,9 +121,22 @@ func main() {
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
+    calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
+    sdkQuery := flag.String("sdk-query", "", "Absolute path to official Wacom SDK query executable")
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *calibrationTest {
+        if *diagnostics || *penTest || *strokeTest || *sdkEnumerator != "" || *sdkPenSample != "" || *sdkQuery == "" || len(flag.Args()) != 0 {
+            log.Println("Use --calibration-test --sdk-query=/absolute/path/to/query")
+            os.Exit(2)
+        }
+        calibration, err := queryLocalSDKCalibration(*sdkQuery)
+        if err != nil { log.Printf("Wacom calibration test failed: %v",err); os.Exit(1) }
+        log.Printf("Wacom SDK calibration: tabletMaxX=%d tabletMaxY=%d tabletMaxPressure=%d (local diagnostic only; no signing).",calibration.MaxX,calibration.MaxY,calibration.MaxPressure)
+        return
+    }
+    if *sdkQuery != "" { log.Println("--sdk-query is only allowed with --calibration-test"); os.Exit(2) }
     if *penTest && *strokeTest {
         log.Println("Choose exactly one of --pen-test or --stroke-test")
         os.Exit(2)
