@@ -56,3 +56,19 @@ An SDK readiness prompt alone only proves initialization, not a capture.
 If the Go diagnostic reports zero reports, check direct SDK output and
 ensure no other Wacom process owns the tablet. No borrower signatures
 should be used during tests.
+
+## Confirmed transport issue — local interactive stdin
+
+The operator demonstrated the official Wacom SDK through
+`script -q -f -e -c ... /dev/null | awk ...`: at least 360 numeric pen
+reports and 160 pen-contact reports arrived. This establishes that USB,
+SDK, PTY and piped stdout can work together.
+
+The Go launch previously replaced script's stdin with an inert `os.Pipe`,
+which repeatedly yielded vendor startup lines but zero pen reports on
+the workstation. The connector now inherits the calling **real terminal
+stdin** for locally invoked diagnostics, matching the proven shell
+pipeline. Noninteractive CI mock tests retain the open pipe fallback.
+
+This is a candidate fix. It must still pass the operator's STU-540
+calibrated stroke test; do not mark live capture complete from CI alone.
