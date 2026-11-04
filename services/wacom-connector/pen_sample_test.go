@@ -54,3 +54,15 @@ func TestSamplePathRejectsShellMetacharacters(t *testing.T) {
         t.Fatal("actual SDK executable path rejected")
     }
 }
+
+func TestDiagnosticCountsSilentAndUnrecognizedOutputSeparately(t *testing.T) {
+    quiet, err := summarizeSampleCounts(strings.NewReader(""), 10)
+    if err != nil || quiet.lines != 0 || quiet.reports != 0 {
+        t.Fatalf("quiet count: %+v %v", quiet, err)
+    }
+    noisy, err := summarizeSampleCounts(strings.NewReader(
+        "Connecting...\nConnected!\n1 1 105 250 300 400 1\n"), 10)
+    if err != nil || noisy.lines != 3 || noisy.other != 2 || noisy.reports != 1 {
+        t.Fatalf("noisy count: %+v %v", noisy, err)
+    }
+}
