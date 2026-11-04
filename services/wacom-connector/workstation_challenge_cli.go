@@ -5,6 +5,7 @@ package main
 // A human operator must independently obtain the challenge through the
 // authenticated LoanHub API. Never accept a web-browser request to sign.
 import (
+    "bytes"
     "encoding/base64"
     "encoding/json"
     "errors"
@@ -33,8 +34,9 @@ func signBackendWorkstationChallenge(directory string, input io.Reader, now time
     reject:=func() (workstationProofEnvelope,error) {return workstationProofEnvelope{},errors.New("invalid, mismatched or expired Wacom workstation challenge")}
     if input == nil || now.IsZero() {return reject()}
     // Strict, one-object input. Never read an unbounded challenge payload.
-    limited:=io.LimitReader(input,maxWorkstationChallengeJSON+1)
-    dec:=json.NewDecoder(limited)
+    raw, readErr := io.ReadAll(io.LimitReader(input,maxWorkstationChallengeJSON+1))
+    if readErr != nil || len(raw) > maxWorkstationChallengeJSON {return reject()}
+    dec:=json.NewDecoder(bytes.NewReader(raw))
     dec.DisallowUnknownFields()
     var envelope workstationChallengeEnvelope
     if err:=dec.Decode(&envelope);err!=nil {return reject()}
