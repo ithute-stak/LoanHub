@@ -57,6 +57,7 @@ import {
 import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";
 import {CompactTopUpDialog} from "@/components/loans/compact-top-up-dialog";
 import {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";
+import {ContractPadPreflight} from "@/components/contracts/contract-pad-preflight";
 import {LoanPortfolioWorkspace} from "@/components/loans/loan-portfolio-workspace";
 import {LoanActivityPanel} from "@/components/loans/loan-activity-panel";
 import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert";
@@ -229,7 +230,7 @@ export default function CompanyLoansPage() {
     const [newContractStyle, setNewContractStyle] = useState<ContractTemplateStyle>("loanhub_standard");
     const [borrowerSignature, setBorrowerSignature] = useState("");
     const [witnessName, setWitnessName] = useState("");
-    const [signatureMethod, setSignatureMethod] = useState<"wet_ink" | "electronic" | "email_otp">("wet_ink");
+    const [signatureMethod, setSignatureMethod] = useState<"wet_ink" | "electronic" | "email_otp" | "wacom_preview">("wet_ink");
 
     const [borrowerLookupOpen, setBorrowerLookupOpen] = useState(false);
     const [borrowerQuery, setBorrowerQuery] = useState("");
@@ -773,7 +774,7 @@ export default function CompanyLoansPage() {
 
     async function borrowerSign(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!selectedContract || selectedContract.borrower_signed_at || signatureMethod === "email_otp" || borrowerSignature.trim().length < 2) return;
+        if (!selectedContract || selectedContract.borrower_signed_at || (signatureMethod === "email_otp" || signatureMethod === "wacom_preview") || borrowerSignature.trim().length < 2) return;
         setContractWorking(selectedContract.id);
         try {
             const updated = await originationApi.borrowerSign(selectedContract.id, {
@@ -791,7 +792,7 @@ export default function CompanyLoansPage() {
     }
 
     async function companySign() {
-        if (!selectedContract) return;
+        if (!selectedContract || signatureMethod === "wacom_preview") return;
         setContractWorking(selectedContract.id);
         try {
             const updated = await originationApi.companySign(selectedContract.id, signatureMethod === "email_otp" ? "electronic" : signatureMethod);
@@ -1281,30 +1282,37 @@ export default function CompanyLoansPage() {
                           onOpenChange={(open) => !open && !contractWorking && setSelectedContract(null)}
                           title={selectedContract?.contract_number ?? "Loan contract"}
                           description={selectedContract ? `Status: ${titleCase(selectedContract.status)} · Version ${selectedContract.version}` : undefined}
-                          contentClassName="sm:max-w-3xl">
+                          contentClassName="sm:max-w-3xl" solidHeader>
                 {selectedContract ? <form onSubmit={borrowerSign} className="space-y-6 p-5 sm:p-8"><Alert><ShieldCheck
                     className="h-4 w-4"/><AlertTitle>Signing control</AlertTitle><AlertDescription>Review the
                     FastAPI-generated PDF before recording signatures. The final document is locked when both parties
                     have signed.</AlertDescription></Alert>
                     <div className="grid gap-5 sm:grid-cols-2">
                         <div className="space-y-2"><Label>Signature method</Label><Select value={signatureMethod}
-                                                                                          onValueChange={(value) => setSignatureMethod(value as "wet_ink" | "electronic" | "email_otp")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem
+                                                                                          onValueChange={(value) => setSignatureMethod(value as "wet_ink" | "electronic" | "email_otp" | "wacom_preview")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem
                             value="wet_ink">Wet ink</SelectItem><SelectItem
                             value="electronic">Electronic</SelectItem><SelectItem
-                            value="email_otp">Email + OTP</SelectItem></SelectContent></Select></div>
-                        {signatureMethod !== "email_otp" ? <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}
+                            value="email_otp">Email + OTP</SelectItem><SelectItem value="wacom_preview">Wacom STU-540 (test preview only)</SelectItem></SelectContent></Select></div>
+                        {signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ? <div className="space-y-2"><Label>Witness name</Label><Input value={witnessName}
                                                                                      onChange={(event) => setWitnessName(event.target.value)}/>
                         </div> : null}
-                        {signatureMethod !== "email_otp" ? <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input
+                        {signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ? <div className="space-y-2 sm:col-span-2"><Label>Borrower signature name</Label><Input
                             value={borrowerSignature} onChange={(event) => setBorrowerSignature(event.target.value)}
-                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div> :
+                            disabled={Boolean(selectedContract.borrower_signed_at)}/></div> : signatureMethod === "email_otp" ?
                             <EmailOtpSigningPanel
                                 contract={selectedContract}
                                 borrowerEmail={clientByBorrower.get(selectedContract.borrower_id)?.email ?? null}
                                 disabled={Boolean(contractWorking)}
                                 onVerified={refreshSelectedContractAfterOtp}
-                            />}
+                            /> : null}
                     </div>
+                    {signatureMethod === "wacom_preview" ? <div className="space-y-3 rounded-xl border p-3 sm:p-4" role="region" aria-label="Wacom test preview">
+                        <p className="text-sm font-semibold">Wacom STU-540 — temporary test preview</p>
+                        <p className="text-xs text-muted-foreground">Use only an unsigned test contract. This mode cannot mark the borrower or company as signed, and no Wacom pen strokes are transmitted to the server.</p>
+                        {!selectedContract.borrower_signed_at && selectedContract.status !== "signed" ?
+                            <ContractPadPreflight key={`${selectedContract.id}:${selectedContract.contract_hash ?? ""}`} contractId={selectedContract.id}/> :
+                            <p role="status" className="text-sm text-muted-foreground">This contract is already signed or closed. A new pad preview cannot be prepared.</p>}
+                    </div> : null}
                     <div className="grid gap-3 sm:grid-cols-2"><Value label="Borrower"
                                                                       value={selectedContract.borrower_signed_at ? `Signed ${formatDate(selectedContract.borrower_signed_at)}` : "Pending signature"}/><Value
                         label="Company"
@@ -1316,9 +1324,9 @@ export default function CompanyLoansPage() {
                         className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" ?
                         <LoadingButton type="button" variant="outline" loading={contractWorking === selectedContract.id}
                                        onClick={() => void regenerateContractPdf()}><RefreshCcw className="h-4 w-4"/>Regenerate
-                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" ?
+                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower
-                            signed</LoadingButton> : null}{!selectedContract.company_signed_at ?
+                            signed</LoadingButton> : null}{!selectedContract.company_signed_at && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="button" loading={contractWorking === selectedContract.id}
                                        onClick={() => void companySign()}>Company signed</LoadingButton> : null}
                     </DialogFooter></form> : null}
