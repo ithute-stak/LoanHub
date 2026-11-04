@@ -20,6 +20,7 @@ from database.models.origination import LoanContract
 from database.models.pad_signing import ContractPadSigningSession
 from database.models.borrower_signature import BorrowerSavedSignature
 from database.session import get_db
+from services.wacom_session_revalidation import current_pad_preview_eligibility
 from services.contract_email_otp_service import (
     request_signing_code,
     signing_status,
@@ -215,13 +216,19 @@ def pad_signing_session_status(
     expires_at = row.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    expired = datetime.now(timezone.utc) >= expires_at
+    now = datetime.now(timezone.utc)
+    expired = now >= expires_at
+    eligibility = current_pad_preview_eligibility(row, contract, now)
     return {
         "session_id": str(row.id),
         "contract_id": str(row.contract_id),
         "status": "expired" if expired and row.status in ("created", "consented") else row.status,
         "expires_at": expires_at.isoformat(),
         "capture_enabled": False,
+        # Advisory UI status only. A workstation must never treat this
+        # response as permission to capture or stream biometric data.
+        **eligibility,
+        "workstation_capture_authorized": False,
     }
 
 
