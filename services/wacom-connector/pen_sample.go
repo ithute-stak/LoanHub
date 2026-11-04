@@ -81,6 +81,12 @@ func summarizeSamples(source io.Reader, maxLines int) (int, error) {
     return counts.reports, err
 }
 
+type countingWriter struct { count int }
+func (w *countingWriter) Write(p []byte) (int, error) {
+    w.count += len(p)
+    return len(p), nil
+}
+
 // testWacomPenSample is explicitly operator-initiated, bounded and local.
 // It launches the vendor SDK sample only, never a shell or user-selected
 // command from an HTTP request. The vendor sample is killed at timeout.
@@ -109,14 +115,27 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     // Keep the diagnostic attached to the calling terminal. Without this,
     // os/exec supplies /dev/null as stdin and util-linux script can close
     // its interactive session before the operator draws any pen strokes.
-    command.Stdin = os.Stdin
+    // Keep stdin open: util-linux script treats EOF as end of its recording
+    // and may close the PTY before a pen stroke can be delivered.
+    stdinReader, stdinWriter, err := os.Pipe()
+    if err != nil { return 0, err }
+    defer stdinReader.Close()
+    defer stdinWriter.Close()
+    command.Stdin = stdinReader
     command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+    // On deadline, request orderly PTY shutdown before the final forced kill.
+    command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGTERM) }
     command.WaitDelay = 2 * time.Second
     pipe, err := command.StdoutPipe()
     if err != nil { return 0, err }
     // Avoid collecting or printing pen coordinates to logs.
-    command.Stderr = io.Discard
+    // Count vendor stderr bytes only; never expose its content or pen samples.
+    diagnosticErr := &countingWriter{}
+    command.Stderr = diagnosticErr
     if err := command.Start(); err != nil { return 0, err }
+    // The child has inherited its stdin file descriptor; parent can drop its
+    // reader copy while retaining the writer to prevent an early EOF.
+    _ = stdinReader.Close()
     // CommandContext kills the PTY parent on timeout. Ensure any vendor
     // child in the separate process group is also terminated.
     defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }()
@@ -124,7 +143,7 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
     waitErr := command.Wait()
     if parseErr != nil { return 0, parseErr }
     if counts.reports == 0 {
-        return 0, fmt.Errorf("no pen reports: %d total output lines, %d non-report lines (values not recorded)", counts.lines, counts.other)
+        return 0, fmt.Errorf("no pen reports: %d stdout lines, %d non-report lines, %d stderr bytes, exit=%v (values not recorded)", counts.lines, counts.other, diagnosticErr.count, waitErr)
     }
     if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, ctx.Err()
