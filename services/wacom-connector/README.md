@@ -91,3 +91,68 @@ device, the status remains `sdk_detected:false`. The executable must be the
 vendor-provided SDK sample on disk: no SDK binary is checked into GitHub.
 `connected` remains `false` until a separately audited capture implementation
 exists. The service runs on the Ubuntu desktop, not the VPS.
+
+## Local pen communication diagnostic (no signing)
+
+After building the connector on the Ubuntu PC, close any other sample
+application using the STU-540, then run the **one-shot** native hardware test:
+
+```sh
+cd ~/LoanHub-Wacom
+git fetch origin
+git switch feat/wacom-local-pen-sample-20261104
+git pull --ff-only
+cd services/wacom-connector
+go test ./...
+go build -o loanhub-wacom-connector .
+./loanhub-wacom-connector --pen-test \
+  --sdk-pen-sample="$HOME/wacom-stu-sdk/sdk-extracted/Linux/x86_64/simpleInterface"
+```
+
+Draw only disposable test strokes when prompted. The test runs for **up to 25 seconds**, including SDK initialization, shuts down the vendor sample and prints only how many numeric pen
+reports were observed. It does not return raw coordinates, pen pressure,
+a reusable signature, images, or contract data. It does not contact the
+LoanHub backend or create any signing session. It requires no VPS changes.
+
+The binary uses an absolute path to the Wacom-supplied sample. This is a
+development diagnostic and not a supported SDK adapter for production. If
+the vendor SDK buffers its output when piped, you might see zero reports
+despite working pen hardware; we will then need to link the documented
+native SDK directly. Do **not** use this feature to sign real borrower
+contracts or store test strokes as signatures.
+
+### Wacom stdout buffering fix
+
+The first hardware test reported zero even though running the SDK sample
+interactively had already streamed pen data. This can happen because a program
+that prints to a terminal may buffer stdout when redirected to a pipe. The
+Go diagnostic now invokes the vendor sample through Ubuntu's `stdbuf -oL`
+(coreutils) to request line-buffered output; no shell is involved.
+If the device still reports zero, first verify that `simpleInterface` works
+interactively. The vendor SDK may override the requested buffering; in that
+case a documented SDK integration or pseudo-terminal is needed, not an
+assumption that pen hardware failed. Test signatures only.
+
+### Pseudo-terminal diagnostic update
+
+Direct `simpleInterface` access worked on the STU-540, but running that
+sample through a Go output pipe produced zero reports, even with `stdbuf`.
+The CLI now starts the installed sample through a util-linux pseudo-terminal
+(`script -q -f -e`), preserving the terminal behavior of the working sample.
+Install `util-linux` if the `script` command is unavailable.
+
+The diagnostic remains explicitly non-signing: do not enter a real borrower's
+signature. The sample path is validated and not accepted from HTTP requests.
+The process is killed after at most 25 seconds; confirm the pad is released before
+launching another SDK program.
+
+### SDK startup timing (Nov 4, 2026)
+
+A real STU-540 workstation test returned 15 non-report stdout lines
+and 49 stderr bytes before the original eight-second test deadline.
+Those lines can include SDK connection and tablet setup output; they
+must not be mistaken for handwritten pen data. The CLI now allows up to
+25 seconds and prints a readiness prompt when the SDK outputs
+`use stylus`. Draw disposable test strokes **after that prompt**.
+If the prompt never appears, check for another program already using
+the STU-540. Do not run multiple Wacom samples concurrently.
