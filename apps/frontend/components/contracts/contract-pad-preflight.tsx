@@ -27,6 +27,17 @@ type PadSession = {
   reason?: string;
 };
 
+type PadSessionStatus = {
+  session_id: string;
+  contract_id: string;
+  status: string;
+  expires_at: string;
+  capture_enabled: false;
+  preview_eligible: boolean;
+  preview_blockers: string[];
+  workstation_capture_authorized: false;
+};
+
 /**
  * Operator-only signing preparation. Never interprets local hardware status
  * or a browser stroke preview as signer identity, consent or legal signing.
@@ -35,6 +46,8 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
   const [check, setCheck] = useState<Preflight | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<PadSession | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<PadSessionStatus | null>(null);
+  const [sessionStatusError, setSessionStatusError] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -42,11 +55,51 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
     setCheck(null);
     setError(null);
     setSession(null);
+    setSessionStatus(null);
+    setSessionStatusError(false);
     api.get<Preflight>(`/contract-signing/contracts/${contractId}/pad/preflight`)
       .then(({ data }) => { if (mounted) setCheck(data); })
       .catch(() => { if (mounted) setError("Could not verify signing permissions and contract state."); });
     return () => { mounted = false; };
   }, [contractId]);
+
+  // Recheck persisted session eligibility while the operator is on this
+  // contract. Errors fail closed; status is advisory and never authorizes
+  // capture, upload, consent or signing.
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    let active = true;
+    setSessionStatus(null);
+    setSessionStatusError(false);
+    const path = `/contract-signing/contracts/${encodeURIComponent(contractId)}/pad/sessions/${encodeURIComponent(session.session_id)}`;
+    const refresh = async () => {
+      try {
+        const { data } = await api.get<PadSessionStatus>(path);
+        if (!active) return;
+        if (data.session_id !== session.session_id || data.contract_id !== contractId ||
+            data.capture_enabled !== false || data.workstation_capture_authorized !== false ||
+            typeof data.preview_eligible !== "boolean" ||
+            !Array.isArray(data.preview_blockers) ||
+            data.preview_blockers.some((reason) => typeof reason !== "string")) {
+          setSessionStatus(null);
+          setSessionStatusError(true);
+          return;
+        }
+        setSessionStatus(data);
+        setSessionStatusError(false);
+      } catch {
+        if (active) {
+          setSessionStatus(null);
+          setSessionStatusError(true);
+        }
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 5000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [contractId, session]);
 
   async function createSession() {
     if (!check?.ready || busy || session) return;
@@ -67,6 +120,8 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
         setError("Signing preparation did not match the current contract. Reload the agreement.");
         return;
       }
+      setSessionStatus(null);
+      setSessionStatusError(false);
       setSession(data);
     } catch {
       setError("Unable to prepare a pad session. Check contract permissions and retry.");
@@ -82,6 +137,8 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
     try {
       await api.post(`/contract-signing/contracts/${contractId}/pad/sessions/${session.session_id}/cancel`);
       setSession(null);
+      setSessionStatus(null);
+      setSessionStatusError(false);
     } catch {
       setError("Could not close the signing session. Please refresh its state.");
     } finally {
@@ -111,14 +168,21 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
         </Button>
         {session && <Button type="button" variant="outline" disabled={busy} onClick={() => void cancelSession()}>Cancel session</Button>}
       </div>
-      {session && <p role="status" className="text-xs text-muted-foreground">
-        Session {session.session_id} ({session.status}), expires {new Date(session.expires_at).toLocaleString()}.
-        Hardware signing remains disabled until identity, consent and secured evidence capture are implemented.
-      </p>}
+      {session && <div role="status" className="space-y-1 text-xs text-muted-foreground">
+        <p>Session {session.session_id} ({sessionStatus?.status ?? session.status}), expires {new Date(session.expires_at).toLocaleString()}.</p>
+        {sessionStatusError
+          ? <p role="alert" className="text-destructive">Session verification unavailable. Temporary preview is disabled; retry or cancel the session.</p>
+          : !sessionStatus
+            ? <p>Verifying current contract and session status...</p>
+            : !sessionStatus.preview_eligible
+              ? <p role="alert" className="text-destructive">Temporary preview blocked: {sessionStatus.preview_blockers.join(", ") || "session no longer eligible"}.</p>
+              : <p>Session remains eligible for test preview only. Wacom workstation capture is not authorized.</p>}
+        <p>Hardware signing remains disabled until identity, consent and secured evidence capture are implemented.</p>
+      </div>}
       <ContractSignatureCapture
         key={`${check.contract_id}:${check.contract_hash}`}
         contractId={check.contract_id}
-        disabled={busy}
+        disabled={busy || Boolean(session && (!sessionStatus?.preview_eligible || sessionStatusError))}
       />
     </section>
   );
