@@ -5,7 +5,6 @@ package main
 // supply actual backend-backed enrollment and revocation adapters.
 import (
     "context"
-    "crypto/ed25519"
     "errors"
     "time"
 )
@@ -102,7 +101,3 @@ func runEphemeralAuthorizedPreview(
     return config.Sink.DeliverPreview(bounded, expected, calibrated)
 }
 
-// Compile-time assertion: no signing, evidence or file storage dependency
-// exists in this coordinator. The SDK adapter and browser sink remain unbound
-// until the authenticated backend/workstation bridge exists.
-var _ ed25519.PublicKey
