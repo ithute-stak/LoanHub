@@ -135,6 +135,15 @@ func testWacomPenSample(executable string, duration time.Duration) (int, error) 
 }
 
 func testWacomSampleWithHandler(executable string, duration time.Duration, onPen func(penSample) error) (int, error) {
+    return testWacomSampleWithContext(context.Background(), executable, duration, onPen)
+}
+
+// testWacomSampleWithContext propagates an authenticated capture lease's
+// cancellation into the SDK process. This is only a dependency for future
+// authorized preview capture; no HTTP capture endpoint is exposed.
+func testWacomSampleWithContext(parent context.Context, executable string, duration time.Duration, onPen func(penSample) error) (int, error) {
+    if parent == nil { return 0, errors.New("missing Wacom preview cancellation context") }
+    if err := parent.Err(); err != nil { return 0, err }
     if !filepath.IsAbs(executable) || !safeSamplePath.MatchString(executable) {
         return 0, errors.New("sample executable path must be absolute and contain no shell metacharacters")
     }
@@ -144,7 +153,7 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     if !stat.Mode().IsRegular() || stat.Mode().Perm()&0111 == 0 {
         return 0, errors.New("sample is not an executable file")
     }
-    ctx, cancel := context.WithTimeout(context.Background(), duration)
+    ctx, cancel := context.WithTimeout(parent, duration)
     defer cancel()
     // The Wacom C++ sample emits reports immediately to a terminal, but
     // buffers its stdout when piped. A pseudo-terminal restores that behavior.
@@ -220,6 +229,9 @@ func testWacomSampleWithHandler(executable string, duration time.Duration, onPen
     if counts.reports == 0 {
         return 0, fmt.Errorf("no pen reports: sdk_ready=%t, %d stdout lines, %d non-report lines, %d stderr bytes, exit=%v (values not recorded)", counts.ready, counts.lines, counts.other, diagnosticErr.count, waitErr)
     }
+    // A revoked/explicitly cancelled parent is always a hard failure even
+    // if some pen reports arrived before cancellation. Do not deliver them.
+    if err := parent.Err(); err != nil { return 0, err }
     if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
         return 0, ctx.Err()
     }
