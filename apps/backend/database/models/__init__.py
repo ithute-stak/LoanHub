@@ -306,3 +306,6 @@ from database.models.loan_rollover_reversal_approval import LoanRolloverReversal
 from database.models.loan_rollover_reversal_request import LoanRolloverReversalRequest
 
 from database.models.borrower_signature import BorrowerSavedSignature, BorrowerSignatureUseAuthorization
+
+# Enrollment records are registered with SQLAlchemy metadata; activation requires approval.
+from database.models.wacom_workstation import WacomWorkstationEnrollment, WacomWorkstationChallengeRecord
