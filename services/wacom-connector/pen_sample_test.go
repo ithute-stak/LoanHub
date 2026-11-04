@@ -2,6 +2,9 @@ package main
 
 import (
     "strings"
+    "os"
+    "os/exec"
+    "path/filepath"
     "testing"
     "time"
 )
@@ -64,5 +67,25 @@ func TestDiagnosticCountsSilentAndUnrecognizedOutputSeparately(t *testing.T) {
         "Connecting...\nConnected!\n1 1 105 250 300 400 1\n"), 10)
     if err != nil || noisy.lines != 3 || noisy.other != 2 || noisy.reports != 1 {
         t.Fatalf("noisy count: %+v %v", noisy, err)
+    }
+}
+
+func TestPTYReceivesFakeVendorOutputWithoutEarlyStdinEOF(t *testing.T) {
+    if _, err := exec.LookPath("script"); err != nil {
+        t.Skip("util-linux script unavailable on test host")
+    }
+    sample := filepath.Join(t.TempDir(), "fake-simpleInterface")
+    // A mock vendor executable that prints a few numeric lines before
+    // sleeping. No Wacom hardware or borrower data is involved.
+    source := "#!/bin/sh\\nprintf 'Connected!\\\\n'\\nprintf '1 1 100 200 300 400 1\\\\n'\\nprintf '1 1 101 201 301 401 2\\\\n'\\nsleep 2\\n"
+    if err := os.WriteFile(sample, []byte(source), 0700); err != nil {
+        t.Fatal(err)
+    }
+    count, err := testWacomPenSample(sample, 1200*time.Millisecond)
+    if err != nil {
+        t.Fatalf("PTY did not deliver mock vendor lines: %v", err)
+    }
+    if count != 2 {
+        t.Fatalf("expected two mock numeric reports, got %d", count)
     }
 }
