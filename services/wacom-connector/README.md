@@ -91,3 +91,33 @@ device, the status remains `sdk_detected:false`. The executable must be the
 vendor-provided SDK sample on disk: no SDK binary is checked into GitHub.
 `connected` remains `false` until a separately audited capture implementation
 exists. The service runs on the Ubuntu desktop, not the VPS.
+
+## Local pen communication diagnostic (no signing)
+
+After building the connector on the Ubuntu PC, close any other sample
+application using the STU-540, then run the **one-shot** native hardware test:
+
+```sh
+cd ~/LoanHub-Wacom
+git fetch origin
+git switch feat/wacom-local-pen-sample-20261104
+git pull --ff-only
+cd services/wacom-connector
+go test ./...
+go build -o loanhub-wacom-connector .
+./loanhub-wacom-connector --pen-test \
+  --sdk-pen-sample="$HOME/wacom-stu-sdk/sdk-extracted/Linux/x86_64/simpleInterface"
+```
+
+Draw only disposable test strokes when prompted. The test runs for **eight
+seconds**, shuts down the vendor sample and prints only how many numeric pen
+reports were observed. It does not return raw coordinates, pen pressure,
+a reusable signature, images, or contract data. It does not contact the
+LoanHub backend or create any signing session. It requires no VPS changes.
+
+The binary uses an absolute path to the Wacom-supplied sample. This is a
+development diagnostic and not a supported SDK adapter for production. If
+the vendor SDK buffers its output when piped, you might see zero reports
+despite working pen hardware; we will then need to link the documented
+native SDK directly. Do **not** use this feature to sign real borrower
+contracts or store test strokes as signatures.
