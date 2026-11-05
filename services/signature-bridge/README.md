@@ -23,9 +23,35 @@ LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN='short-lived-staging-token' \\
 
 This command sends at most 25 queued records over verified HTTPS, never saves a token, retains failed records, and only marks entries acknowledged after a 202 quarantine confirmation. It does **not** apply signatures to contracts.
 
+## Optional staging-only background sync
+
+The user service starts after reboot (when linger is enabled), but does not
+send anything until explicitly configured. No token or password is saved by
+the Signature Bridge. Provision a separate authenticated **short-lived**
+token helper on the workstation; it must be an absolute executable path
+owned by the current desktop user with mode `0700` (no group/other access).
+The helper prints only the fresh API access token to standard output, and
+must not echo credentials to logs. It must be reviewed by the operator.
+
+Create `~/.config/loanhub-signature-bridge/sync.env` as a private 0600 file:
+
+```ini
+LOANHUB_SIGNATURE_BRIDGE_AUTO_SYNC_ENABLED=true
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging
+LOANHUB_SIGNATURE_BRIDGE_SYNC_URL=https://VERIFIED-STAGING-HOST/api/v1/signature-bridge/imports
+LOANHUB_SIGNATURE_BRIDGE_TOKEN_PROVIDER=/home/USER/path/to/reviewed-token-provider
+```
+
+Restart the user service with `systemctl --user restart loanhub-signature-bridge.service`.
+The service checks pending records at approximately 60-second intervals.
+It refuses production mode and retains unsent records after failures.
+**Do not enable this with live customer data:** true device capture, signer
+verification, audit approval, key rotation, and production policies remain
+unfinished.
+
 ## Not yet implemented
 - Physical Wacom STU-540 capture bridge, signer verification UI, operator authentication, consent UI.
-- Unattended sync scheduler, token provisioning and renewal, conflict resolution UI. A supervised HTTPS sync command exists, but requires an authenticated staging operator and a deployed remote API.
+- Production token provisioning, identity-verification UI and conflict resolution UI. Unattended staging sync is opt-in and requires an administrator-provided short-lived token helper; no helper is bundled.
 - Contract-specific signing approval and approved import into LoanHub forms.
 - Windows installer and production key management / encryption hardening.
 
