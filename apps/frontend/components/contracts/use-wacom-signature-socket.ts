@@ -49,6 +49,7 @@ export function useWacomSignatureSocket(sessionKey: string) {
   const [status, setStatus] = useState<WacomSocketStatus>("idle");
   const [strokes, setStrokes] = useState<WacomPreviewStrokes | null>(null);
   const activeKey = useRef(sessionKey);
+  const receivedStrokeFrame = useRef(false);
 
   const close = useCallback((notify = true) => {
     if (expiryTimer.current !== null) clearTimeout(expiryTimer.current);
@@ -60,12 +61,14 @@ export function useWacomSignatureSocket(sessionKey: string) {
         current.send(JSON.stringify({ type: "cancel" }));
       current.close(1000, "preview closed");
     }
+    receivedStrokeFrame.current = false;
     setStrokes(null);
     setStatus("cancelled");
   }, []);
 
   useEffect(() => {
     activeKey.current = sessionKey;
+    receivedStrokeFrame.current = false;
     setStrokes(null);
     setStatus("idle");
     return () => {
@@ -90,6 +93,7 @@ export function useWacomSignatureSocket(sessionKey: string) {
       setStatus("error");
       return false;
     }
+    receivedStrokeFrame.current = false;
     setStrokes(null);
     setStatus("connecting");
     const connection = new WebSocket(approval.endpoint);
@@ -129,9 +133,13 @@ export function useWacomSignatureSocket(sessionKey: string) {
       } else if (frame.type === "preview_strokes") {
         const valid = validateWacomPreviewStrokes(frame.strokes);
         if (!valid) { close(); setStatus("error"); return; }
+        receivedStrokeFrame.current = true;
         setStatus("capturing");
         setStrokes(valid);
       } else if (frame.type === "complete") {
+        // A successful completion cannot exist without a validated physical
+        // stroke frame in this exact browser session.
+        if (!receivedStrokeFrame.current) { close(); setStatus("error"); return; }
         // A preview complete event is NOT a legally executed signature.
         if (expiryTimer.current !== null) clearTimeout(expiryTimer.current);
         expiryTimer.current = null;
