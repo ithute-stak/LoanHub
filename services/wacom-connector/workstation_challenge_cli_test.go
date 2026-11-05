@@ -33,7 +33,7 @@ func TestLocalBackendChallengeSignsOnlyBoundEnrolledSession(t *testing.T){
  if err!=nil{t.Fatal(err)}
  challenge.BackendSigningKID="verified-test-backend"
  challenge.BackendSignatureBase64=base64.StdEncoding.EncodeToString(ed25519.Sign(backendPrivate,
-  []byte(fmt.Sprintf("LOANHUB-WACOM-CHALLENGE-ENVELOPE-V1\\n%s\\n%s\\n%s\\n%s\\n%d\\n",
+  []byte(fmt.Sprintf("LOANHUB-WACOM-CHALLENGE-ENVELOPE-V1\n%s\n%s\n%s\n%s\n%d\n",
    challenge.ChallengeID,challenge.WorkstationID,challenge.SessionID,challenge.Nonce,now.Add(20*time.Second).Unix()))))
  keys:=map[string]ed25519.PublicKey{challenge.BackendSigningKID:backendPublic}
  input,_:=json.Marshal(challenge)
@@ -55,10 +55,10 @@ func TestLocalBackendChallengeSignsOnlyBoundEnrolledSession(t *testing.T){
  bad,_:=json.Marshal(challenge)
  if _,err:=signBackendWacomChallenge(dir,session,bytes.NewReader(bad),now,keys);err==nil{t.Fatal("foreign workstation accepted")}
  challenge.WorkstationID=identity.WorkstationID
- if _,err:=signBackendWacomChallenge(dir,"44444444-4444-4444-8444-444444444444",bytes.NewReader(input),now);err==nil{t.Fatal("wrong session accepted")}
+ if _,err:=signBackendWacomChallenge(dir,"44444444-4444-4444-8444-444444444444",bytes.NewReader(input),now,keys);err==nil{t.Fatal("wrong session accepted")}
  challenge.ExpiresAt=now.Add(-time.Second).Format(time.RFC3339Nano)
  bad,_=json.Marshal(challenge)
- if _,err:=signBackendWacomChallenge(dir,session,bytes.NewReader(bad),now);err==nil{t.Fatal("expired challenge accepted")}
+ if _,err:=signBackendWacomChallenge(dir,session,bytes.NewReader(bad),now,keys);err==nil{t.Fatal("expired challenge accepted")}
 }
 func TestLocalBackendChallengeRejectsUntrustedInputs(t *testing.T){
  dir:=filepath.Join(t.TempDir(),"identity")
