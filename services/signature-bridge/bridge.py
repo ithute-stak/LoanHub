@@ -11,6 +11,7 @@ import contextlib
 import fcntl
 import urllib.request
 import urllib.error
+import urllib.parse
 from uuid import UUID, uuid4
 import base64
 import hashlib
@@ -240,17 +241,30 @@ def resolve(args: argparse.Namespace) -> None:
                       "signature_ids":ids if status == "match" else [],
                       "auto_apply":False, "requires_document_consent":True}))
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Prevent staging bearer tokens from being forwarded to a redirect URL."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("Redirect during signature sync is not permitted")
+
+
+def validate_sync_url(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
+            parsed.password or parsed.fragment or parsed.query or
+            parsed.path != "/api/v1/signature-bridge/imports" or
+            not parsed.netloc or parsed.hostname in ("localhost", "127.0.0.1")):
+        raise ValueError("Expected a verified staging HTTPS import URL")
+
+
 def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
     """Explicit supervised sync; never caches an access token locally."""
     url = args.url
-    if not url.startswith("https://") or "@" in url.split("/", 3)[2]:
-        raise ValueError("Remote synchronization requires an HTTPS URL without embedded credentials")
-    if not url.rstrip("/").endswith("/api/v1/signature-bridge/imports"):
-        raise ValueError("Unexpected synchronization endpoint")
+    validate_sync_url(url)
     token = access_token if access_token is not None else os.environ.get("LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN", "")
     if not token or any(c.isspace() for c in token):
         raise ValueError("Provide a staging-only bearer token using LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN")
     vault_key = key()
+    opener = urllib.request.build_opener(NoRedirect)
     sent = 0
     with connection() as db:
         rows = db.execute("""SELECT s.signature_id, s.company_id, s.signer_kind,
@@ -278,7 +292,7 @@ def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
                              "Content-Type": "application/json",
                              "X-Company-ID": str(UUID(company_id))}
                 )
-                with urllib.request.urlopen(req, timeout=15) as response:
+                with opener.open(req, timeout=15) as response:
                     result = json.load(response)
                     if response.status != 202 or result.get("status") != "pending_identity_review" or result.get("source_record_id") != signature_id:
                         raise ValueError("Unexpected remote acknowledgement; retaining queued record")
@@ -309,8 +323,9 @@ def auto_sync_config() -> tuple[str, str] | None:
         raise ValueError("Automatic sync is restricted to staging mode")
     url = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_SYNC_URL", "")
     provider = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_TOKEN_PROVIDER", "")
-    if not provider.startswith("/") or not url.startswith("https://"):
-        raise ValueError("Staging HTTPS URL and absolute token provider executable required")
+    if not provider.startswith("/"):
+        raise ValueError("Absolute token provider executable required")
+    validate_sync_url(url)
     info = os.stat(provider, follow_symlinks=False)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("Token provider must be a private file owned by the current user")
