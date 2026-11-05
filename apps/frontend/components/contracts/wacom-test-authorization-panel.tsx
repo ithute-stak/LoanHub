@@ -236,7 +236,10 @@ export function WacomTestAuthorizationPanel({
       </button>
       {challenge && (
         <div className="space-y-2">
-          <p className="text-xs">Obtain a locally verified workstation proof, or use the enrolled Go CLI in manual test mode.</p>\n          <button type="button" className="rounded border px-3 py-2 text-sm"\n            disabled={busy || !validSession || Date.parse(challenge.expires_at) <= Date.now()}\n            onClick={() => void obtainLocalProof()}>Get proof from protected local connector</button>
+          <p className="text-xs">Obtain a locally verified workstation proof, or use the enrolled Go CLI in manual test mode.</p>
+          <button type="button" className="rounded border px-3 py-2 text-sm"
+            disabled={busy || !validSession || Date.parse(challenge.expires_at) <= Date.now()}
+            onClick={() => void obtainLocalProof()}>Get proof from protected local connector</button>
           <textarea readOnly aria-label="Backend-issued workstation challenge"
             className="w-full rounded border p-2 font-mono text-xs" rows={5}
             value={JSON.stringify(challenge)} />
