@@ -43,23 +43,9 @@ func newProtectedWacomPreviewAuthority(
   TrustedWorkstationID:cfg.WorkstationID,
   TrustedSDKExecutable:cfg.SDKExecutable,
   Keys:cfg.PinnedKeys,
-  // The resolver constructs live backend-check providers after receiving
-  // a verified snapshot. Never use a cached or fake authorization source.
-  Enrollment:unconfiguredWacomAuthority{},
-  Session:unconfiguredWacomAuthority{},
   Replay:replay,
   Calibration:cfg.Calibration,
  }
  return verifiedWacomWebSocketAuthority{Resolver:resolver,TrustedSDKExecutable:cfg.SDKExecutable},nil
 }
 
-// Fail-closed markers satisfy the existing legacy resolver constructor
-// until its now-redundant static authority inputs can be removed. They are
-// never exposed: the resolver replaces them with backendLivePreviewAuthority.
-type unconfiguredWacomAuthority struct {}
-func(unconfiguredWacomAuthority) AuthenticatedWorkstationID()(string,error){
- return "",errors.New("unconfigured workstation")
-}
-func(unconfiguredWacomAuthority) CheckPreviewActive(_ previewTicketScope)error{
- return errors.New("unconfigured session")
-}
