@@ -87,6 +87,7 @@ def test_duplicate_import_is_idempotent_but_never_signs(context, enabled):
     ).hexdigest()
     response = api.import_signature(record, Response(), db, context)
     assert response["duplicate"] is True
+    assert response["company_id"] == str(context.company_id)
     assert response["usable_for_signing"] is False
     db.add.assert_not_called()
 
