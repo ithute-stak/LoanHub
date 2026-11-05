@@ -22,8 +22,6 @@ type mtlsWacomPreviewResolver struct {
  TrustedWorkstationID string
  TrustedSDKExecutable string
  Keys map[string]ed25519.PublicKey
- Enrollment previewEnrollmentProvider
- Session previewSessionAuthority
  Replay previewTicketReplayStore
  Calibration deviceCalibration
 }
@@ -34,7 +32,7 @@ func(r mtlsWacomPreviewResolver) ResolveAuthorizedPreview(
  denied:=errors.New("Wacom backend session authority unavailable")
  if ctx==nil||ctx.Err()!=nil||r.Backend==nil||
   !validUUID(r.TrustedWorkstationID)||r.TrustedSDKExecutable==""||
-  len(r.Keys)==0||r.Enrollment==nil||r.Session==nil||r.Replay==nil||
+  len(r.Keys)==0||r.Replay==nil||
   !r.Calibration.valid(){
   return authoritativeWacomPreviewState{},denied
  }
