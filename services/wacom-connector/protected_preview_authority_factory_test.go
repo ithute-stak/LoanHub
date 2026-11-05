@@ -3,11 +3,9 @@ package main
 import (
  "crypto/ed25519"
  "crypto/rand"
- "net/http"
  "os"
  "path/filepath"
  "testing"
- "time"
 )
 
 func protectedFactoryConfig(t *testing.T) wacomProtectedPreviewConfig {
@@ -17,10 +15,13 @@ func protectedFactoryConfig(t *testing.T) wacomProtectedPreviewConfig {
  dir:=filepath.Join(t.TempDir(),"replay")
  if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)}
  return wacomProtectedPreviewConfig{
-  Backend:&hardenedWacomIntrospectionClient{
-   client:&http.Client{Timeout:time.Second},
-   endpoint:"https://loanhub.co.ls"+wacomIntrospectionPath,
-  },
+  Backend:func()*hardenedWacomIntrospectionClient{
+   root,cert:=wacomTestTLSMaterials(t)
+   client,err:=newHardenedWacomIntrospectionClient(
+    "https://loanhub.co.ls"+wacomIntrospectionPath,root,cert)
+   if err!=nil{t.Fatal(err)}
+   return client
+  }(),
   WorkstationID:testPreviewScope().WorkstationID,
   SDKExecutable:"/usr/local/libexec/wacom/simpleInterface",
   ReplayDirectory:dir,
