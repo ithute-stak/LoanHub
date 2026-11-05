@@ -63,7 +63,7 @@ class SyncTests(unittest.TestCase):
 
         args = argparse.Namespace(url="https://staging.example.com/api/v1/signature-bridge/imports")
         with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN": "staging-test-token"}), \
-             patch.object(bridge.urllib.request, "urlopen", side_effect=fake_open):
+             patch.object(bridge.urllib.request, "build_opener", return_value=type("Opener", (), {"open": staticmethod(fake_open)})()):
             with contextlib.redirect_stdout(io.StringIO()):
                 bridge.sync(args)
                 bridge.sync(args)
@@ -76,7 +76,7 @@ class SyncTests(unittest.TestCase):
         self.prepare()
         args = argparse.Namespace(url="https://staging.example.com/api/v1/signature-bridge/imports")
         with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN": "test-token"}), \
-             patch.object(bridge.urllib.request, "urlopen", side_effect=OSError("disconnected")):
+             patch.object(bridge.urllib.request, "build_opener", return_value=type("Opener", (), {"open": staticmethod(lambda req, timeout: (_ for _ in ()).throw(OSError("disconnected")))})()):
             with contextlib.redirect_stderr(io.StringIO()):
                 bridge.sync(args)
         with bridge.connection() as db:
