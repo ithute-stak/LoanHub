@@ -123,3 +123,82 @@ def test_real_postgresql_company_borrower_query_isolation(monkeypatch):
                 transaction.rollback()
     finally:
         engine.dispose()
+
+
+def test_real_postgres_revocation_state_and_jti_are_enforced(monkeypatch):
+    """Exercise the actual LoanHub local-auth dependency with disposable PG."""
+    from core import security
+
+    url = os.environ.get("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("Disposable PostgreSQL integration URL not configured")
+
+    engine = create_engine(url, pool_pre_ping=True)
+    base = declarative_base()
+    user_id = uuid4()
+    jti = str(uuid4())
+
+    class SecurityRow(base):
+        __tablename__ = "phase47_security"
+        user_id = Column(UUID(as_uuid=True), primary_key=True)
+        session_version = Column("session_version", __import__("sqlalchemy").Integer, nullable=False)
+
+    class TokenRow(base):
+        __tablename__ = "phase47_tokens"
+        id = Column(UUID(as_uuid=True), primary_key=True)
+        user_id = Column(UUID(as_uuid=True), nullable=False)
+        jti = Column(__import__("sqlalchemy").String(120), nullable=False)
+        revoked = Column(Boolean, nullable=False)
+
+    try:
+        with engine.connect() as conn:
+            transaction = conn.begin()
+            try:
+                conn.execute(text("""CREATE TEMP TABLE phase47_security (
+                    user_id uuid PRIMARY KEY, session_version integer NOT NULL
+                ) ON COMMIT DROP"""))
+                conn.execute(text("""CREATE TEMP TABLE phase47_tokens (
+                    id uuid PRIMARY KEY, user_id uuid NOT NULL,
+                    jti varchar(120) NOT NULL, revoked boolean NOT NULL
+                ) ON COMMIT DROP"""))
+                conn.execute(SecurityRow.__table__.insert(), [
+                    {"user_id": user_id, "session_version": 1},
+                ])
+                conn.execute(TokenRow.__table__.insert(), [
+                    {"id": uuid4(), "user_id": user_id, "jti": jti, "revoked": False},
+                ])
+                actor = SimpleNamespace(id=user_id)
+                monkeypatch.setattr(security, "_load_user", lambda db, uid: actor if uid == user_id else None)
+                monkeypatch.setattr(security, "UserSecurityState", SecurityRow)
+                monkeypatch.setattr(security, "RefreshToken", TokenRow)
+                claims = {"user_id": str(user_id), "session_version": 1, "session_jti": jti}
+                monkeypatch.setattr(security, "decode_token", lambda _: claims)
+
+                with Session(bind=conn) as db:
+                    assert security._current_local_user("dummy-signed-token", db) is actor
+
+                    # Revocation of the exact JTI invalidates the still-valid
+                    # access token without relying on token expiry.
+                    conn.execute(text(
+                        "UPDATE phase47_tokens SET revoked = TRUE WHERE jti = :jti"
+                    ), {"jti": jti})
+                    with pytest.raises(HTTPException) as exc:
+                        security._current_local_user("dummy-signed-token", db)
+                    assert exc.value.status_code == 401
+
+                    conn.execute(text(
+                        "UPDATE phase47_tokens SET revoked = FALSE WHERE jti = :jti"
+                    ), {"jti": jti})
+                    assert security._current_local_user("dummy-signed-token", db) is actor
+
+                    # Session-version rotation revokes all old access tokens.
+                    conn.execute(text(
+                        "UPDATE phase47_security SET session_version = 2"
+                    ))
+                    with pytest.raises(HTTPException) as exc:
+                        security._current_local_user("dummy-signed-token", db)
+                    assert exc.value.status_code == 401
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
