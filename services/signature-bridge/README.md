@@ -10,9 +10,22 @@ This is a **staging-only foundation**, not yet a completed desktop application o
 - Background Python vault process and Linux systemd user service that can auto-start after reboot.
 - Tests for normalization, tenant isolation and matching conflicts.
 
+## Remote synchronization (staging only)
+
+The backend Docker image includes a gated import route at `POST /api/v1/signature-bridge/imports` and an Alembic migration. It accepts identity-claimed captures only into encrypted **quarantine**, not an approved signature registry. It is disabled unless `ENVIRONMENT=staging` and `LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED=true` with a separate Fernet key in `LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY`. Use an isolated staging HTTPS endpoint and a short-lived authenticated operator token; do not use production credentials.
+
+On the local workstation, a *supervised* run is supported:
+
+```sh
+LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN='short-lived-staging-token' \\
+  .venv/bin/python bridge.py sync --url https://YOUR-VERIFIED-STAGING-HOST/api/v1/signature-bridge/imports
+```
+
+This command sends at most 25 queued records over verified HTTPS, never saves a token, retains failed records, and only marks entries acknowledged after a 202 quarantine confirmation. It does **not** apply signatures to contracts.
+
 ## Not yet implemented
 - Physical Wacom STU-540 capture bridge, signer verification UI, operator authentication, consent UI.
-- Remote API and sync worker, certificate or token provisioning, conflict resolution UI.
+- Unattended sync scheduler, token provisioning and renewal, conflict resolution UI. A supervised HTTPS sync command exists, but requires an authenticated staging operator and a deployed remote API.
 - Contract-specific signing approval and approved import into LoanHub forms.
 - Windows installer and production key management / encryption hardening.
 
