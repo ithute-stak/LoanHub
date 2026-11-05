@@ -10,6 +10,7 @@ workstation UUID. Never forward caller-controlled TLS-extension metadata.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 from datetime import datetime, timezone
@@ -62,9 +63,9 @@ def _verified_workstation_from_tls(scope: dict) -> UUID | None:
                 return None
             if not all(c in "0123456789abcdef" for c in allowed_digest):
                 return None
-            if hashlib.sha256(cert_der).hexdigest() == allowed_digest:
+            if hmac.compare_digest(digest, allowed_digest):
                 matches.append(workstation_uuid)
-        if len(matches) != 1 or digest not in pins.values():
+        if len(matches) != 1:
             return None
         return matches[0]
     except (ValueError, TypeError, KeyError, x509.ExtensionNotFound, json.JSONDecodeError):
