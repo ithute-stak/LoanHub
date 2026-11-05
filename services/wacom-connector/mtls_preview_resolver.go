@@ -56,15 +56,18 @@ func(r mtlsWacomPreviewResolver) ResolveAuthorizedPreview(
  if _,err=verifyPreviewTicketSignatureAndScope(ticket,r.Keys,expected,time.Now().UTC());err!=nil{
   return authoritativeWacomPreviewState{},denied
  }
- // Enrollment and Session are live trust sources, not fields from the
- // signed ticket or the introspection JSON. Recheck again in the coordinator
- // immediately before each SDK operation and outbound preview frame.
+ // The backend-backed providers perform a fresh mTLS introspection on
+ // every revalidation. The underlying handler independently verifies the
+ // current tenant, enrollment and session, including revocation.
+ live:=&backendLivePreviewAuthority{Backend:r.Backend,Ticket:ticket,Scope:expected,FieldID:snapshot.FieldID}
+ // Fail before making capture available when the live backend is offline.
+ if err=live.check();err!=nil{return authoritativeWacomPreviewState{},denied}
  return authoritativeWacomPreviewState{
   Scope:expected,SessionKey:snapshot.SessionKey,FieldID:snapshot.FieldID,
   SDKExecutable:r.TrustedSDKExecutable,
   Calibration:r.Calibration,
   Admission:previewAdmissionDependencies{
-   Keys:r.Keys,Enrollment:r.Enrollment,Session:r.Session,Replay:r.Replay,
+   Keys:r.Keys,Enrollment:live,Session:live,Replay:r.Replay,
   },
  },nil
 }
