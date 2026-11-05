@@ -13,7 +13,8 @@ if [[ ! -x "${PYTHON}" ]]; then
   exit 1
 fi
 "${PYTHON}" -c 'import cryptography'
-mkdir -p "${HOME}/.config/systemd/user" "${HOME}/.local/share/loanhub-signature-bridge"
+mkdir -p "${HOME}/.config/systemd/user" "${HOME}/.config/loanhub-signature-bridge" "${HOME}/.local/share/loanhub-signature-bridge"
+chmod 700 "${HOME}/.config/loanhub-signature-bridge"
 chmod 700 "${HOME}/.local/share/loanhub-signature-bridge"
 cat > "${HOME}/.config/systemd/user/loanhub-signature-bridge.service" <<EOF
 [Unit]
@@ -21,6 +22,7 @@ Description=LoanHub Signature Bridge offline vault
 After=default.target
 [Service]
 Type=simple
+EnvironmentFile=-%h/.config/loanhub-signature-bridge/sync.env
 ExecStart=${PYTHON} ${APP_DIR}/bridge.py serve
 Restart=on-failure
 RestartSec=5
