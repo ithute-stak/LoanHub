@@ -19,4 +19,3 @@ class SignatureBridgeImport(Base):
     consent_reference = Column(String(180), nullable=False)
     phone_aliases_digest = Column(String(64), nullable=True)
     status = Column(String(30), nullable=False, default="pending_identity_review")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
