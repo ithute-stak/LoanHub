@@ -62,6 +62,9 @@ func TestWacomStagingPreflightChecksLocalPrerequisitesOnly(t *testing.T){
  cfg.ReplayDirectory=filepath.Join(cfg.IdentityDirectory,"missing-replay")
  if err:=checkLocalWacomStagingReadiness(cfg);err==nil{t.Fatal("missing replay store accepted")}
  cfg=makeStagingPreflightFixture(t)
+ if err:=os.Chmod(cfg.ClientKeyPath,0644);err!=nil{t.Fatal(err)}
+ if err:=checkLocalWacomStagingReadiness(cfg);err==nil{t.Fatal("exposed mTLS private key accepted")}
+ cfg=makeStagingPreflightFixture(t)
  cfg.CalibrationMaxX=0
  if err:=checkLocalWacomStagingReadiness(cfg);err==nil{t.Fatal("invalid SDK calibration accepted")}
  cfg=makeStagingPreflightFixture(t)
@@ -83,6 +86,7 @@ func TestStagingPreflightConfigRejectsUnsafeOrExtraKeys(t *testing.T){
  if loaded.IdentityDirectory!=cfg.IdentityDirectory{t.Fatal("configuration changed")}
  if err:=os.Chmod(path,0644);err!=nil{t.Fatal(err)}
  if _,err:=loadWacomStagingPreflightConfig(path);err==nil{t.Fatal("world-readable configuration accepted")}
+ if err:=os.Chmod(path,0600);err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(path,append(raw[:len(raw)-1],[]byte(`,"unexpected":true}`)...),0600);err!=nil{t.Fatal(err)}
  if _,err:=loadWacomStagingPreflightConfig(path);err==nil{t.Fatal("unknown staging config field accepted")}
 }
