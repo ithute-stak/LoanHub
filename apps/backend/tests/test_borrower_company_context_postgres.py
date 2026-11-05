@@ -195,6 +195,7 @@ def test_real_postgres_revocation_state_and_jti_are_enforced(monkeypatch):
                     conn.execute(text(
                         "UPDATE phase47_security SET session_version = 2"
                     ))
+                    db.expire_all()  # Force real SQL read after out-of-session update.
                     with pytest.raises(HTTPException) as exc:
                         security._current_local_user("dummy-signed-token", db)
                     assert exc.value.status_code == 401
