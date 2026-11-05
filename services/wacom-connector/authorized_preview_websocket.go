@@ -5,6 +5,8 @@ package main
 // trusted backend-backed authorizer is wired by the composition root.
 import (
  "context"
+ "bytes"
+ "io"
  "encoding/json"
  "errors"
  "net/http"
@@ -35,6 +37,20 @@ type wsPreviewRequest struct {
  PreviewTicket string `json:"preview_ticket,omitempty"`
  FieldID string `json:"field_id,omitempty"`
 }
+// decodeWacomPreviewRequest rejects unknown fields and trailing JSON.
+// Browser requests may carry a ticket and a field identifier, but must
+// never be allowed to inject tenant, workstation or session claims.
+func decodeWacomPreviewRequest(raw []byte)(wsPreviewRequest,error){
+ var req wsPreviewRequest
+ if len(raw)==0||len(raw)>maxWacomWSMessageBytes{return req,errors.New("invalid Wacom WebSocket frame size")}
+ decoder:=json.NewDecoder(bytes.NewReader(raw))
+ decoder.DisallowUnknownFields()
+ if err:=decoder.Decode(&req);err!=nil{return wsPreviewRequest{},err}
+ var trailing any
+ if err:=decoder.Decode(&trailing);err!=io.EOF{return wsPreviewRequest{},errors.New("trailing WebSocket JSON")}
+ return req,nil
+}
+
 type wsPreviewFrame struct {
  Type string `json:"type"`
  SessionKey string `json:"session_key"`
@@ -110,8 +126,10 @@ func(s *localWacomWSServer) ServeHTTP(w http.ResponseWriter,r *http.Request){
  defer conn.Close()
  conn.SetReadLimit(maxWacomWSMessageBytes)
  _=conn.SetReadDeadline(time.Now().Add(3*time.Second))
- var req wsPreviewRequest
- if err:=conn.ReadJSON(&req);err!=nil{return}
+ kind,raw,err:=conn.ReadMessage()
+ if err!=nil||kind!=websocket.TextMessage{return}
+ req,err:=decodeWacomPreviewRequest(raw)
+ if err!=nil{return}
  if req.Type!="authorize_preview"||len(req.PreviewTicket)<64||len(req.PreviewTicket)>3500||
   req.FieldID==""||len(req.FieldID)>128||strings.TrimSpace(req.FieldID)!=req.FieldID{return}
  // No client-supplied tenant, hash, session, or workstation scope accepted.
@@ -133,8 +151,10 @@ func(s *localWacomWSServer) ServeHTTP(w http.ResponseWriter,r *http.Request){
  go func(){
   for {
    _=conn.SetReadDeadline(time.Now().Add(15*time.Second))
-   var command wsPreviewRequest
-   if err:=conn.ReadJSON(&command);err!=nil {cancel();return}
+   kind,raw,err:=conn.ReadMessage()
+   if err!=nil||kind!=websocket.TextMessage{cancel();return}
+   command,err:=decodeWacomPreviewRequest(raw)
+   if err!=nil{cancel();return}
    if command.Type!="cancel"||command.PreviewTicket!=""||command.FieldID!=""{cancel();return}
    cancel();return
   }
