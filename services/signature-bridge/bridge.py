@@ -200,7 +200,8 @@ def capture_wacom(args: argparse.Namespace) -> None:
                     [str(executable), "--capture-strokes-json"],
                     stdout=output, stderr=subprocess.DEVNULL,
                     timeout=35, check=True,
-                    env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                    env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin",
+                         "LANG": "C.UTF-8", "LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"},
                 )
                 output.seek(0)
                 raw = output.read(MAX_BYTES + 1)
