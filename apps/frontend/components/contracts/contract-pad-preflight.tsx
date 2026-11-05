@@ -4,16 +4,13 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ContractSignatureCapture } from "@/components/contracts/contract-signature-capture";
-import { WacomSignatureField } from "@/components/contracts/wacom-signature-field";
+import { WacomTestAuthorizationPanel } from "@/components/contracts/wacom-test-authorization-panel";
 
 // An opt-in UI affordance only. Hardware capture remains disabled until
 // the separate enrolled-workstation challenge signer and backend approval
 // workflow can supply the exact field/session-bound preview ticket.
 const showWacomTestPreviewUI = process.env.NEXT_PUBLIC_LOANHUB_WACOM_PREVIEW_UI === "true";
 
-async function unconfiguredWacomPreviewAuthorization(): Promise<never> {
-  throw new Error("Wacom workstation authorization is not configured");
-}
 
 type Preflight = {
   contract_id: string;
@@ -190,20 +187,13 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
         <p>Hardware signing remains disabled until identity, consent and secured evidence capture are implemented.</p>
       </div>}
       {showWacomTestPreviewUI && session && (
-        <div className="space-y-2 rounded-2xl border border-dashed p-4">
-          <p className="text-sm font-semibold">Wacom STU-540 — test handwriting preview (inactive)</p>
-          <p className="text-xs text-muted-foreground">
-            Hardware handwriting requires a separately authenticated workstation proof and
-            short-lived backend ticket. This preview cannot sign or update the contract.
-          </p>
-          <WacomSignatureField
-            key={`${check.contract_id}:${check.contract_hash}:${session.session_id}`}
-            fieldId="borrower_signature"
-            sessionKey={session.session_id}
-            disabled
-            authorize={unconfiguredWacomPreviewAuthorization}
-          />
-        </div>
+        <WacomTestAuthorizationPanel
+          key={`${check.contract_id}:${check.contract_hash}:${session.session_id}`}
+          contractId={check.contract_id}
+          contractHash={check.contract_hash}
+          sessionId={session.session_id}
+          eligible={!busy && !sessionStatusError && sessionStatus?.preview_eligible === true}
+        />
       )}
       <ContractSignatureCapture
         key={`${check.contract_id}:${check.contract_hash}`}
