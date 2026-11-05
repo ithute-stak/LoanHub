@@ -168,3 +168,30 @@ def resolve_client(
         "requires_document_consent": True,
         "signature_available_for_form": False,
     }
+
+@router.get("/resolve-officer")
+def resolve_officer(
+    response: Response,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """The authenticated LoanHub session is the sole source of officer identity."""
+    response.headers["Cache-Control"] = "no-store"
+    _enabled()
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
+    if context.company_id is None:
+        raise HTTPException(403, "Tenant company required")
+    rows = db.query(SignatureBridgeImport.id).filter(
+        SignatureBridgeImport.company_id == context.company_id,
+        SignatureBridgeImport.signer_kind == "officer",
+        SignatureBridgeImport.signer_id == context.user.id,
+        SignatureBridgeImport.status == "pending_identity_review",
+    ).all()
+    count = len({row[0] for row in rows})
+    return {
+        "status": "not_found" if count == 0 else "conflict" if count > 1 else "pending_identity_review",
+        "match_count": count,
+        "auto_apply": False,
+        "requires_document_consent": True,
+        "signature_available_for_form": False,
+    }
