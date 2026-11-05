@@ -33,7 +33,22 @@ def upgrade():
         sa.UniqueConstraint("company_id", "source_record_id", name="uq_signature_bridge_company_source"),
     )
     op.create_index("ix_signature_bridge_company_signer", "signature_bridge_imports", ["company_id", "signer_id"])
+    op.create_table(
+        "signature_bridge_phone_aliases",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column("company_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("loan_companies.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("import_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("signature_bridge_imports.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("phone_digest", sa.String(length=64), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_by", sa.String(length=36), nullable=True),
+        sa.Column("updated_by", sa.String(length=36), nullable=True),
+        sa.UniqueConstraint("company_id", "phone_digest", "import_id", name="uq_signature_bridge_alias"),
+    )
+    op.create_index("ix_signature_bridge_alias_lookup", "signature_bridge_phone_aliases", ["company_id", "phone_digest"])
 
 def downgrade():
+    op.drop_index("ix_signature_bridge_alias_lookup", table_name="signature_bridge_phone_aliases")
+    op.drop_table("signature_bridge_phone_aliases")
     op.drop_index("ix_signature_bridge_company_signer", table_name="signature_bridge_imports")
     op.drop_table("signature_bridge_imports")
