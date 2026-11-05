@@ -102,19 +102,19 @@ def import_signature(
         payload_sha256=digest, consent_reference=body.consent_reference,
         phone_aliases_digest=alias_hash, status="pending_identity_review",
     )
-    db.add(row)
-    db.flush()
-    for phone in aliases:
-        phone_digest = hmac.new(
-            digest_key, (str(context.company_id) + "|" + phone).encode("ascii"),
-            hashlib.sha256,
-        ).hexdigest()
-        db.add(SignatureBridgePhoneAlias(
-            company_id=context.company_id,
-            import_id=row.id,
-            phone_digest=phone_digest,
-        ))
     try:
+        db.add(row)
+        db.flush()
+        for phone in aliases:
+            phone_digest = hmac.new(
+                digest_key, (str(context.company_id) + "|" + phone).encode("ascii"),
+                hashlib.sha256,
+            ).hexdigest()
+            db.add(SignatureBridgePhoneAlias(
+                company_id=context.company_id,
+                import_id=row.id,
+                phone_digest=phone_digest,
+            ))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
