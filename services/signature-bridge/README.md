@@ -70,6 +70,52 @@ does not open a network listener, so the existing Wacom diagnostic service
 at `127.0.0.1:8765` is preserved. No external Wacom SDK binaries are checked
 into LoanHub.
 
+## Staging-only official STU sample adapter on Selemela
+
+The Go Wacom connector now includes an **opt-in local CLI**
+`--capture-strokes-json`, implemented using the existing Go SDK pen parser
+and vendor sample launcher. The official STU SDK binaries are **not included**.
+
+On the **test workstation only**, use a current Go build from this feature
+branch and configure the two verified official Wacom sample paths privately:
+
+```sh
+cd services/wacom-connector
+go test ./...
+go build -o loanhub-wacom-connector .
+mkdir -p "$HOME/.config/loanhub-signature-bridge"
+chmod 700 "$HOME/.config/loanhub-signature-bridge"
+# Edit this file with your locally verified Wacom SDK paths:
+# ~/.config/loanhub-signature-bridge/wacom-sdk.json
+chmod 600 "$HOME/.config/loanhub-signature-bridge/wacom-sdk.json"
+```
+
+The private JSON configuration must contain:
+
+```json
+{
+  "sdk_query": "/home/USER/wacom-stu-sdk/sdk-extracted/Linux/x86_64/query",
+  "sdk_pen_sample": "/home/USER/wacom-stu-sdk/sdk-extracted/Linux/x86_64/simpleInterface"
+}
+```
+
+Replace both paths with the executables that were actually verified on the
+workstation. The Go adapter must be run in an interactive terminal with
+`LOANHUB_SIGNATURE_BRIDGE_MODE=staging` and only disposable test strokes.
+Its stdout contains sensitive pen coordinates, and should be consumed
+directly by the encrypted Python bridge, **never logged or pasted into chat**.
+
+To run the integrated local staging test after preparing the SDK config,
+set the desktop user’s mode to staging and pass the absolute Go executable
+path through `bridge.py capture-wacom --sdk-adapter ...`, along with
+verified synthetic signer IDs and explicit local operator confirmation.
+The Python bridge launches Go, captures JSON without writing the pen data
+to log files, validates it, and stores the encrypted result in SQLite.
+
+This feature remains **staging-only and disabled by default**. A successful
+build does not prove actual hardware connectivity or legally valid consent;
+the operator must check physical STU-540 capture before any rollout.
+
 ## Remote synchronization (staging only)
 
 The backend Docker image includes a gated import route at `POST /api/v1/signature-bridge/imports` and an Alembic migration. It accepts identity-claimed captures only into encrypted **quarantine**, not an approved signature registry. It is disabled unless `ENVIRONMENT=staging` and `LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED=true` with a separate Fernet key in `LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY`. Use an isolated staging HTTPS endpoint and a short-lived authenticated operator token; do not use production credentials.
