@@ -75,10 +75,18 @@ def import_signature(
     digest = hashlib.sha256(raw).hexdigest()
     if not hmac.compare_digest(digest, body.capture_sha256):
         raise HTTPException(422, "Capture digest mismatch")
-    aliases = normalized_phone_aliases(body.phone_numbers) if body.phone_numbers else ()
-    cipher = _fernet().encrypt(raw)
-    # No raw phone numbers are stored in this provisional registry.
-    alias_hash = hashlib.sha256("|".join(aliases).encode("ascii")).hexdigest() if aliases else None
+    try:
+        aliases = normalized_phone_aliases(body.phone_numbers) if body.phone_numbers else ()
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid client phone aliases") from exc
+    vault = _fernet()
+    cipher = vault.encrypt(raw)
+    # Tenant-scoped keyed digest avoids offline guessing of stored phone numbers.
+    digest_key = base64.urlsafe_b64decode(os.environ["LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY"])
+    alias_hash = hmac.new(
+        digest_key, (str(context.company_id) + "|" + "|".join(aliases)).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest() if aliases else None
     existing = db.query(SignatureBridgeImport).filter(
         SignatureBridgeImport.company_id == context.company_id,
         SignatureBridgeImport.source_record_id == body.source_record_id,
