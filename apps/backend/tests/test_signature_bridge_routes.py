@@ -106,6 +106,38 @@ def test_duplicate_record_with_different_payload_returns_409(context, enabled):
     assert error.value.status_code == 409
 
 
+
+def test_concurrent_retry_is_accepted_only_for_same_capture(context, enabled):
+    from sqlalchemy.exc import IntegrityError
+    from services.signature_bridge_matching import normalized_phone_aliases
+    import hmac
+    import os
+    record = payload()
+    key = base64.urlsafe_b64decode(os.environ["LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY"])
+    aliases = normalized_phone_aliases(record.phone_numbers)
+    alias_hash = hmac.new(key, (str(context.company_id) + "|" + "|".join(aliases)).encode(), hashlib.sha256).hexdigest()
+    existing = SimpleNamespace(payload_sha256=record.capture_sha256, signer_id=record.verified_signer_id, signer_kind=record.signer_kind, consent_reference=record.consent_reference, phone_aliases_digest=alias_hash)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.one_or_none.side_effect = [None, existing]
+    db.flush.side_effect = IntegrityError("INSERT", {}, RuntimeError("unique violation"))
+    result = api.import_signature(record, Response(), db, context)
+    assert result["duplicate"] is True
+    assert result["usable_for_signing"] is False
+    db.rollback.assert_called_once()
+
+
+def test_concurrent_conflicting_retry_remains_409(context, enabled):
+    from sqlalchemy.exc import IntegrityError
+    record = payload()
+    existing = SimpleNamespace(payload_sha256="0" * 64, signer_id=record.verified_signer_id, signer_kind=record.signer_kind, consent_reference=record.consent_reference, phone_aliases_digest="0" * 64)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.one_or_none.side_effect = [None, existing]
+    db.flush.side_effect = IntegrityError("INSERT", {}, RuntimeError("unique violation"))
+    with pytest.raises(HTTPException) as error:
+        api.import_signature(record, Response(), db, context)
+    assert error.value.status_code == 409
+    db.rollback.assert_called_once()
+
 def test_client_lookup_detects_two_signature_records(context, enabled):
     db = MagicMock()
     db.query.return_value.join.return_value.filter.return_value.distinct.return_value.all.return_value = [
