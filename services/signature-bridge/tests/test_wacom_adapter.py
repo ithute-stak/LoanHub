@@ -28,6 +28,8 @@ class WacomAdapterTests(unittest.TestCase):
             phones="58123456 / 63123456",
             consent_reference="staging-example-consent",
         )
+        self.env = patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"})
+        self.env.start()
         self.sample = json.dumps({
             "format": "loanhub-pen-strokes-v1",
             "strokes": [[
@@ -37,13 +39,14 @@ class WacomAdapterTests(unittest.TestCase):
         }).encode()
 
     def tearDown(self):
+        self.env.stop()
         bridge.HOME = self.original
         self.temp.cleanup()
 
     def test_adapter_receipt_vaulted_and_queued(self):
-        class Result:
-            stdout = self.sample
-        with patch.object(bridge.subprocess, "run", return_value=Result()) as run:
+        def write_strokes(*argv, **kwargs):
+            kwargs["stdout"].write(self.sample)
+        with patch.object(bridge.subprocess, "run", side_effect=write_strokes) as run:
             with contextlib.redirect_stdout(io.StringIO()):
                 bridge.capture_wacom(self.args)
         run.assert_called_once()
@@ -69,9 +72,9 @@ class WacomAdapterTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_rejects_invalid_hardware_output_without_storage(self):
-        class Result:
-            stdout = b"not-json"
-        with patch.object(bridge.subprocess, "run", return_value=Result()):
+        def write_invalid(*argv, **kwargs):
+            kwargs["stdout"].write(b"not-json")
+        with patch.object(bridge.subprocess, "run", side_effect=write_invalid):
             with self.assertRaises(ValueError):
                 bridge.capture_wacom(self.args)
         self.assertFalse((bridge.HOME / "bridge.sqlite3").exists())
@@ -79,6 +82,27 @@ class WacomAdapterTests(unittest.TestCase):
     def test_expired_adapter_never_creates_record(self):
         with patch.object(bridge.subprocess, "run",
                           side_effect=bridge.subprocess.TimeoutExpired("test", 35)):
+            with self.assertRaises(ValueError):
+                bridge.capture_wacom(self.args)
+        self.assertFalse((bridge.HOME / "bridge.sqlite3").exists())
+
+    def test_refuses_capture_outside_staging(self):
+        with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "production"}):
+            with patch.object(bridge.subprocess, "run") as run:
+                with self.assertRaises(ValueError):
+                    bridge.capture_wacom(self.args)
+        run.assert_not_called()
+
+    def test_concurrent_capture_lock_fails_closed(self):
+        with bridge.exclusive_capture_lock():
+            with self.assertRaises(ValueError):
+                with bridge.exclusive_capture_lock():
+                    pass
+
+    def test_unbounded_output_rejected(self):
+        def flood(*argv, **kwargs):
+            kwargs["stdout"].write(b"x" * 140000)
+        with patch.object(bridge.subprocess, "run", side_effect=flood):
             with self.assertRaises(ValueError):
                 bridge.capture_wacom(self.args)
         self.assertFalse((bridge.HOME / "bridge.sqlite3").exists())
