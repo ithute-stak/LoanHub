@@ -6,6 +6,7 @@ package main
 import (
     "context"
     "errors"
+    "sync"
     "time"
 )
 
@@ -73,7 +74,10 @@ func runEphemeralAuthorizedPreview(
     // and backend session must remain valid. A future adapter should offer a
     // push-revocation/cancel signal; this polling is not instant revocation.
     lastCheck := time.Time{}
+    var checkMu sync.Mutex
     checkActive := func(force bool) error {
+        checkMu.Lock()
+        defer checkMu.Unlock()
         if err := bounded.Err(); err != nil { return err }
         if !force && !lastCheck.IsZero() && time.Since(lastCheck) < 500*time.Millisecond {
             return nil
@@ -92,6 +96,24 @@ func runEphemeralAuthorizedPreview(
         return nil
     }
     if err := checkActive(true); err != nil { return err }
+    // Poll revocation even when the pen is idle and the SDK emits no
+    // reports. A failed check cancels the SDK process and prevents delivery.
+    watchdogDone := make(chan struct{})
+    watchdogStopped := make(chan struct{})
+    go func() {
+        defer close(watchdogStopped)
+        ticker := time.NewTicker(250 * time.Millisecond)
+        defer ticker.Stop()
+        for {
+            select {
+            case <-watchdogDone: return
+            case <-bounded.Done(): return
+            case <-ticker.C:
+                if checkActive(true) != nil { cancel(); return }
+            }
+        }
+    }()
+    defer func() { close(watchdogDone); <-watchdogStopped }()
     lastLiveFrame := time.Time{}
     err = config.Source.CollectPreview(bounded, func(report penSample) error {
         if err := checkActive(false); err != nil { return err }
