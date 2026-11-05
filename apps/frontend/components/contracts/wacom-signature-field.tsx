@@ -28,12 +28,14 @@ export function WacomSignatureField({
   const authorizationEpoch = useRef(0);
   const approvalPending = useRef(false);
   const currentBinding = useRef({ fieldId, sessionKey, disabled });
-  currentBinding.current = { fieldId, sessionKey, disabled };
+  const initialized = useRef(false);
 
   useEffect(() => {
+    currentBinding.current = { fieldId, sessionKey, disabled };
     authorizationEpoch.current += 1;
     approvalPending.current = false;
-    cancel();
+    if (initialized.current) cancel();
+    initialized.current = true;
     setFocused(false);
     setRequesting(false);
     setMessage("");
