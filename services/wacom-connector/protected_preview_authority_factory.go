@@ -23,7 +23,7 @@ func newProtectedWacomPreviewAuthority(
  cfg wacomProtectedPreviewConfig,
 )(verifiedWacomWebSocketAuthority,error){
  denied:=errors.New("Wacom protected preview dependencies unavailable")
- if cfg.Backend==nil||cfg.Backend.client==nil||
+ if !cfg.Backend.securelyConfigured()||
   !validUUID(cfg.WorkstationID)||
   !filepath.IsAbs(cfg.SDKExecutable)||
   filepath.Clean(cfg.SDKExecutable)!=cfg.SDKExecutable||
