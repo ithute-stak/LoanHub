@@ -30,7 +30,6 @@ type backendWacomPreviewSnapshot struct {
  WorkstationID string `json:"workstation_id"`
  SessionKey string `json:"session_key"`
  FieldID string `json:"field_id"`
- SDKExecutable string `json:"sdk_executable"`
 }
 
 // HardenedWacomIntrospectionClient only fetches backend-asserted scope.
@@ -103,7 +102,7 @@ func(c *hardenedWacomIntrospectionClient) FetchPreviewSnapshot(
  if snapshot.CompanyID==""||snapshot.OperatorID==""||snapshot.ContractID==""||
   snapshot.SessionID==""||snapshot.WorkstationID==""||
   !isLowerHexSHA256(snapshot.ContractHash)||snapshot.SessionKey==""||
-  snapshot.FieldID==""||snapshot.SDKExecutable==""{
+  snapshot.FieldID==""{
   return backendWacomPreviewSnapshot{},denied
  }
  return snapshot,nil
