@@ -294,7 +294,10 @@ def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
                 )
                 with opener.open(req, timeout=15) as response:
                     result = json.load(response)
-                    if response.status != 202 or result.get("status") != "pending_identity_review" or result.get("source_record_id") != signature_id:
+                    if (response.status != 202 or result.get("status") != "pending_identity_review"
+                            or result.get("source_record_id") != signature_id
+                            or result.get("company_id") != company_id
+                            or result.get("usable_for_signing") is not False):
                         raise ValueError("Unexpected remote acknowledgement; retaining queued record")
                 db.execute("UPDATE sync_outbox SET status='acknowledged' WHERE signature_id=?", (signature_id,))
                 db.execute("UPDATE signatures SET status='pending_identity_review' WHERE signature_id=?", (signature_id,))
