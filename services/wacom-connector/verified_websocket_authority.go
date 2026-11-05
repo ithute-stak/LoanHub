@@ -7,6 +7,8 @@ package main
 import (
  "context"
  "errors"
+ "os"
+ "path/filepath"
  "time"
 )
 
@@ -28,6 +30,9 @@ type backendWacomPreviewResolver interface {
 
 type verifiedWacomWebSocketAuthority struct {
  Resolver backendWacomPreviewResolver
+ // Absolute SDK path fixed by local workstation configuration. Never accept
+ // a binary path selected by a backend response or by the browser.
+ TrustedSDKExecutable string
 }
 
 func(a verifiedWacomWebSocketAuthority) AuthorizeWebSocketPreview(
@@ -37,6 +42,18 @@ func(a verifiedWacomWebSocketAuthority) AuthorizeWebSocketPreview(
  if ctx==nil||ctx.Err()!=nil||a.Resolver==nil||len(ticket)<64||len(ticket)>3500{return approvedWacomWebSocketPreview{},denied}
  state,err:=a.Resolver.ResolveAuthorizedPreview(ctx,ticket)
  if err!=nil||ctx.Err()!=nil{return approvedWacomWebSocketPreview{},denied}
+ if !filepath.IsAbs(a.TrustedSDKExecutable)||
+  !safeSamplePath.MatchString(a.TrustedSDKExecutable)||
+  state.SDKExecutable!=a.TrustedSDKExecutable||
+  !filepath.IsAbs(state.SDKExecutable)||
+  filepath.Clean(state.SDKExecutable)!=state.SDKExecutable||
+  !safeSamplePath.MatchString(state.SDKExecutable){
+  return approvedWacomWebSocketPreview{},denied
+ }
+ info,statErr:=os.Stat(a.TrustedSDKExecutable)
+ if statErr!=nil||!info.Mode().IsRegular()||info.Mode().Perm()&0111==0{
+  return approvedWacomWebSocketPreview{},denied
+ }
  if state.SessionKey==""||len(state.SessionKey)>256||
   state.FieldID==""||len(state.FieldID)>128||
   !state.Calibration.valid()||state.SDKExecutable==""||
@@ -59,7 +76,7 @@ func(a verifiedWacomWebSocketAuthority) AuthorizeWebSocketPreview(
   Scope:state.Scope,FieldID:state.FieldID,SessionKey:state.SessionKey,
   Config:authorizedPreviewConfig{
    Admission:state.Admission,Calibration:state.Calibration,
-   Source:wacomSDKPreviewSource{Executable:state.SDKExecutable},
+   Source:wacomSDKPreviewSource{Executable:a.TrustedSDKExecutable},
    MaxDuration:12*time.Second,
   },
  },nil
