@@ -155,6 +155,39 @@ def capture_strokes(args: argparse.Namespace) -> None:
     register(args, capture_bytes=envelope.canonical)
 
 
+def capture_wacom(args: argparse.Namespace) -> None:
+    """Run a separately installed approved SDK adapter once, then vault strokes.
+
+    The adapter protocol is JSON stdout as defined by capture_protocol.py.
+    The official Wacom SDK is not redistributed or implicitly invoked.
+    """
+    if not args.consent_confirmed or not args.identity_verified:
+        raise ValueError("Signer identity and explicit local capture consent required")
+    executable = Path(args.sdk_adapter)
+    if not executable.is_absolute():
+        raise ValueError("Wacom SDK adapter path must be absolute")
+    info = executable.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+        raise ValueError("Wacom adapter must be a regular file owned by root or desktop user")
+    if info.st_mode & 0o022 or not info.st_mode & 0o111:
+        raise ValueError("Wacom adapter must be executable and not group/world-writable")
+    # Capture adapter must not be provided via an HTTP request or external host.
+    try:
+        result = subprocess.run(
+            [str(executable), "--capture-strokes-json"],
+            capture_output=True, timeout=35, check=True, env={
+                "HOME": str(Path.home()),
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+            },
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+        # Vendor stderr may contain sensitive data; do not print it.
+        raise ValueError("Wacom capture adapter unavailable or timed out") from error
+    envelope = validate_strokes(result.stdout)
+    register(args, capture_bytes=envelope.canonical)
+
+
 def resolve(args: argparse.Namespace) -> None:
     if not args.company_id.strip():
         raise ValueError("Company ID required")
@@ -322,6 +355,15 @@ def main() -> int:
     p.add_argument("--consent-reference", required=True)
     p.add_argument("--consent-confirmed", action="store_true")
     p.add_argument("--identity-verified", action="store_true")
+    p = sub.add_parser("capture-wacom")
+    p.add_argument("--sdk-adapter", required=True)
+    p.add_argument("--company-id", required=True)
+    p.add_argument("--signer-kind", choices=("client", "officer"), required=True)
+    p.add_argument("--verified-signer-id", required=True)
+    p.add_argument("--phones", default="")
+    p.add_argument("--consent-reference", required=True)
+    p.add_argument("--consent-confirmed", action="store_true")
+    p.add_argument("--identity-verified", action="store_true")
     p = sub.add_parser("resolve")
     p.add_argument("--company-id", required=True)
     p.add_argument("--signer-kind", choices=("client","officer"), default="client")
@@ -331,7 +373,7 @@ def main() -> int:
     s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"resolve":resolve,"sync":sync}[args.command](args)
+        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
