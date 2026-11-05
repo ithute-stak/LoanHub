@@ -30,6 +30,8 @@ def setup_proof(monkeypatch):
     )
     ctx = SimpleNamespace(company_id=company, user=SimpleNamespace(id=operator))
     monkeypatch.setattr(route, "_operator_session", lambda *a, **k: (object(), object()))
+    monkeypatch.setattr(route, "load_wacom_preview_ticket_signer",
+                        lambda: (Ed25519PrivateKey.generate(), "test-backend"))
     monkeypatch.setattr(route, "_active_enrollment", lambda *a, **k: registry)
     class Query:
         def filter(self, *args):

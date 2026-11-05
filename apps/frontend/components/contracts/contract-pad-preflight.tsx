@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ContractSignatureCapture } from "@/components/contracts/contract-signature-capture";
+import { WacomTestAuthorizationPanel } from "@/components/contracts/wacom-test-authorization-panel";
+
+// An opt-in UI affordance only. Hardware capture remains disabled until
+// the separate enrolled-workstation challenge signer and backend approval
+// workflow can supply the exact field/session-bound preview ticket.
+const showWacomTestPreviewUI = process.env.NEXT_PUBLIC_LOANHUB_WACOM_PREVIEW_UI === "true";
+
 
 type Preflight = {
   contract_id: string;
@@ -179,6 +186,15 @@ export function ContractPadPreflight({ contractId }: { contractId: string }) {
               : <p>Session remains eligible for test preview only. Wacom workstation capture is not authorized.</p>}
         <p>Hardware signing remains disabled until identity, consent and secured evidence capture are implemented.</p>
       </div>}
+      {showWacomTestPreviewUI && session && (
+        <WacomTestAuthorizationPanel
+          key={`${check.contract_id}:${check.contract_hash}:${session.session_id}`}
+          contractId={check.contract_id}
+          contractHash={check.contract_hash}
+          sessionId={session.session_id}
+          eligible={!busy && !sessionStatusError && sessionStatus?.preview_eligible === true}
+        />
+      )}
       <ContractSignatureCapture
         key={`${check.contract_id}:${check.contract_hash}`}
         contractId={check.contract_id}

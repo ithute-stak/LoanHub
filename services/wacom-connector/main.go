@@ -119,7 +119,12 @@ func serve() error {
 
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
+    proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
+    proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    stagingPreflightPath := flag.String("staging-preflight", "", "Offline check for protected Wacom staging prerequisites (never captures handwriting)")
+    stagingPreviewPath := flag.String("protected-preview-staging", "", "Isolated protected Wacom staging route test at 127.0.0.1:8766; does not enable browser capture")
+    proofTestDirectory := flag.String("preview-proof-test", "", "Opt-in local proof-only test listener, requires protected enrolled workstation directory; no SDK capture")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
     calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
@@ -128,6 +133,85 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *stagingPreviewPath != "" {
+        if *stagingPreflightPath != "" || *proofSession != "" || *proofDirectory != "" ||
+            *proofTestDirectory != "" || *diagnostics || *initWorkstation != "" ||
+            *calibrationTest || *calibratedStrokeTest || *penTest || *strokeTest ||
+            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--protected-preview-staging requires only a protected config file")
+            os.Exit(2)
+        }
+        log.Println("Wacom isolated staging route test on 127.0.0.1:8766; browser capture disabled; production diagnostics unchanged")
+        if err := serveProtectedWacomStagingPreview(*stagingPreviewPath); err != nil {
+            log.Printf("Wacom staging routes unavailable: %v",err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *stagingPreflightPath != "" {
+        if *stagingPreviewPath != "" || *proofSession != "" || *proofDirectory != "" || *proofTestDirectory != "" ||
+            *diagnostics || *initWorkstation != "" || *calibrationTest ||
+            *calibratedStrokeTest || *penTest || *strokeTest ||
+            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--staging-preflight requires only a protected configuration file")
+            os.Exit(2)
+        }
+        cfg, err := loadWacomStagingPreflightConfig(*stagingPreflightPath)
+        if err != nil {
+            log.Println("Wacom staging preflight configuration unavailable")
+            os.Exit(1)
+        }
+        if err := checkLocalWacomStagingReadiness(cfg); err != nil {
+            log.Println("Wacom staging preflight FAILED; capture remains disabled")
+            os.Exit(1)
+        }
+        log.Println("Wacom local staging preflight PASSED; backend TLS handshake, server authorization and physical hardware streaming remain UNVERIFIED")
+        return
+    }
+    if *proofTestDirectory != "" {
+        if *proofSession != "" || *proofDirectory != "" || *diagnostics ||
+            *initWorkstation != "" || *calibrationTest || *calibratedStrokeTest ||
+            *penTest || *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--preview-proof-test requires an enrolled directory and no other mode")
+            os.Exit(2)
+        }
+        log.Println("Wacom explicit local PROOF-ONLY test mode: no SDK capture, no WebSocket, no contract signing")
+        if err := serveLocalWacomProofTestOnly(*proofTestDirectory); err != nil {
+            log.Printf("Wacom proof-only test server unavailable: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *proofDirectory != "" {
+        if *proofSession == "" || *diagnostics || *calibrationTest || *calibratedStrokeTest ||
+            *penTest || *strokeTest || *initWorkstation != "" || *sdkEnumerator != "" ||
+            *sdkQuery != "" || *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--sign-workstation-challenge requires --proof-session-id and no other modes")
+            os.Exit(2)
+        }
+        trustedKeys, keyErr := loadTrustedBackendPreviewKeys(*proofDirectory)
+        if keyErr != nil {
+            log.Println("Wacom trusted backend public key unavailable")
+            os.Exit(1)
+        }
+        proof, err := signBackendWacomChallenge(*proofDirectory, *proofSession, os.Stdin, time.Now().UTC(), trustedKeys)
+        if err != nil {
+            log.Println("Wacom workstation challenge proof unavailable")
+            os.Exit(1)
+        }
+        if err := json.NewEncoder(os.Stdout).Encode(proof); err != nil {
+            log.Println("Wacom workstation proof output unavailable")
+            os.Exit(1)
+        }
+        return
+    }
+    if *proofSession != "" {
+        log.Println("--proof-session-id is only available with --sign-workstation-challenge")
+        os.Exit(2)
+    }
     if *initWorkstation != "" {
         if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
             *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||

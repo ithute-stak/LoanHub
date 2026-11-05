@@ -29,6 +29,7 @@ from core.response_cache import (
     response_cache,
 )
 from core.security_middleware import SecurityControlMiddleware
+from core.wacom_mtls_identity import WacomVerifiedMTLSIdentityMiddleware
 from core.websocket_manager import manager
 from core.route_inspection import validate_http_route_contracts
 from database.config.config import settings
@@ -170,6 +171,7 @@ app.add_middleware(
     ],
     max_age=3600,
 )
+app.add_middleware(WacomVerifiedMTLSIdentityMiddleware)
 app.include_router(api_router, prefix="/api/v1")
 
 

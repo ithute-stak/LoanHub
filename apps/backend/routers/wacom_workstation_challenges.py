@@ -32,6 +32,8 @@ from database.models.wacom_workstation import (
 )
 from database.session import get_db
 from services.wacom_challenge_persistence import consume_verified_wacom_challenge
+from services.wacom_challenge_envelope import sign_challenge_envelope
+from services.wacom_preview_signing_keys import load_wacom_preview_ticket_signer
 from services.wacom_session_revalidation import current_pad_preview_eligibility
 from services.wacom_workstation_proof import (
     WacomWorkstationChallenge,
@@ -134,6 +136,9 @@ def create_wacom_workstation_challenge(
 ):
     """Create an enrolled-workstation challenge, NOT a capture permission."""
     response.headers["Cache-Control"] = "no-store"
+    # Require provisioned backend signer before emitting challenges intended
+    # for automatic localhost key use. Disabled by default.
+    signer, key_id = load_wacom_preview_ticket_signer()
     _operator_session(db, context=context, contract_id=contract_id, session_id=session_id)
     enrollment = _active_enrollment(
         db, context=context, workstation_id=payload.workstation_id,
@@ -168,7 +173,15 @@ def create_wacom_workstation_challenge(
     )
     db.add(row)
     db.commit()
+    signature_envelope = sign_challenge_envelope(
+        signer=signer, key_id=key_id,
+        challenge_id=challenge_id, workstation_id=payload.workstation_id,
+        session_id=session_id,
+        nonce=base64.urlsafe_b64encode(nonce).decode("ascii").rstrip("="),
+        expires_at=expires_at,
+    )
     return {
+        **signature_envelope,
         "challenge_id": str(challenge_id),
         "workstation_id": str(payload.workstation_id),
         "session_id": str(session_id),
