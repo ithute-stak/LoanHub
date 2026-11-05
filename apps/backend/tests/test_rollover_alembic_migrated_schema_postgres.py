@@ -21,6 +21,8 @@ EXPECTED_TABLES = (
     "repayment_installments",
     "loan_rollover_transfers",
     "audit_logs",
+    "signature_bridge_imports",
+    "signature_bridge_phone_aliases",
 )
 
 
@@ -71,6 +73,21 @@ def test_full_migrations_provide_rollover_financial_schema():
                     assert inspector.get_foreign_keys(table), f"Missing migrated foreign keys: {table}"
                 child_columns = {c["name"] for c in inspector.get_columns("client_company_loan")}
                 assert {"id", "company_id", "parent_loan_id", "folio_number", "balance"} <= child_columns
+                # The offline Signature Bridge must be part of the normal
+                # image migration graph, with tenant-scoped lookup indexes and FKs.
+                bridge_columns = {col["name"] for col in inspector.get_columns("signature_bridge_imports")}
+                assert {"id", "company_id", "source_record_id", "signer_id",
+                        "payload_ciphertext", "payload_sha256", "status"} <= bridge_columns
+                alias_columns = {col["name"] for col in inspector.get_columns("signature_bridge_phone_aliases")}
+                assert {"company_id", "import_id", "phone_digest"} <= alias_columns
+                for table in ("signature_bridge_imports", "signature_bridge_phone_aliases"):
+                    assert inspector.get_foreign_keys(table), f"Missing foreign keys: {table}"
+                import_indexes = {idx["name"] for idx in inspector.get_indexes("signature_bridge_imports")}
+                alias_indexes = {idx["name"] for idx in inspector.get_indexes("signature_bridge_phone_aliases")}
+                assert "ix_signature_bridge_company_signer" in import_indexes
+                assert "ix_signature_bridge_alias_lookup" in alias_indexes
+                unique_constraints = {item["name"] for item in inspector.get_unique_constraints("signature_bridge_imports")}
+                assert "uq_signature_bridge_company_source" in unique_constraints
                 transfer_columns = {c["name"] for c in inspector.get_columns("loan_rollover_transfers")}
                 assert {"parent_loan_id", "child_loan_id", "transfer_amount",
                         "principal_component", "interest_component"} <= transfer_columns
