@@ -69,7 +69,7 @@ func signBackendWacomChallenge(directory, expectedSessionID string, input io.Rea
  if !ok||len(backendKey)!=ed25519.PublicKeySize{return workstationProofSubmission{},denied}
  backendSignature,err:=base64.StdEncoding.Strict().DecodeString(challenge.BackendSignatureBase64)
  if err!=nil||len(backendSignature)!=ed25519.SignatureSize{return workstationProofSubmission{},denied}
- envelope:=[]byte(fmt.Sprintf("LOANHUB-WACOM-CHALLENGE-ENVELOPE-V1\\n%s\\n%s\\n%s\\n%s\\n%d\\n",
+ envelope:=[]byte(fmt.Sprintf("LOANHUB-WACOM-CHALLENGE-ENVELOPE-V1\n%s\n%s\n%s\n%s\n%d\n",
   challenge.ChallengeID,challenge.WorkstationID,challenge.SessionID,
   challenge.Nonce,expires.Unix()))
  if !ed25519.Verify(backendKey,envelope,backendSignature){return workstationProofSubmission{},denied}
