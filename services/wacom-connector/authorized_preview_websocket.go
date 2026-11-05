@@ -5,6 +5,7 @@ package main
 // trusted backend-backed authorizer is wired by the composition root.
 import (
  "context"
+ "encoding/json"
  "errors"
  "net/http"
  "strings"
@@ -16,6 +17,7 @@ import (
 
 const previewWebSocketPath="/v1/preview/stream"
 const maxWacomWSMessageBytes=4096
+const maxWacomWSOutboundBytes=256*1024
 
 // BackendSessionKey is a non-secret UI binding, NOT a credential.
 // Scope and field are derived from verified backend state, never the request.
@@ -75,8 +77,11 @@ type oneShotPreviewWSSink struct {
 func(s *oneShotPreviewWSSink) write(frame wsPreviewFrame)error{
  if err:=s.ctx.Err();err!=nil{return err}
  s.writeMu.Lock();defer s.writeMu.Unlock()
+ payload,err:=json.Marshal(frame)
+ if err!=nil{return err}
+ if len(payload)>maxWacomWSOutboundBytes{return errors.New("Wacom preview frame exceeds browser limit")}
  if err:=s.conn.SetWriteDeadline(time.Now().Add(2*time.Second));err!=nil{return err}
- return s.conn.WriteJSON(frame)
+ return s.conn.WriteMessage(websocket.TextMessage,payload)
 }
 func(s *oneShotPreviewWSSink) DeliverLivePreview(ctx context.Context, _ previewTicketScope, strokes [][]previewPoint)error {
  if err:=ctx.Err();err!=nil{return err}
