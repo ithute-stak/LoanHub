@@ -7,6 +7,9 @@ Only verified signer links may be imported; phone lookup is advisory.
 from __future__ import annotations
 
 import argparse
+import urllib.request
+import urllib.error
+from uuid import UUID, uuid4
 import base64
 import hashlib
 import hmac
@@ -77,7 +80,8 @@ def connection() -> sqlite3.Connection:
         encrypted_signature BLOB NOT NULL,
         consent_reference TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending_sync',
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        phone_aliases_ciphertext BLOB
       );
       CREATE TABLE IF NOT EXISTS phone_links (
         company_id TEXT NOT NULL,
@@ -91,6 +95,8 @@ def connection() -> sqlite3.Connection:
         status TEXT NOT NULL DEFAULT 'queued'
       );
     """)
+    if 'phone_aliases_ciphertext' not in {col[1] for col in db.execute('PRAGMA table_info(signatures)')}:
+        db.execute('ALTER TABLE signatures ADD COLUMN phone_aliases_ciphertext BLOB')
     db.commit()
     if dbpath.exists():
         os.chmod(dbpath, 0o600)
@@ -113,13 +119,18 @@ def register(args: argparse.Namespace) -> None:
     if not raw or len(raw) > 2_000_000:
         raise ValueError("Capture file must contain 1 to 2,000,000 bytes")
     # Capture-file contents must originate from trusted capture and signer verification.
-    signature_id = secrets.token_hex(16)
+    signature_id = str(uuid4())
     vault_key = key()
     encrypted = Fernet(vault_key).encrypt(raw)
     with connection() as db:
-        db.execute("INSERT INTO signatures VALUES (?, ?, ?, ?, ?, ?, 'pending_sync', ?)",
+        db.execute("""INSERT INTO signatures (
+            signature_id, company_id, signer_kind, verified_signer_id,
+            encrypted_signature, consent_reference, status, created_at,
+            phone_aliases_ciphertext
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending_sync', ?, ?)""",
                    (signature_id, args.company_id, args.signer_kind,
-                    args.verified_signer_id, encrypted, args.consent_reference, int(time.time())))
+                    args.verified_signer_id, encrypted, args.consent_reference,
+                    int(time.time()), Fernet(vault_key).encrypt("/".join(phones).encode()) if phones else None))
         db.executemany("INSERT INTO phone_links VALUES (?, ?, ?)",
                        [(args.company_id, phone_hash(p, vault_key), signature_id) for p in phones])
         db.execute("INSERT INTO sync_outbox(signature_id) VALUES (?)", (signature_id,))
@@ -156,6 +167,59 @@ def resolve(args: argparse.Namespace) -> None:
     print(json.dumps({"status":status, "match_count":len(ids),
                       "signature_ids":ids if status == "match" else [],
                       "auto_apply":False, "requires_document_consent":True}))
+
+def sync(args: argparse.Namespace) -> None:
+    """Explicit supervised sync; never caches an access token locally."""
+    url = args.url
+    if not url.startswith("https://") or "@" in url.split("/", 3)[2]:
+        raise ValueError("Remote synchronization requires an HTTPS URL without embedded credentials")
+    if not url.rstrip("/").endswith("/api/v1/signature-bridge/imports"):
+        raise ValueError("Unexpected synchronization endpoint")
+    token = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN", "")
+    if not token or any(c.isspace() for c in token):
+        raise ValueError("Provide a staging-only bearer token using LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN")
+    vault_key = key()
+    sent = 0
+    with connection() as db:
+        rows = db.execute("""SELECT s.signature_id, s.company_id, s.signer_kind,
+            s.verified_signer_id, s.encrypted_signature, s.consent_reference, s.phone_aliases_ciphertext
+            FROM signatures s JOIN sync_outbox o ON o.signature_id=s.signature_id
+            WHERE o.status='queued' ORDER BY s.created_at ASC LIMIT 25""").fetchall()
+        for signature_id, company_id, kind, signer_id, encrypted, consent, aliases in rows:
+            try:
+                raw = Fernet(vault_key).decrypt(encrypted)
+                if len(raw) > 128_000:
+                    raise ValueError("Capture too large for staging API; record remains queued")
+                phone_numbers = Fernet(vault_key).decrypt(aliases).decode() if aliases else None
+                payload = {
+                    "source_record_id": str(UUID(signature_id)),
+                    "signer_kind": kind,
+                    "verified_signer_id": str(UUID(signer_id)),
+                    "consent_reference": consent,
+                    "phone_numbers": phone_numbers,
+                    "capture_base64": base64.b64encode(raw).decode(),
+                    "capture_sha256": hashlib.sha256(raw).hexdigest()
+                }
+                req = urllib.request.Request(
+                    url, method="POST", data=json.dumps(payload).encode(),
+                    headers={"Authorization": "Bearer " + token,
+                             "Content-Type": "application/json",
+                             "X-Company-ID": str(UUID(company_id))}
+                )
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    result = json.load(response)
+                    if response.status != 202 or result.get("status") != "pending_identity_review" or result.get("source_record_id") != signature_id:
+                        raise ValueError("Unexpected remote acknowledgement; retaining queued record")
+                db.execute("UPDATE sync_outbox SET status='acknowledged' WHERE signature_id=?", (signature_id,))
+                db.execute("UPDATE signatures SET status='pending_identity_review' WHERE signature_id=?", (signature_id,))
+                db.commit()
+                sent += 1
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                db.execute("UPDATE sync_outbox SET retry_count=retry_count+1 WHERE signature_id=?", (signature_id,))
+                db.commit()
+                print(f"Sync stopped after {sent} acknowledgements; queued record retained: {type(exc).__name__}", file=sys.stderr)
+                return
+    print(json.dumps({"acknowledged":sent,"usable_for_signing":False}))
 
 def status(_args: argparse.Namespace) -> None:
     with connection() as db:
@@ -194,9 +258,11 @@ def main() -> int:
     p.add_argument("--signer-kind", choices=("client","officer"), default="client")
     p.add_argument("--verified-signer-id")
     p.add_argument("--phones", default="")
+    s = sub.add_parser('sync')
+    s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"register":register,"resolve":resolve}[args.command](args)
+        {"serve":serve,"status":status,"register":register,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
