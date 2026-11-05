@@ -87,14 +87,31 @@ def import_signature(
         digest_key, (str(context.company_id) + "|" + "|".join(aliases)).encode("utf-8"),
         hashlib.sha256,
     ).hexdigest() if aliases else None
-    existing = db.query(SignatureBridgeImport).filter(
-        SignatureBridgeImport.company_id == context.company_id,
-        SignatureBridgeImport.source_record_id == body.source_record_id,
-    ).one_or_none()
-    if existing is not None:
-        if existing.payload_sha256 != digest or existing.signer_id != body.verified_signer_id or existing.signer_kind != body.signer_kind or existing.consent_reference != body.consent_reference or existing.phone_aliases_digest != alias_hash:
+    def _existing_record():
+        return db.query(SignatureBridgeImport).filter(
+            SignatureBridgeImport.company_id == context.company_id,
+            SignatureBridgeImport.source_record_id == body.source_record_id,
+        ).one_or_none()
+
+    def _duplicate_or_conflict(existing):
+        if (existing.payload_sha256 != digest
+                or existing.signer_id != body.verified_signer_id
+                or existing.signer_kind != body.signer_kind
+                or existing.consent_reference != body.consent_reference
+                or existing.phone_aliases_digest != alias_hash):
             raise HTTPException(409, "Conflicting retry for existing source record")
-        return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"duplicate":True,"usable_for_signing":False}
+        # The caller supplied a claimed identity, not an identity attestation.
+        # No stored record is authorized for form use.
+        return {
+            "status": "pending_identity_review",
+            "source_record_id": str(body.source_record_id),
+            "duplicate": True,
+            "usable_for_signing": False,
+        }
+
+    existing = _existing_record()
+    if existing is not None:
+        return _duplicate_or_conflict(existing)
     row = SignatureBridgeImport(
         company_id=context.company_id, source_record_id=body.source_record_id,
         signer_kind=body.signer_kind, signer_id=body.verified_signer_id,
@@ -118,7 +135,13 @@ def import_signature(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(409, "Concurrent import detected; retry with same record ID") from exc
+        # A concurrent writer may have committed an identical record while this
+        # request was inserting. Re-read after rollback and acknowledge only if
+        # all identity claims, consent references and digests are unchanged.
+        race_winner = _existing_record()
+        if race_winner is not None:
+            return _duplicate_or_conflict(race_winner)
+        raise HTTPException(409, "Import integrity conflict; record not acknowledged") from exc
     return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"duplicate":False,"usable_for_signing":False}
 
 class ClientLookupRequest(BaseModel):
