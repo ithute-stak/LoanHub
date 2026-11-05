@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from core.access_control import LENDING_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.session import get_db
-from database.models.signature_bridge import SignatureBridgeImport
+from database.models.signature_bridge import SignatureBridgeImport, SignatureBridgePhoneAlias
 from services.signature_bridge_matching import normalized_phone_aliases
 
 router = APIRouter(prefix="/signature-bridge", tags=["Signature Bridge (staging only)"])
@@ -103,9 +103,68 @@ def import_signature(
         phone_aliases_digest=alias_hash, status="pending_identity_review",
     )
     db.add(row)
+    db.flush()
+    for phone in aliases:
+        phone_digest = hmac.new(
+            digest_key, (str(context.company_id) + "|" + phone).encode("ascii"),
+            hashlib.sha256,
+        ).hexdigest()
+        db.add(SignatureBridgePhoneAlias(
+            company_id=context.company_id,
+            import_id=row.id,
+            phone_digest=phone_digest,
+        ))
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, "Concurrent import detected; retry with same record ID") from exc
     return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"duplicate":False,"usable_for_signing":False}
+
+class ClientLookupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    phones: str = Field(min_length=8, max_length=180)
+
+@router.post("/resolve-client")
+def resolve_client(
+    body: ClientLookupRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Return advisory record counts only, never signature bytes or signing rights."""
+    response.headers["Cache-Control"] = "no-store"
+    _enabled()
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
+    if context.company_id is None:
+        raise HTTPException(403, "Tenant company required")
+    try:
+        phones = normalized_phone_aliases(body.phones)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid client phone aliases") from exc
+    _fernet()
+    digest_key = base64.urlsafe_b64decode(os.environ["LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY"])
+    digests = [
+        hmac.new(digest_key, (str(context.company_id) + "|" + phone).encode("ascii"),
+                 hashlib.sha256).hexdigest()
+        for phone in phones
+    ]
+    rows = db.query(SignatureBridgeImport.id, SignatureBridgeImport.signer_id).join(
+        SignatureBridgePhoneAlias, SignatureBridgePhoneAlias.import_id == SignatureBridgeImport.id
+    ).filter(
+        SignatureBridgeImport.company_id == context.company_id,
+        SignatureBridgeImport.signer_kind == "client",
+        SignatureBridgeImport.status == "pending_identity_review",
+        SignatureBridgePhoneAlias.company_id == context.company_id,
+        SignatureBridgePhoneAlias.phone_digest.in_(digests),
+    ).distinct().all()
+    sig_ids = {row[0] for row in rows}
+    signers = {row[1] for row in rows}
+    status = "not_found" if not sig_ids else "conflict" if len(sig_ids) > 1 or len(signers) > 1 else "pending_identity_review"
+    return {
+        "status": status,
+        "match_count": len(sig_ids),
+        "auto_apply": False,
+        "requires_document_consent": True,
+        "signature_available_for_form": False,
+    }
