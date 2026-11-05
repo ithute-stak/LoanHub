@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from capture_protocol import MAX_BYTES, validate_strokes
 
 HOME = Path(os.environ.get("LOANHUB_SIGNATURE_BRIDGE_HOME", str(Path.home() / ".local/share/loanhub-signature-bridge")))
 STOP = False
@@ -107,7 +108,7 @@ def connection() -> sqlite3.Connection:
 def phone_hash(value: str, vault_key: bytes) -> str:
     return hmac.new(vault_key, value.encode("ascii"), hashlib.sha256).hexdigest()
 
-def register(args: argparse.Namespace) -> None:
+def register(args: argparse.Namespace, *, capture_bytes: bytes | None = None) -> None:
     if not args.consent_reference.strip():
         raise ValueError("Explicit capture consent reference required")
     if not args.verified_signer_id.strip() or not args.company_id.strip():
@@ -117,7 +118,7 @@ def register(args: argparse.Namespace) -> None:
     if args.signer_kind == "officer" and args.phones:
         raise ValueError("Officer identity must be resolved by authenticated user ID")
     phones = split_phones(args.phones) if args.phones else []
-    raw = Path(args.capture_file).read_bytes()
+    raw = capture_bytes if capture_bytes is not None else Path(args.capture_file).read_bytes()
     if not raw or len(raw) > 2_000_000:
         raise ValueError("Capture file must contain 1 to 2,000,000 bytes")
     # Capture-file contents must originate from trusted capture and signer verification.
@@ -138,6 +139,21 @@ def register(args: argparse.Namespace) -> None:
         db.execute("INSERT INTO sync_outbox(signature_id) VALUES (?)", (signature_id,))
     print(json.dumps({"status":"stored_locally","signature_id":signature_id,
                       "sync_status":"queued","applied_to_contract":False}))
+
+def capture_strokes(args: argparse.Namespace) -> None:
+    """Receive structured strokes from a trusted local adapter via stdin.
+
+    This is a one-shot, operator-confirmed ingestion path. No HTTP listener or
+    background USB capture is created. Native SDK integration comes next.
+    """
+    if not args.consent_confirmed or not args.identity_verified:
+        raise ValueError("Signer identity and explicit local capture consent required")
+    if sys.stdin.isatty():
+        raise ValueError("Expected a trusted adapter JSON stream on stdin")
+    raw = sys.stdin.buffer.read(MAX_BYTES + 1)
+    envelope = validate_strokes(raw)
+    register(args, capture_bytes=envelope.canonical)
+
 
 def resolve(args: argparse.Namespace) -> None:
     if not args.company_id.strip():
@@ -298,6 +314,14 @@ def main() -> int:
     p.add_argument("--phones", default="")
     p.add_argument("--consent-reference", required=True)
     p.add_argument("--capture-file", required=True)
+    p = sub.add_parser("capture-strokes")
+    p.add_argument("--company-id", required=True)
+    p.add_argument("--signer-kind", choices=("client", "officer"), required=True)
+    p.add_argument("--verified-signer-id", required=True)
+    p.add_argument("--phones", default="")
+    p.add_argument("--consent-reference", required=True)
+    p.add_argument("--consent-confirmed", action="store_true")
+    p.add_argument("--identity-verified", action="store_true")
     p = sub.add_parser("resolve")
     p.add_argument("--company-id", required=True)
     p.add_argument("--signer-kind", choices=("client","officer"), default="client")
@@ -307,7 +331,7 @@ def main() -> int:
     s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"register":register,"resolve":resolve,"sync":sync}[args.command](args)
+        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
