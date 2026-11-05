@@ -18,7 +18,7 @@ func wacomTestTLSMaterials(t *testing.T)([]byte,tls.Certificate){
  if err!=nil{t.Fatal(err)}
  template:=&x509.Certificate{SerialNumber:big.NewInt(99),Subject:pkix.Name{CommonName:"test-only"},
   NotBefore:time.Now().Add(-time.Hour),NotAfter:time.Now().Add(time.Hour),
-  KeyUsage:x509.KeyUsageDigitalSignature,ExtKeyUsage:[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+  ExtKeyUsage:[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
   BasicConstraintsValid:true,IsCA:true,KeyUsage:x509.KeyUsageCertSign|x509.KeyUsageDigitalSignature}
  encoded,err:=x509.CreateCertificate(rand.Reader,template,template,key.Public(),key)
  if err!=nil{t.Fatal(err)}
