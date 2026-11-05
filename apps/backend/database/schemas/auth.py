@@ -80,6 +80,17 @@ class AuthUserRead(BaseModel):
     memberships: list[AuthMembershipRead] = Field(default_factory=list)
 
 
+
+
+class BorrowerCompanyContextRead(BaseModel):
+    """Minimal verified LoanHub borrower/company association; no financial PII."""
+    user_id: UUID
+    borrower_id: UUID
+    company_id: UUID
+    role: UserRole
+    session_active: bool
+    account_active: bool
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

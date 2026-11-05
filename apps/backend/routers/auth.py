@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 import hashlib
 import uuid
 
@@ -12,16 +13,20 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
 from core.access_control import get_current_active_user, require_platform_admin
-from core.security import DUMMY_PASSWORD_HASH, authenticate_user, hash_password, verify_password
+from core.security import DUMMY_PASSWORD_HASH, authenticate_user, get_current_local_user, hash_password, oauth2_scheme, verify_password
 from database.config.config import settings
 from database.models.audit_log import AuditLog
 from database.models.company_staff import CompanyStaff
+from database.models.company import LoanCompany
+from database.models.borrower import Borrower
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.notification import Notification
 from database.models.enums import NotificationType, UserRole
 from database.models.user import RefreshToken, User
 from database.schemas.auth import (
     AuthMembershipRead,
     AuthUserRead,
+    BorrowerCompanyContextRead,
     ImpersonationRequest,
     ImpersonationResponse,
     ImpersonationTargetRead,
@@ -559,6 +564,60 @@ def request_password_reset(
             "access-recovery request. No password or PIN is required."
         ),
         request_reference=request_reference,
+    )
+
+
+@router.get("/borrower-context", response_model=BorrowerCompanyContextRead)
+def borrower_company_context(
+    company_id: UUID,
+    current_user: User = Depends(get_current_local_user),
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    """Resolve borrower identity inside LoanHub, without a cross-app DB grant.
+
+    Requires a LoanHub-local, non-legacy access session already verified
+    against live revocation state by get_current_local_user. It cannot be
+    used with staff, central-identity-only, inactive or unverified accounts.
+    Company association requires an existing loan with this exact company.
+    No balances, contact information, credentials or unrelated tenants leak.
+    """
+    claims = decode_token(token)
+    if (
+        claims.get("token_type") != "access"
+        or not isinstance(claims.get("session_jti"), str)
+        or not claims["session_jti"]
+        or "impersonated_by" in claims
+        or str(claims.get("user_id")) != str(current_user.id)
+    ):
+        raise HTTPException(status_code=401, detail="Verified local borrower session required")
+    if (
+        current_user.role != UserRole.BORROWER
+        or current_user.is_active is not True
+        or current_user.is_verified is not True
+        or current_user.must_change_password is not False
+    ):
+        raise HTTPException(status_code=403, detail="Verified borrower account required")
+    match = (
+        db.query(Borrower.id)
+        .join(ClientCompanyLoan, ClientCompanyLoan.borrower_id == Borrower.id)
+        .join(LoanCompany, LoanCompany.id == ClientCompanyLoan.company_id)
+        .filter(
+            Borrower.user_id == current_user.id,
+            ClientCompanyLoan.company_id == company_id,
+            LoanCompany.is_active.is_(True),
+        )
+        .first()
+    )
+    if not match:
+        raise HTTPException(status_code=404, detail="No borrower-company association")
+    return BorrowerCompanyContextRead(
+        user_id=current_user.id,
+        borrower_id=match[0],
+        company_id=company_id,
+        role=UserRole.BORROWER,
+        session_active=True,
+        account_active=True,
     )
 
 
