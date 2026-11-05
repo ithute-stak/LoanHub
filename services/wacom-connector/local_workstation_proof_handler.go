@@ -29,11 +29,25 @@ func(h *localWacomChallengeProofHandler) ServeHTTP(w http.ResponseWriter,r *http
  if h==nil||h.IdentityDirectory==""||len(h.TrustedBackendKeys)==0 {
   http.Error(w,"Unavailable",http.StatusServiceUnavailable);return
  }
- if r.Method!=http.MethodPost||r.URL.Path!=localWacomChallengeProofPath||
+ if r.URL.Path!=localWacomChallengeProofPath||
   r.URL.RawQuery!=""||r.Host!="127.0.0.1:8765"||
   r.Header.Get("Origin")!="https://loanhub.co.ls"||
-  !strings.HasPrefix(r.Header.Get("Content-Type"),"application/json")||
   r.Header.Get("Cookie")!=""||r.Header.Get("Authorization")!="" {
+  http.Error(w,"Forbidden",http.StatusForbidden);return
+ }
+ w.Header().Set("Access-Control-Allow-Origin","https://loanhub.co.ls")
+ w.Header().Set("Vary","Origin")
+ if r.Method==http.MethodOptions {
+  if r.Header.Get("Access-Control-Request-Method")!="POST" ||
+   r.Header.Get("Access-Control-Request-Headers")!="content-type" {
+   http.Error(w,"Forbidden",http.StatusForbidden);return
+  }
+  w.Header().Set("Access-Control-Allow-Methods","POST")
+  w.Header().Set("Access-Control-Allow-Headers","Content-Type")
+  w.Header().Set("Access-Control-Max-Age","0")
+  w.WriteHeader(http.StatusNoContent);return
+ }
+ if r.Method!=http.MethodPost||!strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Type")),"application/json") {
   http.Error(w,"Forbidden",http.StatusForbidden);return
  }
  h.mu.Lock()
