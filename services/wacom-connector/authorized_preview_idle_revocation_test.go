@@ -26,7 +26,7 @@ func TestIdleCaptureRevocationStopsSDKWithoutPenEvents(t *testing.T) {
  session:=cfg.Admission.Session.(*testLivePreviewSession)
  // The first check permits admission. Subsequent watchdog checks must
  // cancel a silent SDK stream before the lease naturally expires.
- session.rejectAt=2
+ session.rejectAt=4
  start:=time.Now()
  err:=runEphemeralAuthorizedPreview(context.Background(),ticket,scope,now,cfg)
  if err==nil {t.Fatal("revoked silent capture completed successfully")}
