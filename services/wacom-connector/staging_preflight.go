@@ -11,6 +11,7 @@ import (
  "io"
  "os"
  "path/filepath"
+ "syscall"
 )
 
 const maxWacomPreflightConfigBytes=4096
@@ -37,9 +38,11 @@ func loadWacomStagingPreflightConfig(path string)(wacomStagingPreflightConfig,er
  if err!=nil||!info.Mode().IsRegular()||info.Mode().Perm()&0077!=0||
   info.Size()<=0||info.Size()>maxWacomPreflightConfigBytes||
   !ownedByConnectorUser(info){return empty,denied}
- f,err:=os.Open(path)
+ f,err:=os.OpenFile(path,os.O_RDONLY|syscall.O_NOFOLLOW,0)
  if err!=nil{return empty,denied}
  defer f.Close()
+ opened,err:=f.Stat()
+ if err!=nil||!os.SameFile(info,opened){return empty,denied}
  dec:=json.NewDecoder(io.LimitReader(f,maxWacomPreflightConfigBytes+1))
  dec.DisallowUnknownFields()
  var cfg wacomStagingPreflightConfig
@@ -52,6 +55,13 @@ func loadWacomStagingPreflightConfig(path string)(wacomStagingPreflightConfig,er
 // checkLocalWacomStagingReadiness deliberately makes no network calls and
 // never runs SDK pen capture. It confirms *only* locally configured
 // prerequisites for later supervised activation.
+func privateWacomStagingMaterial(path string)bool{
+ if !filepath.IsAbs(path)||filepath.Clean(path)!=path{return false}
+ info,err:=os.Lstat(path)
+ return err==nil&&info.Mode().IsRegular()&&info.Mode().Perm()==0600&&
+  info.Size()>0&&info.Size()<=16384&&ownedByConnectorUser(info)
+}
+
 func checkLocalWacomStagingReadiness(cfg wacomStagingPreflightConfig)error{
  denied:=errors.New("Wacom staging prerequisites not satisfied")
  id,private,err:=loadWorkstationIdentity(cfg.IdentityDirectory)
@@ -67,7 +77,7 @@ func checkLocalWacomStagingReadiness(cfg wacomStagingPreflightConfig)error{
   for i:=range key{if signed[i]!=key[i]{return denied}}
  }
  for _,path:=range []string{cfg.BackendCAPath,cfg.ClientCertificatePath,cfg.ClientKeyPath}{
-  if !filepath.IsAbs(path)||filepath.Clean(path)!=path{return denied}
+  if !privateWacomStagingMaterial(path){return denied}
  }
  cert,err:=tls.LoadX509KeyPair(cfg.ClientCertificatePath,cfg.ClientKeyPath)
  if err!=nil{return denied}
