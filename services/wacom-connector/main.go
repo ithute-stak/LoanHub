@@ -137,7 +137,12 @@ func main() {
             log.Println("--sign-workstation-challenge requires --proof-session-id and no other modes")
             os.Exit(2)
         }
-        proof, err := signBackendWacomChallenge(*proofDirectory, *proofSession, os.Stdin, time.Now().UTC())
+        trustedKeys, keyErr := loadTrustedBackendPreviewKeys(*proofDirectory)
+        if keyErr != nil {
+            log.Println("Wacom trusted backend public key unavailable")
+            os.Exit(1)
+        }
+        proof, err := signBackendWacomChallenge(*proofDirectory, *proofSession, os.Stdin, time.Now().UTC(), trustedKeys)
         if err != nil {
             log.Println("Wacom workstation challenge proof unavailable")
             os.Exit(1)
