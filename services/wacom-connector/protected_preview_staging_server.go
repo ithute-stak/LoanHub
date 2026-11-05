@@ -10,10 +10,23 @@ import (
  "errors"
  "net"
  "net/http"
+ "os"
+ "io"
+ "syscall"
  "time"
 )
 
 const wacomStagingPreviewListenAddr = "127.0.0.1:8766"
+
+func readPrivateWacomStagingCA(path string)([]byte,error){
+ if !privateWacomStagingMaterial(path){return nil,errors.New("untrusted TLS CA file")}
+ file,err:=os.OpenFile(path,os.O_RDONLY|syscall.O_NOFOLLOW,0)
+ if err!=nil{return nil,err}
+ defer file.Close()
+ data,err:=io.ReadAll(io.LimitReader(file,16385))
+ if err!=nil||len(data)==0||len(data)>16384{return nil,errors.New("invalid TLS CA")}
+ return data,nil
+}
 
 // A preflight PASS is necessary but not a claim of backend authorization.
 // Both startup and HTTP mux assembly use the same protected authority.
