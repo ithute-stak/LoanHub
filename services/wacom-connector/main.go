@@ -122,6 +122,7 @@ func main() {
     proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
     proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    stagingPreflightPath := flag.String("staging-preflight", "", "Offline check for protected Wacom staging prerequisites (never captures handwriting)")
     proofTestDirectory := flag.String("preview-proof-test", "", "Opt-in local proof-only test listener, requires protected enrolled workstation directory; no SDK capture")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
@@ -131,6 +132,27 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *stagingPreflightPath != "" {
+        if *proofSession != "" || *proofDirectory != "" || *proofTestDirectory != "" ||
+            *diagnostics || *initWorkstation != "" || *calibrationTest ||
+            *calibratedStrokeTest || *penTest || *strokeTest ||
+            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--staging-preflight requires only a protected configuration file")
+            os.Exit(2)
+        }
+        cfg, err := loadWacomStagingPreflightConfig(*stagingPreflightPath)
+        if err != nil {
+            log.Println("Wacom staging preflight configuration unavailable")
+            os.Exit(1)
+        }
+        if err := checkLocalWacomStagingReadiness(cfg); err != nil {
+            log.Println("Wacom staging preflight FAILED; capture remains disabled")
+            os.Exit(1)
+        }
+        log.Println("Wacom local staging preflight PASSED; backend TLS handshake, server authorization and physical hardware streaming remain UNVERIFIED")
+        return
+    }
     if *proofTestDirectory != "" {
         if *proofSession != "" || *proofDirectory != "" || *diagnostics ||
             *initWorkstation != "" || *calibrationTest || *calibratedStrokeTest ||
