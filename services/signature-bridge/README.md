@@ -34,6 +34,42 @@ service never grabs pen data on its own and port 8765 is untouched.
 Do not use with real signatures until device ownership, staff/client
 verification, consent records and revocation flows are finished.
 
+## Optional native Wacom capture adapter (no SDK binary bundled)
+
+The local bridge supports an operator-initiated `capture-wacom` command.
+The workstation administrator must separately install a reviewed executable
+that wraps the vendor STU SDK, and exposes:
+
+```sh
+/path/to/reviewed-wacom-adapter --capture-strokes-json
+```
+
+The executable must return one `loanhub-pen-strokes-v1` JSON envelope on
+stdout and exit successfully. Coordinates and pressure are normalized to
+`[0,1]`, timestamps strictly increase within each stroke, and all capture
+data must fit within 128 KB. Raw pen data must not appear in stderr logs.
+
+A typical explicitly consented **staging-only** invocation is:
+
+```sh
+.venv/bin/python bridge.py capture-wacom \
+  --sdk-adapter /home/USER/path/to/reviewed-wacom-adapter \
+  --company-id VERIFIED-STAGING-COMPANY-UUID \
+  --signer-kind client \
+  --verified-signer-id VERIFIED-STAGING-BORROWER-UUID \
+  --phones '58123456 / 63123456' \
+  --consent-reference STAGING-CONSENT-REFERENCE \
+  --identity-verified --consent-confirmed
+```
+
+The CLI flags record operator assertions, **not proof of signer identity or
+legally sufficient consent**. This must not be used for live customer records
+until a verified capture UI, device ownership, and audit workflow exist.
+The executable is never called by the auto-start background service and
+does not open a network listener, so the existing Wacom diagnostic service
+at `127.0.0.1:8765` is preserved. No external Wacom SDK binaries are checked
+into LoanHub.
+
 ## Remote synchronization (staging only)
 
 The backend Docker image includes a gated import route at `POST /api/v1/signature-bridge/imports` and an Alembic migration. It accepts identity-claimed captures only into encrypted **quarantine**, not an approved signature registry. It is disabled unless `ENVIRONMENT=staging` and `LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED=true` with a separate Fernet key in `LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY`. Use an isolated staging HTTPS endpoint and a short-lived authenticated operator token; do not use production credentials.
