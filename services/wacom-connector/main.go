@@ -119,6 +119,8 @@ func serve() error {
 
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
+    proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
+    proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
@@ -128,6 +130,28 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *proofDirectory != "" {
+        if *proofSession == "" || *diagnostics || *calibrationTest || *calibratedStrokeTest ||
+            *penTest || *strokeTest || *initWorkstation != "" || *sdkEnumerator != "" ||
+            *sdkQuery != "" || *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--sign-workstation-challenge requires --proof-session-id and no other modes")
+            os.Exit(2)
+        }
+        proof, err := signBackendWacomChallenge(*proofDirectory, *proofSession, os.Stdin, time.Now().UTC())
+        if err != nil {
+            log.Println("Wacom workstation challenge proof unavailable")
+            os.Exit(1)
+        }
+        if err := json.NewEncoder(os.Stdout).Encode(proof); err != nil {
+            log.Println("Wacom workstation proof output unavailable")
+            os.Exit(1)
+        }
+        return
+    }
+    if *proofSession != "" {
+        log.Println("--proof-session-id is only available with --sign-workstation-challenge")
+        os.Exit(2)
+    }
     if *initWorkstation != "" {
         if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
             *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
