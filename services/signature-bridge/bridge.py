@@ -7,6 +7,8 @@ Only verified signer links may be imported; phone lookup is advisory.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import urllib.request
 import urllib.error
 from uuid import UUID, uuid4
@@ -155,12 +157,29 @@ def capture_strokes(args: argparse.Namespace) -> None:
     register(args, capture_bytes=envelope.canonical)
 
 
-def capture_wacom(args: argparse.Namespace) -> None:
-    """Run a separately installed approved SDK adapter once, then vault strokes.
+@contextlib.contextmanager
+def exclusive_capture_lock():
+    """Prevent two Bridge capture operations claiming the same tablet."""
+    location = state_dir() / "capture.lock"
+    fd = os.open(location, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("Another LoanHub capture operation is active") from exc
+        yield
+    finally:
+        os.close(fd)
 
-    The adapter protocol is JSON stdout as defined by capture_protocol.py.
-    The official Wacom SDK is not redistributed or implicitly invoked.
+
+def capture_wacom(args: argparse.Namespace) -> None:
+    """Invoke a separately installed native SDK adapter once, with isolation.
+
+    This does not bundle Wacom SDK or replace port 8765. An independent vendor
+    SDK program must implement --capture-strokes-json.
     """
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Wacom capture requires explicitly selected staging mode")
     if not args.consent_confirmed or not args.identity_verified:
         raise ValueError("Signer identity and explicit local capture consent required")
     executable = Path(args.sdk_adapter)
@@ -171,21 +190,23 @@ def capture_wacom(args: argparse.Namespace) -> None:
         raise ValueError("Wacom adapter must be a regular file owned by root or desktop user")
     if info.st_mode & 0o022 or not info.st_mode & 0o111:
         raise ValueError("Wacom adapter must be executable and not group/world-writable")
-    # Capture adapter must not be provided via an HTTP request or external host.
-    try:
-        result = subprocess.run(
-            [str(executable), "--capture-strokes-json"],
-            capture_output=True, timeout=35, check=True, env={
-                "HOME": str(Path.home()),
-                "PATH": "/usr/bin:/bin",
-                "LANG": "C.UTF-8",
-            },
-        )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
-        # Vendor stderr may contain sensitive data; do not print it.
-        raise ValueError("Wacom capture adapter unavailable or timed out") from error
-    envelope = validate_strokes(result.stdout)
-    register(args, capture_bytes=envelope.canonical)
+    with exclusive_capture_lock():
+        try:
+            # A capped temp file avoids unbounded subprocess stdout in memory.
+            import tempfile
+            with tempfile.TemporaryFile() as output:
+                subprocess.run(
+                    [str(executable), "--capture-strokes-json"],
+                    stdout=output, stderr=subprocess.DEVNULL,
+                    timeout=35, check=True,
+                    env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                )
+                output.seek(0)
+                raw = output.read(MAX_BYTES + 1)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+            raise ValueError("Wacom capture adapter unavailable or timed out") from error
+        envelope = validate_strokes(raw)
+        register(args, capture_bytes=envelope.canonical)
 
 
 def resolve(args: argparse.Namespace) -> None:
