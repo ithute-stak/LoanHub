@@ -105,6 +105,7 @@ def import_signature(
         return {
             "status": "pending_identity_review",
             "source_record_id": str(body.source_record_id),
+            "company_id": str(context.company_id),
             "duplicate": True,
             "usable_for_signing": False,
         }
@@ -142,7 +143,7 @@ def import_signature(
         if race_winner is not None:
             return _duplicate_or_conflict(race_winner)
         raise HTTPException(409, "Import integrity conflict; record not acknowledged") from exc
-    return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"duplicate":False,"usable_for_signing":False}
+    return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"company_id":str(context.company_id),"duplicate":False,"usable_for_signing":False}
 
 class ClientLookupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
