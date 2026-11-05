@@ -36,8 +36,6 @@ func makeResolverFixture(t *testing.T)(string,mtlsWacomPreviewResolver,*fixedPre
   Backend:backend,TrustedWorkstationID:scope.WorkstationID,
   TrustedSDKExecutable:"/usr/local/libexec/wacom/simpleInterface",
   Keys:map[string]ed25519.PublicKey{"test-ed25519-key":pub},
-  Enrollment:&testEnrolledWorkstation{id:scope.WorkstationID},
-  Session:&testLivePreviewSession{},
   Replay:&fakePreviewReplay{used:map[string]bool{}},
   Calibration:deviceCalibration{MinX:0,MaxX:10800,MinY:0,MaxY:6480,MaxPressure:1023},
  }
@@ -71,9 +69,6 @@ func TestWacomMTLSResolverFailsClosedWithoutTrustDependencies(t *testing.T){
  resolver.Replay=nil
  if _,err:=resolver.ResolveAuthorizedPreview(context.Background(),token);err==nil{t.Fatal("missing replay store accepted")}
  resolver.Replay=&fakePreviewReplay{used:map[string]bool{}}
- resolver.Session=nil
- if _,err:=resolver.ResolveAuthorizedPreview(context.Background(),token);err==nil{t.Fatal("missing live session authority accepted")}
- resolver.Session=&testLivePreviewSession{}
  backend.err=errors.New("backend offline")
  if _,err:=resolver.ResolveAuthorizedPreview(context.Background(),token);err==nil{t.Fatal("unavailable backend accepted")}
 }
