@@ -122,6 +122,7 @@ func main() {
     proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
     proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    proofTestDirectory := flag.String("preview-proof-test", "", "Opt-in local proof-only test listener, requires protected enrolled workstation directory; no SDK capture")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
     calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
@@ -130,6 +131,21 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *proofTestDirectory != "" {
+        if *proofSession != "" || *proofDirectory != "" || *diagnostics ||
+            *initWorkstation != "" || *calibrationTest || *calibratedStrokeTest ||
+            *penTest || *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--preview-proof-test requires an enrolled directory and no other mode")
+            os.Exit(2)
+        }
+        log.Println("Wacom explicit local PROOF-ONLY test mode: no SDK capture, no WebSocket, no contract signing")
+        if err := serveLocalWacomProofTestOnly(*proofTestDirectory); err != nil {
+            log.Printf("Wacom proof-only test server unavailable: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
     if *proofDirectory != "" {
         if *proofSession == "" || *diagnostics || *calibrationTest || *calibratedStrokeTest ||
             *penTest || *strokeTest || *initWorkstation != "" || *sdkEnumerator != "" ||
