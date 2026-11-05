@@ -162,9 +162,9 @@ export function WacomTestAuthorizationPanel({
         fieldId !== approved.fieldId || sessionKey !== approved.sessionKey ||
         approved.expiresAt <= Date.now()) throw new Error("Preview ticket unavailable");
     issued.current = true;
-    const result = approved;
-    setApproved(null);
-    return result;
+    // Retain the local approval metadata while the socket is active;
+    // immediately disabling the field would cancel its connection.
+    return approved;
   }
 
   return (
