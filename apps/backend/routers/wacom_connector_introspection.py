@@ -8,7 +8,6 @@ No evidence, signature or raw pen data is received.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 from datetime import datetime, timezone
@@ -74,7 +73,7 @@ def _read_ticket(token: str) -> dict:
                 or not 20 <= len(claims["jti"]) <= 128):
             raise ValueError("expired or wrong audience")
         return claims
-    except (ValueError, KeyError, TypeError, binascii.Error, json.JSONDecodeError, Exception) as error:
+    except Exception as error:
         raise _rejected() from error
 
 
