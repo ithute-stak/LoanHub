@@ -77,9 +77,10 @@ def test_actual_tcp_tls_client_identity_reaches_asgi_without_headers(tmp_path, m
                 b"Content-Length: 2\r\n\r\n{}"
             )
             await writer.drain()
-            reply = await asyncio.wait_for(reader.read(4096), timeout=5)
-            assert b"HTTP/1.1 200 OK" in reply
-            assert b'{"authenticated":true}' in reply
+            head = await asyncio.wait_for(reader.readuntil(b"\\r\\n\\r\\n"), timeout=5)
+            assert b"HTTP/1.1 200 OK" in head
+            body = await asyncio.wait_for(reader.readexactly(22), timeout=5)
+            assert body == b'{"authenticated":true}'
             writer.close()
             await writer.wait_closed()
         finally:
