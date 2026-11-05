@@ -14,6 +14,7 @@ sys.path.append(
 from database.base import Base
 from database.config.config import settings
 from database.models import *  # noqa: F401,F403,E402
+from database.models.signature_bridge import SignatureBridgeImport  # noqa: F401,E402
 from database.models.employer_payroll import (  # noqa: F401,E402
     EmployerPayrollAccount,
     EmployerPayrollCycle,
