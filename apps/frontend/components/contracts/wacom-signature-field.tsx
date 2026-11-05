@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WacomStrokePreview } from "./wacom-stroke-preview";
 import {
   useWacomSignatureSocket,
@@ -23,26 +23,45 @@ export function WacomSignatureField({
   const [focused, setFocused] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [message, setMessage] = useState("");
+  // Invalidate in-flight backend approvals when the selected field/session
+  // changes, the component unmounts, or the operator cancels.
+  const authorizationEpoch = useRef(0);
+  const approvalPending = useRef(false);
+  const currentBinding = useRef({ fieldId, sessionKey, disabled });
+  currentBinding.current = { fieldId, sessionKey, disabled };
 
   useEffect(() => {
+    authorizationEpoch.current += 1;
+    approvalPending.current = false;
+    cancel();
     setFocused(false);
     setRequesting(false);
     setMessage("");
-  }, [fieldId, sessionKey]);
+    return () => { authorizationEpoch.current += 1; };
+  }, [fieldId, sessionKey, disabled, cancel]);
 
   async function begin() {
-    if (disabled || !focused || requesting || status === "capturing" || status === "authorizing") return;
+    if (disabled || !focused || requesting || approvalPending.current || status === "capturing" || status === "authorizing") return;
+    const epoch = ++authorizationEpoch.current;
+    approvalPending.current = true;
     setRequesting(true);
     setMessage("");
     try {
       const approval = await authorize(fieldId, sessionKey);
+      const latest = currentBinding.current;
+      if (epoch !== authorizationEpoch.current || latest.disabled ||
+          latest.fieldId !== fieldId || latest.sessionKey !== sessionKey) return;
       if (approval.fieldId !== fieldId || approval.sessionKey !== sessionKey || !start(approval)) {
         setMessage("Preview authorization failed.");
       }
     } catch {
-      setMessage("Preview not authorized. Please try again.");
+      if (epoch === authorizationEpoch.current)
+        setMessage("Preview not authorized. Please try again.");
     } finally {
-      setRequesting(false);
+      if (epoch === authorizationEpoch.current) {
+        approvalPending.current = false;
+        setRequesting(false);
+      }
     }
   }
 
@@ -64,7 +83,13 @@ export function WacomSignatureField({
           onClick={begin} className="rounded-lg border px-3 py-2">
           {requesting ? "Authorizing…" : "Start test handwriting preview"}
         </button>
-        <button type="button" onClick={() => cancel()} className="rounded-lg border px-3 py-2">
+        <button type="button" onClick={() => {
+          authorizationEpoch.current += 1;
+          approvalPending.current = false;
+          setRequesting(false);
+          setMessage("");
+          cancel();
+        }} className="rounded-lg border px-3 py-2">
           Cancel and clear
         </button>
       </div>
