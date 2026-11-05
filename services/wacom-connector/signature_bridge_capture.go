@@ -70,60 +70,83 @@ func loadBridgeSDKConfig() (bridgeSDKConfig, error) {
     return cfg, nil
 }
 
-// Calibration dimensions come from the vendor SDK query executable, never from
-// untrusted pen output. The output is only normalized stroke coordinates.
-func captureBridgeStrokes(cfg bridgeSDKConfig) (bridgePenEnvelope, error) {
+// bridgeStrokeCollector is deliberately pure: SDK parsing and stroke assembly
+// can be tested without any tablet, terminal, or customer handwriting.
+type bridgeStrokeCollector struct {
+    maxX, maxY, maxPressure int
+    strokes [][]bridgePenPoint
+    current []bridgePenPoint
+    previousTime int
+    total int
+}
+
+func newBridgeStrokeCollector(x, y, pressure int) (*bridgeStrokeCollector, error) {
+    if x <= 0 || y <= 0 || pressure <= 0 {
+        return nil, errors.New("invalid tablet calibration")
+    }
+    return &bridgeStrokeCollector{maxX:x, maxY:y, maxPressure:pressure, previousTime:-1}, nil
+}
+
+func (c *bridgeStrokeCollector) finishStroke() error {
+    if len(c.current) >= 2 {
+        c.strokes = append(c.strokes, c.current)
+        if len(c.strokes) > 128 { return errors.New("too many pen strokes") }
+    }
+    c.current = nil
+    c.previousTime = -1
+    return nil
+}
+
+func (c *bridgeStrokeCollector) Add(p penSample) error {
+    if p.Ready != 1 || p.Switch != 1 || p.Pressure == 0 {
+        return c.finishStroke()
+    }
+    if p.X < 0 || p.Y < 0 || p.Pressure < 0 ||
+       p.X > c.maxX || p.Y > c.maxY || p.Pressure > c.maxPressure {
+        return errors.New("out-of-bounds Wacom pen report")
+    }
+    if c.total >= 8192 { return errors.New("pen point budget exceeded") }
+    tick := p.Time
+    if tick <= c.previousTime { tick = c.previousTime+1 }
+    if tick > 300000 { return errors.New("pen report time exceeded limit") }
+    c.previousTime = tick
+    c.current = append(c.current, bridgePenPoint{
+        X:float64(p.X)/float64(c.maxX),
+        Y:float64(p.Y)/float64(c.maxY),
+        Pressure:float64(p.Pressure)/float64(c.maxPressure),
+        Tick:tick,
+    })
+    c.total++
+    return nil
+}
+
+func (c *bridgeStrokeCollector) Envelope() (bridgePenEnvelope, error) {
     failed := bridgePenEnvelope{}
-    calibration, err := queryLocalSDKCalibration(cfg.Query)
-    if err != nil { return failed, errors.New("Wacom calibration unavailable") }
-    if calibration.MaxX <= 0 || calibration.MaxY <= 0 || calibration.MaxPressure <= 0 {
-        return failed, errors.New("invalid Wacom calibration dimensions")
-    }
-    envelope := bridgePenEnvelope{Format:"loanhub-pen-strokes-v1"}
-    var stroke []bridgePenPoint
-    lastTime := -1
-    callback := func(p penSample) error {
-        if p.Ready != 1 || p.Switch != 1 || p.Pressure == 0 {
-            if len(stroke) >= 2 {
-                envelope.Strokes = append(envelope.Strokes, stroke)
-                if len(envelope.Strokes) > 128 { return errors.New("too many strokes") }
-            }
-            stroke = nil
-            lastTime = -1
-            return nil
-        }
-        if p.X < 0 || p.Y < 0 || p.Pressure < 0 ||
-           p.X > calibration.MaxX || p.Y > calibration.MaxY ||
-           p.Pressure > calibration.MaxPressure {
-            return errors.New("out-of-bounds Wacom pen report")
-        }
-        tick := p.Time
-        if tick <= lastTime { tick = lastTime + 1 }
-        if tick > 300000 { return errors.New("pen report time exceeded limit") }
-        lastTime = tick
-        stroke = append(stroke, bridgePenPoint{
-            X: float64(p.X)/float64(calibration.MaxX),
-            Y: float64(p.Y)/float64(calibration.MaxY),
-            Pressure: float64(p.Pressure)/float64(calibration.MaxPressure),
-            Tick: tick,
-        })
-        if len(stroke) > 8192 { return errors.New("pen point budget exceeded") }
-        return nil
-    }
-    _, err = testWacomSampleWithHandler(cfg.PenSample, 25*time.Second, callback)
-    if err != nil { return failed, errors.New("Wacom pen stream capture failed") }
-    if len(stroke) >= 2 { envelope.Strokes = append(envelope.Strokes, stroke) }
-    if len(envelope.Strokes) == 0 || len(envelope.Strokes) > 128 {
+    if err := c.finishStroke(); err != nil { return failed, err }
+    if len(c.strokes) == 0 || len(c.strokes) > 128 {
         return failed, errors.New("no valid Wacom pen strokes")
     }
-    total := 0
-    for _, s := range envelope.Strokes { total += len(s) }
-    if total > 8192 { return failed, errors.New("pen point budget exceeded") }
-    encoded, err := json.Marshal(envelope)
+    envelope := bridgePenEnvelope{Format:"loanhub-pen-strokes-v1", Strokes:c.strokes}
+    encoded,err := json.Marshal(envelope)
     if err != nil || len(encoded) > 128000 {
         return failed, errors.New("Wacom capture exceeds the local envelope limit")
     }
     return envelope, nil
+}
+
+// Calibration dimensions come from the official SDK query executable, not
+// from a client, a browser or the pen report stream itself.
+func captureBridgeStrokes(cfg bridgeSDKConfig) (bridgePenEnvelope, error) {
+    failed := bridgePenEnvelope{}
+    calibration, err := queryLocalSDKCalibration(cfg.Query)
+    if err != nil { return failed, errors.New("Wacom calibration unavailable") }
+    collector, err := newBridgeStrokeCollector(
+        calibration.MaxX, calibration.MaxY, calibration.MaxPressure,
+    )
+    if err != nil { return failed, err }
+    _, err = testWacomSampleWithHandler(cfg.PenSample, 25*time.Second, collector.Add)
+    if err != nil { return failed, errors.New("Wacom pen stream capture failed") }
+    return collector.Envelope()
 }
 
 func runBridgeCaptureCLI() error {
