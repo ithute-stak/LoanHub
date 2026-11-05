@@ -88,6 +88,18 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.sync(argparse.Namespace(url="http://localhost/api/v1/signature-bridge/imports"))
 
+    def test_rejects_untrusted_redirect_and_query_string(self):
+        with self.assertRaises(ValueError):
+            bridge.NoRedirect().redirect_request(None, None, 307, "Temporary Redirect", {}, "https://other.example.invalid")
+        for target in (
+            "https://staging.example.com/api/v1/signature-bridge/imports?next=https://evil.example",
+            "https://staging.example.com/api/v1/signature-bridge/imports#fragment",
+            "https://user:password@staging.example.com/api/v1/signature-bridge/imports",
+        ):
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    bridge.validate_sync_url(target)
+
 
 if __name__ == "__main__":
     unittest.main()
