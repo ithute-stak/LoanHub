@@ -92,8 +92,10 @@ func(c *hardenedWacomIntrospectionClient) FetchPreviewSnapshot(
   !strings.HasPrefix(resp.Header.Get("Content-Type"),"application/json"){
   return backendWacomPreviewSnapshot{},denied
  }
+ raw,err:=io.ReadAll(io.LimitReader(resp.Body,maxIntrospectionResponse+1))
+ if err!=nil||len(raw)>maxIntrospectionResponse{return backendWacomPreviewSnapshot{},denied}
  var snapshot backendWacomPreviewSnapshot
- decoder:=json.NewDecoder(io.LimitReader(resp.Body,maxIntrospectionResponse+1))
+ decoder:=json.NewDecoder(bytes.NewReader(raw))
  decoder.DisallowUnknownFields()
  if err=decoder.Decode(&snapshot);err!=nil{return backendWacomPreviewSnapshot{},denied}
  var tail any
