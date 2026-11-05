@@ -147,6 +147,17 @@ jobs:
           set -euo pipefail
           bash ./scripts/validate_project.sh
 
+      - name: Verify Signature Bridge offline storage and protected imports
+        run: |
+          set -euo pipefail
+          (cd services/signature-bridge && python -m unittest discover -s tests -v)
+          (cd apps/backend && python -m pytest -q \
+            tests/test_signature_bridge_matching.py \
+            tests/test_signature_bridge_import_gate.py \
+            tests/test_signature_bridge_routes.py \
+            tests/test_signature_bridge_db.py \
+            tests/test_signature_bridge_migration_graph.py)
+
       - name: Report Alembic heads for rollover migration review
         working-directory: apps/backend
         run: |
