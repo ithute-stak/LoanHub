@@ -67,6 +67,7 @@ class FullOfflineFlowTests(unittest.TestCase):
                 "SELECT status FROM sync_outbox"
             ).fetchone()[0], "queued")
         outbound = []
+        self_company = self.actor.company_id
         class Reply:
             status = 202
             def __init__(self, body):
@@ -79,6 +80,8 @@ class FullOfflineFlowTests(unittest.TestCase):
                 return json.dumps({
                     "status": "pending_identity_review",
                     "source_record_id": self.body["source_record_id"],
+                    "company_id": self_company,
+                    "usable_for_signing": False,
                 }).encode()
         def fake_https(req, timeout):
             data = json.loads(req.data)
