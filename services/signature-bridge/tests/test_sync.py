@@ -52,6 +52,8 @@ class SyncTests(unittest.TestCase):
                 return json.dumps({
                     "status": "pending_identity_review",
                     "source_record_id": self.payload["source_record_id"],
+                    "company_id": company,
+                    "usable_for_signing": False,
                 }).encode()
 
         def fake_open(req, timeout):
@@ -71,6 +73,62 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(requests[0]["phone_numbers"], "26658123456/26663123456")
         with bridge.connection() as db:
             self.assertEqual(db.execute("SELECT status FROM sync_outbox").fetchone()[0], "acknowledged")
+
+    def test_wrong_tenant_acknowledgement_does_not_clear_queue(self):
+        company = self.prepare()
+        class Reply:
+            status = 202
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return json.dumps({
+                    "status": "pending_identity_review",
+                    "source_record_id": payload["source_record_id"],
+                    "company_id": str(uuid4()),
+                    "usable_for_signing": False,
+                }).encode()
+        payload = {}
+        def wrong_tenant(req, timeout):
+            payload.update(json.loads(req.data))
+            return Reply()
+        args = argparse.Namespace(url="https://staging.example.com/api/v1/signature-bridge/imports")
+        with patch.object(bridge.urllib.request, "build_opener", return_value=type(
+            "Opener", (), {"open": staticmethod(wrong_tenant)})()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            bridge.sync(args, access_token="test-token")
+        with bridge.connection() as db:
+            self.assertEqual(db.execute("SELECT status FROM sync_outbox").fetchone()[0], "queued")
+        self.assertNotEqual(company, payload.get("company_id"))
+
+
+    def test_acknowledgement_claiming_signing_rights_is_rejected(self):
+        company = self.prepare()
+        payload = {}
+        class Reply:
+            status = 202
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return json.dumps({
+                    "status": "pending_identity_review",
+                    "source_record_id": payload["source_record_id"],
+                    "company_id": company,
+                    "usable_for_signing": True,
+                }).encode()
+        def unauthorized(req, timeout):
+            payload.update(json.loads(req.data))
+            return Reply()
+        with patch.object(bridge.urllib.request, "build_opener", return_value=type(
+            "Opener", (), {"open": staticmethod(unauthorized)})()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            bridge.sync(argparse.Namespace(url="https://staging.example.com/api/v1/signature-bridge/imports"), access_token="test-token")
+        with bridge.connection() as db:
+            self.assertEqual(db.execute("SELECT status FROM sync_outbox").fetchone()[0], "queued")
+
 
     def test_failed_connection_retains_queue(self):
         self.prepare()
