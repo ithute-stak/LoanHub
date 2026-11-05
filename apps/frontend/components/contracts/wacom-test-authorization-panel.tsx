@@ -18,6 +18,8 @@ type Challenge = {
   issued_at: string;
   expires_at: string;
   capture_enabled: false;
+  backend_signature_base64: string;
+  backend_signing_kid: string;
 };
 type Proof = {
   challenge_id: string;
@@ -99,6 +101,49 @@ export function WacomTestAuthorizationPanel({
       setChallenge(data);
     } catch {
       if (generation.current === requestID) setError("Workstation challenge unavailable. Check enrollment and session.");
+    } finally {
+      if (generation.current === requestID) setBusy(false);
+    }
+  }
+
+  async function obtainLocalProof() {
+    if (!validSession || busy || !challenge ||
+        Date.parse(challenge.expires_at) <= Date.now() ||
+        typeof challenge.backend_signature_base64 !== "string" ||
+        typeof challenge.backend_signing_kid !== "string") return;
+    const requestID = ++generation.current;
+    setBusy(true);
+    setError("");
+    try {
+      // Does not expose workstation private key. The local Go handler
+      // independently verifies the backend-signed challenge with a key
+      // pinned in its privately provisioned identity directory.
+      const response = await fetch("http://127.0.0.1:8765/v1/preview/workstation-proof", {
+        method: "POST",
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(challenge),
+      });
+      if (!response.ok) throw new Error("Local workstation unavailable");
+      const raw: unknown = await response.json();
+      if (!raw || typeof raw !== "object") throw new Error("Invalid workstation proof");
+      const proof = raw as Record<string, unknown>;
+      if (Object.keys(proof).sort().join(",") !==
+          "challenge_id,signature_base64,workstation_id" ||
+          proof.challenge_id !== challenge.challenge_id ||
+          proof.workstation_id !== challenge.workstation_id ||
+          typeof proof.signature_base64 !== "string" ||
+          !SIGNATURE.test(proof.signature_base64)) throw new Error("Unexpected workstation proof");
+      if (generation.current === requestID && currentBinding.current.eligible) {
+        setProofText(JSON.stringify(proof));
+      }
+    } catch {
+      if (generation.current === requestID) {
+        setError("Protected local proof service unavailable. Manual signed-proof transfer remains available.");
+      }
     } finally {
       if (generation.current === requestID) setBusy(false);
     }
@@ -191,7 +236,7 @@ export function WacomTestAuthorizationPanel({
       </button>
       {challenge && (
         <div className="space-y-2">
-          <p className="text-xs">Pass this JSON to the enrolled local Go CLI using its protected stdin mode.</p>
+          <p className="text-xs">Obtain a locally verified workstation proof, or use the enrolled Go CLI in manual test mode.</p>\n          <button type="button" className="rounded border px-3 py-2 text-sm"\n            disabled={busy || !validSession || Date.parse(challenge.expires_at) <= Date.now()}\n            onClick={() => void obtainLocalProof()}>Get proof from protected local connector</button>
           <textarea readOnly aria-label="Backend-issued workstation challenge"
             className="w-full rounded border p-2 font-mono text-xs" rows={5}
             value={JSON.stringify(challenge)} />
