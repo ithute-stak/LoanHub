@@ -24,7 +24,7 @@ def normalized_phone_aliases(text: str) -> tuple[str, ...]:
         raise ValueError("Expected 1 to 8 nonempty slash-separated numbers")
     values = []
     for part in parts:
-        number = re.sub(r"[\\s()\\-]", "", part)
+        number = re.sub(r"[\s()\-]", "", part)
         if number.startswith("00266"):
             number = number[5:]
         elif number.startswith("+266"):
