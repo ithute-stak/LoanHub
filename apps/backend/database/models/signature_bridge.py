@@ -19,3 +19,13 @@ class SignatureBridgeImport(Base):
     consent_reference = Column(String(180), nullable=False)
     phone_aliases_digest = Column(String(64), nullable=True)
     status = Column(String(30), nullable=False, default="pending_identity_review")
+
+class SignatureBridgePhoneAlias(Base):
+    __tablename__ = "signature_bridge_phone_aliases"
+    __table_args__ = (
+        UniqueConstraint("company_id", "phone_digest", "import_id", name="uq_signature_bridge_alias"),
+        Index("ix_signature_bridge_alias_lookup", "company_id", "phone_digest"),
+    )
+    company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="RESTRICT"), nullable=False)
+    import_id = Column(UUID(as_uuid=True), ForeignKey("signature_bridge_imports.id", ondelete="CASCADE"), nullable=False)
+    phone_digest = Column(String(64), nullable=False)
