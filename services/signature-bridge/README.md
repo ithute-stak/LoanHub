@@ -10,6 +10,30 @@ This is a **staging-only foundation**, not yet a completed desktop application o
 - Background Python vault process and Linux systemd user service that can auto-start after reboot.
 - Tests for normalization, tenant isolation and matching conflicts.
 
+## Local pen-stroke capture interface (staging foundation)
+
+The local `capture-strokes` command now accepts a **bounded JSON envelope on
+standard input** and immediately encrypts it inside the workstation vault.
+This is an interface for a separately reviewed native Wacom STU SDK adapter,
+**not yet a working STU-540 capture driver**. The CLI flags below attest that
+the operator verified identity and obtained consent; they are not independent
+cryptographic evidence and must not be treated as such.
+
+Test envelope (synthetic points only):
+
+```json
+{"format":"loanhub-pen-strokes-v1","strokes":[[{"x":0.1,"y":0.2,"pressure":0.5,"t":1},{"x":0.2,"y":0.3,"pressure":0.7,"t":2}]]}
+```
+
+The native adapter must emit normalized x/y coordinates and pressure in
+`[0,1]`, strictly increasing per-stroke timestamps in milliseconds, with
+at least two points per stroke. Unexpected fields and excessive data are
+rejected. Capture is a separate operator-triggered action; the background
+service never grabs pen data on its own and port 8765 is untouched.
+
+Do not use with real signatures until device ownership, staff/client
+verification, consent records and revocation flows are finished.
+
 ## Remote synchronization (staging only)
 
 The backend Docker image includes a gated import route at `POST /api/v1/signature-bridge/imports` and an Alembic migration. It accepts identity-claimed captures only into encrypted **quarantine**, not an approved signature registry. It is disabled unless `ENVIRONMENT=staging` and `LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED=true` with a separate Fernet key in `LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY`. Use an isolated staging HTTPS endpoint and a short-lived authenticated operator token; do not use production credentials.
