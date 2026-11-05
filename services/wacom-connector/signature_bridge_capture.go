@@ -11,6 +11,7 @@ import (
     "os"
     "path/filepath"
     "strings"
+    "syscall"
     "time"
 )
 
@@ -41,6 +42,10 @@ func loadBridgeSDKConfig() (bridgeSDKConfig, error) {
     if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
         return cfg, errors.New("private SDK configuration unavailable")
     }
+    owner, ok := info.Sys().(*syscall.Stat_t)
+    if !ok || owner.Uid != uint32(os.Getuid()) {
+        return cfg, errors.New("SDK configuration must belong to the desktop operator")
+    }
     data, err := os.ReadFile(location)
     if err != nil || len(data) > 4096 {
         return cfg, errors.New("SDK configuration unavailable")
@@ -52,9 +57,14 @@ func loadBridgeSDKConfig() (bridgeSDKConfig, error) {
         if !filepath.IsAbs(path) || !safeSamplePath.MatchString(path) {
             return cfg, errors.New("SDK sample path must be absolute and safe")
         }
-        st, err := os.Stat(path)
-        if err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
-            return cfg, errors.New("SDK binary unavailable")
+        st, err := os.Lstat(path)
+        if err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 ||
+           st.Mode().Perm()&0022 != 0 {
+            return cfg, errors.New("SDK binary unavailable or writable by untrusted users")
+        }
+        binaryOwner, ok := st.Sys().(*syscall.Stat_t)
+        if !ok || (binaryOwner.Uid != 0 && binaryOwner.Uid != uint32(os.Getuid())) {
+            return cfg, errors.New("SDK binary ownership is not trusted")
         }
     }
     return cfg, nil
