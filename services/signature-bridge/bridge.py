@@ -17,6 +17,8 @@ import json
 import os
 import re
 import secrets
+import stat
+import subprocess
 import signal
 import sqlite3
 import sys
@@ -168,14 +170,14 @@ def resolve(args: argparse.Namespace) -> None:
                       "signature_ids":ids if status == "match" else [],
                       "auto_apply":False, "requires_document_consent":True}))
 
-def sync(args: argparse.Namespace) -> None:
+def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
     """Explicit supervised sync; never caches an access token locally."""
     url = args.url
     if not url.startswith("https://") or "@" in url.split("/", 3)[2]:
         raise ValueError("Remote synchronization requires an HTTPS URL without embedded credentials")
     if not url.rstrip("/").endswith("/api/v1/signature-bridge/imports"):
         raise ValueError("Unexpected synchronization endpoint")
-    token = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN", "")
+    token = access_token if access_token is not None else os.environ.get("LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN", "")
     if not token or any(c.isspace() for c in token):
         raise ValueError("Provide a staging-only bearer token using LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN")
     vault_key = key()
@@ -229,6 +231,36 @@ def status(_args: argparse.Namespace) -> None:
                       "queued":queued,"remote_sync_enabled":False,
                       "capture_adapter_enabled":False}))
 
+def auto_sync_config() -> tuple[str, str] | None:
+    """Require explicit staging activation and a private executable token provider."""
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_AUTO_SYNC_ENABLED") != "true":
+        return None
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Automatic sync is restricted to staging mode")
+    url = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_SYNC_URL", "")
+    provider = os.environ.get("LOANHUB_SIGNATURE_BRIDGE_TOKEN_PROVIDER", "")
+    if not provider.startswith("/") or not url.startswith("https://"):
+        raise ValueError("Staging HTTPS URL and absolute token provider executable required")
+    info = os.stat(provider, follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("Token provider must be a private file owned by the current user")
+    if not info.st_mode & stat.S_IXUSR:
+        raise ValueError("Token provider must be executable")
+    return url, provider
+
+
+def sync_using_provider(url: str, provider: str) -> None:
+    """Never save or log the short-lived access token provided externally."""
+    result = subprocess.run(
+        [provider], capture_output=True, timeout=10, check=True,
+        text=True, env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin"},
+    )
+    token = result.stdout.strip()
+    if not token or len(token) > 4096 or any(ch.isspace() for ch in token):
+        raise ValueError("Token provider returned an invalid token")
+    sync(argparse.Namespace(url=url), access_token=token)
+
+
 def serve(_args: argparse.Namespace) -> None:
     global STOP
     connection().close()
@@ -237,9 +269,22 @@ def serve(_args: argparse.Namespace) -> None:
         STOP = True
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-    print("Signature Bridge local vault ready; remote sync disabled.", flush=True)
+    config = auto_sync_config()
+    print("Signature Bridge local vault ready; auto sync " +
+          ("enabled for staging." if config else "disabled."), flush=True)
     while not STOP:
-        time.sleep(1)
+        if config:
+            try:
+                sync_using_provider(*config)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                # Never include exception text: provider failures may contain secrets.
+                print("Staging sync attempt failed; queued records retained: " +
+                      type(error).__name__, file=sys.stderr, flush=True)
+        # Short sleeps allow clean shutdown while keeping the polling interval bounded.
+        for _ in range(60):
+            if STOP:
+                break
+            time.sleep(1)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="LoanHub offline signature vault")
