@@ -329,6 +329,8 @@ def validate_sync_url(url: str) -> None:
 
 def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
     """Explicit supervised sync; never caches an access token locally."""
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Explicit remote sync requires staging mode")
     url = args.url
     validate_sync_url(url)
     token = access_token if access_token is not None else os.environ.get("LOANHUB_SIGNATURE_BRIDGE_ACCESS_TOKEN", "")
@@ -380,6 +382,37 @@ def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
                 print(f"Sync stopped after {sent} acknowledgements; queued record retained: {type(exc).__name__}", file=sys.stderr)
                 return
     print(json.dumps({"acknowledged":sent,"usable_for_signing":False}))
+
+def staging_import_preflight(_args: argparse.Namespace) -> None:
+    """Read-only, no-network import policy preflight.
+
+    Existing desktop test captures have no independently verified identity or
+    consent evidence and must remain local. Do not expose encrypted payloads,
+    tenant IDs, phone numbers or signer IDs during this check.
+    """
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Import preflight requires staging mode")
+    with connection() as db:
+        queued = db.execute(
+            "SELECT COUNT(*) FROM sync_outbox WHERE status='queued'"
+        ).fetchone()[0]
+        acknowledged = db.execute(
+            "SELECT COUNT(*) FROM sync_outbox WHERE status='acknowledged'"
+        ).fetchone()[0]
+    print(json.dumps({
+        "environment": "staging",
+        "network_requests": 0,
+        "queued_records": queued,
+        "acknowledged_records": acknowledged,
+        "existing_capture_upload_approved": False,
+        "identity_evidence_verified": False,
+        "consent_evidence_verified": False,
+        "server_endpoint_certified": False,
+        "tenant_isolation_certified": False,
+        "ready_to_sync": False,
+        "next_step": "Use isolated synthetic fixture and authenticated staging server tests",
+    }))
+
 
 def audit_local_queue(_args: argparse.Namespace) -> None:
     """Read-only staging audit of pending record metadata, never pen data.
@@ -475,6 +508,7 @@ def main() -> int:
     sub.add_parser("serve")
     sub.add_parser("status")
     sub.add_parser("audit-local-queue")
+    sub.add_parser("staging-import-preflight")
     p = sub.add_parser("register")
     p.add_argument("--company-id", required=True)
     p.add_argument("--signer-kind", choices=("client","officer"), required=True)
@@ -510,7 +544,7 @@ def main() -> int:
     s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"audit-local-queue":audit_local_queue,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"verify-local-capture":verify_local_capture,"resolve":resolve,"sync":sync}[args.command](args)
+        {"serve":serve,"status":status,"audit-local-queue":audit_local_queue,"staging-import-preflight":staging_import_preflight,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"verify-local-capture":verify_local_capture,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
