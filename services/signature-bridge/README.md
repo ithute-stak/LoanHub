@@ -2,6 +2,24 @@
 
 This is a **staging-only foundation**, not yet a completed desktop application or a signing system.
 
+## Staging import preflight (offline by default)
+
+Before connecting a workstation to a staging import service:
+
+```bash
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging .venv/bin/python bridge.py staging-import-preflight
+```
+
+This command only queries local queue counts. It performs **zero network requests**
+and reports `ready_to_sync: false` until an independent staging
+certification is completed. A disposable reference does not constitute
+independently verified identity or consent. The two captured workstation
+examples are to remain offline. The explicit `sync` CLI now rejects any
+environment other than `LOANHUB_SIGNATURE_BRIDGE_MODE=staging`, but
+staging mode alone is **not** approval to upload captures. For server
+integration, use an isolated synthetic fixture, verified tenant-scoped
+authentication, PostgreSQL isolation and replay tests.
+
 ## Implemented
 - Private SQLite queue; Fernet-encrypted capture payload at rest; vault key in a mode-0600 local file.
 - HMAC-hashed phone aliases, including slash-separated Lesotho numbers.
