@@ -120,6 +120,8 @@ func serve() error {
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    pcUI := flag.Bool("pc-ui", false, "Start local PC login/client lookup UI (capture disabled)")
+    loanHubOrigin := flag.String("loanhub-origin", "", "Trusted LoanHub HTTPS API origin for --pc-ui")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
     calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
@@ -128,6 +130,24 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *pcUI {
+        if *loanHubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
+            *calibrationTest || *calibratedStrokeTest || *strokeTest ||
+            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--pc-ui requires only --loanhub-origin=https://trusted-loanhub-api")
+            os.Exit(2)
+        }
+        if err := servePCUI(*loanHubOrigin); err != nil {
+            log.Printf("Local Wacom PC UI failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *loanHubOrigin != "" {
+        log.Println("--loanhub-origin can only be used with --pc-ui")
+        os.Exit(2)
+    }
     if *initWorkstation != "" {
         if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
             *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
