@@ -31,10 +31,10 @@ def postgres(monkeypatch):
     assert url.database == "loan_db"
 
     Base = declarative_base()
-    table_name = "signature_lookup_ci_" + uuid4().hex[:16]
+    probe_table_name = "signature_lookup_ci_" + uuid4().hex[:16]
 
     class AuditProbe(Base):
-        __tablename__ = table_name
+        __tablename__ = probe_table_name
         id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
         user_id = Column(UUID(as_uuid=True), nullable=False)
         company_id = Column(UUID(as_uuid=True), nullable=False)
