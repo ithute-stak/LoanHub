@@ -121,6 +121,10 @@ func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
     proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
+    captureBridge := flag.Bool("capture-strokes-json", false, "Local staging-only SDK capture to JSON stdout, no HTTP and no contract signing")
+    captureFast := flag.Bool("capture-strokes-json-fast", false, "Staging-only 10-second local SDK capture for review dialog")
+    watchPen := flag.Bool("watch-pen-contact", false, "Staging-only first pen-down notification (no handwriting output)")
+    capturePreflight := flag.Bool("bridge-capture-preflight", false, "Read-only offline Signature Bridge SDK and terminal checks; no device access")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     stagingPreflightPath := flag.String("staging-preflight", "", "Offline check for protected Wacom staging prerequisites (never captures handwriting)")
     stagingPreviewPath := flag.String("protected-preview-staging", "", "Isolated protected Wacom staging route test at 127.0.0.1:8766; does not enable browser capture")
@@ -133,6 +137,56 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *captureFast || *watchPen {
+        if *captureFast == *watchPen || *captureBridge || *capturePreflight ||
+            *diagnostics || *stagingPreviewPath != "" || *stagingPreflightPath != "" ||
+            *proofDirectory != "" || *proofSession != "" || *proofTestDirectory != "" ||
+            *initWorkstation != "" || *sdkEnumerator != "" || *calibrationTest ||
+            *calibratedStrokeTest || *sdkQuery != "" || *penTest || *strokeTest ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("Fast capture and pen-contact watch are exclusive staging-only modes")
+            os.Exit(2)
+        }
+        var err error
+        if *captureFast { err = runBridgeCaptureCLI(true) } else { err = runBridgePenContactWatchCLI() }
+        if err != nil {
+            log.Printf("Wacom local adapter operation failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *capturePreflight {
+        if *captureBridge || *captureFast || *watchPen || *diagnostics || *stagingPreviewPath != "" ||
+            *stagingPreflightPath != "" || *proofDirectory != "" ||
+            *proofSession != "" || *proofTestDirectory != "" ||
+            *initWorkstation != "" || *sdkEnumerator != "" ||
+            *calibrationTest || *calibratedStrokeTest ||
+            *sdkQuery != "" || *penTest || *strokeTest ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--bridge-capture-preflight accepts no additional modes")
+            os.Exit(2)
+        }
+        if err := preflightBridgeCaptureCLI(); err != nil {
+            log.Printf("Wacom capture preflight failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *captureBridge {
+        if *captureFast || *watchPen || *diagnostics || *stagingPreviewPath != "" || *stagingPreflightPath != "" ||
+            *proofDirectory != "" || *proofSession != "" || *proofTestDirectory != "" ||
+            *initWorkstation != "" || *sdkEnumerator != "" || *calibrationTest ||
+            *calibratedStrokeTest || *sdkQuery != "" || *penTest || *strokeTest ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--capture-strokes-json accepts no additional modes or arguments")
+            os.Exit(2)
+        }
+        if err := runBridgeCaptureCLI(false); err != nil {
+            log.Printf("Offline staging Wacom capture failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
     if *stagingPreviewPath != "" {
         if *stagingPreflightPath != "" || *proofSession != "" || *proofDirectory != "" ||
             *proofTestDirectory != "" || *diagnostics || *initWorkstation != "" ||
