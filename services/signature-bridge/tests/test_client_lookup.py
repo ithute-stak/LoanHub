@@ -25,6 +25,30 @@ class LookupTests(unittest.TestCase):
         self.mode.stop()
         self.tmp.cleanup()
 
+    def test_private_lookup_profile_uses_no_token_in_file(self):
+        config = Path(self.tmp.name) / "lookup.json"
+        config.write_text(json.dumps({
+            "url": self.url, "company_id": self.company,
+            "token_provider": str(self.provider)
+        }))
+        config.chmod(0o600)
+        found = client_lookup.load_lookup_config(config)
+        self.assertEqual(found["company_id"], self.company)
+        self.assertEqual(found["token_provider"], self.provider)
+        config.chmod(0o644)
+        with self.assertRaises(ValueError):
+            client_lookup.load_lookup_config(config)
+
+    def test_lookup_profile_rejects_embedded_token(self):
+        config = Path(self.tmp.name) / "lookup.json"
+        config.write_text(json.dumps({
+            "url": self.url, "company_id": self.company,
+            "token_provider": str(self.provider), "token": "must-not-store"
+        }))
+        config.chmod(0o600)
+        with self.assertRaises(ValueError):
+            client_lookup.load_lookup_config(config)
+
     def test_rejects_production_hostname_and_http(self):
         for url in (
             "https://loanhub.co.ls/api/v1/signature-bridge/lookup-national-id",
