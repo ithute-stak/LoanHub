@@ -9,6 +9,7 @@ import (
     "errors"
     "fmt"
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "syscall"
@@ -147,6 +148,31 @@ func captureBridgeStrokes(cfg bridgeSDKConfig) (bridgePenEnvelope, error) {
     _, err = testWacomSampleWithHandler(cfg.PenSample, 25*time.Second, collector.Add)
     if err != nil { return failed, errors.New("Wacom pen stream capture failed") }
     return collector.Envelope()
+}
+
+// This dry-run validates local prerequisites without opening the STU tablet,
+// starting a Wacom SDK sample, or producing/storing handwriting.
+func preflightBridgeCaptureCLI() error {
+    cfg, err := loadBridgeSDKConfig()
+    if err != nil { return err }
+    if _, err := exec.LookPath("script"); err != nil {
+        return errors.New("util-linux script is required for Wacom PTY capture")
+    }
+    if !isOperatorTerminalStdin() {
+        return errors.New("interactive operator terminal required for real capture")
+    }
+    if cfg.Query == cfg.PenSample {
+        return errors.New("calibration and pen sample executables must be distinct")
+    }
+    // Deliberately no SDK invocation or device access during preflight.
+    return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+        "status": "prerequisites_ready",
+        "mode": "staging",
+        "device_connected": false,
+        "capture_performed": false,
+        "hardware_verified": false,
+        "signing_enabled": false,
+    })
 }
 
 func runBridgeCaptureCLI() error {
