@@ -15,7 +15,7 @@ type pcPendingCapture struct {
     signerKind string
     borrowerID string
     consentReference string
-    label string
+    Label string
     expires time.Time
 }
 
@@ -77,7 +77,7 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     }
     session.capture=&pcPendingCapture{
         preview:preview, signerKind:kind, borrowerID:borrowerID,
-        consentReference:ref, label:signerName, expires:time.Now().Add(2*time.Minute),
+        consentReference:ref, Label:signerName, expires:time.Now().Add(2*time.Minute),
     }
     session.feedback="Capture complete. Check handwriting with the signer, then explicitly approve upload or discard."
 }
