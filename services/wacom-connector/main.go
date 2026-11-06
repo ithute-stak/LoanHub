@@ -119,6 +119,7 @@ func serve() error {
 
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
+    respondChallenge := flag.String("respond-workstation-challenge", "", "Sign one operator-supplied challenge JSON from stdin with existing private workstation key; print public proof only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
@@ -128,6 +129,25 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *respondChallenge != "" {
+        if *initWorkstation != "" || *diagnostics || *calibrationTest ||
+            *calibratedStrokeTest || *penTest || *strokeTest ||
+            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
+            len(flag.Args()) != 0 {
+            log.Println("--respond-workstation-challenge accepts only a private identity directory and stdin JSON")
+            os.Exit(2)
+        }
+        proof, err := signBackendWorkstationChallenge(*respondChallenge, os.Stdin, time.Now().UTC())
+        if err != nil {
+            log.Printf("Wacom workstation proof failed: %v",err)
+            os.Exit(1)
+        }
+        if err := json.NewEncoder(os.Stdout).Encode(proof); err != nil {
+            log.Printf("Wacom workstation proof output failed: %v",err)
+            os.Exit(1)
+        }
+        return
+    }
     if *initWorkstation != "" {
         if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
             *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
