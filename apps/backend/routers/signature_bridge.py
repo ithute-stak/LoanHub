@@ -22,6 +22,10 @@ from sqlalchemy.orm import Session
 from core.access_control import LENDING_ROLES, COMPANY_MANAGEMENT_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.session import get_db
 from database.models.signature_bridge import SignatureBridgeImport, SignatureBridgePhoneAlias
+from database.models.person import Person
+from database.models.borrower import Borrower
+from database.models.company_client import CompanyBorrowerAccount
+from database.models.borrower_signature import BorrowerSavedSignature
 from services.signature_bridge_matching import normalized_phone_aliases
 
 router = APIRouter(prefix="/signature-bridge", tags=["Signature Bridge (staging only)"])
@@ -144,6 +148,76 @@ def import_signature(
             return _duplicate_or_conflict(race_winner)
         raise HTTPException(409, "Import integrity conflict; record not acknowledged") from exc
     return {"status":"pending_identity_review","source_record_id":str(body.source_record_id),"company_id":str(context.company_id),"duplicate":False,"usable_for_signing":False}
+
+
+class NationalIdLookupRequest(BaseModel):
+    """Exact-match request, never unbounded National ID enumeration."""
+    model_config = ConfigDict(extra="forbid")
+    national_id: str = Field(min_length=4, max_length=50)
+
+
+@router.post("/lookup-national-id")
+def lookup_national_id(
+    body: NationalIdLookupRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Tenant-scoped exact National ID resolution and signature reuse status."""
+    response.headers["Cache-Control"] = "no-store"
+    _enabled()
+    require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
+    if context.company_id is None:
+        raise HTTPException(403, "Tenant company required")
+    national_id = body.national_id.strip()
+    if not national_id or len(national_id) < 4 or any(ord(ch) < 32 for ch in national_id):
+        raise HTTPException(422, "Invalid National ID")
+    matches = db.query(Borrower.id, Person.first_name, Person.middle_name, Person.last_name).join(
+        Person, Person.user_id == Borrower.user_id
+    ).join(
+        CompanyBorrowerAccount, CompanyBorrowerAccount.borrower_id == Borrower.id
+    ).filter(
+        CompanyBorrowerAccount.company_id == context.company_id,
+        Person.national_id == national_id,
+    ).limit(2).all()
+    if not matches:
+        return {"status": "not_found", "matches": [], "may_capture": False,
+                "may_reuse": False, "may_sign_contract": False}
+    if len(matches) != 1:
+        return {"status": "conflict", "matches": [], "may_capture": False,
+                "may_reuse": False, "may_sign_contract": False}
+    borrower_id, first, middle, last = matches[0]
+    saved = db.query(BorrowerSavedSignature.id).filter(
+        BorrowerSavedSignature.company_id == context.company_id,
+        BorrowerSavedSignature.borrower_id == borrower_id,
+        BorrowerSavedSignature.status == "active",
+    ).limit(2).all()
+    pending = db.query(SignatureBridgeImport.id).filter(
+        SignatureBridgeImport.company_id == context.company_id,
+        SignatureBridgeImport.signer_kind == "client",
+        SignatureBridgeImport.signer_id == borrower_id,
+        SignatureBridgeImport.status == "pending_identity_review",
+    ).limit(1).all()
+    full_name = " ".join(part.strip() for part in (first, middle, last) if part and part.strip())
+    if saved or pending:
+        status = "existing_signature" if saved else "pending_signature_review"
+    else:
+        status = "matched_no_signature"
+    return {
+        "status": status,
+        "matches": [{
+            "borrower_id": str(borrower_id),
+            "full_name": full_name,
+            "national_id_suffix": national_id[-4:],
+            "signature_state": (
+                "active_saved" if saved else "pending_review" if pending else "none"
+            ),
+        }],
+        "may_capture": False,
+        "may_reuse": False,
+        "may_sign_contract": False,
+    }
+
 
 class ClientLookupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
