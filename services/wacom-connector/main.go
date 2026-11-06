@@ -120,7 +120,8 @@ func serve() error {
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
-    pcUI := flag.Bool("pc-ui", false, "Start local PC login/client lookup UI (capture disabled)")
+    pcUI := flag.Bool("pc-ui", false, "Start local PC login/client lookup UI")
+    enableCapture := flag.Bool("enable-local-capture", false, "Enable explicit STU-540 local capture and pending-review upload; requires --pc-ui and installed Wacom SDK paths")
     disposablePNG := flag.Bool("disposable-png-test", false, "Operator-triggered SDK handwriting-to-PNG verification, memory only; no upload or signing")
     loanHubOrigin := flag.String("loanhub-origin", "", "Trusted LoanHub HTTPS API origin for --pc-ui")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
@@ -152,16 +153,29 @@ func main() {
     if *pcUI {
         if *loanHubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
             *calibrationTest || *calibratedStrokeTest || *strokeTest ||
-            *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
-            len(flag.Args()) != 0 {
-            log.Println("--pc-ui requires only --loanhub-origin=https://trusted-loanhub-api")
+            *sdkEnumerator != "" || len(flag.Args()) != 0 ||
+            (*enableCapture && (*sdkQuery == "" || *sdkPenSample == "")) ||
+            (!*enableCapture && (*sdkQuery != "" || *sdkPenSample != "")) {
+            log.Println("--pc-ui requires --loanhub-origin=https://trusted-api; --enable-local-capture additionally requires --sdk-query and --sdk-pen-sample")
             os.Exit(2)
         }
-        if err := servePCUI(*loanHubOrigin); err != nil {
+        var capture func() (disposableWacomPreview,error)
+        if *enableCapture {
+            // Paths are fixed at startup; HTTP requests can never select executables.
+            query,pen:=*sdkQuery,*sdkPenSample
+            capture=func()(disposableWacomPreview,error) {
+                return captureDisposableWacomPreview(query,pen)
+            }
+        }
+        if err := servePCUI(*loanHubOrigin,capture); err != nil {
             log.Printf("Local Wacom PC UI failed: %v", err)
             os.Exit(1)
         }
         return
+    }
+    if *enableCapture {
+        log.Println("--enable-local-capture requires --pc-ui")
+        os.Exit(2)
     }
     if *loanHubOrigin != "" {
         log.Println("--loanhub-origin can only be used with --pc-ui")
