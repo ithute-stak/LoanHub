@@ -151,6 +151,10 @@ path through `bridge.py capture-wacom --sdk-adapter ...`, along with
 verified synthetic signer IDs and explicit local operator confirmation.
 The Python bridge launches Go, captures JSON without writing the pen data
 to log files, validates it, and stores the encrypted result in SQLite.
+The operator now sees the native adapter's redacted `Wacom SDK ready` cue
+on stderr and should begin disposable strokes only after that message.
+The Go adapter counts, but does not forward, vendor stderr; its stdout
+contains private pen JSON and is captured separately from terminal output.
 
 This feature remains **staging-only and disabled by default**. A successful
 build does not prove actual hardware connectivity or legally valid consent;
