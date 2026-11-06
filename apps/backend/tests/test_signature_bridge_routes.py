@@ -32,6 +32,7 @@ def enabled(monkeypatch):
     monkeypatch.setattr(api, "reserve_lookup_attempt", lambda db, **scope: None)
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED", "true")
+    monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED", "true")
     monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY", Fernet.generate_key().decode())
 
 
@@ -318,3 +319,38 @@ def test_missing_client_name_never_grants_capture(context, enabled):
     assert result["status"] == "conflict"
     assert result["matches"] == []
     assert result["may_sign_contract"] is False
+
+
+def test_lookup_gate_does_not_enable_imports(context, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED", "true")
+    monkeypatch.delenv("LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED", raising=False)
+    api._lookup_enabled()
+    with pytest.raises(HTTPException) as error:
+        api._enabled()
+    assert error.value.status_code == 503
+
+
+def test_import_flag_does_not_enable_national_id_lookup(context, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED", "true")
+    monkeypatch.delenv("LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED", raising=False)
+    db = MagicMock()
+    with pytest.raises(HTTPException) as error:
+        api.lookup_national_id(
+            api.NationalIdLookupRequest(national_id="TEST0001"), Response(), db, context
+        )
+    assert error.value.status_code == 503
+    db.query.assert_not_called()
+
+
+def test_lookup_flag_cannot_enable_lookup_in_production(context, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED", "true")
+    db = MagicMock()
+    with pytest.raises(HTTPException) as error:
+        api.lookup_national_id(
+            api.NationalIdLookupRequest(national_id="TEST0001"), Response(), db, context
+        )
+    assert error.value.status_code == 503
+    db.query.assert_not_called()
