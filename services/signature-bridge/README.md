@@ -54,6 +54,23 @@ lookup. Live `api.loanhub.co.ls`, `www.loanhub.co.ls` and `loanhub.co.ls`
 hosts are rejected by the staging client. A reviewed staging HTTPS hostname,
 operator access and server deployment remain mandatory.
 
+## Independent staging feature gates
+
+The read-only exact National ID lookup and the quarantined signature import
+inbox have **separate, fail-closed switches**:
+
+- `LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED=true` enables authenticated
+  staging lookup only (still subject to role/tenant controls and audit limit).
+- `LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED=true` enables the staging import
+  inbox separately. Keep it **false** for identity lookup rollout.
+- Both routes are disabled unless `ENVIRONMENT=staging`. Neither switch
+  authorizes capture, signature reuse or contract signing.
+
+Do not deploy the previous image `loanhub-wacom-signature-bridge:77d65918`
+to activate lookups: it predates this separation and enabling its old shared
+switch would also open the quarantine import route. Rebuild a uniquely tagged
+image from the latest feature branch and complete CI before staging cutover.
+
 ## Authenticated National ID rate limiting (staging)
 
 The backend now reserves each exact National ID lookup attempt through
