@@ -198,6 +198,7 @@ class CdasProviderOperation(Base):
     submitted_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     reconciled_at = Column(DateTime, nullable=True)
+    reconciliation_required_at = Column(DateTime, nullable=True)
     requires_reconciliation = Column(Boolean, nullable=False, default=False, index=True)
 
     actor = relationship("User", foreign_keys=[actor_user_id])
