@@ -115,7 +115,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <p class="notice warn">Physical capture disabled until the official STU-540 SDK has been configured and verified on this PC.</p>
 {{else}}
 {{if .Pending}}
-<p>Review handwriting for: <strong>{{.Pending.label}}</strong></p>
+<p>Review handwriting for: <strong>{{.Pending.Label}}</strong></p>
 <img src="/preview" alt="Handwriting captured on local Wacom pad" style="width:100%;height:auto;border:1px solid #ccd7e1">
 <form method="post" action="/upload">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
