@@ -21,9 +21,9 @@ class ReviewDialogSafetyTests(unittest.TestCase):
     def test_capture_refuses_production_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
             p = Path(temporary) / "adapter"
-            p.write_text("#!/bin/sh\\n")
+            p.write_text("#!/bin/sh\n")
             p.chmod(0o700)
-            with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "production"}), \\
+            with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "production"}), \
                  patch.object(review_dialog.subprocess, "run") as process:
                 with self.assertRaisesRegex(ValueError, "requires staging"):
                     review_dialog.capture_once(p)
