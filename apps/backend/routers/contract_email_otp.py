@@ -19,6 +19,7 @@ from database.models.enums import UserRole
 from database.models.origination import LoanContract
 from database.models.pad_signing import ContractPadSigningSession
 from database.models.borrower_signature import BorrowerSavedSignature
+from database.models.file_management import ManagedFile
 from database.session import get_db
 from services.wacom_session_revalidation import current_pad_preview_eligibility
 from services.contract_email_otp_service import (
@@ -260,6 +261,66 @@ def cancel_pad_signing_session(
     row.status = "cancelled"
     db.commit()
     return {"session_id": str(row.id), "status": "cancelled", "capture_enabled": False}
+
+
+@router.get("/contracts/{contract_id}/pad/verified-capture-evidence")
+def contract_verified_capture_evidence(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Metadata-only discovery of the contract borrower's reviewed capture.
+
+    This cannot sign or authorize any document, issue a capture ticket, or
+    expose a signature image. Fresh borrower consent is always required.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    records = (
+        db.query(ManagedFile)
+        .filter(
+            ManagedFile.company_id == context.company_id,
+            ManagedFile.category == "wacom_client_capture_verified",
+            ManagedFile.linked_entity_type == "wacom_client",
+            ManagedFile.linked_entity_id == str(contract.borrower_id),
+            ManagedFile.is_encrypted.is_(True),
+            ManagedFile.is_confidential.is_(True),
+            ManagedFile.visibility == "private",
+            ManagedFile.scan_status == "clean",
+            ManagedFile.is_deleted.is_(False),
+        )
+        .order_by(ManagedFile.created_at.desc(), ManagedFile.id.desc())
+        .limit(10)
+        .all()
+    )
+    blockers: list[str] = []
+    if contract.borrower_signed_at is not None:
+        blockers.append("borrower_already_signed")
+    if contract.locked_at is not None or contract.status == "signed":
+        blockers.append("contract_locked")
+    if contract.pdf_file_id is None:
+        blockers.append("contract_pdf_missing")
+    if not contract.contract_hash:
+        blockers.append("contract_hash_missing")
+    return {
+        "contract_id": str(contract.id),
+        "borrower_id": str(contract.borrower_id),
+        "capture_evidence": [
+            {
+                "file_id": str(record.id),
+                "captured_at": record.created_at.isoformat() if record.created_at else None,
+                "evidence_status": "verified_capture",
+            }
+            for record in records
+        ],
+        "document_preflight_blockers": blockers,
+        "requires_fresh_borrower_identity_verification": True,
+        "requires_fresh_contract_consent": True,
+        "requires_document_specific_authorization": True,
+        "can_apply_capture_to_document": False,
+        "automatic_signature_reuse_enabled": False,
+        "contract_signed": False,
+    }
 
 
 @router.get("/contracts/{contract_id}/pad/saved-signatures")
