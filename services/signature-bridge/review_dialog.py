@@ -20,7 +20,7 @@ import tempfile
 import threading
 
 from capture_protocol import MAX_BYTES, validate_strokes
-from client_lookup import lookup_client
+from client_lookup import lookup_client, load_lookup_config
 
 
 def validate_national_id(value: str) -> str:
@@ -29,19 +29,6 @@ def validate_national_id(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9/-]{4,32}", candidate):
         raise ValueError("Enter a National ID using 4–32 letters, digits, / or -")
     return candidate
-
-
-# Deliberately synthetic examples. No local customer directory, network or real IDs.
-DEMO_NATIONAL_IDS = ("DEMO-1001", "DEMO-1002", "DEMO-1003", "TEST-2001")
-
-
-def search_national_id_options(prefix: str, *, demo: bool = True) -> list[str]:
-    """Fail-closed autocomplete: real client lookup needs authenticated API."""
-    query = prefix.strip().casefold()
-    if not demo or len(query) < 2 or len(query) > 32:
-        return []
-    return [identity for identity in DEMO_NATIONAL_IDS
-            if query in identity.casefold()][:5]
 
 
 def adapter_is_trusted(path: Path) -> bool:
@@ -117,7 +104,7 @@ class ReviewDialog:
         self.busy = False
         self.generation = 0
         self.national_id = tk.StringVar()
-        self.status = tk.StringVar(value="Ready for a disposable STU-540 test capture")
+        self.status = tk.StringVar(value="LoanHub client lookup connected; signature submission is not activated." if lookup_config else "LoanHub lookup not configured. Capture and posting disabled.")
         self.selected_national_id = None
         self.search_after = None
         root.title("LoanHub • Signature Review — STAGING")
@@ -129,8 +116,8 @@ class ReviewDialog:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Signature review", font=("Sans", 19, "bold")).pack(anchor="w")
         ttk.Label(outer, text="STAGING / TEST SIGNATURES ONLY • No VPS upload • No contract signing").pack(anchor="w", pady=(3, 14))
-        ttk.Label(outer, text="Client National ID — authenticated exact lookup" if lookup_config else "Client National ID — DEMO only").pack(anchor="w")
-        self.id_field = ttk.Entry(outer, textvariable=self.national_id, show="•", width=38)
+        ttk.Label(outer, text="Client National ID — LoanHub company lookup").pack(anchor="w")
+        self.id_field = ttk.Entry(outer, textvariable=self.national_id, width=38)
         self.id_field.pack(anchor="w", pady=(4, 3))
         self.matches = tk.Listbox(outer, height=4, exportselection=False)
         self.matches.bind("<Double-Button-1>", self.choose_match)
@@ -140,7 +127,7 @@ class ReviewDialog:
         self.national_id.trace_add("write", self.schedule_search)
         self.id_field.bind("<Down>", self.focus_first_match)
         self.id_field.bind("<Return>", self.choose_first_match)
-        self.client_info = tk.StringVar(value="Enter exact National ID for company-scoped staging lookup." if lookup_config else "Type DEMO or TEST for synthetic choices.")
+        self.client_info = tk.StringVar(value="Enter National ID to verify the client against authenticated LoanHub staging." if lookup_config else "Not connected: configure a private LoanHub lookup profile on this workstation.")
         ttk.Label(outer, textvariable=self.client_info, wraplength=680).pack(anchor="w", pady=(0, 10))
         self.canvas = tk.Canvas(outer, background="#ffffff", height=245, highlightbackground="#b8c1ce", highlightthickness=1)
         self.canvas.pack(fill="both", expand=True)
@@ -149,6 +136,7 @@ class ReviewDialog:
         actions.pack(fill="x")
         self.capture_button = ttk.Button(actions, text="Start signing", command=self.start)
         self.capture_button.pack(side="left", padx=(0, 7))
+        self.capture_button.configure(state="disabled")
         self.clear_button = ttk.Button(actions, text="Clear / Restart", command=self.restart)
         self.clear_button.pack(side="left", padx=(0, 7))
         self.reject_button = ttk.Button(actions, text="Reject signature", command=self.reject)
@@ -174,44 +162,8 @@ class ReviewDialog:
         if self.lookup_config:
             self.query_server_for_exact_id()
             return
-        if self.selected_national_id == self.national_id.get():
-            self.matches.pack_forget()
-            return
-        values = search_national_id_options(self.national_id.get())
-        self.matches.delete(0, self.tk.END)
-        for value in values:
-            self.matches.insert(self.tk.END, value + "  •  SYNTHETIC TEST ONLY")
-        if values:
-            self.matches.pack(anchor="w", fill="x", after=self.id_field)
-        else:
-            self.matches.pack_forget()
-
-    def select_identity(self, identity: str):
-        if identity not in DEMO_NATIONAL_IDS:
-            return
-        self.national_id.set(identity)
-        self.selected_national_id = identity
         self.matches.pack_forget()
-        self.id_field.focus_set()
-        self.status.set("Synthetic ID selected for UI testing only; not verified against LoanHub.")
-
-    def choose_match(self, _event=None):
-        selection = self.matches.curselection()
-        if selection:
-            self.select_identity(self.matches.get(selection[0]).split("  •")[0])
-
-    def choose_first_match(self, _event=None):
-        if self.matches.size():
-            self.select_identity(self.matches.get(0).split("  •")[0])
-        return "break"
-
-    def focus_first_match(self, _event=None):
-        if self.matches.size():
-            self.matches.selection_clear(0, self.tk.END)
-            self.matches.selection_set(0)
-            self.matches.focus_set()
-        return "break"
-
+        return
     def discard(self, clear_identity: bool = True):
         self.capture = None
         self.canvas.delete("all")
@@ -224,9 +176,8 @@ class ReviewDialog:
     def start(self):
         if self.busy:
             return
-        if self.lookup_config:
-            self.status.set("Real client signing blocked until verified consent and contract authorization.")
-            return
+        self.status.set("Real client signing blocked until verified consent and contract authorization.")
+        return
         self.discard(clear_identity=False)
         self.busy = True
         self.generation += 1
@@ -319,7 +270,7 @@ class ReviewDialog:
                 if generation != self.generation:
                     continue
                 self.busy = False
-                self.capture_button.configure(state="normal")
+                self.capture_button.configure(state="disabled")
                 if ok:
                     self.capture = data
                     envelope = validate_strokes(data)
@@ -382,6 +333,7 @@ def main() -> int:
     p.add_argument("--lookup-url", help="Approved staging HTTPS exact National ID endpoint")
     p.add_argument("--company-id", help="Authenticated company UUID")
     p.add_argument("--token-provider", help="Private executable supplying a short-lived operator token")
+    p.add_argument("--lookup-config", help="Owner-only JSON config with staging URL, company UUID and private token provider")
     args = p.parse_args()
     if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
         p.error("The review dialog is only available in staging mode")
@@ -395,7 +347,11 @@ def main() -> int:
         print("Unable to open desktop dialog; install python3-tk and use a graphical desktop", file=sys.stderr)
         return 1
     lookup_config = None
-    if any((args.lookup_url, args.company_id, args.token_provider)):
+    if args.lookup_config:
+        if any((args.lookup_url, args.company_id, args.token_provider)):
+            p.error("Use either --lookup-config or individual lookup arguments")
+        lookup_config = load_lookup_config(Path(args.lookup_config))
+    elif any((args.lookup_url, args.company_id, args.token_provider)):
         if not all((args.lookup_url, args.company_id, args.token_provider)):
             p.error("Lookup requires --lookup-url, --company-id and --token-provider")
         from client_lookup import validate_lookup_endpoint
