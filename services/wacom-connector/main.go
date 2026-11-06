@@ -122,6 +122,7 @@ func main() {
     proofDirectory := flag.String("sign-workstation-challenge", "", "Sign a backend Wacom challenge read from stdin with an enrolled local identity (no HTTP)")
     proofSession := flag.String("proof-session-id", "", "Expected session UUID, required with --sign-workstation-challenge")
     captureBridge := flag.Bool("capture-strokes-json", false, "Local staging-only SDK capture to JSON stdout, no HTTP and no contract signing")
+    capturePreflight := flag.Bool("bridge-capture-preflight", false, "Read-only offline Signature Bridge SDK and terminal checks; no device access")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     stagingPreflightPath := flag.String("staging-preflight", "", "Offline check for protected Wacom staging prerequisites (never captures handwriting)")
     stagingPreviewPath := flag.String("protected-preview-staging", "", "Isolated protected Wacom staging route test at 127.0.0.1:8766; does not enable browser capture")
@@ -134,6 +135,23 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *capturePreflight {
+        if *captureBridge || *diagnostics || *stagingPreviewPath != "" ||
+            *stagingPreflightPath != "" || *proofDirectory != "" ||
+            *proofSession != "" || *proofTestDirectory != "" ||
+            *initWorkstation != "" || *sdkEnumerator != "" ||
+            *calibrationTest || *calibratedStrokeTest ||
+            *sdkQuery != "" || *penTest || *strokeTest ||
+            *sdkPenSample != "" || len(flag.Args()) != 0 {
+            log.Println("--bridge-capture-preflight accepts no additional modes")
+            os.Exit(2)
+        }
+        if err := preflightBridgeCaptureCLI(); err != nil {
+            log.Printf("Wacom capture preflight failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
     if *captureBridge {
         if *diagnostics || *stagingPreviewPath != "" || *stagingPreflightPath != "" ||
             *proofDirectory != "" || *proofSession != "" || *proofTestDirectory != "" ||
