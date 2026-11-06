@@ -2,6 +2,39 @@
 
 This is a **staging-only foundation**, not yet a completed desktop application or a signing system.
 
+## Local signing review window (staging prototype)
+
+A first local desktop review window is available using Python Tkinter.
+Launch it from an **interactive graphical Linux terminal** attached to the STU-540:
+
+```bash
+cd services/signature-bridge
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging .venv/bin/python review_dialog.py \
+  --sdk-adapter "$PWD/../wacom-connector/loanhub-wacom-connector"
+```
+
+If Tkinter is missing, install the distribution's `python3-tk` package.
+Use **test strokes only**. Click **Start signing**, wait for native capture to
+complete, and inspect the locally rendered preview. **Reject signature**
+discards the preview, and **Clear / Restart** discards the prior capture and
+starts a new 25-second SDK session. This is a **software reset**, not a
+guarantee that the physical STU-540 display was erased. A hard USB/tablet
+clear command has not been certified.
+
+The National ID field is masked and remains in volatile GUI memory only.
+Basic input hygiene is **not** National ID verification. Phone numbers are
+not part of the new UI. Real client identification will require an
+authenticated, tenant-scoped LoanHub National ID lookup; never substitute a
+manually entered National ID for an authenticated borrower UUID.
+
+**Post to VPS is deliberately disabled** until the server supports
+authenticated National ID resolution, explicit operator authorization and
+consent evidence, per-tenant policies, duplicate-source protection, and
+staging acceptance testing. This window does not read or alter the existing
+two stored offline test captures and does not create a local queued record.
+It is not yet an automatically triggered modal in the LoanHub web portal;
+that needs a separate authenticated desktop launch/handshake protocol.
+
 ## Staging import preflight (offline by default)
 
 Before connecting a workstation to a staging import service:
