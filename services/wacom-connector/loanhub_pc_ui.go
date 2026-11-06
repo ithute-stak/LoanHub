@@ -39,6 +39,7 @@ type pcUI struct {
     origin string
     mu sync.Mutex
     sessions map[string]*pcUISession
+    transport *http.Client // optional injected HTTPS transport in tests
 }
 
 type pcUIPage struct {
@@ -197,7 +198,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         switch r.URL.Path {
         case "/login":
             if session.client != nil { session.feedback="Already signed in"; break }
-            client,err := NewLoanHubPCClient(ui.origin,nil)
+            client,err := NewLoanHubPCClient(ui.origin,ui.transport)
             if err != nil { session.feedback="LoanHub origin configuration unavailable"; break }
             err=client.Login(ctx,strings.TrimSpace(r.PostForm.Get("phone")),
                 r.PostForm.Get("password"),strings.TrimSpace(r.PostForm.Get("otp")),
