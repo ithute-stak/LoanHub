@@ -211,6 +211,40 @@ def capture_wacom(args: argparse.Namespace) -> None:
         register(args, capture_bytes=envelope.canonical)
 
 
+def verify_local_capture(args: argparse.Namespace) -> None:
+    """Local smoke check: validate encrypted capture without revealing strokes.
+
+    This command neither reads the STU device nor contacts a server.
+    """
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Capture verification is restricted to staging")
+    capture_id = str(UUID(args.signature_id))
+    with connection() as db:
+        row = db.execute(
+            """SELECT s.encrypted_signature, s.status, o.status
+               FROM signatures s JOIN sync_outbox o
+               ON o.signature_id = s.signature_id
+               WHERE s.signature_id = ?""",
+            (capture_id,),
+        ).fetchone()
+    if row is None:
+        raise ValueError("Local capture unavailable")
+    encrypted, status_value, queue_status = row
+    raw = Fernet(key()).decrypt(encrypted)
+    envelope = validate_strokes(raw)
+    print(json.dumps({
+        "signature_id": capture_id,
+        "capture_format_valid": True,
+        "encrypted_at_rest": encrypted != raw,
+        "stroke_count": envelope.stroke_count,
+        "point_count": envelope.point_count,
+        "local_status": status_value,
+        "queue_status": queue_status,
+        "contract_signed": False,
+        "hardware_certified": False,
+    }))
+
+
 def resolve(args: argparse.Namespace) -> None:
     if not args.company_id.strip():
         raise ValueError("Company ID required")
@@ -404,6 +438,8 @@ def main() -> int:
     p.add_argument("--consent-reference", required=True)
     p.add_argument("--consent-confirmed", action="store_true")
     p.add_argument("--identity-verified", action="store_true")
+    p = sub.add_parser("verify-local-capture")
+    p.add_argument("--signature-id", required=True)
     p = sub.add_parser("resolve")
     p.add_argument("--company-id", required=True)
     p.add_argument("--signer-kind", choices=("client","officer"), default="client")
@@ -413,7 +449,7 @@ def main() -> int:
     s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"resolve":resolve,"sync":sync}[args.command](args)
+        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"verify-local-capture":verify_local_capture,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
