@@ -71,10 +71,20 @@ def key() -> bytes:
         raise RuntimeError("Insecure vault key permissions")
     return location.read_bytes()
 
-def connection() -> sqlite3.Connection:
+@contextlib.contextmanager
+def connection():
     folder = state_dir()
     dbpath = folder / "bridge.sqlite3"
     db = sqlite3.connect(dbpath)
+    try:
+        _initialize_connection(db, dbpath)
+        with db:
+            yield db
+    finally:
+        db.close()
+
+
+def _initialize_connection(db: sqlite3.Connection, dbpath: Path) -> None:
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript("""
@@ -371,6 +381,29 @@ def sync(args: argparse.Namespace, *, access_token: str | None = None) -> None:
                 return
     print(json.dumps({"acknowledged":sent,"usable_for_signing":False}))
 
+def audit_local_queue(_args: argparse.Namespace) -> None:
+    """Read-only staging audit of pending record metadata, never pen data.
+
+    A test consent marker is only a label, not proof of a synthetic signer
+    or valid consent. The operator must review all queued records before sync.
+    """
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Queue audit is restricted to staging")
+    with connection() as db:
+        rows = db.execute("""SELECT s.signature_id, s.signer_kind,
+               s.consent_reference, s.status, o.status
+               FROM signatures s JOIN sync_outbox o USING(signature_id)
+               ORDER BY s.created_at, s.signature_id""").fetchall()
+    print(json.dumps({"remote_sync_enabled": False, "records": [
+        {"signature_id": capture_id, "signer_kind": signer_kind,
+         "disposable_test_reference": consent == "DISPOSABLE-LOCAL-HARDWARE-TEST",
+         "identity_independently_verified": False,
+         "consent_independently_verified": False,
+         "local_status": status, "queue_status": queue}
+        for capture_id, signer_kind, consent, status, queue in rows
+    ]}))
+
+
 def status(_args: argparse.Namespace) -> None:
     with connection() as db:
         count = db.execute("SELECT COUNT(*) FROM signatures").fetchone()[0]
@@ -412,7 +445,8 @@ def sync_using_provider(url: str, provider: str) -> None:
 
 def serve(_args: argparse.Namespace) -> None:
     global STOP
-    connection().close()
+    with connection():
+        pass
     def shutdown(_signum, _frame):
         global STOP
         STOP = True
@@ -440,6 +474,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve")
     sub.add_parser("status")
+    sub.add_parser("audit-local-queue")
     p = sub.add_parser("register")
     p.add_argument("--company-id", required=True)
     p.add_argument("--signer-kind", choices=("client","officer"), required=True)
@@ -475,7 +510,7 @@ def main() -> int:
     s.add_argument('--url', required=True, help='Verified HTTPS staging import URL')
     args = parser.parse_args()
     try:
-        {"serve":serve,"status":status,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"verify-local-capture":verify_local_capture,"resolve":resolve,"sync":sync}[args.command](args)
+        {"serve":serve,"status":status,"audit-local-queue":audit_local_queue,"register":register,"capture-strokes":capture_strokes,"capture-wacom":capture_wacom,"verify-local-capture":verify_local_capture,"resolve":resolve,"sync":sync}[args.command](args)
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         print(f"ERROR: {error}", file=sys.stderr)
