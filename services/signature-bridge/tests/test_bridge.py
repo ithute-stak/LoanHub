@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import bridge
@@ -17,6 +18,36 @@ class BridgeTests(unittest.TestCase):
     def tearDown(self):
         bridge.HOME = self.old
         self.tmp.cleanup()
+    def test_connection_closes_after_context(self):
+        with bridge.connection() as db:
+            self.assertEqual(db.execute("SELECT 1").fetchone()[0], 1)
+        with self.assertRaises(bridge.sqlite3.ProgrammingError):
+            db.execute("SELECT 1")
+
+    def test_redacted_local_queue_audit(self):
+        args = argparse.Namespace(
+            company_id="synthetic-tenant", signer_kind="officer",
+            verified_signer_id="synthetic-officer", phones="",
+            consent_reference="DISPOSABLE-LOCAL-HARDWARE-TEST",
+            capture_file=str(bridge.HOME / "synthetic.capture"),
+        )
+        Path(args.capture_file).write_bytes(b"secret-synthetic-stroke-data")
+        with contextlib.redirect_stdout(io.StringIO()):
+            bridge.register(args)
+        output = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"}):
+            with contextlib.redirect_stdout(output):
+                bridge.audit_local_queue(argparse.Namespace())
+        payload = json.loads(output.getvalue())
+        self.assertFalse(payload["remote_sync_enabled"])
+        self.assertEqual(len(payload["records"]), 1)
+        record = payload["records"][0]
+        self.assertTrue(record["disposable_test_reference"])
+        self.assertFalse(record["identity_independently_verified"])
+        self.assertNotIn("secret-synthetic-stroke-data", output.getvalue())
+        self.assertNotIn("synthetic-officer", output.getvalue())
+        self.assertNotIn("synthetic-tenant", output.getvalue())
+
     def test_phone_normalization(self):
         self.assertEqual(bridge.split_phones("58123456 / +26663123456 / 58123456"),
                          ["26658123456", "26663123456"])
