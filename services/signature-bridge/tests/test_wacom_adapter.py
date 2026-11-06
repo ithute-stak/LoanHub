@@ -51,6 +51,10 @@ class WacomAdapterTests(unittest.TestCase):
                 bridge.capture_wacom(self.args)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], [str(self.adapter), "--capture-strokes-json"])
+        self.assertEqual(run.call_args.kwargs["cwd"], str(self.adapter.parent))
+        self.assertIs(run.call_args.kwargs["stdin"], bridge.sys.stdin)
+        self.assertEqual(run.call_args.kwargs["env"]["TERM"], "xterm")
+        self.assertIs(run.call_args.kwargs["stderr"], bridge.subprocess.DEVNULL)
         with bridge.connection() as db:
             row = db.execute("SELECT encrypted_signature FROM signatures").fetchone()
             self.assertIsNotNone(row)
