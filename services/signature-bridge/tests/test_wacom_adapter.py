@@ -57,6 +57,33 @@ class WacomAdapterTests(unittest.TestCase):
             self.assertNotIn(b"loanhub-pen-strokes-v1", row[0])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM sync_outbox").fetchone()[0], 1)
 
+    def test_operator_gets_prompt_while_adapter_stderr_stays_private(self):
+        events = []
+        def fake_capture(*args, **kwargs):
+            events.append(("run", kwargs["stderr"]))
+            kwargs["stdout"].write(self.sample)
+        class PromptRecorder(io.StringIO):
+            def write(self, message):
+                events.append(("prompt", message))
+                return super().write(message)
+        prompt = PromptRecorder()
+        with patch.object(bridge.subprocess, "run", side_effect=fake_capture):
+            with contextlib.redirect_stderr(prompt), contextlib.redirect_stdout(io.StringIO()):
+                bridge.capture_wacom(self.args)
+        self.assertEqual(events[0][0], "prompt")
+        self.assertIn("draw several loops", prompt.getvalue())
+        self.assertIs(events[-1][1], bridge.subprocess.DEVNULL)
+        self.assertNotIn("pressure", prompt.getvalue())
+
+    def test_nonzero_adapter_exit_is_safe_and_leaves_no_record(self):
+        with patch.object(
+            bridge.subprocess, "run",
+            side_effect=bridge.subprocess.CalledProcessError(1, ["adapter"]),
+        ), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "nonzero exit code"):
+                bridge.capture_wacom(self.args)
+        self.assertFalse((bridge.HOME / "bridge.sqlite3").exists())
+
     def test_blocks_without_consent(self):
         self.args.consent_confirmed = False
         with patch.object(bridge.subprocess, "run") as run:
