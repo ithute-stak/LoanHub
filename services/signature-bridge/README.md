@@ -22,7 +22,7 @@ guarantee that the physical STU-540 display was erased. A hard USB/tablet
 clear command has not been certified.
 
 The National ID field is masked and remains in volatile GUI memory only.
-It now includes a keyboard/mouse-selectable autocomplete dropdown for **synthetic DEMO/TEST IDs only** (type `DEMO` or `TEST`). Real borrower suggestions are **not returned** until a tenant-scoped authenticated LoanHub National ID search API exists. No phone-number lookup or local plaintext list of real IDs is used.
+The previous synthetic suggestion dropdown has been removed. Real client lookup is exact-match only and requires authenticated staging configuration; no plaintext customer directory is stored locally.
 Basic input hygiene is **not** National ID verification. Phone numbers are
 not part of the new UI. Real client identification will require an
 authenticated, tenant-scoped LoanHub National ID lookup; never substitute a
@@ -35,6 +35,54 @@ staging acceptance testing. This window does not read or alter the existing
 two stored offline test captures and does not create a local queued record.
 It is not yet an automatically triggered modal in the LoanHub web portal;
 that needs a separate authenticated desktop launch/handshake protocol.
+
+## Visible National ID and persistent local watcher (no demo mode)
+
+The desktop National ID entry is now **plain text**, not a password field.
+The synthetic DEMO/TEST dropdown has been removed. When an authorized
+staging lookup profile is configured, the operator can type an exact
+National ID and see the matching client's full name and existing-signature
+status. Lookup requires authenticated, tenant-scoped LoanHub access;
+no real client records are cached in the workstation.
+
+The local watcher is registered as a GNOME graphical-session autostart
+and can reopen the review window when the operator touches the STU pad.
+This starts after graphical login following reboot, **not before login**,
+because the official Wacom SDK relies on an interactive TTY. It uses
+Ptyxis or GNOME Terminal to provide that TTY. A completely headless
+system boot watcher requires a separately validated SDK integration.
+
+For authenticated staging lookup, an administrator must first create a
+private `~/.config/loanhub-signature-bridge/lookup.json`, owned by the
+desktop user and mode 0600. It contains only a **reviewed staging** URL,
+the authorized company UUID and the absolute path to an owner-only
+short-lived token helper (mode 0700), **never a token**:
+
+```json
+{
+  "url": "https://APPROVED-STAGING-HOST/api/v1/signature-bridge/lookup-national-id",
+  "company_id": "AUTHORIZED-STAGING-COMPANY-UUID",
+  "token_provider": "/home/USER/path/to/reviewed-token-helper"
+}
+```
+
+The file is **not generated with fake credentials**. The administrator
+must validate the staging endpoint deployment, operator authentication,
+permission scoping, audit and request rate limits before enabling lookup.
+Without this file, the dialog displays a disconnected state and does
+not search client data or accept new signatures.
+
+Install or refresh the startup entry after configuring the profile:
+
+```bash
+.venv/bin/python install_review_autostart.py --install
+```
+
+All capture/posting and signature reuse remain disabled for real
+clients until a separate consented session and server-side approval
+process is in place; matching a client is not permission to reuse a
+signature or sign a contract. The local two-item encrypted test queue
+is not touched.
 
 ## National ID borrower match and signature reuse status (staging only)
 
