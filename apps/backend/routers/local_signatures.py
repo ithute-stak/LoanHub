@@ -35,6 +35,8 @@ router = APIRouter(prefix="/local-signatures", tags=["Local Wacom PC"])
 _ALLOWED = LENDING_ROLES | COMPANY_MANAGEMENT_ROLES
 _OPERATOR_CATEGORY = "wacom_operator_signature_pending"
 _CLIENT_CATEGORY = "wacom_client_signature_pending"
+_OPERATOR_VERIFIED_CATEGORY = "wacom_operator_capture_verified"
+_CLIENT_VERIFIED_CATEGORY = "wacom_client_capture_verified"
 _MAX_CAPTURE_BYTES = 128_000
 
 
@@ -133,13 +135,18 @@ def operator_signature_status(
         db, context, category=_OPERATOR_CATEGORY,
         kind="wacom_operator", identity=context.user.id,
     ).first()
+    verified = _pending_file(
+        db, context, category=_OPERATOR_VERIFIED_CATEGORY,
+        kind="wacom_operator", identity=context.user.id,
+    ).first()
     person = context.user.person
+    status = "verified_capture" if verified else "pending_review" if pending else "missing"
     return {
         "operator_id": str(context.user.id),
         "full_name": person.full_name if person else None,
         "company_id": str(context.company_id),
-        "signature_status": "pending_review" if pending else "missing",
-        "requires_capture": pending is None,
+        "signature_status": status,
+        "requires_capture": status == "missing",
         "usable_for_signing": False,
     }
 
@@ -189,7 +196,14 @@ def lookup_client(
         db, context, category=_CLIENT_CATEGORY,
         kind="wacom_client", identity=borrower_id,
     ).first()
-    signature_status = "active" if existing else "pending_review" if pending else "missing"
+    verified = _pending_file(
+        db, context, category=_CLIENT_VERIFIED_CATEGORY,
+        kind="wacom_client", identity=borrower_id,
+    ).first()
+    signature_status = (
+        "active" if existing else "verified_capture" if verified
+        else "pending_review" if pending else "missing"
+    )
     return {
         "status": "matched",
         "client": {
