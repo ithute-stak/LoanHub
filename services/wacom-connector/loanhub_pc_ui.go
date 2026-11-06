@@ -33,6 +33,7 @@ type pcUISession struct {
     status *LoanHubOperatorStatus
     lastClient *LoanHubClientLookup
     feedback string
+    capture *pcPendingCapture
 }
 
 type pcUI struct {
@@ -40,6 +41,8 @@ type pcUI struct {
     mu sync.Mutex
     sessions map[string]*pcUISession
     transport *http.Client // optional injected HTTPS transport in tests
+    sdkCapture func() (disposableWacomPreview,error)
+    captureMu sync.Mutex
 }
 
 type pcUIPage struct {
@@ -48,6 +51,8 @@ type pcUIPage struct {
     Feedback string
     Status *LoanHubOperatorStatus
     Client *LoanHubClientLookup
+    Pending *pcPendingCapture
+    CaptureEnabled bool
 }
 
 var pcUITemplate = template.Must(template.New("pc").Parse(`<!doctype html>
@@ -105,7 +110,36 @@ footer{font-size:13px;color:#66758a;text-align:center}
 {{end}}</div>{{end}}
 </section>
 <section class="panel"><h2>Signature capture</h2>
-<p class="notice warn">Disabled until verified Wacom STU-540 SDK capture and approval workflow are connected. This screen cannot sign documents.</p>
+
+{{if not .CaptureEnabled}}
+<p class="notice warn">Physical capture disabled until the official STU-540 SDK has been configured and verified on this PC.</p>
+{{else}}
+{{if .Pending}}
+<p>Review handwriting for: <strong>{{.Pending.Label}}</strong></p>
+<img src="/preview" alt="Handwriting captured on local Wacom pad" style="width:100%;height:auto;border:1px solid #ccd7e1">
+<form method="post" action="/upload">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label><input type="checkbox" name="approved" value="yes" required style="width:auto"> I have checked the captured handwriting with the signer and confirmed consent to submit it for review.</label>
+<button type="submit">Upload to LoanHub for review</button></form>
+<form method="post" action="/discard"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Discard handwriting</button></form>
+{{else}}
+<p>The signer must be present and consent to capture. This is not contract signing.</p>
+<form method="post" action="/capture">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="signer_kind">Signer</label>
+<select id="signer_kind" name="signer_kind" required>
+<option value="operator">Logged-in operator</option>
+{{if .Client}}{{if .Client.Client}}{{if .Client.Client.RequiresCapture}}<option value="client">Located client: {{.Client.Client.FullName}}</option>{{end}}{{end}}{{end}}
+</select>
+<label for="confirm_name">Type the signer's full name to confirm</label>
+<input id="confirm_name" name="confirm_name" maxlength="200" required>
+<label for="consent_reference">Consent record reference</label>
+<input id="consent_reference" name="consent_reference" minlength="4" maxlength="180" required>
+<label><input type="checkbox" name="consent" value="yes" style="width:auto" required> Identity confirmed, signer present and consent obtained.</label>
+<button type="submit">Capture handwriting on STU-540</button>
+</form>{{end}}
+{{end}}
+
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Sign out</button></form>
 </section>
 {{end}}
@@ -156,7 +190,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Cache-Control", "no-store")
     w.Header().Set("X-Content-Type-Options", "nosniff")
     w.Header().Set("X-Frame-Options", "DENY")
-    w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+    w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
     w.Header().Set("Referrer-Policy", "no-referrer")
     if r.Host != pcUIAddr || r.URL.RawQuery != "" {
         http.Error(w,"Forbidden",http.StatusForbidden)
@@ -171,11 +205,13 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         return
     }
     if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
-        r.URL.Path != "/refresh" && r.URL.Path != "/logout" {
+        r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
+        r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
+        r.URL.Path != "/discard" && r.URL.Path != "/preview" {
         http.NotFound(w,r)
         return
     }
-    if r.Method == http.MethodGet && r.URL.Path != "/" {
+    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" {
         http.NotFound(w,r)
         return
     }
@@ -190,6 +226,15 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             http.Error(w,"Invalid form submission",http.StatusForbidden)
             return
         }
+    }
+    if r.URL.Path == "/preview" {
+        if r.Method != http.MethodGet || session.client == nil || session.capture == nil ||
+            time.Now().After(session.capture.expires) {
+            http.NotFound(w,r); return
+        }
+        w.Header().Set("Content-Type","image/png")
+        _,_ = w.Write(session.capture.preview.PNG)
+        return
     }
     session.feedback = ""
     if r.Method == http.MethodPost {
@@ -212,11 +257,20 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             status,err := session.client.OperatorSignatureStatus(ctx)
             if err != nil { session.feedback="Could not refresh signature status." } else { session.status=&status }
         case "/lookup":
+            session.capture=nil
             session.lastClient=nil
             if session.client == nil { session.feedback="Sign in first"; break }
             result,err := session.client.FindClient(ctx,strings.TrimSpace(r.PostForm.Get("national_id")))
             if err != nil { session.feedback="Client lookup unavailable or not authorized." } else { session.lastClient=&result }
+        case "/capture":
+            ui.captureRequest(r,session)
+        case "/upload":
+            ui.uploadRequest(ctx,r,session)
+        case "/discard":
+            session.capture=nil
+            session.feedback="Capture discarded"
         case "/logout":
+            session.capture=nil
             if session.client != nil { session.client.Logout() }
             session.client=nil
             session.status=nil
@@ -230,23 +284,25 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     if err := pcUITemplate.Execute(w,pcUIPage{
         CSRF:session.csrf, Authenticated:session.client != nil,
         Feedback:session.feedback, Status:session.status, Client:session.lastClient,
+        Pending:session.capture, CaptureEnabled:ui.sdkCapture!=nil,
     }); err != nil {
         log.Println("Wacom PC UI template rendering failed")
     }
 }
 
-func servePCUI(origin string) error {
+func servePCUI(origin string, capture func() (disposableWacomPreview,error)) error {
     ui,err := newPCUI(origin)
     if err != nil { return err }
+    ui.sdkCapture=capture
     listener,err := net.Listen("tcp4",pcUIAddr)
     if err != nil { return err }
     defer listener.Close()
     server:=&http.Server{
         Handler:ui,ReadHeaderTimeout:3*time.Second,
-        ReadTimeout:20*time.Second,WriteTimeout:20*time.Second,
+        ReadTimeout:45*time.Second,WriteTimeout:45*time.Second,
         IdleTimeout:30*time.Second,MaxHeaderBytes:8192,
     }
-    log.Printf("LoanHub Wacom PC UI available at %s; capture disabled",pcUIOrigin)
+    log.Printf("LoanHub Wacom PC UI available at %s; capture enabled: %t",pcUIOrigin,ui.sdkCapture!=nil)
     err=server.Serve(listener)
     if errors.Is(err,http.ErrServerClosed) { return nil }
     return err
