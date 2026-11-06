@@ -164,6 +164,9 @@ class ReviewDialog:
 
     def update_matches(self):
         self.search_after = None
+        if self.selected_national_id == self.national_id.get():
+            self.matches.pack_forget()
+            return
         values = search_national_id_options(self.national_id.get())
         self.matches.delete(0, self.tk.END)
         for value in values:
