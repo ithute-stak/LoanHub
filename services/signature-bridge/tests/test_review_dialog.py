@@ -62,8 +62,8 @@ class ReviewDialogSafetyTests(unittest.TestCase):
             adapter = Path(temporary) / "adapter"
             adapter.write_text("#!/bin/sh\n")
             adapter.chmod(0o700)
-            result = type("Result", (), {"returncode": 0, "stdout": b"pen-contact\\n"})()
-            with patch.object(review_dialog.sys.stdin, "isatty", return_value=True), \\
+            result = type("Result", (), {"returncode": 0, "stdout": b"pen-contact\n"})()
+            with patch.object(review_dialog.sys.stdin, "isatty", return_value=True), \
                  patch.object(review_dialog.subprocess, "run", return_value=result) as launch:
                 self.assertTrue(review_dialog.watch_first_pen_contact(adapter))
             self.assertEqual(launch.call_args.args[0][1], "--watch-pen-contact")
