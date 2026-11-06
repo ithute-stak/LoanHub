@@ -36,6 +36,23 @@ two stored offline test captures and does not create a local queued record.
 It is not yet an automatically triggered modal in the LoanHub web portal;
 that needs a separate authenticated desktop launch/handshake protocol.
 
+## Authenticated National ID rate limiting (staging)
+
+The backend now reserves each exact National ID lookup attempt through
+the existing PostgreSQL-backed audit ledger, guarded by a tenant- and
+operator-specific transaction advisory lock. Staging policy permits at most
+**8 lookups in a rolling 60-second window** per authenticated operator and
+company. This limits concurrent guessing even across separate API workers.
+
+Audit events record **only the operator, company and lookup action**:
+not the National ID, person name, bearer token, signature image or raw body.
+If the database audit service cannot respond, the endpoint refuses lookup
+with HTTP 503. Exhausted budgets return HTTP 429. Logging limits are
+complementary to authentication; real lookup remains disabled until
+endpoint deployment, tenant authorization and integration tests pass.
+Neither a match nor a successful lookup grants capture/reuse/contract
+signing rights.
+
 ## Visible National ID and persistent local watcher (no demo mode)
 
 The desktop National ID entry is now **plain text**, not a password field.
