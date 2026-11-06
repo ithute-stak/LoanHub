@@ -55,7 +55,7 @@ def capture_once(executable: Path) -> bytes:
     with tempfile.TemporaryFile() as output:
         try:
             subprocess.run(
-                [str(executable), "--capture-strokes-json"],
+                [str(executable), "--capture-strokes-json-fast"],
                 stdin=sys.stdin, stdout=output, stderr=subprocess.DEVNULL,
                 cwd=str(executable.parent), env=env, timeout=35, check=True,
             )
@@ -65,14 +65,34 @@ def capture_once(executable: Path) -> bytes:
         return validate_strokes(output.read(MAX_BYTES + 1)).canonical
 
 
+def watch_first_pen_contact(executable: Path) -> bool:
+    """Detect a first pen-down only, never access or return coordinates."""
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Pen watch requires staging mode")
+    if not adapter_is_trusted(executable) or not sys.stdin.isatty():
+        raise ValueError("Trusted adapter and interactive terminal required")
+    env = {"HOME": str(Path.home()), "PATH": "/usr/bin:/bin",
+           "LANG": "C.UTF-8", "TERM": "xterm",
+           "LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"}
+    result = subprocess.run(
+        [str(executable), "--watch-pen-contact"], stdin=sys.stdin,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        cwd=str(executable.parent), env=env, timeout=35, check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == b"pen-contact"
+
+
 class ReviewDialog:
     """Only staged preview and discard paths are enabled pending server certification."""
 
-    def __init__(self, root, adapter: Path):
+    def __init__(self, root, adapter: Path, auto_watch: bool = False):
         import tkinter as tk
         from tkinter import ttk
         self.root = root
         self.adapter = adapter
+        self.auto_watch = auto_watch
+        self.watching = False
+        self.watch_generation = 0
         self.tk = tk
         self.ttk = ttk
         self.events = queue.Queue()
@@ -109,6 +129,9 @@ class ReviewDialog:
         self.post_button.pack(side="right")
         ttk.Label(outer, text="Posting requires server-side National ID matching, authenticated operator, consent and tenant checks.").pack(anchor="w", pady=(12, 0))
         root.after(100, self.poll)
+        if auto_watch:
+            root.withdraw()
+            root.after(250, self.start_watch)
 
     def discard(self):
         self.capture = None
@@ -124,19 +147,46 @@ class ReviewDialog:
         self.generation += 1
         generation = self.generation
         self.capture_button.configure(state="disabled")
-        self.status.set("Capture starting. Draw disposable test strokes after SDK ready (approximately 25 seconds).")
+        self.status.set("Capture starting. Draw disposable test strokes after SDK ready (approximately 10 seconds).")
         def worker():
             try:
                 data = capture_once(self.adapter)
-                self.events.put((generation, True, data))
+                self.events.put(("capture", generation, True, data))
             except (OSError, ValueError) as exc:
-                self.events.put((generation, False, str(exc)))
+                self.events.put(("capture", generation, False, str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def start_watch(self):
+        if not self.auto_watch or self.watching or self.busy or self.root.state() != "withdrawn":
+            return
+        self.watching = True
+        self.watch_generation += 1
+        generation = self.watch_generation
+        def worker():
+            try:
+                detected = watch_first_pen_contact(self.adapter)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                detected = False
+            self.events.put(("watch", generation, detected))
         threading.Thread(target=worker, daemon=True).start()
 
     def poll(self):
         try:
             while True:
-                generation, ok, data = self.events.get_nowait()
+                event = self.events.get_nowait()
+                if event[0] == "watch":
+                    _, generation, detected = event
+                    if generation != self.watch_generation:
+                        continue
+                    self.watching = False
+                    if detected and not self.busy and self.root.state() == "withdrawn":
+                        self.root.deiconify()
+                        self.root.lift()
+                        self.status.set("Pen contact detected. The first touch was only a wake-up signal. Press Start signing to capture NEW disposable strokes.")
+                    elif self.root.state() == "withdrawn":
+                        self.root.after(1000, self.start_watch)
+                    continue
+                _, generation, ok, data = event
                 if generation != self.generation:
                     continue
                 self.busy = False
@@ -189,12 +239,17 @@ class ReviewDialog:
             self.status.set("Capture is still running; close after capture completes.")
             return
         self.discard()
-        self.root.destroy()
+        if self.auto_watch:
+            self.root.withdraw()
+            self.root.after(500, self.start_watch)
+        else:
+            self.root.destroy()
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="STU-540 staging review dialog")
     p.add_argument("--sdk-adapter", required=True)
+    p.add_argument("--auto-watch", action="store_true", help="Wake dialog on first pen contact; needs interactive terminal")
     args = p.parse_args()
     if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
         p.error("The review dialog is only available in staging mode")
@@ -207,7 +262,7 @@ def main() -> int:
     except (ImportError, RuntimeError, OSError) as exc:
         print("Unable to open desktop dialog; install python3-tk and use a graphical desktop", file=sys.stderr)
         return 1
-    ReviewDialog(root, adapter)
+    ReviewDialog(root, adapter, auto_watch=args.auto_watch)
     root.mainloop()
     return 0
 
