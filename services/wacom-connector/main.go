@@ -131,7 +131,7 @@ func main() {
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
     if *pcUI {
-        if *loanhubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
+        if *loanHubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
             *calibrationTest || *calibratedStrokeTest || *strokeTest ||
             *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||
             len(flag.Args()) != 0 {
@@ -144,7 +144,7 @@ func main() {
         }
         return
     }
-    if *loanhubOrigin != "" {
+    if *loanHubOrigin != "" {
         log.Println("--loanhub-origin can only be used with --pc-ui")
         os.Exit(2)
     }
