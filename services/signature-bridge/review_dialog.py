@@ -119,14 +119,8 @@ class ReviewDialog:
         ttk.Label(outer, text="Client National ID — LoanHub company lookup").pack(anchor="w")
         self.id_field = ttk.Entry(outer, textvariable=self.national_id, width=38)
         self.id_field.pack(anchor="w", pady=(4, 3))
-        self.matches = tk.Listbox(outer, height=4, exportselection=False)
-        self.matches.bind("<Double-Button-1>", self.choose_match)
-        self.matches.bind("<Return>", self.choose_match)
-        self.matches.pack(anchor="w", fill="x")
-        self.matches.pack_forget()
         self.national_id.trace_add("write", self.schedule_search)
-        self.id_field.bind("<Down>", self.focus_first_match)
-        self.id_field.bind("<Return>", self.choose_first_match)
+        self.id_field.bind("<Return>", lambda _event: self.update_matches())
         self.client_info = tk.StringVar(value="Enter National ID to verify the client against authenticated LoanHub staging." if lookup_config else "Not connected: configure a private LoanHub lookup profile on this workstation.")
         ttk.Label(outer, textvariable=self.client_info, wraplength=680).pack(anchor="w", pady=(0, 10))
         self.canvas = tk.Canvas(outer, background="#ffffff", height=245, highlightbackground="#b8c1ce", highlightthickness=1)
@@ -155,15 +149,16 @@ class ReviewDialog:
         self.lookup_generation += 1
         if self.search_after is not None:
             self.root.after_cancel(self.search_after)
-        self.search_after = self.root.after(180, self.update_matches)
+        self.search_after = self.root.after(650, self.update_matches)
 
     def update_matches(self):
         self.search_after = None
         if self.lookup_config:
             self.query_server_for_exact_id()
             return
-        self.matches.pack_forget()
+        self.client_info.set("LoanHub lookup is not connected. Contact the workstation administrator.")
         return
+
     def discard(self, clear_identity: bool = True):
         self.capture = None
         self.canvas.delete("all")
@@ -171,26 +166,10 @@ class ReviewDialog:
         if clear_identity:
             self.national_id.set("")
             self.selected_national_id = None
-            self.matches.pack_forget()
 
     def start(self):
-        if self.busy:
-            return
-        self.status.set("Real client signing blocked until verified consent and contract authorization.")
-        return
-        self.discard(clear_identity=False)
-        self.busy = True
-        self.generation += 1
-        generation = self.generation
-        self.capture_button.configure(state="disabled")
-        self.status.set("Capture starting. Draw disposable test strokes after SDK ready (approximately 10 seconds).")
-        def worker():
-            try:
-                data = capture_once(self.adapter)
-                self.events.put(("capture", generation, True, data))
-            except (OSError, ValueError) as exc:
-                self.events.put(("capture", generation, False, str(exc)))
-        threading.Thread(target=worker, daemon=True).start()
+        # Lookups alone do not establish consent or permit signed document use.
+        self.status.set("New signature capture requires a separate approved session and consent. Blocked.")
 
     def start_watch(self):
         if not self.auto_watch or self.watching or self.busy or self.root.state() != "withdrawn":
@@ -207,7 +186,6 @@ class ReviewDialog:
         threading.Thread(target=worker, daemon=True).start()
 
     def query_server_for_exact_id(self):
-        self.matches.pack_forget()
         self.capture_button.configure(state="disabled")
         entered = self.national_id.get().strip()
         if not re.fullmatch(r"[A-Za-z0-9/-]{4,32}", entered):
