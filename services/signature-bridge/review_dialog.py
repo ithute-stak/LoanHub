@@ -20,6 +20,7 @@ import tempfile
 import threading
 
 from capture_protocol import MAX_BYTES, validate_strokes
+from client_lookup import lookup_client
 
 
 def validate_national_id(value: str) -> str:
@@ -98,12 +99,15 @@ def watch_first_pen_contact(executable: Path) -> bool:
 class ReviewDialog:
     """Only staged preview and discard paths are enabled pending server certification."""
 
-    def __init__(self, root, adapter: Path, auto_watch: bool = False):
+    def __init__(self, root, adapter: Path, auto_watch: bool = False, lookup_config=None):
         import tkinter as tk
         from tkinter import ttk
         self.root = root
         self.adapter = adapter
         self.auto_watch = auto_watch
+        self.lookup_config = lookup_config
+        self.lookup_generation = 0
+        self.server_match = None
         self.watching = False
         self.watch_generation = 0
         self.tk = tk
@@ -125,7 +129,7 @@ class ReviewDialog:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Signature review", font=("Sans", 19, "bold")).pack(anchor="w")
         ttk.Label(outer, text="STAGING / TEST SIGNATURES ONLY • No VPS upload • No contract signing").pack(anchor="w", pady=(3, 14))
-        ttk.Label(outer, text="Client National ID — search and select (DEMO ONLY)").pack(anchor="w")
+        ttk.Label(outer, text="Client National ID — authenticated exact lookup" if lookup_config else "Client National ID — DEMO only").pack(anchor="w")
         self.id_field = ttk.Entry(outer, textvariable=self.national_id, show="•", width=38)
         self.id_field.pack(anchor="w", pady=(4, 3))
         self.matches = tk.Listbox(outer, height=4, exportselection=False)
@@ -136,7 +140,8 @@ class ReviewDialog:
         self.national_id.trace_add("write", self.schedule_search)
         self.id_field.bind("<Down>", self.focus_first_match)
         self.id_field.bind("<Return>", self.choose_first_match)
-        ttk.Label(outer, text="Type DEMO or TEST to see synthetic choices. Real National ID lookup requires authenticated LoanHub access; no client data is loaded.").pack(anchor="w", pady=(0, 10))
+        self.client_info = tk.StringVar(value="Enter exact National ID for company-scoped staging lookup." if lookup_config else "Type DEMO or TEST for synthetic choices.")
+        ttk.Label(outer, textvariable=self.client_info, wraplength=680).pack(anchor="w", pady=(0, 10))
         self.canvas = tk.Canvas(outer, background="#ffffff", height=245, highlightbackground="#b8c1ce", highlightthickness=1)
         self.canvas.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self.status, wraplength=680).pack(anchor="w", pady=(12, 12))
@@ -158,12 +163,17 @@ class ReviewDialog:
 
     def schedule_search(self, *_args):
         self.selected_national_id = None
+        self.server_match = None
+        self.lookup_generation += 1
         if self.search_after is not None:
             self.root.after_cancel(self.search_after)
         self.search_after = self.root.after(180, self.update_matches)
 
     def update_matches(self):
         self.search_after = None
+        if self.lookup_config:
+            self.query_server_for_exact_id()
+            return
         if self.selected_national_id == self.national_id.get():
             self.matches.pack_forget()
             return
@@ -214,6 +224,9 @@ class ReviewDialog:
     def start(self):
         if self.busy:
             return
+        if self.lookup_config:
+            self.status.set("Real client signing blocked until verified consent and contract authorization.")
+            return
         self.discard(clear_identity=False)
         self.busy = True
         self.generation += 1
@@ -242,10 +255,54 @@ class ReviewDialog:
             self.events.put(("watch", generation, detected))
         threading.Thread(target=worker, daemon=True).start()
 
+    def query_server_for_exact_id(self):
+        self.matches.pack_forget()
+        self.capture_button.configure(state="disabled")
+        entered = self.national_id.get().strip()
+        if not re.fullmatch(r"[A-Za-z0-9/-]{4,32}", entered):
+            self.client_info.set("Enter complete National ID; no partial directory search.")
+            return
+        generation = self.lookup_generation
+        self.client_info.set("Checking authenticated LoanHub staging records...")
+        def worker():
+            try:
+                answer = lookup_client(
+                    url=self.lookup_config["url"],
+                    company_id=self.lookup_config["company_id"],
+                    token_provider=self.lookup_config["token_provider"],
+                    national_id=entered,
+                )
+                self.events.put(("lookup", generation, answer))
+            except Exception:
+                self.events.put(("lookup", generation, None))
+        threading.Thread(target=worker, daemon=True).start()
+
     def poll(self):
         try:
             while True:
                 event = self.events.get_nowait()
+                if event[0] == "lookup":
+                    _, generation, answer = event
+                    if generation != self.lookup_generation:
+                        continue
+                    if answer is None:
+                        self.client_info.set("Client lookup unavailable. Signing blocked.")
+                        continue
+                    state = answer["status"]
+                    if state in ("existing_signature", "pending_signature_review", "matched_no_signature"):
+                        match = answer["matches"][0]
+                        self.server_match = match
+                        self.selected_national_id = self.national_id.get().strip()
+                        if state == "existing_signature":
+                            message = " — SAVED SIGNATURE EXISTS. Recapture blocked; separate contract consent required for reuse."
+                        elif state == "pending_signature_review":
+                            message = " — SIGNATURE PENDING REVIEW. Recapture blocked."
+                        else:
+                            message = " — matched company borrower. Signing still requires independent authorization."
+                        self.client_info.set(match["full_name"] + message)
+                    else:
+                        self.client_info.set("No unique authorized client match. Capture blocked.")
+                    continue
                 if event[0] == "watch":
                     _, generation, detected = event
                     if generation != self.watch_generation:
@@ -322,6 +379,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description="STU-540 staging review dialog")
     p.add_argument("--sdk-adapter", required=True)
     p.add_argument("--auto-watch", action="store_true", help="Wake dialog on first pen contact; needs interactive terminal")
+    p.add_argument("--lookup-url", help="Approved staging HTTPS exact National ID endpoint")
+    p.add_argument("--company-id", help="Authenticated company UUID")
+    p.add_argument("--token-provider", help="Private executable supplying a short-lived operator token")
     args = p.parse_args()
     if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
         p.error("The review dialog is only available in staging mode")
@@ -334,7 +394,17 @@ def main() -> int:
     except (ImportError, RuntimeError, OSError) as exc:
         print("Unable to open desktop dialog; install python3-tk and use a graphical desktop", file=sys.stderr)
         return 1
-    ReviewDialog(root, adapter, auto_watch=args.auto_watch)
+    lookup_config = None
+    if any((args.lookup_url, args.company_id, args.token_provider)):
+        if not all((args.lookup_url, args.company_id, args.token_provider)):
+            p.error("Lookup requires --lookup-url, --company-id and --token-provider")
+        from client_lookup import validate_lookup_endpoint
+        from uuid import UUID
+        validate_lookup_endpoint(args.lookup_url)
+        UUID(args.company_id)
+        lookup_config = {"url": args.lookup_url, "company_id": args.company_id,
+                         "token_provider": Path(args.token_provider)}
+    ReviewDialog(root, adapter, auto_watch=args.auto_watch, lookup_config=lookup_config)
     root.mainloop()
     return 0
 
