@@ -54,7 +54,7 @@ class WacomAdapterTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["cwd"], str(self.adapter.parent))
         self.assertIs(run.call_args.kwargs["stdin"], bridge.sys.stdin)
         self.assertEqual(run.call_args.kwargs["env"]["TERM"], "xterm")
-        self.assertIs(run.call_args.kwargs["stderr"], bridge.subprocess.DEVNULL)
+        self.assertIs(run.call_args.kwargs["stderr"], bridge.sys.stderr)
         with bridge.connection() as db:
             row = db.execute("SELECT encrypted_signature FROM signatures").fetchone()
             self.assertIsNotNone(row)
@@ -76,7 +76,7 @@ class WacomAdapterTests(unittest.TestCase):
                 bridge.capture_wacom(self.args)
         self.assertEqual(events[0][0], "prompt")
         self.assertIn("draw several loops", prompt.getvalue())
-        self.assertIs(events[-1][1], bridge.subprocess.DEVNULL)
+        self.assertIs(events[-1][1], prompt)
         self.assertNotIn("pressure", prompt.getvalue())
 
     def test_nonzero_adapter_exit_is_safe_and_leaves_no_record(self):
