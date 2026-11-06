@@ -35,6 +35,58 @@ two stored offline test captures and does not create a local queued record.
 It is not yet an automatically triggered modal in the LoanHub web portal;
 that needs a separate authenticated desktop launch/handshake protocol.
 
+## Faster signing preview and pen-contact GNOME autostart (staging only)
+
+The review dialog's test capture now uses a shorter **10-second native SDK
+window** instead of the original 25-second window; timing and SDK startup
+remain hardware-dependent. The underlying 25-second diagnostic CLI is unchanged.
+
+The experimental **pen-contact watcher** runs in a real local terminal and
+processes only a boolean first-pen-down indication. It does not save the
+wake-up gesture, expose coordinates, open a port, or send anything to LoanHub.
+On contact it opens the previously hidden review window. **The initial touch
+only wakes the dialog**: the operator must press **Start signing** and make a
+NEW disposable test signature before a preview is produced. While the dialog
+is open, the watcher does not contend with the tablet. Closing the review
+window in auto-watch mode hides it and resumes the watcher.
+
+From a graphical GNOME terminal, after a fresh Go build, test manually:
+
+```sh
+cd services/wacom-connector
+go test ./...
+go build -o loanhub-wacom-connector .
+chmod 755 loanhub-wacom-connector
+cd ../signature-bridge
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging .venv/bin/python review_dialog.py \
+  --sdk-adapter "$PWD/../wacom-connector/loanhub-wacom-connector" --auto-watch
+```
+
+To register startup **after GNOME desktop login following reboot**, opt in
+with this command (do not run under sudo):
+
+```sh
+.venv/bin/python install_review_autostart.py --install
+```
+
+This creates a private `~/.config/autostart/loanhub-staging-signature-review.desktop`
+entry which launches a **visible GNOME Terminal** to supply the controlling
+TTY required by the vendor Wacom SDK. The app starts hidden and listens for
+pen contact until the first touch. No display can be shown before a user
+logs into the graphical session. A terminal remains open while monitoring,
+and the SDK may take several seconds to become ready. Stop the terminal
+process to pause monitoring. To disable login startup:
+
+```sh
+.venv/bin/python install_review_autostart.py --remove
+```
+
+The watcher and faster capture are **not yet device-certified** and require
+on-device testing. Physical STU pad display clearing is not implemented;
+Clear/Restart only resets the local preview and capture. Posting to VPS,
+client National ID verification, contract signing and automatic signing
+remain disabled. The existing encrypted capture queue is not modified.
+
 ## Staging import preflight (offline by default)
 
 Before connecting a workstation to a staging import service:
