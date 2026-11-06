@@ -70,6 +70,28 @@ does not open a network listener, so the existing Wacom diagnostic service
 at `127.0.0.1:8765` is preserved. No external Wacom SDK binaries are checked
 into LoanHub.
 
+## Read-only workstation preflight before pen capture
+
+After building the Go connector on Selemela and configuring the private
+`wacom-sdk.json`, check prerequisites **without recording a signature**:
+
+```sh
+cd services/wacom-connector
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging \
+  ./loanhub-wacom-connector --bridge-capture-preflight
+```
+
+Run from the signing workstation's interactive terminal. A successful
+preflight confirms file ownership/modes, available SDK sample executables,
+an installed util-linux `script` program, and the staging-only setting.
+It prints `prerequisites_ready` with `hardware_verified: false`;
+**it does not open the tablet, exercise any pen strokes, or verify consent**.
+A successful preflight is not evidence of a physically working STU-540.
+
+Only after the preflight and an independently verified staging operator
+session should the operator test `capture-wacom` with a disposable
+signature. Never use real customer handwriting as test data.
+
 ## Staging-only official STU sample adapter on Selemela
 
 The Go Wacom connector now includes an **opt-in local CLI**
