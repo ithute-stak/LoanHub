@@ -157,3 +157,57 @@ def test_officer_lookup_uses_authenticated_identity(context, enabled):
     assert result["status"] == "pending_identity_review"
     assert result["auto_apply"] is False
     assert result["signature_available_for_form"] is False
+
+def test_exact_national_id_lookup_requires_staging_gate(context, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    db = MagicMock()
+    with pytest.raises(HTTPException) as err:
+        api.lookup_national_id(api.NationalIdLookupRequest(national_id="ABC1234"), Response(), db, context)
+    assert err.value.status_code == 503
+    db.query.assert_not_called()
+
+
+def test_national_id_lookup_reports_full_name_and_saved_signature(context, enabled):
+    borrower_id = uuid4()
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (borrower_id, "Thabo", "M.", "Mokoena")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = [(uuid4(),)]
+    queries[2].filter.return_value.limit.return_value.all.return_value = []
+    data = api.lookup_national_id(api.NationalIdLookupRequest(national_id="ABC1234"), Response(), db, context)
+    assert data["status"] == "existing_signature"
+    assert data["matches"][0]["full_name"] == "Thabo M. Mokoena"
+    assert data["matches"][0]["borrower_id"] == str(borrower_id)
+    assert data["matches"][0]["signature_state"] == "active_saved"
+    assert data["may_capture"] is False
+    assert data["may_reuse"] is False
+    assert data["may_sign_contract"] is False
+
+
+def test_national_id_lookup_pending_import_blocks_recapture(context, enabled):
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (uuid4(), "Lineo", None, "Molefe")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = []
+    queries[2].filter.return_value.limit.return_value.all.return_value = [(uuid4(),)]
+    data = api.lookup_national_id(api.NationalIdLookupRequest(national_id="ABCD098"), Response(), db, context)
+    assert data["status"] == "pending_signature_review"
+    assert data["matches"][0]["full_name"] == "Lineo Molefe"
+    assert data["may_capture"] is False
+
+
+def test_national_id_lookup_does_not_disclose_unknown_records(context, enabled):
+    db = MagicMock()
+    db.query.return_value.join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = []
+    data = api.lookup_national_id(api.NationalIdLookupRequest(national_id="ABCD123"), Response(), db, context)
+    assert data["status"] == "not_found"
+    assert data["matches"] == []
+    assert data["may_capture"] is False
+
+
