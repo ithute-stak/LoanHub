@@ -206,10 +206,17 @@ def capture_wacom(args: argparse.Namespace) -> None:
             with tempfile.TemporaryFile() as output:
                 subprocess.run(
                     [str(executable), "--capture-strokes-json"],
+                    # The vendor sample is terminal-sensitive. Launch from the
+                    # same directory as the verified native connector, preserve
+                    # the operator terminal for stdin, and set a fixed TERM.
+                    # Only sensitive pen JSON goes to the private temp file.
+                    stdin=sys.stdin,
                     stdout=output, stderr=subprocess.DEVNULL,
+                    cwd=str(executable.parent),
                     timeout=35, check=True,
                     env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin",
-                         "LANG": "C.UTF-8", "LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"},
+                         "LANG": "C.UTF-8", "TERM": "xterm",
+                         "LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"},
                 )
                 output.seek(0)
                 raw = output.read(MAX_BYTES + 1)
