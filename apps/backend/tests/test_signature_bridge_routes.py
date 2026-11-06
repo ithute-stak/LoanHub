@@ -29,6 +29,7 @@ def context():
 
 @pytest.fixture
 def enabled(monkeypatch):
+    monkeypatch.setattr(api, "reserve_lookup_attempt", lambda db, **scope: None)
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED", "true")
     monkeypatch.setenv("LOANHUB_SIGNATURE_BRIDGE_VAULT_KEY", Fernet.generate_key().decode())
