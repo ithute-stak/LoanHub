@@ -9,10 +9,12 @@ import base64
 import binascii
 import hashlib
 import hmac
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from core.access_control import (
@@ -20,6 +22,7 @@ from core.access_control import (
     get_tenant_context, require_tenant_roles,
 )
 from database.config.config import settings
+from database.models.audit_log import AuditLog
 from database.models.borrower import Borrower
 from database.models.borrower_signature import BorrowerSavedSignature
 from database.models.company_client import CompanyBorrowerAccount
@@ -80,6 +83,44 @@ def _pending_file(db: Session, context: TenantContext, *, category: str, kind: s
     )
 
 
+
+def _reserve_lookup_attempt(db: Session, context: TenantContext) -> None:
+    """Serialize per-operator lookup budgets; log no National ID or person name."""
+    lock_identity = f"local-wacom-lookup:{context.company_id}:{context.user.id}"
+    key = int.from_bytes(hashlib.sha256(lock_identity.encode("ascii")).digest()[:8], "big", signed=True)
+    try:
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
+        used = db.query(func.count(AuditLog.id)).filter(
+            AuditLog.company_id == context.company_id,
+            AuditLog.user_id == context.user.id,
+            AuditLog.action == "local_signatures.client_lookup",
+            AuditLog.created_at >= cutoff,
+        ).scalar()
+        if not isinstance(used, int):
+            raise ValueError("Invalid lookup audit count")
+        if used >= 8:
+            db.rollback()
+            raise HTTPException(429, "Client lookup rate limit reached")
+        db.add(AuditLog(
+            company_id=context.company_id,
+            user_id=context.user.id,
+            branch_id=context.branch_id,
+            action="local_signatures.client_lookup",
+            table_name="people",
+            entity_type="privacy_access",
+            status="attempted",
+            description="Authenticated exact client identity lookup",
+            event_data={"lookup_type": "national_id", "contains_personal_data": False},
+        ))
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(503, "Lookup audit unavailable") from exc
+
+
 @router.get("/me/status")
 def operator_signature_status(
     response: Response,
@@ -129,6 +170,7 @@ def lookup_client(
         if context.branch_id is None:
             raise HTTPException(403, "Active company branch required")
         query = query.filter(CompanyBorrowerAccount.branch_id == context.branch_id)
+    _reserve_lookup_attempt(db, context)
     matches = query.limit(2).all()
     if not matches:
         return {"status": "not_found", "client": None}
