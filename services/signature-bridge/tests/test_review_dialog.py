@@ -30,6 +30,17 @@ class ReviewDialogSafetyTests(unittest.TestCase):
                     review_dialog.capture_once(p)
             process.assert_not_called()
 
+    def test_dropdown_suggestions_are_synthetic_only(self):
+        self.assertEqual(
+            review_dialog.search_national_id_options("demo"),
+            ["DEMO-1001", "DEMO-1002", "DEMO-1003"],
+        )
+        self.assertEqual(review_dialog.search_national_id_options("1002"), ["DEMO-1002"])
+        self.assertEqual(review_dialog.search_national_id_options(""), [])
+        self.assertEqual(review_dialog.search_national_id_options("DEMO", demo=False), [])
+        self.assertTrue(all(item.startswith(("DEMO-", "TEST-"))
+                            for item in review_dialog.search_national_id_options("10")))
+
     def test_national_id_syntax_is_only_input_hygiene(self):
         self.assertEqual(review_dialog.validate_national_id(" A12345-67 "), "A12345-67")
         for candidate in ("", "abc", "  ", "id with spaces", "a" * 33, "x\nsecret"):
@@ -92,6 +103,16 @@ class ReviewDialogSafetyTests(unittest.TestCase):
                 Path("/tmp/unsafe path/review.py"), Path("/tmp/adapter"),
                 Path("/usr/bin/gnome-terminal"), Path("/usr/bin/python3")
             )
+
+    def test_ptyxis_autostart_command_has_tty(self):
+        entry = install_review_autostart.build_entry(
+            Path("/home/operator/bridge/review_dialog.py"),
+            Path("/home/operator/go/loanhub-wacom-connector"),
+            Path("/usr/bin/ptyxis"),
+            Path("/usr/bin/python3"),
+        )
+        self.assertIn("Exec=/usr/bin/ptyxis -- /usr/bin/env", entry)
+        self.assertIn("--auto-watch", entry)
 
     def test_capture_validates_adapter_json_without_logging_strokes(self):
         with tempfile.TemporaryDirectory() as temporary:
