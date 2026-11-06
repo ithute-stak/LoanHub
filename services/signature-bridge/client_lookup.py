@@ -31,6 +31,32 @@ def validate_lookup_endpoint(url: str) -> None:
         raise ValueError("Use an approved dedicated staging HTTPS National ID endpoint")
 
 
+def load_lookup_config(path: Path) -> dict:
+    """Load metadata only; never persist tokens or real National IDs."""
+    if not path.is_absolute():
+        raise ValueError("Lookup config must be an absolute path")
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o077):
+        raise ValueError("Lookup config must be private and owned by the operator")
+    if info.st_size > 4096:
+        raise ValueError("Lookup config too large")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or set(data) != {"url", "company_id", "token_provider"}:
+        raise ValueError("Lookup config must specify URL, company and token provider only")
+    validate_lookup_endpoint(data["url"])
+    data["company_id"] = str(UUID(data["company_id"]))
+    provider = Path(data["token_provider"])
+    if not provider.is_absolute():
+        raise ValueError("Token provider path must be absolute")
+    info = provider.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o077 or not info.st_mode & stat.S_IXUSR):
+        raise ValueError("Token provider must be private and executable")
+    return {"url": data["url"], "company_id": data["company_id"],
+            "token_provider": provider}
+
+
 def lookup_client(*, url: str, company_id: str, token_provider: Path, national_id: str) -> dict:
     if os.getenv("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
         raise ValueError("Client lookup requires staging mode")
