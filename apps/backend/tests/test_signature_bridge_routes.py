@@ -243,10 +243,10 @@ def test_national_id_lookup_filters_company_and_borrower_in_all_queries(context,
     saved_sql = compiled(saved_predicates)
     pending_sql = compiled(pending_predicates)
     for statement in (first_sql, saved_sql, pending_sql):
-        assert str(context.company_id) in statement
+        assert context.company_id.hex in statement.replace("-", "")
         assert "company_id" in statement
     for statement in (saved_sql, pending_sql):
-        assert str(borrower) in statement
+        assert borrower.hex in statement.replace("-", "")
         assert "borrower_id" in statement or "signer_id" in statement
     assert "people.national_id" in first_sql
     assert "ABCD5678" in first_sql
