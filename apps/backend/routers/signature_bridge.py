@@ -202,6 +202,11 @@ def lookup_national_id(
         SignatureBridgeImport.status == "pending_identity_review",
     ).limit(1).all()
     full_name = " ".join(part.strip() for part in (first, middle, last) if part and part.strip())
+    # More than one active signature is a data-integrity conflict, not an
+    # invitation to choose an arbitrary reusable signature.
+    if len(saved) > 1 or not full_name:
+        return {"status": "conflict", "matches": [], "may_capture": False,
+                "may_reuse": False, "may_sign_contract": False}
     if saved or pending:
         status = "existing_signature" if saved else "pending_signature_review"
     else:
