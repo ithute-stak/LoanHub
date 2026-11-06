@@ -282,3 +282,39 @@ def test_pending_signature_review_does_not_grant_reuse(context, enabled):
     assert result["may_capture"] is False
     assert result["may_reuse"] is False
     assert result["may_sign_contract"] is False
+
+def test_multiple_active_saved_signatures_are_not_reused(context, enabled):
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (uuid4(), "Mpho", None, "Motaung")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = [
+        (uuid4(),), (uuid4(),)
+    ]
+    queries[2].filter.return_value.limit.return_value.all.return_value = []
+    result = api.lookup_national_id(
+        api.NationalIdLookupRequest(national_id="ABCD5678"), Response(), db, context
+    )
+    assert result == {
+        "status": "conflict", "matches": [], "may_capture": False,
+        "may_reuse": False, "may_sign_contract": False,
+    }
+
+
+def test_missing_client_name_never_grants_capture(context, enabled):
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (uuid4(), "", None, "")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = []
+    queries[2].filter.return_value.limit.return_value.all.return_value = []
+    result = api.lookup_national_id(
+        api.NationalIdLookupRequest(national_id="ABCD5678"), Response(), db, context
+    )
+    assert result["status"] == "conflict"
+    assert result["matches"] == []
+    assert result["may_sign_contract"] is False
