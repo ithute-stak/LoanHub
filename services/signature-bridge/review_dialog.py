@@ -43,6 +43,8 @@ def adapter_is_trusted(path: Path) -> bool:
 
 def capture_once(executable: Path) -> bytes:
     """Acquire private stroke JSON via verified adapter, never log raw data."""
+    if os.environ.get("LOANHUB_SIGNATURE_BRIDGE_MODE") != "staging":
+        raise ValueError("Local review capture requires staging mode")
     if not adapter_is_trusted(executable):
         raise ValueError("Wacom adapter permissions or ownership are not trusted")
     if not sys.stdin.isatty():
