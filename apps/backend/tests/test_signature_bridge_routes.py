@@ -212,3 +212,73 @@ def test_national_id_lookup_does_not_disclose_unknown_records(context, enabled):
     assert data["may_capture"] is False
 
 
+
+def test_national_id_lookup_filters_company_and_borrower_in_all_queries(context, enabled):
+    """Ensure every identity/signature query is scoped to one verified tenant."""
+    borrower = uuid4()
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (borrower, "Mpho", None, "Motaung")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = []
+    queries[2].filter.return_value.limit.return_value.all.return_value = []
+    answer = api.lookup_national_id(
+        api.NationalIdLookupRequest(national_id="ABCD5678"), Response(), db, context
+    )
+    assert answer["status"] == "matched_no_signature"
+    assert answer["matches"][0]["full_name"] == "Mpho Motaung"
+    assert answer["may_capture"] is False
+    # Render the actual SQLAlchemy predicates; mocking returned results alone
+    # cannot detect a regression that drops tenant or borrower constraints.
+    first_predicates = queries[0].join.return_value.join.return_value.filter.call_args.args
+    saved_predicates = queries[1].filter.call_args.args
+    pending_predicates = queries[2].filter.call_args.args
+    compiled = lambda expressions: " AND ".join(
+        str(expression.compile(compile_kwargs={"literal_binds": True}))
+        for expression in expressions
+    )
+    first_sql = compiled(first_predicates)
+    saved_sql = compiled(saved_predicates)
+    pending_sql = compiled(pending_predicates)
+    for statement in (first_sql, saved_sql, pending_sql):
+        assert str(context.company_id) in statement
+        assert "company_id" in statement
+    for statement in (saved_sql, pending_sql):
+        assert str(borrower) in statement
+        assert "borrower_id" in statement or "signer_id" in statement
+    assert "people.national_id" in first_sql
+    assert "ABCD5678" in first_sql
+
+
+def test_national_id_lookup_audit_attempt_precedes_client_database_query(context, enabled, monkeypatch):
+    """No identity record may be returned before the audit budget is reserved."""
+    db = MagicMock()
+    def refuse(*_args, **_kwargs):
+        raise HTTPException(429, "Lookup budget exhausted")
+    monkeypatch.setattr(api, "reserve_lookup_attempt", refuse)
+    with pytest.raises(HTTPException) as raised:
+        api.lookup_national_id(
+            api.NationalIdLookupRequest(national_id="ABCD5678"), Response(), db, context
+        )
+    assert raised.value.status_code == 429
+    db.query.assert_not_called()
+
+
+def test_pending_signature_review_does_not_grant_reuse(context, enabled):
+    db = MagicMock()
+    queries = [MagicMock(), MagicMock(), MagicMock()]
+    db.query.side_effect = queries
+    queries[0].join.return_value.join.return_value.filter.return_value.limit.return_value.all.return_value = [
+        (uuid4(), "Mpho", None, "Motaung")
+    ]
+    queries[1].filter.return_value.limit.return_value.all.return_value = []
+    queries[2].filter.return_value.limit.return_value.all.return_value = [(uuid4(),)]
+    result = api.lookup_national_id(
+        api.NationalIdLookupRequest(national_id="ABCD5678"), Response(), db, context
+    )
+    assert result["status"] == "pending_signature_review"
+    assert result["may_capture"] is False
+    assert result["may_reuse"] is False
+    assert result["may_sign_contract"] is False
