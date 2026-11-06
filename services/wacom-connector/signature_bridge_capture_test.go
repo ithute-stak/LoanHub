@@ -68,3 +68,18 @@ func TestBridgeCaptureRejectsWritableSDKBinary(t *testing.T) {
         t.Fatal("group/world writable SDK binaries must fail closed")
     }
 }
+
+func TestBridgePreflightDoesNotOpenSDKWithoutConfig(t *testing.T) {
+    t.Setenv("HOME", t.TempDir())
+    t.Setenv("LOANHUB_SIGNATURE_BRIDGE_MODE", "staging")
+    if err := preflightBridgeCaptureCLI(); err == nil {
+        t.Fatal("preflight must fail closed when official SDK config is absent")
+    }
+}
+
+func TestBridgePreflightFailsInProduction(t *testing.T) {
+    t.Setenv("LOANHUB_SIGNATURE_BRIDGE_MODE", "production")
+    if err := preflightBridgeCaptureCLI(); err == nil {
+        t.Fatal("production preflight must not authorize capture")
+    }
+}
