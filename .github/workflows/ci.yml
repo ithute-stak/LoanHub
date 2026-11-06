@@ -158,6 +158,15 @@ jobs:
             tests/test_signature_bridge_db.py \
             tests/test_signature_bridge_migration_graph.py)
 
+      - name: Certify signature lookup privacy budget on disposable PostgreSQL
+        working-directory: apps/backend
+        env:
+          CI: 'true'
+          LOANHUB_SIGNATURE_LOOKUP_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_signature_lookup_security.py tests/test_signature_lookup_postgres.py
+
       - name: Report Alembic heads for rollover migration review
         working-directory: apps/backend
         run: |
