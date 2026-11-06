@@ -30,6 +30,19 @@ def validate_national_id(value: str) -> str:
     return candidate
 
 
+# Deliberately synthetic examples. No local customer directory, network or real IDs.
+DEMO_NATIONAL_IDS = ("DEMO-1001", "DEMO-1002", "DEMO-1003", "TEST-2001")
+
+
+def search_national_id_options(prefix: str, *, demo: bool = True) -> list[str]:
+    """Fail-closed autocomplete: real client lookup needs authenticated API."""
+    query = prefix.strip().casefold()
+    if not demo or len(query) < 2 or len(query) > 32:
+        return []
+    return [identity for identity in DEMO_NATIONAL_IDS
+            if query in identity.casefold()][:5]
+
+
 def adapter_is_trusted(path: Path) -> bool:
     if not path.is_absolute():
         return False
@@ -101,6 +114,8 @@ class ReviewDialog:
         self.generation = 0
         self.national_id = tk.StringVar()
         self.status = tk.StringVar(value="Ready for a disposable STU-540 test capture")
+        self.selected_national_id = None
+        self.search_after = None
         root.title("LoanHub • Signature Review — STAGING")
         root.geometry("760x570")
         root.minsize(620, 480)
@@ -110,10 +125,18 @@ class ReviewDialog:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Signature review", font=("Sans", 19, "bold")).pack(anchor="w")
         ttk.Label(outer, text="STAGING / TEST SIGNATURES ONLY • No VPS upload • No contract signing").pack(anchor="w", pady=(3, 14))
-        ttk.Label(outer, text="Client National ID (not yet verified)").pack(anchor="w")
+        ttk.Label(outer, text="Client National ID — search and select (DEMO ONLY)").pack(anchor="w")
         self.id_field = ttk.Entry(outer, textvariable=self.national_id, show="•", width=38)
         self.id_field.pack(anchor="w", pady=(4, 3))
-        ttk.Label(outer, text="The ID is for future authenticated lookup. This dialog does not save or transmit it.").pack(anchor="w", pady=(0, 10))
+        self.matches = tk.Listbox(outer, height=4, exportselection=False)
+        self.matches.bind("<Double-Button-1>", self.choose_match)
+        self.matches.bind("<Return>", self.choose_match)
+        self.matches.pack(anchor="w", fill="x")
+        self.matches.pack_forget()
+        self.national_id.trace_add("write", self.schedule_search)
+        self.id_field.bind("<Down>", self.focus_first_match)
+        self.id_field.bind("<Return>", self.choose_first_match)
+        ttk.Label(outer, text="Type DEMO or TEST to see synthetic choices. Real National ID lookup requires authenticated LoanHub access; no client data is loaded.").pack(anchor="w", pady=(0, 10))
         self.canvas = tk.Canvas(outer, background="#ffffff", height=245, highlightbackground="#b8c1ce", highlightthickness=1)
         self.canvas.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self.status, wraplength=680).pack(anchor="w", pady=(12, 12))
@@ -133,12 +156,57 @@ class ReviewDialog:
             root.withdraw()
             root.after(250, self.start_watch)
 
+    def schedule_search(self, *_args):
+        self.selected_national_id = None
+        if self.search_after is not None:
+            self.root.after_cancel(self.search_after)
+        self.search_after = self.root.after(180, self.update_matches)
+
+    def update_matches(self):
+        self.search_after = None
+        values = search_national_id_options(self.national_id.get())
+        self.matches.delete(0, self.tk.END)
+        for value in values:
+            self.matches.insert(self.tk.END, value + "  •  SYNTHETIC TEST ONLY")
+        if values:
+            self.matches.pack(anchor="w", fill="x", after=self.id_field)
+        else:
+            self.matches.pack_forget()
+
+    def select_identity(self, identity: str):
+        if identity not in DEMO_NATIONAL_IDS:
+            return
+        self.national_id.set(identity)
+        self.selected_national_id = identity
+        self.matches.pack_forget()
+        self.id_field.focus_set()
+        self.status.set("Synthetic ID selected for UI testing only; not verified against LoanHub.")
+
+    def choose_match(self, _event=None):
+        selection = self.matches.curselection()
+        if selection:
+            self.select_identity(self.matches.get(selection[0]).split("  •")[0])
+
+    def choose_first_match(self, _event=None):
+        if self.matches.size():
+            self.select_identity(self.matches.get(0).split("  •")[0])
+        return "break"
+
+    def focus_first_match(self, _event=None):
+        if self.matches.size():
+            self.matches.selection_clear(0, self.tk.END)
+            self.matches.selection_set(0)
+            self.matches.focus_set()
+        return "break"
+
     def discard(self, clear_identity: bool = True):
         self.capture = None
         self.canvas.delete("all")
         # Clearing handwriting does not erase the typed ID during recapture.
         if clear_identity:
             self.national_id.set("")
+            self.selected_national_id = None
+            self.matches.pack_forget()
 
     def start(self):
         if self.busy:
