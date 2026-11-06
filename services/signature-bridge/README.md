@@ -22,6 +22,7 @@ guarantee that the physical STU-540 display was erased. A hard USB/tablet
 clear command has not been certified.
 
 The National ID field is masked and remains in volatile GUI memory only.
+It now includes a keyboard/mouse-selectable autocomplete dropdown for **synthetic DEMO/TEST IDs only** (type `DEMO` or `TEST`). Real borrower suggestions are **not returned** until a tenant-scoped authenticated LoanHub National ID search API exists. No phone-number lookup or local plaintext list of real IDs is used.
 Basic input hygiene is **not** National ID verification. Phone numbers are
 not part of the new UI. Real client identification will require an
 authenticated, tenant-scoped LoanHub National ID lookup; never substitute a
@@ -70,7 +71,7 @@ with this command (do not run under sudo):
 ```
 
 This creates a private `~/.config/autostart/loanhub-staging-signature-review.desktop`
-entry which launches a **visible GNOME Terminal** to supply the controlling
+entry which launches a **visible Ptyxis / GNOME Terminal** to supply the controlling
 TTY required by the vendor Wacom SDK. The app starts hidden and listens for
 pen contact until the first touch. No display can be shown before a user
 logs into the graphical session. A terminal remains open while monitoring,
