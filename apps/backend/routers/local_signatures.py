@@ -190,7 +190,7 @@ def upload_capture(
         raise HTTPException(422, "Invalid signature encoding") from exc
     if not 1 <= len(raw) <= _MAX_CAPTURE_BYTES:
         raise HTTPException(413, "Signature capture size invalid")
-    if not raw.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+    if not raw.startswith(bytes.fromhex("89504e470d0a1a0a")):
         raise HTTPException(422, "PNG signature capture required")
     digest = hashlib.sha256(raw).hexdigest()
     if not hmac.compare_digest(digest, body.capture_sha256):
