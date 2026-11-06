@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install or remove a GNOME graphical-session startup entry for test-only review.
 
-The Wacom vendor SDK requires an interactive controlling TTY: gnome-terminal
-provides one. This cannot display a GUI before the user logs into GNOME.
+The Wacom vendor SDK requires an interactive controlling TTY: Ptyxis or
+GNOME Terminal provides one. This cannot display a GUI before the user logs into GNOME.
 """
 import argparse
 import os
@@ -19,6 +19,8 @@ def build_entry(script: Path, adapter: Path, terminal: Path, python: Path) -> st
     for path in (script, adapter, terminal, python):
         if not SAFE_PATH.fullmatch(str(path)):
             raise ValueError("Autostart paths must be absolute and contain no spaces or shell characters")
+    if terminal.name not in ("ptyxis", "gnome-terminal"):
+        raise ValueError("Supported terminal must be Ptyxis or GNOME Terminal")
     return (
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -43,9 +45,9 @@ def main() -> int:
         target.unlink(missing_ok=True)
         print("Removed LoanHub staging autostart entry.")
         return 0
-    terminal = shutil.which("gnome-terminal")
+    terminal = shutil.which("ptyxis") or shutil.which("gnome-terminal")
     if not terminal:
-        print("GNOME Terminal is required for the vendor Wacom SDK's real TTY. Autostart not installed.", file=sys.stderr)
+        print("Ptyxis or GNOME Terminal is required for the vendor Wacom SDK's real TTY. Autostart not installed.", file=sys.stderr)
         return 1
     script = Path(__file__).resolve().parent / "review_dialog.py"
     python = Path(sys.executable).resolve()
@@ -62,7 +64,7 @@ def main() -> int:
         output.write(text)
     os.chmod(target, 0o600)
     print("Installed GNOME session autostart:", target)
-    print("Starts after graphical login, not before login. It opens a terminal window for SDK TTY support.")
+    print("Starts after graphical login, not before login. Opens", Path(terminal).name, "for SDK TTY support.")
     print("Only local pen detection and preview; no remote upload is enabled.")
     return 0
 
