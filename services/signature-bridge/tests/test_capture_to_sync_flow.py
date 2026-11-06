@@ -94,7 +94,8 @@ class FullOfflineFlowTests(unittest.TestCase):
             ).hexdigest())
             outbound.append(data)
             return Reply(data)
-        with patch.object(bridge.urllib.request, "build_opener", return_value=type("Opener", (), {"open": staticmethod(fake_https)})()), \
+        with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"}), \
+             patch.object(bridge.urllib.request, "build_opener", return_value=type("Opener", (), {"open": staticmethod(fake_https)})()), \
              contextlib.redirect_stdout(io.StringIO()):
             bridge.sync(argparse.Namespace(url=self.url), access_token="test-token")
             bridge.sync(argparse.Namespace(url=self.url), access_token="test-token")
