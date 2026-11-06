@@ -92,6 +92,24 @@ Only after the preflight and an independently verified staging operator
 session should the operator test `capture-wacom` with a disposable
 signature. Never use real customer handwriting as test data.
 
+## Verify a disposable local capture without viewing handwriting
+
+After an operator-supervised staging capture, the bridge prints a
+`signature_id`. Verify the encrypted vault entry locally without exposing
+coordinates or sending anything to LoanHub:
+
+```sh
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging \
+  .venv/bin/python bridge.py verify-local-capture \
+  --signature-id UUID-PRINTED-BY-CAPTURE
+```
+
+The command verifies that the stored encrypted payload decrypts to a
+valid bounded stroke envelope, and reports only the stroke/point counts,
+local queue state and disabled signing status. It **does not** certify
+the physical device or the operator's identity/consent assertions.
+Do not share captured raw JSON, cryptographic keys or customer details.
+
 ## Staging-only official STU sample adapter on Selemela
 
 The Go Wacom connector now includes an **opt-in local CLI**
