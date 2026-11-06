@@ -27,6 +27,7 @@ from database.models.borrower import Borrower
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.borrower_signature import BorrowerSavedSignature
 from services.signature_bridge_matching import normalized_phone_aliases
+from services.signature_lookup_security import reserve_lookup_attempt
 
 router = APIRouter(prefix="/signature-bridge", tags=["Signature Bridge (staging only)"])
 
@@ -172,6 +173,8 @@ def lookup_national_id(
     national_id = body.national_id.strip()
     if not national_id or len(national_id) < 4 or any(ord(ch) < 32 for ch in national_id):
         raise HTTPException(422, "Invalid National ID")
+    # Reserve a database-coordinated attempt before revealing even match existence.
+    reserve_lookup_attempt(db, company_id=context.company_id, operator_id=context.user.id)
     matches = db.query(Borrower.id, Person.first_name, Person.middle_name, Person.last_name).join(
         Person, Person.user_id == Borrower.user_id
     ).join(
