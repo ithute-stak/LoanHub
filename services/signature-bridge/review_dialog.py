@@ -133,16 +133,17 @@ class ReviewDialog:
             root.withdraw()
             root.after(250, self.start_watch)
 
-    def discard(self):
+    def discard(self, clear_identity: bool = True):
         self.capture = None
         self.canvas.delete("all")
-        # Clear any typed National ID; the widget masks it while entered.
-        self.national_id.set("")
+        # Clearing handwriting does not erase the typed ID during recapture.
+        if clear_identity:
+            self.national_id.set("")
 
     def start(self):
         if self.busy:
             return
-        self.discard()
+        self.discard(clear_identity=False)
         self.busy = True
         self.generation += 1
         generation = self.generation
