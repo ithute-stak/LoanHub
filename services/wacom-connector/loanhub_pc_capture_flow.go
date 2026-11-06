@@ -5,7 +5,6 @@ package main
 import (
     "bytes"
     "context"
-    "errors"
     "net/http"
     "strings"
     "time"
@@ -125,6 +124,3 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     session.feedback="LoanHub received the capture for identity and consent review. It is not approved for signing."
 }
 
-// compile-time confirmation that local work is entirely synchronous and
-// deliberately cannot accept SDK paths or arbitrary bytes from a browser.
-var _ = errors.New
