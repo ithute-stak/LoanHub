@@ -30,16 +30,9 @@ class ReviewDialogSafetyTests(unittest.TestCase):
                     review_dialog.capture_once(p)
             process.assert_not_called()
 
-    def test_dropdown_suggestions_are_synthetic_only(self):
-        self.assertEqual(
-            review_dialog.search_national_id_options("demo"),
-            ["DEMO-1001", "DEMO-1002", "DEMO-1003"],
-        )
-        self.assertEqual(review_dialog.search_national_id_options("1002"), ["DEMO-1002"])
-        self.assertEqual(review_dialog.search_national_id_options(""), [])
-        self.assertEqual(review_dialog.search_national_id_options("DEMO", demo=False), [])
-        self.assertTrue(all(item.startswith(("DEMO-", "TEST-"))
-                            for item in review_dialog.search_national_id_options("10")))
+    def test_real_id_is_not_masked_by_placeholder_demo_data(self):
+        self.assertFalse(hasattr(review_dialog, "DEMO_NATIONAL_IDS"))
+        self.assertFalse(hasattr(review_dialog, "search_national_id_options"))
 
     def test_national_id_syntax_is_only_input_hygiene(self):
         self.assertEqual(review_dialog.validate_national_id(" A12345-67 "), "A12345-67")
