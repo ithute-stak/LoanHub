@@ -107,6 +107,19 @@ class ReviewDialogSafetyTests(unittest.TestCase):
         self.assertIn("Exec=/usr/bin/ptyxis -- /usr/bin/env", entry)
         self.assertIn("--auto-watch", entry)
 
+    def test_autostart_passes_private_lookup_profile_after_login(self):
+        entry = install_review_autostart.build_entry(
+            Path("/home/operator/bridge/review_dialog.py"),
+            Path("/home/operator/go/loanhub-wacom-connector"),
+            Path("/usr/bin/ptyxis"),
+            Path("/usr/bin/python3"),
+            Path("/home/operator/.config/loanhub-signature-bridge/lookup.json"),
+        )
+        self.assertIn("--lookup-config /home/operator/.config/loanhub-signature-bridge/lookup.json", entry)
+        self.assertEqual(entry.count("Exec="), 1)
+        self.assertIn("--auto-watch", entry)
+        self.assertNotIn("Bearer", entry)
+
     def test_capture_validates_adapter_json_without_logging_strokes(self):
         with tempfile.TemporaryDirectory() as temporary:
             p = Path(temporary) / "adapter"
