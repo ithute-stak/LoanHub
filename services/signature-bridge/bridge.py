@@ -192,6 +192,14 @@ def capture_wacom(args: argparse.Namespace) -> None:
     if info.st_mode & 0o022 or not info.st_mode & 0o111:
         raise ValueError("Wacom adapter must be executable and not group/world-writable")
     with exclusive_capture_lock():
+        # The native SDK may need a few seconds to become ready. This safe
+        # prompt is emitted before launch because adapter stderr is intentionally
+        # discarded: raw coordinates must never leak into terminal logs.
+        print(
+            "Disposable Wacom test capture starting: draw several loops on "
+            "the STU-540 during the next 25 seconds; no remote upload.",
+            file=sys.stderr, flush=True,
+        )
         try:
             # A capped temp file avoids unbounded subprocess stdout in memory.
             import tempfile
@@ -205,8 +213,14 @@ def capture_wacom(args: argparse.Namespace) -> None:
                 )
                 output.seek(0)
                 raw = output.read(MAX_BYTES + 1)
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
-            raise ValueError("Wacom capture adapter unavailable or timed out") from error
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("Wacom adapter exceeded its local capture timeout; no signature stored") from error
+        except subprocess.CalledProcessError as error:
+            raise ValueError(
+                "Wacom adapter returned a nonzero exit code; no signature stored. "
+                "Try its standalone --capture-strokes-json diagnostic without "
+                "printing pen coordinates."
+            ) from error
         envelope = validate_strokes(raw)
         register(args, capture_bytes=envelope.canonical)
 
