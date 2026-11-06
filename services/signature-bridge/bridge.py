@@ -211,7 +211,12 @@ def capture_wacom(args: argparse.Namespace) -> None:
                     # the operator terminal for stdin, and set a fixed TERM.
                     # Only sensitive pen JSON goes to the private temp file.
                     stdin=sys.stdin,
-                    stdout=output, stderr=subprocess.DEVNULL,
+                    # Go's capture CLI emits only redacted readiness and
+                    # report-count diagnostics on stderr; the vendor SDK's
+                    # raw output is parsed inside Go, never forwarded. Keep
+                    # the readiness cue visible so the operator can draw
+                    # after the tablet actually enters capture mode.
+                    stdout=output, stderr=sys.stderr,
                     cwd=str(executable.parent),
                     timeout=35, check=True,
                     env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin",
