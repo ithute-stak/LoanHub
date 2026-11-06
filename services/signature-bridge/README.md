@@ -36,6 +36,47 @@ two stored offline test captures and does not create a local queued record.
 It is not yet an automatically triggered modal in the LoanHub web portal;
 that needs a separate authenticated desktop launch/handshake protocol.
 
+## National ID borrower match and signature reuse status (staging only)
+
+A new authenticated `POST /api/v1/signature-bridge/lookup-national-id`
+endpoint returns **exact** National ID matches only, scoped to the active
+LoanHub company and limited to staff roles with lending/management permission.
+It joins `Person.national_id` to the company-owned borrower account,
+returns the official full name, and checks the existing
+`BorrowerSavedSignature` registry and quarantined `SignatureBridgeImport`
+records for the same borrower and company.
+
+Status values include `existing_signature`, `pending_signature_review`,
+`matched_no_signature`, `not_found` and `conflict`.
+**None of these states grants new signing or reuse.** Active saved signatures
+block recapture; reuse on a contract requires independently approved identity,
+fresh document-specific consent, a valid contract hash and a separate authorized
+signing session. Pending review blocks recapture as well.
+
+The desktop dialog can be configured to request these matches after the
+operator enters an exact ID (debounced) using a short-lived token provider.
+It does not store National IDs or tokens, and it fails closed when lookup
+fails. This requires an **authorized, deployed staging server**, an explicitly
+verified staging HTTPS URL and an independently provisioned private
+operator-token helper. Neither is created by this PR. Do not configure the
+production hostname or reuse production tokens. Real-client capture remains
+disabled in authenticated-lookup mode until a verified consent workflow is
+available.
+
+```bash
+LOANHUB_SIGNATURE_BRIDGE_MODE=staging .venv/bin/python review_dialog.py \
+  --sdk-adapter "$PWD/../wacom-connector/loanhub-wacom-connector" \
+  --lookup-url https://APPROVED-STAGING-HOST/api/v1/signature-bridge/lookup-national-id \
+  --company-id AUTHORIZED-STAGING-COMPANY-UUID \
+  --token-provider /absolute/path/to/reviewed-private-token-helper
+```
+
+The above values are examples, **not instructions to use production
+credentials**. No actual staging endpoint has been verified or deployed
+as part of this phase. A production user must not be searched from
+the workstation UI until staging authorization and protections against
+ID enumeration (including rate limits and audit trails) have been reviewed.
+
 ## Faster signing preview and pen-contact GNOME autostart (staging only)
 
 The review dialog's test capture now uses a shorter **10-second native SDK
