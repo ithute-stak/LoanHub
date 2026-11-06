@@ -17,8 +17,11 @@ class SyncTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.previous = bridge.HOME
         bridge.HOME = Path(self.temp.name)
+        self.mode = patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"})
+        self.mode.start()
 
     def tearDown(self):
+        self.mode.stop()
         bridge.HOME = self.previous
         self.temp.cleanup()
 
@@ -35,6 +38,37 @@ class SyncTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             bridge.register(args)
         return company
+
+    def test_explicit_sync_refuses_non_staging_without_network(self):
+        self.prepare()
+        with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "production"}), \
+             patch.object(bridge.urllib.request, "build_opener") as network:
+            with self.assertRaisesRegex(ValueError, "requires staging mode"):
+                bridge.sync(
+                    argparse.Namespace(url="https://staging.example.com/api/v1/signature-bridge/imports"),
+                    access_token="test-token",
+                )
+        network.assert_not_called()
+        with bridge.connection() as db:
+            self.assertEqual(
+                db.execute("SELECT status FROM sync_outbox").fetchone()[0],
+                "queued",
+            )
+
+    def test_read_only_preflight_never_makes_network_request(self):
+        self.prepare()
+        out = io.StringIO()
+        with patch.object(bridge.urllib.request, "build_opener") as network:
+            with contextlib.redirect_stdout(out):
+                bridge.staging_import_preflight(argparse.Namespace())
+        network.assert_not_called()
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["queued_records"], 1)
+        self.assertEqual(result["network_requests"], 0)
+        self.assertFalse(result["ready_to_sync"])
+        self.assertFalse(result["identity_evidence_verified"])
+        self.assertFalse(result["consent_evidence_verified"])
+        self.assertNotIn("26658123456", out.getvalue())
 
     def test_acknowledged_import_is_not_repeated(self):
         company = self.prepare()
