@@ -36,6 +36,24 @@ two stored offline test captures and does not create a local queued record.
 It is not yet an automatically triggered modal in the LoanHub web portal;
 that needs a separate authenticated desktop launch/handshake protocol.
 
+## Offline lookup configuration preflight
+
+Before attempting any real client lookup, check whether the desktop has a
+private staging lookup configuration:
+
+```bash
+cd services/signature-bridge
+.venv/bin/python lookup_preflight.py
+```
+
+The command **never accesses a network, executes a token provider or prints
+customer IDs/credentials**. Exit code 0 means local profile metadata passed
+validation only; exit code 2 means the profile is missing or unsafe.
+It does **not** prove the staging server is deployed or authorize a client
+lookup. Live `api.loanhub.co.ls`, `www.loanhub.co.ls` and `loanhub.co.ls`
+hosts are rejected by the staging client. A reviewed staging HTTPS hostname,
+operator access and server deployment remain mandatory.
+
 ## Authenticated National ID rate limiting (staging)
 
 The backend now reserves each exact National ID lookup attempt through
