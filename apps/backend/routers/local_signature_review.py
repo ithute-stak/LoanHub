@@ -6,9 +6,11 @@ reuse, attach handwriting to a contract, or sign a document.
 """
 from __future__ import annotations
 
+from io import BytesIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,7 @@ from core.access_control import (
 from database.models.audit_log import AuditLog
 from database.models.file_management import ManagedFile
 from database.session import get_db
+from services.file_service import read_file_bytes
 
 router = APIRouter(prefix="/local-signatures/review", tags=["Local Wacom Evidence Review"])
 
@@ -89,6 +92,49 @@ def pending_evidence(
     )
     # Metadata only. File content access is still separately protected.
     return {"captures": [_capture_meta(item) for item in records]}
+
+
+@router.get("/{file_id}/preview")
+def preview_capture(
+    file_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    _reviewer(context)
+    record = (
+        db.query(ManagedFile)
+        .filter(
+            ManagedFile.id == file_id,
+            ManagedFile.company_id == context.company_id,
+            ManagedFile.category.in_(PENDING),
+            ManagedFile.is_deleted.is_(False),
+            ManagedFile.is_confidential.is_(True),
+            ManagedFile.visibility == "private",
+        )
+        .one_or_none()
+    )
+    if record is None:
+        raise HTTPException(404, "Pending capture unavailable")
+    if not record.is_encrypted or record.scan_status != "clean" or (
+        record.mime_type != "image/png" or record.size_bytes > 128_000
+    ):
+        raise HTTPException(409, "Capture image is unavailable for review")
+    try:
+        content = read_file_bytes(record)
+    except Exception as exc:
+        raise HTTPException(503, "Signature review image unavailable") from exc
+    if len(content) > 128_000 or len(content) != record.size_bytes:
+        raise HTTPException(409, "Signature capture size mismatch")
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline; filename=review.png",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
 
 
 @router.post("/{file_id}/decision")
