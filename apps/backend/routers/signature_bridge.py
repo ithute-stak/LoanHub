@@ -53,6 +53,16 @@ def _enabled() -> None:
     if os.getenv("ENVIRONMENT", "").lower() != "staging" or os.getenv("LOANHUB_SIGNATURE_BRIDGE_IMPORT_ENABLED") != "true":
         raise HTTPException(503, "Signature Bridge import disabled")
 
+def _lookup_enabled() -> None:
+    """Read-only National ID lookup has an independent staging gate.
+
+    Enabling lookup MUST NOT turn on signature imports.
+    """
+    if (os.getenv("ENVIRONMENT", "").lower() != "staging"
+            or os.getenv("LOANHUB_SIGNATURE_BRIDGE_LOOKUP_ENABLED") != "true"):
+        raise HTTPException(503, "Signature Bridge lookup disabled")
+
+
 @router.post("/imports", status_code=202)
 def import_signature(
     body: SignatureImportRequest,
@@ -166,7 +176,7 @@ def lookup_national_id(
 ):
     """Tenant-scoped exact National ID resolution and signature reuse status."""
     response.headers["Cache-Control"] = "no-store"
-    _enabled()
+    _lookup_enabled()
     require_tenant_roles(context, LENDING_ROLES | COMPANY_MANAGEMENT_ROLES)
     if context.company_id is None:
         raise HTTPException(403, "Tenant company required")
