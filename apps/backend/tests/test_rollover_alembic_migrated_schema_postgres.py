@@ -272,6 +272,51 @@ def _certify_migrated_posting(engine):
             action="loan.final_installment_receivable_transferred",
         ).count() == 0
 
+    # Simultaneous requests must serialize on the parent row lock. Distinct
+    # Sessions and connections are essential: a sequential replay is not a race.
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    with Session(engine, expire_on_commit=False) as db:
+        racing = seed(db, "concurrent")
+    race_args = arguments(racing)
+    start = Barrier(2)
+
+    def concurrent_attempt():
+        with Session(engine) as db:
+            start.wait(timeout=20)
+            try:
+                response = test_only_post(db, **race_args)
+                return ("success", response)
+            except HTTPException as exc:
+                db.rollback()
+                return ("rejected", exc.status_code)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(concurrent_attempt)
+        second = pool.submit(concurrent_attempt)
+        outcomes = [first.result(timeout=40), second.result(timeout=40)]
+    assert sorted(item[0] for item in outcomes) == ["rejected", "success"]
+    assert next(item[1] for item in outcomes if item[0] == "rejected") == 409
+    with Session(engine) as verify:
+        parent = verify.get(ClientCompanyLoan, racing[1])
+        assert parent.balance == Decimal("0")
+        assert parent.status == LoanStatus.COMPLETED
+        children = verify.query(ClientCompanyLoan).filter_by(
+            parent_loan_id=racing[1]
+        ).all()
+        assert len(children) == 1
+        assert children[0].balance == Decimal("60")
+        assert verify.query(RepaymentInstallment).filter_by(
+            loan_id=children[0].id
+        ).count() == 1
+        assert verify.query(LoanRolloverTransfer).filter_by(
+            parent_loan_id=racing[1]
+        ).count() == 1
+        assert verify.query(AuditLog).filter_by(
+            record_id=racing[1],
+            action="loan.final_installment_receivable_transferred",
+        ).count() == 1
+
     with Session(engine, expire_on_commit=False) as db:
         failed = seed(db, "rollback")
         def fail_after_financial_flush(**_kwargs):
