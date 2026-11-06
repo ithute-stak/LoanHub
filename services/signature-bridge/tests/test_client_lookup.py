@@ -52,6 +52,8 @@ class LookupTests(unittest.TestCase):
     def test_rejects_production_hostname_and_http(self):
         for url in (
             "https://loanhub.co.ls/api/v1/signature-bridge/lookup-national-id",
+            "https://api.loanhub.co.ls/api/v1/signature-bridge/lookup-national-id",
+            "https://www.loanhub.co.ls/api/v1/signature-bridge/lookup-national-id",
             "http://staging.example.invalid/api/v1/signature-bridge/lookup-national-id",
             "https://staging.example.invalid/api/v1/signature-bridge/lookup-national-id?redirect=yes",
         ):
