@@ -11,6 +11,24 @@ import review_dialog
 
 
 class ReviewDialogSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.mode = patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "staging"})
+        self.mode.start()
+
+    def tearDown(self):
+        self.mode.stop()
+
+    def test_capture_refuses_production_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            p = Path(temporary) / "adapter"
+            p.write_text("#!/bin/sh\\n")
+            p.chmod(0o700)
+            with patch.dict(os.environ, {"LOANHUB_SIGNATURE_BRIDGE_MODE": "production"}), \\
+                 patch.object(review_dialog.subprocess, "run") as process:
+                with self.assertRaisesRegex(ValueError, "requires staging"):
+                    review_dialog.capture_once(p)
+            process.assert_not_called()
+
     def test_national_id_syntax_is_only_input_hygiene(self):
         self.assertEqual(review_dialog.validate_national_id(" A12345-67 "), "A12345-67")
         for candidate in ("", "abc", "  ", "id with spaces", "a" * 33, "x\nsecret"):
