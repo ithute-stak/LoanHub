@@ -168,7 +168,7 @@ func preflightBridgeCaptureCLI() error {
     return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
         "status": "prerequisites_ready",
         "mode": "staging",
-        "device_connected": false,
+        "device_checked": false,
         "capture_performed": false,
         "hardware_verified": false,
         "signing_enabled": false,
