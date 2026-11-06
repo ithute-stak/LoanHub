@@ -27,7 +27,8 @@ def validate_lookup_endpoint(url: str) -> None:
             parts.username is not None or parts.password is not None or
             parts.query or parts.fragment or parts.port not in (None, 443) or
             parts.path != "/api/v1/signature-bridge/lookup-national-id" or
-            parts.hostname.lower() in ("localhost", "127.0.0.1", "loanhub.co.ls")):
+            parts.hostname.lower() in ("localhost", "127.0.0.1", "loanhub.co.ls",
+                                       "www.loanhub.co.ls", "api.loanhub.co.ls")):
         raise ValueError("Use an approved dedicated staging HTTPS National ID endpoint")
 
 
