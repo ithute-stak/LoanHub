@@ -6,6 +6,7 @@ package main
 // exposes pen data over HTTP, and is not a contract-signing authorization.
 import (
     "encoding/json"
+    "context"
     "errors"
     "fmt"
     "os"
@@ -137,7 +138,7 @@ func (c *bridgeStrokeCollector) Envelope() (bridgePenEnvelope, error) {
 
 // Calibration dimensions come from the official SDK query executable, not
 // from a client, a browser or the pen report stream itself.
-func captureBridgeStrokes(cfg bridgeSDKConfig) (bridgePenEnvelope, error) {
+func captureBridgeStrokes(cfg bridgeSDKConfig, duration time.Duration) (bridgePenEnvelope, error) {
     failed := bridgePenEnvelope{}
     calibration, err := queryLocalSDKCalibration(cfg.Query)
     if err != nil { return failed, errors.New("Wacom calibration unavailable") }
@@ -145,7 +146,7 @@ func captureBridgeStrokes(cfg bridgeSDKConfig) (bridgePenEnvelope, error) {
         calibration.MaxX, calibration.MaxY, calibration.MaxPressure,
     )
     if err != nil { return failed, err }
-    _, err = testWacomSampleWithHandler(cfg.PenSample, 25*time.Second, collector.Add)
+    _, err = testWacomSampleWithHandler(cfg.PenSample, duration, collector.Add)
     if err != nil { return failed, errors.New("Wacom pen stream capture failed") }
     return collector.Envelope()
 }
@@ -175,14 +176,47 @@ func preflightBridgeCaptureCLI() error {
     })
 }
 
-func runBridgeCaptureCLI() error {
+func runBridgeCaptureCLI(fast bool) error {
     cfg, err := loadBridgeSDKConfig()
     if err != nil { return err }
     if !isOperatorTerminalStdin() {
         return fmt.Errorf("operator terminal required for interactive STU capture")
     }
     fmt.Fprintln(os.Stderr, strings.TrimSpace("Wacom staging capture: use only synthetic/test signatures"))
-    capture, err := captureBridgeStrokes(cfg)
+    duration := 25 * time.Second
+    if fast { duration = 10 * time.Second }
+    capture, err := captureBridgeStrokes(cfg, duration)
     if err != nil { return err }
     return json.NewEncoder(os.Stdout).Encode(capture)
 }
+
+// runBridgePenContactWatchCLI detects only the first actual pen-down report.
+// It intentionally discards all coordinates, IDs, and gesture content.
+// The SDK itself still needs a real foreground terminal for its PTY.
+func runBridgePenContactWatchCLI() error {
+    cfg, err := loadBridgeSDKConfig()
+    if err != nil { return err }
+    if !isOperatorTerminalStdin() {
+        return errors.New("interactive terminal required for pen-contact watch")
+    }
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+    detected := false
+    _, err = testWacomSampleWithContext(ctx, cfg.PenSample, 25*time.Second, func(sample penSample) error {
+        if sample.Ready == 1 && sample.Switch == 1 && sample.Pressure > 0 {
+            detected = true
+            cancel()
+            return errPenContactDetected
+        }
+        return nil
+    })
+    if detected {
+        // Exactly one fixed status token; never the raw pen report.
+        fmt.Fprintln(os.Stdout, "pen-contact")
+        return nil
+    }
+    if err != nil { return err }
+    return nil
+}
+
+var errPenContactDetected = errors.New("pen contact detected")
