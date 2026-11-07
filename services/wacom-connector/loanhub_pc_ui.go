@@ -34,6 +34,7 @@ type pcUISession struct {
     lastClient *LoanHubClientLookup
     feedback string
     capture *pcPendingCapture
+    reviewQueue []LoanHubReviewCapture
 }
 
 type pcUI struct {
@@ -53,6 +54,7 @@ type pcUIPage struct {
     Client *LoanHubClientLookup
     Pending *pcPendingCapture
     CaptureEnabled bool
+    ReviewQueue []LoanHubReviewCapture
 }
 
 var pcUITemplate = template.Must(template.New("pc").Parse(`<!doctype html>
@@ -140,6 +142,28 @@ footer{font-size:13px;color:#66758a;text-align:center}
 </form>{{end}}
 {{end}}
 
+<section class="panel"><h2>Independent evidence review</h2>
+<p>Company management only. The reviewer must be different from the capturing operator. Reviewing evidence does not sign any document.</p>
+<form method="post" action="/review-refresh"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Load pending evidence</button></form>
+{{range .ReviewQueue}}
+<div class="client">
+<p><strong>{{.SignerKind}}</strong> capture · <code>{{.CaptureFileID}}</code></p>
+<p>Scan: {{.ScanStatus}} · {{.EvidenceStatus}}</p>
+<img src="/review-preview/{{.CaptureFileID}}" alt="Independent review of handwriting evidence" style="width:100%;height:auto;border:1px solid #ccd7e1">
+<form method="post" action="/review-decision">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="file_id" value="{{.CaptureFileID}}">
+<label>Decision</label><select name="decision" required>
+<option value="reject">Reject evidence</option>
+<option value="verify">Verify evidence only (not signing permission)</option>
+</select>
+<label>Evidence reference</label><input name="evidence_reference" minlength="4" maxlength="160" required>
+<label>Reason</label><input name="reason" minlength="8" maxlength="400" required>
+<label><input type="checkbox" name="identity_checked" value="yes" style="width:auto"> I independently checked signer identity</label>
+<label><input type="checkbox" name="consent_checked" value="yes" style="width:auto"> I independently checked evidence consent</label>
+<button type="submit">Record evidence review decision</button>
+</form></div>{{end}}
+</section>
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Sign out</button></form>
 </section>
 {{end}}
@@ -204,14 +228,17 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         http.Error(w,"Forbidden",http.StatusForbidden)
         return
     }
+    reviewPreview := strings.HasPrefix(r.URL.Path,"/review-preview/")
     if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
         r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
-        r.URL.Path != "/discard" && r.URL.Path != "/preview" {
+        r.URL.Path != "/discard" && r.URL.Path != "/preview" &&
+        r.URL.Path != "/review-refresh" && r.URL.Path != "/review-decision" &&
+        !reviewPreview {
         http.NotFound(w,r)
         return
     }
-    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" {
+    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" && !reviewPreview {
         http.NotFound(w,r)
         return
     }
@@ -226,6 +253,13 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             http.Error(w,"Invalid form submission",http.StatusForbidden)
             return
         }
+    }
+    if reviewPreview {
+        if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
+        ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second)
+        defer cancel()
+        ui.serveReviewPreview(ctx,w,session,strings.TrimPrefix(r.URL.Path,"/review-preview/"))
+        return
     }
     if r.URL.Path == "/preview" {
         if r.Method != http.MethodGet || session.client == nil || session.capture == nil ||
@@ -269,12 +303,17 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         case "/discard":
             session.capture=nil
             session.feedback="Capture discarded"
+        case "/review-refresh":
+            ui.refreshReviewQueue(ctx,session)
+        case "/review-decision":
+            ui.decideReview(ctx,r,session)
         case "/logout":
             session.capture=nil
             if session.client != nil { session.client.Logout() }
             session.client=nil
             session.status=nil
             session.lastClient=nil
+            session.reviewQueue=nil
             session.feedback="Signed out"
         default:
             http.NotFound(w,r); return
@@ -285,6 +324,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         CSRF:session.csrf, Authenticated:session.client != nil,
         Feedback:session.feedback, Status:session.status, Client:session.lastClient,
         Pending:session.capture, CaptureEnabled:ui.sdkCapture!=nil,
+        ReviewQueue:session.reviewQueue,
     }); err != nil {
         log.Println("Wacom PC UI template rendering failed")
     }
