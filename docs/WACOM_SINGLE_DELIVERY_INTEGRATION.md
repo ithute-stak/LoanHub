@@ -57,3 +57,20 @@ Open `http://127.0.0.1:8767/` on that same PC. Never port-forward this local UI,
 ## Release boundary
 
 Do not merge, deploy to production, enable a real customer workflow, or claim legally binding PDF signatures from this branch without the later testing and authorization. Successful compilation alone will not prove physical PC-to-API integration.
+## Final coding-only hardening (after consolidation)
+
+The code-only pass also adds:
+
+- Fail-closed Go checks for foreign/inactive operator capture eligibility, unexpected signature permissions, inconsistent borrower-lookup responses and malformed identity results.
+- A private reviewer browser integration test covering company context, authorization headers, CSRF denial, decision submission, queue invalidation and logout.
+- Additional negative-path operator and borrower API tests using in-process synthetic HTTPS responses only.
+- Immediate RAM cleanup for expired capture previews (including when an expired preview URL is requested).
+- An opt-in offline verification entrypoint at `scripts/wacom_verify_code_only.sh`. It prints usage by default; tests run only with `--execute-offline-tests`.
+
+### Deliberately deferred execution
+
+The final code-only pass was committed **without manually invoking the test script, CI, a GitHub merge, database migration or deployment**. GitHub Actions may run automatically on branch pushes under the repository's existing workflow triggers; an automatic run is not authorization to deploy. After all coding is frozen, inspect the latest head SHA, review the actual GitHub Actions result, run the opt-in local test script and execute approved isolated staging acceptance.
+
+### Stop conditions for later acceptance
+
+Stop immediately if an API reply enables signing/reuse, the reviewer belongs to another company or is the capturing operator, ClamAV is unavailable, encryption is off, the physical PC cannot show genuine STU-540 strokes, the backend routes differ from the release candidate, or the staging deployment touches production resources. Do not accept a green CI result as proof of a physical signing workflow.
