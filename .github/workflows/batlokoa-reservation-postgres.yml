@@ -1,0 +1,66 @@
+name: Batlokoa Phase 36 PostgreSQL reservation certification
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/services/batlokoa_reservation_store.py"
+      - "apps/backend/tests/test_batlokoa_reservation_*.py"
+      - ".github/workflows/batlokoa-reservation-postgres.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/services/batlokoa_reservation_store.py"
+      - "apps/backend/tests/test_batlokoa_reservation_*.py"
+      - ".github/workflows/batlokoa-reservation-postgres.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-postgres:
+    name: Isolated PostgreSQL reservation test
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: batlokoa_ci
+          POSTGRES_USER: batlokoa_ci
+          POSTGRES_PASSWORD: ci-only-reservation-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U batlokoa_ci -d batlokoa_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-secret-not-for-production
+      FERNET_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CHAT_ENCRYPTION_KEY: ci-only-chat-key
+      FILE_ENCRYPTION_KEY: ci-only-file-key
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: batlokoa_ci
+      DB_USER: batlokoa_ci
+      DB_PASSWORD: ci-only-reservation-password
+      LOANHUB_BATLOKOA_TEST_POSTGRES_URL: postgresql+psycopg2://batlokoa_ci:ci-only-reservation-password@127.0.0.1:5432/batlokoa_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r apps/backend/requirements.txt -r apps/backend/requirements-dev.txt
+      - name: Validate inert reservation core and failure cases
+        working-directory: apps/backend
+        run: python -m pytest -q -ra tests/test_batlokoa_reservation_store.py
+      - name: Validate real PostgreSQL concurrent keys and rollback
+        working-directory: apps/backend
+        run: python -m pytest -q -ra tests/test_batlokoa_reservation_postgres.py
