@@ -120,6 +120,10 @@ func serve() error {
 func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
+    pcUI := flag.Bool("pc-ui", false, "Start local PC login/client lookup UI")
+    enableCapture := flag.Bool("enable-local-capture", false, "Enable explicit STU-540 local capture and pending-review upload; requires --pc-ui and installed Wacom SDK paths")
+    disposablePNG := flag.Bool("disposable-png-test", false, "Operator-triggered SDK handwriting-to-PNG verification, memory only; no upload or signing")
+    loanHubOrigin := flag.String("loanhub-origin", "", "Trusted LoanHub HTTPS API origin for --pc-ui")
     sdkEnumerator := flag.String("sdk-enumerator", "", "Absolute path to official Wacom SDK getUsbDevices executable")
     penTest := flag.Bool("pen-test", false, "Run bounded local hardware diagnostic (does not sign contracts)")
     calibrationTest := flag.Bool("calibration-test", false, "Read official STU SDK tablet capabilities locally (not signing)")
@@ -128,6 +132,55 @@ func main() {
     strokeTest := flag.Bool("stroke-test", false, "Assemble test strokes locally in memory (does not sign contracts)")
     sdkPenSample := flag.String("sdk-pen-sample", "", "Absolute path to vendor SDK simpleInterface sample")
     flag.Parse()
+    if *disposablePNG {
+        if *sdkQuery == "" || *sdkPenSample == "" || *pcUI || *diagnostics ||
+            *initWorkstation != "" || *penTest || *calibrationTest ||
+            *calibratedStrokeTest || *strokeTest || *sdkEnumerator != "" ||
+            *loanHubOrigin != "" || len(flag.Args()) != 0 {
+            log.Println("Use --disposable-png-test --sdk-query=/absolute/query --sdk-pen-sample=/absolute/simpleInterface")
+            os.Exit(2)
+        }
+        log.Println("Wacom disposable TEST handwriting capture: no signature upload or disk output")
+        preview, err := captureDisposableWacomPreview(*sdkQuery,*sdkPenSample)
+        if err != nil {
+            log.Printf("Disposable Wacom capture failed: %v",err)
+            os.Exit(1)
+        }
+        log.Printf("In-memory PNG verified: %d bytes, %d contact points, %d strokes, SHA-256 %s (nothing stored/uploaded)",
+            len(preview.PNG),preview.ContactPoints,preview.StrokeCount,preview.SHA256)
+        return
+    }
+    if *pcUI {
+        if *loanHubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
+            *calibrationTest || *calibratedStrokeTest || *strokeTest ||
+            *sdkEnumerator != "" || len(flag.Args()) != 0 ||
+            (*enableCapture && (*sdkQuery == "" || *sdkPenSample == "")) ||
+            (!*enableCapture && (*sdkQuery != "" || *sdkPenSample != "")) {
+            log.Println("--pc-ui requires --loanhub-origin=https://trusted-api; --enable-local-capture additionally requires --sdk-query and --sdk-pen-sample")
+            os.Exit(2)
+        }
+        var capture func() (disposableWacomPreview,error)
+        if *enableCapture {
+            // Paths are fixed at startup; HTTP requests can never select executables.
+            query,pen:=*sdkQuery,*sdkPenSample
+            capture=func()(disposableWacomPreview,error) {
+                return captureDisposableWacomPreview(query,pen)
+            }
+        }
+        if err := servePCUI(*loanHubOrigin,capture); err != nil {
+            log.Printf("Local Wacom PC UI failed: %v", err)
+            os.Exit(1)
+        }
+        return
+    }
+    if *enableCapture {
+        log.Println("--enable-local-capture requires --pc-ui")
+        os.Exit(2)
+    }
+    if *loanHubOrigin != "" {
+        log.Println("--loanhub-origin can only be used with --pc-ui")
+        os.Exit(2)
+    }
     if *initWorkstation != "" {
         if *diagnostics || *calibrationTest || *calibratedStrokeTest || *penTest ||
             *strokeTest || *sdkEnumerator != "" || *sdkQuery != "" || *sdkPenSample != "" ||

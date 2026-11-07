@@ -18,7 +18,8 @@ from core.access_control import (
 from database.models.enums import UserRole
 from database.models.origination import LoanContract
 from database.models.pad_signing import ContractPadSigningSession
-from database.models.borrower_signature import BorrowerSavedSignature
+from database.models.borrower_signature import BorrowerSavedSignature, BorrowerSignatureUseAuthorization
+from database.models.file_management import ManagedFile
 from database.session import get_db
 from services.wacom_session_revalidation import current_pad_preview_eligibility
 from services.contract_email_otp_service import (
@@ -260,6 +261,180 @@ def cancel_pad_signing_session(
     row.status = "cancelled"
     db.commit()
     return {"session_id": str(row.id), "status": "cancelled", "capture_enabled": False}
+
+
+def _fresh_authorization_checks(
+    contract: LoanContract,
+    authorization: BorrowerSignatureUseAuthorization | None,
+    signature: BorrowerSavedSignature | None,
+    session: ContractPadSigningSession | None,
+    *,
+    company_id: UUID,
+    now: datetime,
+) -> list[str]:
+    """Fail-closed status assessment; does not authorize any signer operation."""
+    blockers: list[str] = []
+    if contract.borrower_signed_at is not None or contract.locked_at is not None or contract.status == "signed":
+        blockers.append("contract_already_completed_or_locked")
+    if contract.pdf_file_id is None or not contract.contract_hash or len(contract.contract_hash) != 64:
+        blockers.append("contract_document_unavailable")
+    if authorization is None:
+        blockers.append("contract_authorization_missing")
+        return blockers
+    if (
+        authorization.company_id != company_id
+        or authorization.borrower_id != contract.borrower_id
+        or authorization.contract_id != contract.id
+        or authorization.status != "authorized"
+        or authorization.contract_hash != contract.contract_hash
+        or authorization.consumed_at is not None
+        or authorization.verified_identity_at is None
+        or authorization.explicit_consent_at is None
+    ):
+        blockers.append("contract_authorization_invalid")
+    if signature is None or (
+        signature.company_id != company_id
+        or signature.borrower_id != contract.borrower_id
+        or signature.id != authorization.signature_id
+        or signature.status != "active"
+        or signature.revoked_at is not None
+        or signature.reuse_opt_in_at is None
+    ):
+        blockers.append("saved_signature_unavailable_or_revoked")
+    if session is None or (
+        session.id != authorization.session_id
+        or session.company_id != company_id
+        or session.contract_id != contract.id
+        or session.contract_hash != contract.contract_hash
+        or session.status not in {"consented", "captured"}
+        or session.verified_identity_at is None
+        or session.consent_at is None
+        or session.expires_at is None
+    ):
+        blockers.append("signing_session_invalid")
+    else:
+        expiry = session.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if now >= expiry:
+            blockers.append("signing_session_expired")
+    return blockers
+
+
+@router.get("/contracts/{contract_id}/pad/use-authorization-status")
+def contract_saved_signature_authorization_status(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Read-only eligibility inspection; NEVER usable as a signing ticket."""
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    authorization = (
+        db.query(BorrowerSignatureUseAuthorization)
+        .filter(
+            BorrowerSignatureUseAuthorization.company_id == context.company_id,
+            BorrowerSignatureUseAuthorization.borrower_id == contract.borrower_id,
+            BorrowerSignatureUseAuthorization.contract_id == contract.id,
+        )
+        .one_or_none()
+    )
+    signature = None
+    session = None
+    if authorization is not None:
+        signature = (
+            db.query(BorrowerSavedSignature)
+            .filter(
+                BorrowerSavedSignature.id == authorization.signature_id,
+                BorrowerSavedSignature.company_id == context.company_id,
+                BorrowerSavedSignature.borrower_id == contract.borrower_id,
+            )
+            .one_or_none()
+        )
+        session = (
+            db.query(ContractPadSigningSession)
+            .filter(
+                ContractPadSigningSession.id == authorization.session_id,
+                ContractPadSigningSession.company_id == context.company_id,
+                ContractPadSigningSession.contract_id == contract.id,
+            )
+            .one_or_none()
+        )
+    blockers = _fresh_authorization_checks(
+        contract, authorization, signature, session,
+        company_id=context.company_id, now=datetime.now(timezone.utc),
+    )
+    return {
+        "contract_id": str(contract.id),
+        "borrower_id": str(contract.borrower_id),
+        "authorization_record_found": authorization is not None,
+        "eligibility_checks_passed": not blockers,
+        "blockers": blockers,
+        "authorization_is_not_a_capture_ticket": True,
+        "can_sign_from_this_endpoint": False,
+        "contract_signed": False,
+        "requires_atomic_recheck_before_any_signature_use": True,
+    }
+
+
+@router.get("/contracts/{contract_id}/pad/verified-capture-evidence")
+def contract_verified_capture_evidence(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Metadata-only discovery of the contract borrower's reviewed capture.
+
+    This cannot sign or authorize any document, issue a capture ticket, or
+    expose a signature image. Fresh borrower consent is always required.
+    """
+    require_tenant_roles(context, CONTRACT_SIGNING_ROLES)
+    contract = _contract(db, context=context, contract_id=contract_id)
+    records = (
+        db.query(ManagedFile)
+        .filter(
+            ManagedFile.company_id == context.company_id,
+            ManagedFile.category == "wacom_client_capture_verified",
+            ManagedFile.linked_entity_type == "wacom_client",
+            ManagedFile.linked_entity_id == str(contract.borrower_id),
+            ManagedFile.is_encrypted.is_(True),
+            ManagedFile.is_confidential.is_(True),
+            ManagedFile.visibility == "private",
+            ManagedFile.scan_status == "clean",
+            ManagedFile.is_deleted.is_(False),
+        )
+        .order_by(ManagedFile.created_at.desc(), ManagedFile.id.desc())
+        .limit(10)
+        .all()
+    )
+    blockers: list[str] = []
+    if contract.borrower_signed_at is not None:
+        blockers.append("borrower_already_signed")
+    if contract.locked_at is not None or contract.status == "signed":
+        blockers.append("contract_locked")
+    if contract.pdf_file_id is None:
+        blockers.append("contract_pdf_missing")
+    if not contract.contract_hash:
+        blockers.append("contract_hash_missing")
+    return {
+        "contract_id": str(contract.id),
+        "borrower_id": str(contract.borrower_id),
+        "capture_evidence": [
+            {
+                "file_id": str(record.id),
+                "captured_at": record.created_at.isoformat() if record.created_at else None,
+                "evidence_status": "verified_capture",
+            }
+            for record in records
+        ],
+        "document_preflight_blockers": blockers,
+        "requires_fresh_borrower_identity_verification": True,
+        "requires_fresh_contract_consent": True,
+        "requires_document_specific_authorization": True,
+        "can_apply_capture_to_document": False,
+        "automatic_signature_reuse_enabled": False,
+        "contract_signed": False,
+    }
 
 
 @router.get("/contracts/{contract_id}/pad/saved-signatures")
