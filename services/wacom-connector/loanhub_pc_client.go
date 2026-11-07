@@ -33,6 +33,7 @@ type LoanHubLoginResult struct {
     User struct {
         ID string `json:"id"`
         MustChangePassword bool `json:"must_change_password"`
+        IsActive bool `json:"is_active"`
         Memberships []struct {
             CompanyID string `json:"company_id"`
             IsActive bool `json:"is_active"`
@@ -135,7 +136,7 @@ func (c *LoanHubPCClient) Login(ctx context.Context, phone, password, otp, compa
     }{phone, password, otp, "LoanHub Wacom Local PC"}
     if err := c.do(ctx, http.MethodPost, "/api/v1/auth/login", request, false, &result); err != nil { return err }
     if result.TokenType != "bearer" || result.AccessToken == "" ||
-       result.User.ID == "" || result.User.MustChangePassword {
+       result.User.ID == "" || !result.User.IsActive || result.User.MustChangePassword {
         return errors.New("LoanHub login requires account action or returned invalid credentials")
     }
     authorized := false
