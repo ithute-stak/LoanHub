@@ -47,9 +47,14 @@ def isolated_tenant_database():
         ).read_text(encoding="utf-8")
         with scoped.begin() as connection:
             for statement in fixture_sql.split(";"):
-                # Avoid semicolons inside strings (fixture does not use any).
-                if statement.strip():
-                    connection.execute(text(statement))
+                # Ignore blank/comment-only SQL fragments. This test fixture
+                # deliberately has no SQL string literals containing ';'.
+                executable = "\n".join(
+                    line for line in statement.splitlines()
+                    if not line.lstrip().startswith("--")
+                ).strip()
+                if executable:
+                    connection.execute(text(executable))
             for company, loan, borrower in (
                 (TENANT_A, LOAN_A, BORROWER_A),
                 (TENANT_B, LOAN_B, BORROWER_B),
