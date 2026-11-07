@@ -126,7 +126,7 @@ func (c *LoanHubPCClient) do(ctx context.Context, method, path string, payload a
 // The selected company must belong to the authenticated user's active memberships.
 func (c *LoanHubPCClient) Login(ctx context.Context, phone, password, otp, companyID string) error {
     c.Logout()
-    if phone == "" || password == "" || companyID == "" { return errors.New("phone, password and company are required") }
+    if phone == "" || password == "" { return errors.New("phone and password are required") }
     var result LoanHubLoginResult
     request := struct {
         Phone string `json:"phone"`
@@ -139,11 +139,28 @@ func (c *LoanHubPCClient) Login(ctx context.Context, phone, password, otp, compa
        result.User.ID == "" || !result.User.IsActive || result.User.MustChangePassword {
         return errors.New("LoanHub login requires account action or returned invalid credentials")
     }
+    // Never trust a company identifier supplied by the browser. For the
+    // two-field login, derive the tenant only from authenticated memberships.
+    // Existing callers may explicitly select an authorized company.
+    selected := ""
+    activeCount := 0
     authorized := false
+    seen := make(map[string]bool)
     for _, membership := range result.User.Memberships {
-        if membership.IsActive && membership.CompanyID == companyID { authorized = true; break }
+        if !membership.IsActive || strings.TrimSpace(membership.CompanyID) == "" { continue }
+        if companyID != "" && membership.CompanyID == companyID { authorized = true }
+        if !seen[membership.CompanyID] {
+            activeCount++
+            seen[membership.CompanyID] = true
+            selected = membership.CompanyID
+        }
     }
-    if !authorized { return errors.New("Selected company is not an active LoanHub membership") }
+    if companyID == "" {
+        if activeCount != 1 { return errors.New("Exactly one active company membership required for automatic selection") }
+        companyID = selected
+    } else if !authorized {
+        return errors.New("Selected company is not an active LoanHub membership")
+    }
     c.accessToken = result.AccessToken
     c.companyID = companyID
     return nil

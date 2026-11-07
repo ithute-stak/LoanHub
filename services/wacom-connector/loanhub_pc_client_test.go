@@ -125,3 +125,25 @@ func TestLoanHubPCOperatorStatus(t *testing.T) {
     status, err := client.OperatorSignatureStatus(context.Background())
     if err != nil || !status.RequiresCapture || status.UsableForSigning { t.Fatal("invalid operator status", err) }
 }
+
+func TestLoanHubPCAutoSelectsOnlyActiveCompany(t *testing.T) {
+    client, server := newTestLoanHubPC(t, func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        _, _ = w.Write([]byte(`{"access_token":"synthetic-access","token_type":"bearer","user":{"id":"test","is_active":true,"memberships":[{"company_id":"inactive","is_active":false},{"company_id":"active-company","is_active":true}]}}`))
+    })
+    defer server.Close()
+    if err := client.Login(context.Background(), "59000000", "synthetic-password", "", ""); err != nil { t.Fatal(err) }
+    if client.companyID != "active-company" { t.Fatalf("wrong selected tenant %q", client.companyID) }
+}
+
+func TestLoanHubPCAutoSelectionFailsClosedForMultipleCompanies(t *testing.T) {
+    client, server := newTestLoanHubPC(t, func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        _, _ = w.Write([]byte(`{"access_token":"synthetic-access","token_type":"bearer","user":{"id":"test","is_active":true,"memberships":[{"company_id":"tenant-a","is_active":true},{"company_id":"tenant-b","is_active":true}]}}`))
+    })
+    defer server.Close()
+    if err := client.Login(context.Background(), "59000000", "synthetic-password", "", ""); err == nil {
+        t.Fatal("multiple tenants silently selected")
+    }
+    if client.accessToken != "" || client.companyID != "" { t.Fatal("unauthorized session state retained") }
+}
