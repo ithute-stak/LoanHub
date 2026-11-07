@@ -148,6 +148,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 {{range .ReviewQueue}}
 <div class="client">
 <p><strong>{{.SignerKind}}</strong> capture · <code>{{.CaptureFileID}}</code></p>
+<p>Signer ID: <code>{{.SignerID}}</code>{{if .CapturedByUserID}} · Captured by: <code>{{.CapturedByUserID}}</code>{{end}}</p>
 <p>Scan: {{.ScanStatus}} · {{.EvidenceStatus}}</p>
 <img src="/review-preview/{{.CaptureFileID}}" alt="Independent review of handwriting evidence" style="width:100%;height:auto;border:1px solid #ccd7e1">
 <form method="post" action="/review-decision">
