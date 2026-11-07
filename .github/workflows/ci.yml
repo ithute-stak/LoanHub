@@ -180,8 +180,6 @@ jobs:
           # Dedicated test database; tests create and drop their own unique schemas.
           createdb -h 127.0.0.1 -p 5432 -U loanhub wacom_isolation_test
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_postgresql_review_isolation.py
-          # A skipped-only job is NOT proof the isolated PostgreSQL tests ran.
-          python -m pytest -q -ra --maxfail=1 tests/test_wacom_postgresql_review_isolation.py
 
       - name: Validate system-owner recovery helper
         run: |
