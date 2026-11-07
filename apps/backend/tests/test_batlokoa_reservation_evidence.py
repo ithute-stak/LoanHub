@@ -54,8 +54,11 @@ def test_wrong_tip_is_not_accepted():
 def test_tampering_breaks_digest_or_tenant_binding(change):
     events = sequence()
     altered = (events[0], replace(events[1], **change))
-    with pytest.raises(EvidenceIntegrityError):
-        verify_evidence_chain(altered, hash_reservation_evidence(events[-1]))
+    if any(field in change for field in ("company_id", "loan_id", "reservation_id", "borrower_id")):
+        with pytest.raises(EvidenceIntegrityError):
+            verify_evidence_chain(altered, hash_reservation_evidence(events[-1]))
+    else:
+        assert verify_evidence_chain(altered, hash_reservation_evidence(events[-1])) is False
 
 
 def test_changed_amount_only_changes_digest():
