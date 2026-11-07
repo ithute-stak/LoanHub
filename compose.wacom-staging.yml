@@ -1,0 +1,52 @@
+# OPT-IN isolated Wacom staging overlay. Never use with production .env or project.
+# Start only targeted services; do not include compose.edge.yml (public-edge).
+services:
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "true"
+    networks: [loanhub]
+    # No host ports: the scanner is reachable only on this private Compose network.
+    expose:
+      - "3310"
+    mem_limit: 3g
+
+  migrate:
+    environment:
+      ENVIRONMENT: staging
+      FILE_ENCRYPTION_ENABLED: "true"
+      MALWARE_SCAN_ENABLED: "true"
+      MALWARE_SCAN_FAIL_CLOSED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      FILE_STORAGE_BACKEND: local
+      FILE_STORAGE_PATH: /app/media/staging/uploads
+    volumes:
+      - ./staging-secrets:/app/secrets:ro
+
+  backend:
+    environment:
+      ENVIRONMENT: staging
+      FILE_ENCRYPTION_ENABLED: "true"
+      MALWARE_SCAN_ENABLED: "true"
+      MALWARE_SCAN_FAIL_CLOSED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      CLAMAV_TIMEOUT_SECONDS: "20"
+      FILE_STORAGE_BACKEND: local
+      FILE_STORAGE_PATH: /app/media/staging/uploads
+      # Do not connect to live payment integrations during the test.
+      LELEFAPAYGATE_ENABLED: "false"
+      COLLECTION_AUTOMATION_ENABLED: "false"
+      COLLECTION_DAILY_REPORT_ENABLED: "false"
+      TREASURY_AUTO_SUBMIT_ENABLED: "false"
+      MAINTENANCE_INTERVAL_SECONDS: "3600"
+    volumes:
+      - ./staging-secrets:/app/secrets:ro
+      - loanhub_files:/app/media
+    ports:
+      - "127.0.0.1:${WACOM_STAGE_BACKEND_PORT:-18080}:8000"
+    depends_on:
+      clamav:
+        condition: service_started
