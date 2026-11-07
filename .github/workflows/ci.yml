@@ -181,6 +181,33 @@ jobs:
           createdb -h 127.0.0.1 -p 5432 -U loanhub wacom_isolation_test
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_postgresql_review_isolation.py
 
+      - name: Verify real ClamAV signature scan and outage rejection
+        working-directory: apps/backend
+        env:
+          WACOM_REAL_CLAMAV_HOST: 127.0.0.1
+          WACOM_REAL_CLAMAV_PORT: '33119'
+        run: |
+          set -euo pipefail
+          # Run a disposable ClamAV daemon on loopback only; never publish externally.
+          docker run --rm -d --name wacom-ci-clamav \
+            -p 127.0.0.1:33119:3310 clamav/clamav:stable
+          trap 'docker stop wacom-ci-clamav >/dev/null 2>&1 || true' EXIT
+          python - <<'PY'
+          import socket
+          import time
+          deadline = time.monotonic() + 240
+          while time.monotonic() < deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1", 33119), timeout=2):
+                      print("ClamAV INSTREAM socket is ready")
+                      break
+              except OSError:
+                  time.sleep(2)
+          else:
+              raise SystemExit("ClamAV did not become ready on loopback")
+          PY
+          python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
+
       - name: Validate system-owner recovery helper
         run: |
           set -euo pipefail
