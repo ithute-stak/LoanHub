@@ -59,7 +59,7 @@ type pcUIPage struct {
 
 var pcUITemplate = template.Must(template.New("pc").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>LoanHub | Wacom PC</title>
+<meta name="referrer" content="same-origin"><title>LoanHub | Wacom PC</title>
 <style>
 :root{color-scheme:light;font-family:system-ui,-apple-system,sans-serif;color:#172d43;background:#f0f4f9}
 *{box-sizing:border-box}body{margin:0}main{max-width:660px;margin:6vh auto;padding:20px}
@@ -221,7 +221,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("X-Content-Type-Options", "nosniff")
     w.Header().Set("X-Frame-Options", "DENY")
     w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-    w.Header().Set("Referrer-Policy", "no-referrer")
+    w.Header().Set("Referrer-Policy", "same-origin")
     if r.Host != pcUIAddr || r.URL.RawQuery != "" {
         http.Error(w,"Forbidden",http.StatusForbidden)
         return
