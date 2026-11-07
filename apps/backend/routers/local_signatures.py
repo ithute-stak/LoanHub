@@ -83,6 +83,10 @@ def _pending_file(db: Session, context: TenantContext, *, category: str, kind: s
         ManagedFile.linked_entity_type == kind,
         ManagedFile.linked_entity_id == str(identity),
         ManagedFile.is_deleted.is_(False),
+        ManagedFile.is_confidential.is_(True),
+        ManagedFile.visibility == "private",
+        ManagedFile.is_encrypted.is_(True),
+        ManagedFile.scan_status == "clean",
     )
 
 
@@ -254,11 +258,28 @@ def upload_capture(
     if not hmac.compare_digest(digest, body.capture_sha256):
         raise HTTPException(422, "Signature digest mismatch")
 
+    # Serialize all pending-capture uploads for the same tenant and signer.
+    # The PostgreSQL transaction-scoped lock is released at commit/rollback.
+    lock_material = f"wacom-capture:{context.company_id}:{kind}:{identity}"
+    lock_key = int.from_bytes(hashlib.sha256(lock_material.encode("ascii")).digest()[:8], "big", signed=True)
+    try:
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(503, "Signature capture transaction lock unavailable") from exc
+
     # An identical retry is acknowledged rather than creating another file.
     existing = _pending_file(db, context, category=category, kind=kind, identity=identity).filter(
         ManagedFile.checksum_sha256 == digest,
     ).first()
     if existing is not None:
+        expected_description = (
+            "Wacom capture pending identity and consent review; reference: " + body.consent_reference
+        )
+        if existing.description != expected_description:
+            db.rollback()
+            raise HTTPException(409, "Capture already pending under another consent reference")
+        db.rollback()
         return {"status": "pending_review", "file_id": str(existing.id),
                 "duplicate": True, "usable_for_signing": False}
 
