@@ -191,3 +191,71 @@ def test_missing_pending_record_never_updates(monkeypatch):
         review.review_capture(uuid4(),body,Response(),db,ctx)
     assert err.value.status_code==404
     assert db.commits==0
+
+
+@pytest.mark.parametrize("decision", ["verify", "reject"])
+def test_capturer_cannot_review_own_operator_evidence(monkeypatch, decision):
+    """Neither a positive nor a negative decision may bypass independence."""
+    ctx = reviewer_context()
+    record = sample_record(ctx.company_id, owner_id=ctx.user.id)
+    record.category = "wacom_operator_signature_pending"
+    record.linked_entity_type = "wacom_operator"
+    db = DB([record])
+    monkeypatch.setattr(review, "require_tenant_roles", lambda *_: None)
+    body = review.EvidenceDecision(
+        decision=decision,
+        identity_checked=decision == "verify",
+        consent_checked=decision == "verify",
+        evidence_reference="WACOM-STAGING-SELF-REVIEW",
+        reason="Synthetic self-review must always be refused",
+    )
+    with pytest.raises(HTTPException) as exc:
+        review.review_capture(record.id, body, Response(), db, ctx)
+    assert exc.value.status_code == 403
+    assert db.commits == 0
+    assert db.writes == []
+    assert record.category == "wacom_operator_signature_pending"
+
+
+@pytest.mark.parametrize(
+    "kind,decision,expected_category",
+    [
+        ("operator", "reject", "wacom_operator_capture_rejected"),
+        ("client", "reject", "wacom_client_capture_rejected"),
+        ("operator", "verify", "wacom_operator_capture_verified"),
+        ("client", "verify", "wacom_client_capture_verified"),
+    ],
+)
+def test_independent_review_is_audited_and_never_authorizes_signing(
+    monkeypatch, kind, decision, expected_category
+):
+    """Cover both real staging evidence kinds and both decision paths."""
+    ctx = reviewer_context()
+    record = sample_record(ctx.company_id)
+    record.category = f"wacom_{kind}_signature_pending"
+    record.linked_entity_type = f"wacom_{kind}"
+    db = DB([record])
+    monkeypatch.setattr(review, "require_tenant_roles", lambda *_: None)
+    body = review.EvidenceDecision(
+        decision=decision,
+        identity_checked=decision == "verify",
+        consent_checked=decision == "verify",
+        evidence_reference="WACOM-STAGING-REVIEW-TEST",
+        reason="Synthetic independent evidence review validation",
+    )
+    result = review.review_capture(record.id, body, Response(), db, ctx)
+    assert db.q.locked
+    assert db.commits == 1
+    assert len(db.writes) == 1
+    assert record.category == expected_category
+    assert result["evidence_status"] == (
+        "verified" if decision == "verify" else "rejected"
+    )
+    assert result["usable_for_signing"] is False
+    assert result["automatic_reuse_allowed"] is False
+    event = db.writes[0]
+    assert event.action == "local_signatures.capture_reviewed"
+    assert event.user_id == ctx.user.id
+    assert event.event_data["authorizes_signing"] is False
+    assert event.event_data["decision"] == decision
+    assert event.event_data["submitted_by_user_id"] == str(record.owner_user_id)
