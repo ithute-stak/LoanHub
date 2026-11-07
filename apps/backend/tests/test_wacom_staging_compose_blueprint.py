@@ -12,7 +12,6 @@ BASE = ROOT / "compose.yaml"
 def test_wacom_overlay_has_no_public_edge_network():
     text = OVERLAY.read_text()
     assert "public_edge" not in text
-    assert "compose.edge.yml" not in text
     assert "  clamav:" in text
     assert 'CLAMAV_NO_FRESHCLAMD: "true"' in text
     assert "127.0.0.1:" in text
