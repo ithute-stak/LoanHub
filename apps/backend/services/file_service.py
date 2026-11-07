@@ -324,7 +324,19 @@ def store_bytes(
         is_confidential=is_confidential,
     )
     db.add(record)
-    db.flush()
+    try:
+        db.flush()
+    except Exception:
+        # Prevent an orphan encrypted object when the SQL insert itself fails.
+        # The caller still owns the DB rollback. Do not delete objects after
+        # an uncertain COMMIT outcome (the row might already be durable).
+        try:
+            storage.delete(str(relative_key))
+        except Exception:
+            # A deletion failure must never hide the original DB failure.
+            # Storage reconciliation can identify any remaining orphan.
+            pass
+        raise
     return record
 
 
