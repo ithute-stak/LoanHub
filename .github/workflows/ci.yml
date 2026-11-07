@@ -246,7 +246,8 @@ jobs:
           DB_NAME: loanhub_wacom_staging
           DB_PASSWORD: synthetic-ci-only-postgres
           DB_RUNTIME_PASSWORD: synthetic-ci-only-runtime
-          WACOM_STAGE_BACKEND_PORT: '18080'
+          BACKEND_BIND: 127.0.0.1
+          BACKEND_PORT: '18080'
         run: |
           set -euo pipefail
           # Fully resolved compose inspection, with disposable dummy env_file.
