@@ -192,19 +192,29 @@ jobs:
           docker run --rm -d --name wacom-ci-clamav \
             -p 127.0.0.1:33119:3310 clamav/clamav:stable
           trap 'docker stop wacom-ci-clamav >/dev/null 2>&1 || true' EXIT
+          # A TCP connect may succeed before clamd is ready to scan.
+          # Require an actual clamd protocol PING -> PONG round trip.
           python - <<'PY'
           import socket
           import time
+
           deadline = time.monotonic() + 240
+          errors = 0
           while time.monotonic() < deadline:
               try:
-                  with socket.create_connection(("127.0.0.1", 33119), timeout=2):
-                      print("ClamAV INSTREAM socket is ready")
-                      break
-              except OSError:
-                  time.sleep(2)
+                  with socket.create_connection(("127.0.0.1", 33119), timeout=3) as conn:
+                      conn.settimeout(3)
+                      conn.sendall(b"zPING\\0")
+                      response = conn.recv(128).strip(b"\\0\\r\\n")
+                      if response == b"PONG":
+                          print("ClamAV clamd protocol ready (PING/PONG)")
+                          break
+                      raise RuntimeError("ClamAV has not completed scanner startup")
+              except (OSError, RuntimeError):
+                  errors += 1
+                  time.sleep(3)
           else:
-              raise SystemExit("ClamAV did not become ready on loopback")
+              raise SystemExit(f"ClamAV never answered PONG after {errors} attempts")
           PY
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
 
