@@ -1,0 +1,11 @@
+-- DESIGN DRAFT ONLY: DO NOT RUN AS AN ALEMBIC OR PRODUCTION MIGRATION.
+-- Session variables set by an untrusted SQL caller are not sufficient
+-- security. Production app DB roles must not bypass RLS or own the table.
+-- This reference intentionally denies all tenant access until approved.
+-- ALTER TABLE batlokoa_collection_intent_reservations ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE batlokoa_collection_intent_reservations FORCE ROW LEVEL SECURITY;
+-- REVOKE ALL ON batlokoa_collection_intent_reservations FROM PUBLIC;
+-- CREATE POLICY batlokoa_collection_intent_deny_all
+-- ON batlokoa_collection_intent_reservations FOR ALL TO PUBLIC
+-- USING (false) WITH CHECK (false);
+-- Requires real PostgreSQL permission and isolation integration testing.
