@@ -19,8 +19,19 @@ type pcPendingCapture struct {
     expires time.Time
 }
 
+// discardCapture clears the in-memory PNG before releasing its session.
+// It never writes raw pen points or handwriting to a local file.
+func (session *pcUISession) discardCapture() {
+    if session.capture != nil {
+        for i := range session.capture.preview.PNG {
+            session.capture.preview.PNG[i] = 0
+        }
+        session.capture = nil
+    }
+}
+
 func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
-    session.capture=nil
+    session.discardCapture()
     if ui.sdkCapture==nil || session.client==nil {
         session.feedback="Capture unavailable on this workstation"
         return
@@ -89,7 +100,7 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     }
     capture:=session.capture
     if time.Now().After(capture.expires) {
-        session.capture=nil
+        session.discardCapture()
         session.feedback="Capture expired; please capture again"
         return
     }
@@ -99,7 +110,7 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     }
     if capture.signerKind=="operator" {
         if session.status==nil || !session.status.RequiresCapture {
-            session.capture=nil
+            session.discardCapture()
             session.feedback="Operator is no longer eligible for capture"
             return
         }
@@ -107,7 +118,7 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
         if session.lastClient==nil || session.lastClient.Client==nil ||
             session.lastClient.Status!="matched" || !session.lastClient.Client.RequiresCapture ||
             session.lastClient.Client.BorrowerID!=capture.borrowerID {
-            session.capture=nil
+            session.discardCapture()
             session.feedback="Client identity changed; capture discarded"
             return
         }
@@ -118,7 +129,7 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
         session.feedback="LoanHub did not confirm receipt; upload remains unapproved"
         return
     }
-    session.capture=nil
+    session.discardCapture()
     session.lastClient=nil
     session.status=nil
     session.feedback="LoanHub received the capture for identity and consent review. It is not approved for signing."
