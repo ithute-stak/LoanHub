@@ -121,3 +121,23 @@ func TestPCUIMaliciousBrowserCannotSubmitWithoutSession(t *testing.T) {
     ui.ServeHTTP(recorder,request)
     if recorder.Code!=403 { t.Fatal("login allowed without session cookie") }
 }
+
+func TestPCUIFormOriginCompatibleWithChrome(t *testing.T) {
+    ui,err:=newPCUI("https://loanhub.example")
+    if err!=nil { t.Fatal(err) }
+    cookie,csrf,html:=localUIGet(t,ui)
+    if !strings.Contains(html,`<meta name="referrer" content="same-origin">`) {
+        t.Fatal("browser referrer policy must retain origin for same-origin POST")
+    }
+    req:=httptest.NewRequest(http.MethodGet,pcUIOrigin+"/",nil)
+    response:=httptest.NewRecorder()
+    ui.ServeHTTP(response,req)
+    if got:=response.Header().Get("Referrer-Policy"); got!="same-origin" {
+        t.Fatalf("unexpected referrer policy: %q",got)
+    }
+    payload:=url.Values{"csrf":{csrf},"phone":{"59000000"},"password":{"synthetic-password"}}
+    post:=localUIPost(ui,cookie,"/login",payload,"null")
+    if post.Code!=403 { t.Fatal("opaque Origin must remain forbidden") }
+    post=localUIPost(ui,cookie,"/login",payload,pcUIOrigin)
+    if post.Code!=200 { t.Fatalf("same-origin login POST blocked: %d",post.Code) }
+}
