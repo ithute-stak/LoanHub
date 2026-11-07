@@ -84,8 +84,6 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="phone">LoanHub phone number</label><input id="phone" name="phone" maxlength="30" required autocomplete="username">
 <label for="pass">Password</label><input id="pass" type="password" name="password" maxlength="128" required autocomplete="current-password">
-<label for="otp">Authenticator code (if enabled)</label><input id="otp" name="otp" inputmode="numeric" maxlength="8">
-<label for="company">Company ID</label><input id="company" name="company" placeholder="Company UUID from your LoanHub membership" maxlength="36" required>
 <button type="submit">Sign in securely</button>
 </form></section>
 {{else}}
@@ -292,9 +290,8 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             client,err := NewLoanHubPCClient(ui.origin,ui.transport)
             if err != nil { session.feedback="LoanHub origin configuration unavailable"; break }
             err=client.Login(ctx,strings.TrimSpace(r.PostForm.Get("phone")),
-                r.PostForm.Get("password"),strings.TrimSpace(r.PostForm.Get("otp")),
-                strings.TrimSpace(r.PostForm.Get("company")))
-            if err != nil { session.feedback="Login failed. Check credentials, MFA and company selection."; break }
+                r.PostForm.Get("password"),"", "")
+            if err != nil { session.feedback="Login failed. Check credentials or account requirements. Multi-company accounts require company selection."; break }
             session.client=client
             status,err := client.OperatorSignatureStatus(ctx)
             if err == nil { session.status=&status } else { session.feedback="Signed in. Signature status unavailable." }
