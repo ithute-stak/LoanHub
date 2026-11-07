@@ -47,7 +47,7 @@ func TestPCToLoanHubSyntheticCaptureUploadAndReviewReceipt(t *testing.T) {
             if request.Phone != "59000000" || request.Password != "synthetic-password" {
                 t.Error("unexpected synthetic login")
             }
-            _, _ = w.Write([]byte(`{"access_token":"synthetic-test-token","token_type":"bearer","user":{"id":"00000000-0000-4000-8000-000000000001","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+            _, _ = w.Write([]byte(`{"access_token":"synthetic-test-token","token_type":"bearer","user":{"is_active":true,"id":"00000000-0000-4000-8000-000000000001","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
         case "/api/v1/local-signatures/me/status":
             _, _ = w.Write([]byte(`{"operator_id":"00000000-0000-4000-8000-000000000001","company_id":"`+companyID+`","full_name":"Synthetic Operator","signature_status":"missing","requires_capture":true,"usable_for_signing":false}`))
         case "/api/v1/local-signatures/clients/lookup":
