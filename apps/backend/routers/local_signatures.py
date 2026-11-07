@@ -30,6 +30,7 @@ from database.models.file_management import ManagedFile
 from database.models.person import Person
 from database.session import get_db
 from services.file_service import store_bytes
+from services.wacom_png_validation import validate_wacom_png
 
 router = APIRouter(prefix="/local-signatures", tags=["Local Wacom PC"])
 _ALLOWED = LENDING_ROLES | COMPANY_MANAGEMENT_ROLES
@@ -228,6 +229,8 @@ def upload_capture(
     _authorized(context)
     if not settings.FILE_ENCRYPTION_ENABLED:
         raise HTTPException(503, "Encrypted signature storage required")
+    if not settings.MALWARE_SCAN_ENABLED or not settings.MALWARE_SCAN_FAIL_CLOSED:
+        raise HTTPException(503, "Fail-closed malware scanning required for signature evidence")
     if body.signer_kind == "operator":
         if body.borrower_id is not None:
             raise HTTPException(422, "Operator capture cannot specify borrower ID")
@@ -246,8 +249,7 @@ def upload_capture(
         raise HTTPException(422, "Invalid signature encoding") from exc
     if not 1 <= len(raw) <= _MAX_CAPTURE_BYTES:
         raise HTTPException(413, "Signature capture size invalid")
-    if not raw.startswith(bytes.fromhex("89504e470d0a1a0a")):
-        raise HTTPException(422, "PNG signature capture required")
+    validate_wacom_png(raw)
     digest = hashlib.sha256(raw).hexdigest()
     if not hmac.compare_digest(digest, body.capture_sha256):
         raise HTTPException(422, "Signature digest mismatch")
@@ -275,6 +277,9 @@ def upload_capture(
         linked_entity_id=str(identity),
         is_confidential=True,
     )
+    if record.scan_status != "clean" or not record.is_encrypted:
+        db.rollback()
+        raise HTTPException(503, "Capture must be clean-scanned and encrypted")
     db.commit()
     return {"status": "pending_review", "file_id": str(record.id),
             "duplicate": False, "usable_for_signing": False}
