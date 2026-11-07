@@ -83,6 +83,9 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     if err!=nil || len(preview.PNG)==0 || len(preview.PNG)>wacomPreviewMaxBytes ||
         !bytes.HasPrefix(preview.PNG,[]byte{137,80,78,71,13,10,26,10}) ||
         preview.ContactPoints<3 || preview.StrokeCount<1 {
+        // SDK may return bytes even if capture metadata is invalid.
+        // Wipe the rejected in-memory signature preview before returning.
+        for i := range preview.PNG { preview.PNG[i] = 0 }
         session.feedback="STU capture failed. Please retry after checking the pad."
         return
     }
