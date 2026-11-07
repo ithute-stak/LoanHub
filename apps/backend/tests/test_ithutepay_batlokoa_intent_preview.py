@@ -37,8 +37,57 @@ def good_response():
         "financial_posting_enabled": False,
         "provider_execution_enabled": False,
         "idempotency_reserved": False,
-        "request_fingerprint": "a" * 64,
+        "request_fingerprint": preview.expected_preview_fingerprint(request_body=request_body()),
     }
+
+
+
+def test_preview_fingerprint_matches_versioned_ithutepay_contract():
+    body = request_body()
+    payload = json.loads(body)
+    canonical = json.dumps({
+        "version": 1,
+        "company_id": COMPANY_ID,
+        "merchant_id": MASTER_ID,
+        "application_id": APPLICATION_ID,
+        "operation": "collection",
+        "currency": "LSL",
+        "amount": payload["amount"],
+        "source_reference": payload["source_reference"],
+        "idempotency_key": payload["idempotency_key"],
+    }, separators=(",", ":"), sort_keys=True).encode()
+    expected = hashlib.sha256(canonical).hexdigest()
+    assert preview.expected_preview_fingerprint(request_body=body) == expected
+
+
+def test_preview_rejects_well_formed_wrong_fingerprint():
+    response = good_response()
+    response["request_fingerprint"] = "a" * 64
+    assert response["request_fingerprint"] != preview.expected_preview_fingerprint(
+        request_body=request_body(),
+    )
+    with pytest.raises(preview.BatlokoaPreviewError, match="fingerprint"):
+        preview.verify_preview_response(
+            response,
+            amount="100.00",
+            expected_fingerprint=preview.expected_preview_fingerprint(request_body=request_body()),
+        )
+
+
+def test_preview_fingerprint_changes_with_reference_or_key():
+    baseline = preview.expected_preview_fingerprint(request_body=request_body())
+    other_ref = preview.prepare_preview_request(
+        amount="100.00",
+        source_reference="loan_ref_B1234567",
+        idempotency_key="collect_req_A123456789",
+    )
+    other_key = preview.prepare_preview_request(
+        amount="100.00",
+        source_reference="loan_ref_A1234567",
+        idempotency_key="collect_req_B123456789",
+    )
+    assert baseline != preview.expected_preview_fingerprint(request_body=other_ref)
+    assert baseline != preview.expected_preview_fingerprint(request_body=other_key)
 
 
 def test_hmac_signature_binds_exact_post_body_and_path():
