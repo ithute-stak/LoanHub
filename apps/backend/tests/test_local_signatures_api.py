@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException, Response
 
 from routers import local_signatures as api
+from scripts.wacom_real_api_smoke import synthetic_png
 
 
 def context():
@@ -71,6 +72,8 @@ def test_client_capture_requires_tenant_bound_borrower(monkeypatch):
     ctx = context()
     monkeypatch.setattr(api, "require_tenant_roles", lambda *_: None)
     monkeypatch.setattr(api.settings, "FILE_ENCRYPTION_ENABLED", True)
+    monkeypatch.setattr(api.settings, "MALWARE_SCAN_ENABLED", True)
+    monkeypatch.setattr(api.settings, "MALWARE_SCAN_FAIL_CLOSED", True)
     db = MagicMock()
     borrower_id = uuid4()
     db.query.return_value.filter.return_value.one_or_none.return_value = None
@@ -111,7 +114,7 @@ def test_valid_png_is_private_and_pending_review(monkeypatch):
     ctx = context()
     monkeypatch.setattr(api, "require_tenant_roles", lambda *_: None)
     monkeypatch.setattr(api.settings, "FILE_ENCRYPTION_ENABLED", True)
-    raw = bytes.fromhex("89504e470d0a1a0a") + b"synthetic"
+    raw = synthetic_png()
     payload = api.CaptureSubmission(
         signer_kind="operator", consent_reference="synthetic-consent",
         capture_png_base64=base64.b64encode(raw).decode(),
@@ -119,7 +122,7 @@ def test_valid_png_is_private_and_pending_review(monkeypatch):
     )
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
-    saved = SimpleNamespace(id=uuid4())
+    saved = SimpleNamespace(id=uuid4(), scan_status="clean", is_encrypted=True)
     store = MagicMock(return_value=saved)
     monkeypatch.setattr(api, "store_bytes", store)
     result = api.upload_capture(payload, Response(), db=db, context=ctx)
