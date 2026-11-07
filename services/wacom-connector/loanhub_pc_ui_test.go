@@ -69,7 +69,7 @@ func TestPCUIHTTPSLoginAndClientLookup(t *testing.T) {
         w.Header().Set("Content-Type","application/json")
         switch r.URL.Path {
         case "/api/v1/auth/login":
-            _,_=w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+            _,_=w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
         case "/api/v1/local-signatures/me/status":
             if r.Header.Get("Authorization")!="Bearer synthetic" || r.Header.Get("X-Company-ID")!=companyID {
                 t.Error("missing operator auth headers")
