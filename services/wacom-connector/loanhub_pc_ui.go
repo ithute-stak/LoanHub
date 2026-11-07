@@ -168,7 +168,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Sign out</button></form>
 </section>
 {{end}}
-<footer>Runs only on this PC · Does not store passwords or signatures · No automatic contract signing</footer>
+<footer>Runs only on this PC · Handwriting stays in memory until submitted or discarded · No automatic contract signing</footer>
 </main></body></html>`))
 
 func pcToken() (string, error) {
@@ -270,11 +270,15 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         return
     }
     if r.URL.Path == "/preview" {
-        if r.Method != http.MethodGet || session.client == nil || session.capture == nil ||
-            time.Now().After(session.capture.expires) {
+        if r.Method != http.MethodGet || session.client == nil || session.capture == nil {
+            http.NotFound(w,r); return
+        }
+        if time.Now().After(session.capture.expires) {
+            session.discardCapture()
             http.NotFound(w,r); return
         }
         w.Header().Set("Content-Type","image/png")
+        w.Header().Set("Content-Disposition","inline; filename=capture-preview.png")
         _,_ = w.Write(session.capture.preview.PNG)
         return
     }
