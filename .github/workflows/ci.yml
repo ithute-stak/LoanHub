@@ -188,33 +188,54 @@ jobs:
           WACOM_REAL_CLAMAV_PORT: '33119'
         run: |
           set -euo pipefail
-          # Run a disposable ClamAV daemon on loopback only; never publish externally.
+          # The official non-base image includes signature definitions.
+          # Disable freshclam during this bounded one-time protocol test:
+          # concurrent database updates can prolong startup or exhaust RAM.
           docker run --rm -d --name wacom-ci-clamav \
-            -p 127.0.0.1:33119:3310 clamav/clamav:stable
-          trap 'docker stop wacom-ci-clamav >/dev/null 2>&1 || true' EXIT
-          # A TCP connect may succeed before clamd is ready to scan.
-          # Require an actual clamd protocol PING -> PONG round trip.
+            --memory=3g \
+            -e CLAMAV_NO_FRESHCLAMD=true \
+            -p 127.0.0.1:33119:3310 \
+            clamav/clamav:stable
+          dump_clamav_diagnostics() {
+            echo "=== ClamAV container state ==="
+            docker inspect wacom-ci-clamav --format \
+              'Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} OOM={{.State.OOMKilled}} Exit={{.State.ExitCode}}' || true
+            echo "=== ClamAV recent logs ==="
+            docker logs --tail 90 wacom-ci-clamav 2>&1 || true
+          }
+          trap 'status=$?; if [ "$status" -ne 0 ]; then dump_clamav_diagnostics; fi; docker stop wacom-ci-clamav >/dev/null 2>&1 || true' EXIT
+          # A TCP connect may succeed before database loading is complete.
+          # Verify real protocol PING/PONG, then run a clean INSTREAM scan.
           python - <<'PY'
           import socket
+          import struct
           import time
 
-          deadline = time.monotonic() + 240
+          host, port = "127.0.0.1", 33119
+          deadline = time.monotonic() + 180
           errors = 0
           while time.monotonic() < deadline:
               try:
-                  with socket.create_connection(("127.0.0.1", 33119), timeout=3) as conn:
-                      conn.settimeout(3)
+                  with socket.create_connection((host, port), timeout=4) as conn:
+                      conn.settimeout(4)
                       conn.sendall(b"zPING\\0")
-                      response = conn.recv(128).strip(b"\\0\\r\\n")
-                      if response == b"PONG":
-                          print("ClamAV clamd protocol ready (PING/PONG)")
-                          break
-                      raise RuntimeError("ClamAV has not completed scanner startup")
+                      if conn.recv(128).rstrip(b"\\0\\r\\n") != b"PONG":
+                          raise RuntimeError("ClamAV PONG not ready")
+                  with socket.create_connection((host, port), timeout=4) as conn:
+                      conn.settimeout(4)
+                      conn.sendall(b"zINSTREAM\\0")
+                      conn.sendall(struct.pack("!I", 4) + b"TEST")
+                      conn.sendall(struct.pack("!I", 0))
+                      response = conn.recv(256).rstrip(b"\\0\\r\\n")
+                      if not response.endswith(b" OK"):
+                          raise RuntimeError("ClamAV scan engine not yet ready")
+                  print("ClamAV PING and clean INSTREAM both succeeded")
+                  break
               except (OSError, RuntimeError):
                   errors += 1
                   time.sleep(3)
           else:
-              raise SystemExit(f"ClamAV never answered PONG after {errors} attempts")
+              raise SystemExit(f"ClamAV scan engine unavailable after {errors} readiness checks")
           PY
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
 
