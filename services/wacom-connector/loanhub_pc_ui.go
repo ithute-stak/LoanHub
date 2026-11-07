@@ -186,7 +186,14 @@ func (ui *pcUI) getSession(w http.ResponseWriter, r *http.Request) (*pcUISession
     defer ui.mu.Unlock()
     now := time.Now()
     for key, session := range ui.sessions {
-        if now.After(session.expires) { delete(ui.sessions, key) }
+        if now.After(session.expires) {
+            session.mu.Lock()
+            session.discardCapture()
+            if session.client!=nil {session.client.Logout()}
+            session.reviewQueue=nil
+            session.mu.Unlock()
+            delete(ui.sessions,key)
+        }
     }
     if cookie, err := r.Cookie(pcUISessionCookie); err == nil {
         if session, ok := ui.sessions[cookie.Value]; ok {
@@ -291,7 +298,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             status,err := session.client.OperatorSignatureStatus(ctx)
             if err != nil { session.feedback="Could not refresh signature status." } else { session.status=&status }
         case "/lookup":
-            session.capture=nil
+            session.discardCapture()
             session.lastClient=nil
             if session.client == nil { session.feedback="Sign in first"; break }
             result,err := session.client.FindClient(ctx,strings.TrimSpace(r.PostForm.Get("national_id")))
@@ -301,14 +308,14 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         case "/upload":
             ui.uploadRequest(ctx,r,session)
         case "/discard":
-            session.capture=nil
+            session.discardCapture()
             session.feedback="Capture discarded"
         case "/review-refresh":
             ui.refreshReviewQueue(ctx,session)
         case "/review-decision":
             ui.decideReview(ctx,r,session)
         case "/logout":
-            session.capture=nil
+            session.discardCapture()
             if session.client != nil { session.client.Logout() }
             session.client=nil
             session.status=nil
