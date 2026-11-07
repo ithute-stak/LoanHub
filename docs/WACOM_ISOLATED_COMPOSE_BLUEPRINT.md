@@ -8,7 +8,7 @@ Files: `compose.yaml` and `compose.wacom-staging.yml`. Do not include `compose.e
 
 - Reserve a dedicated Docker daemon/host or security-reviewed, fully separate Compose project. Never use the production project's name, volumes, networks, secrets, images, database or credentials.
 - Provision a fresh `.env.wacom-staging` file and a separately protected `staging-secrets/` directory; both must be excluded from version control. Do not copy production JWT private keys, file-encryption key, DB password, signing secrets or any real customer data.
-- Set a unique `COMPOSE_PROJECT_NAME=loanhub-wacom-stage`, `LOANHUB_ENV_FILE=.env.wacom-staging`, `ENVIRONMENT=staging`, `DB_NAME=loanhub_wacom_staging`, unique `DB_USER`, `DB_PASSWORD`, `DB_RUNTIME_USER`, `DB_RUNTIME_PASSWORD`, `FILE_ENCRYPTION_KEY`, `FERNET_SECRET_KEY`, `SECRET_KEY`, and dedicated `WACOM_STAGE_BACKEND_PORT=18080`.
+- Set a unique `COMPOSE_PROJECT_NAME=loanhub-wacom-stage`, `LOANHUB_ENV_FILE=.env.wacom-staging`, `ENVIRONMENT=staging`, `DB_NAME=loanhub_wacom_staging`, unique `DB_USER`, `DB_PASSWORD`, `DB_RUNTIME_USER`, `DB_RUNTIME_PASSWORD`, `FILE_ENCRYPTION_KEY`, `FERNET_SECRET_KEY`, `SECRET_KEY`, and dedicated `BACKEND_BIND=127.0.0.1`, `BACKEND_PORT=18080`.
 - Set `WACOM_TEST_ENVIRONMENT=ISOLATED`, `WACOM_TEST_ALLOWED_HOST` and `WACOM_TEST_API_ORIGIN` to the **actual dedicated test HTTPS origin**, only after approved TLS routing is installed.
 - Audit existing LoanHub scheduled integrations and disable outgoing SMS, email, payments, treasury, payroll, collections and other side effects in the isolated deployment. The overlay disables a small subset; it is **not a comprehensive kill switch**.
 - Inspect Docker Compose's fully resolved configuration and volume bindings before starting anything. Verify no `public-edge` network, no production secrets or volumes, and backend bound only to `127.0.0.1`.
@@ -40,3 +40,5 @@ python -m pytest -q tests/test_wacom_staging_compose_blueprint.py tests/test_wac
 Once staging is genuinely isolated and the stacked PRs are reviewed/merged in order, use `docs/WACOM_REAL_LOANHUB_API_SMOKE.md` to validate the actual LoanHub HTTPS API with synthetic staff, company and borrower identities. Verify encrypted pending evidence, ClamAV rejection, independent review and audit. Do not enable real document signing.
 
 Physical Wacom SDK and Go operator UI stay on the local workstation. All backend work uses the existing LoanHub API.
+
+**Compose port-merge caution:** the staging overlay deliberately does not define `backend.ports` because Compose merges port lists additively. Set `BACKEND_BIND=127.0.0.1` and `BACKEND_PORT=18080` in the isolated test environment, then inspect the fully resolved Compose configuration with the Phase 19 gate. Never allow the default port 8000 to be published alongside 18080.
