@@ -280,6 +280,30 @@ def upload_capture(
     if record.scan_status != "clean" or not record.is_encrypted:
         db.rollback()
         raise HTTPException(503, "Capture must be clean-scanned and encrypted")
+    # Upload receipt and immutable evidence audit must be committed together.
+    # Do not include National IDs, rendered handwriting, or authentication data.
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        action="local_signatures.capture_submitted",
+        table_name="managed_files",
+        entity_type="wacom_signature_capture",
+        record_id=record.id,
+        actor_role=context.role.value,
+        severity="high",
+        description="Private Wacom handwriting evidence submitted for independent review",
+        event_data={
+            "capture_file_id": str(record.id),
+            "signer_kind": body.signer_kind,
+            "source_sha256": digest,
+            "scan_status": record.scan_status,
+            "encrypted": True,
+            "consent_reference": body.consent_reference,
+            "authorizes_signing": False,
+            "automatic_reuse_allowed": False,
+        },
+    ))
     db.commit()
     return {"status": "pending_review", "file_id": str(record.id),
             "duplicate": False, "usable_for_signing": False}
