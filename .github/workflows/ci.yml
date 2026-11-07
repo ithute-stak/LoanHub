@@ -239,6 +239,28 @@ jobs:
           PY
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
 
+      - name: Verify fully resolved Wacom staging Compose isolation
+        env:
+          COMPOSE_PROJECT_NAME: loanhub-wacom-stage-ci
+          ENVIRONMENT: staging
+          DB_NAME: loanhub_wacom_staging
+          DB_PASSWORD: synthetic-ci-only-postgres
+          DB_RUNTIME_PASSWORD: synthetic-ci-only-runtime
+          WACOM_STAGE_BACKEND_PORT: '18080'
+        run: |
+          set -euo pipefail
+          # Fully resolved compose inspection, with disposable dummy env_file.
+          # Never print 'docker compose config': its JSON contains credentials.
+          test_env="$(mktemp)"
+          trap 'rm -f "$test_env"' EXIT
+          printf 'ENVIRONMENT=staging\\n' > "$test_env"
+          LOANHUB_ENV_FILE="$test_env" docker compose \\
+            --env-file "$test_env" \\
+            -f compose.yaml -f compose.wacom-staging.yml \\
+            config --format json | \\
+            python apps/backend/scripts/wacom_resolved_compose_gate.py
+          (cd apps/backend && python -m pytest -q tests/test_wacom_resolved_compose_gate.py)
+
       - name: Validate system-owner recovery helper
         run: |
           set -euo pipefail
