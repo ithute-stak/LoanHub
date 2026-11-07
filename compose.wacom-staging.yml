@@ -45,8 +45,6 @@ services:
     volumes:
       - ./staging-secrets:/app/secrets:ro
       - loanhub_files:/app/media
-    ports:
-      - "127.0.0.1:${WACOM_STAGE_BACKEND_PORT:-18080}:8000"
     depends_on:
       clamav:
         condition: service_started
