@@ -156,16 +156,58 @@ func (c *LoanHubPCClient) Logout() {
 
 func (c *LoanHubPCClient) OperatorSignatureStatus(ctx context.Context) (LoanHubOperatorStatus, error) {
     var response LoanHubOperatorStatus
-    err := c.do(ctx, http.MethodGet, "/api/v1/local-signatures/me/status", nil, true, &response)
-    return response, err
+    if err := c.do(ctx, http.MethodGet, "/api/v1/local-signatures/me/status", nil, true, &response); err != nil {
+        return LoanHubOperatorStatus{}, err
+    }
+    // A status response is not a signing authorization. Fail closed even if
+    // a misconfigured backend starts returning an unexpected permission.
+    switch response.SignatureStatus {
+    case "missing", "pending_review", "verified_capture":
+    default:
+        return LoanHubOperatorStatus{}, errors.New("Unexpected operator signature status")
+    }
+    if response.OperatorID == "" || response.CompanyID != c.companyID ||
+        response.UsableForSigning || response.RequiresCapture != (response.SignatureStatus == "missing") {
+        return LoanHubOperatorStatus{}, errors.New("Unsafe operator status returned by LoanHub")
+    }
+    return response, nil
 }
 
 func (c *LoanHubPCClient) FindClient(ctx context.Context, nationalID string) (LoanHubClientLookup, error) {
     var response LoanHubClientLookup
-    if len(strings.TrimSpace(nationalID)) < 4 { return response, errors.New("Client National ID required") }
-    err := c.do(ctx, http.MethodPost, "/api/v1/local-signatures/clients/lookup",
-        map[string]string{"national_id": strings.TrimSpace(nationalID)}, true, &response)
-    return response, err
+    nationalID = strings.TrimSpace(nationalID)
+    if len(nationalID) < 4 || len(nationalID) > 50 {
+        return response, errors.New("Client National ID must be 4 to 50 characters")
+    }
+    if err := c.do(ctx, http.MethodPost, "/api/v1/local-signatures/clients/lookup",
+        map[string]string{"national_id": nationalID}, true, &response); err != nil {
+        return LoanHubClientLookup{}, err
+    }
+    if response.MayReuse || response.MaySignContract {
+        return LoanHubClientLookup{}, errors.New("LoanHub returned unsafe client signing permissions")
+    }
+    switch response.Status {
+    case "not_found", "conflict":
+        if response.Client != nil {
+            return LoanHubClientLookup{}, errors.New("LoanHub exposed unexpected client identity")
+        }
+    case "matched":
+        if response.Client == nil || response.Client.BorrowerID == "" ||
+            strings.TrimSpace(response.Client.FullName) == "" {
+            return LoanHubClientLookup{}, errors.New("LoanHub client identity is incomplete")
+        }
+        switch response.Client.SignatureStatus {
+        case "missing", "pending_review", "verified_capture", "active":
+        default:
+            return LoanHubClientLookup{}, errors.New("Unexpected client signature status")
+        }
+        if response.Client.RequiresCapture != (response.Client.SignatureStatus == "missing") {
+            return LoanHubClientLookup{}, errors.New("Inconsistent client capture requirements")
+        }
+    default:
+        return LoanHubClientLookup{}, errors.New("Unexpected LoanHub client lookup result")
+    }
+    return response, nil
 }
 
 // UploadPNG requires the operator to have verified the correct signer and
