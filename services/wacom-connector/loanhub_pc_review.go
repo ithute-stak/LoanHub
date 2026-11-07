@@ -20,6 +20,7 @@ type LoanHubReviewCapture struct {
     CapturedByUserID *string `json:"captured_by_user_id"`
     CompanyID string `json:"company_id"`
     SignerKind string `json:"signer_kind"`
+    SignerID string `json:"signer_id"`
     EvidenceStatus string `json:"evidence_status"`
     ScanStatus string `json:"scan_status"`
     UsableForSigning bool `json:"usable_for_signing"`
