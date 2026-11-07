@@ -43,7 +43,7 @@ func TestLoanHubPCLoginAndFindClient(t *testing.T) {
                login["otp"] != "123456" { t.Fatal("incorrect login fields") }
             _ = json.NewEncoder(w).Encode(map[string]any{
                 "access_token": "synthetic-access", "token_type": "bearer",
-                "user": map[string]any{"id": "operator", "memberships": []any{
+                "user": map[string]any{"id": "operator", "is_active": true, "memberships": []any{
                     map[string]any{"company_id": company, "is_active": true},
                 }},
             })
