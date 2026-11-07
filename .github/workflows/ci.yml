@@ -218,15 +218,15 @@ jobs:
               try:
                   with socket.create_connection((host, port), timeout=4) as conn:
                       conn.settimeout(4)
-                      conn.sendall(b"zPING\\0")
-                      if conn.recv(128).rstrip(b"\\0\\r\\n") != b"PONG":
+                      conn.sendall(b"zPING\0")
+                      if conn.recv(128).rstrip(b"\0\r\n") != b"PONG":
                           raise RuntimeError("ClamAV PONG not ready")
                   with socket.create_connection((host, port), timeout=4) as conn:
                       conn.settimeout(4)
-                      conn.sendall(b"zINSTREAM\\0")
+                      conn.sendall(b"zINSTREAM\0")
                       conn.sendall(struct.pack("!I", 4) + b"TEST")
                       conn.sendall(struct.pack("!I", 0))
-                      response = conn.recv(256).rstrip(b"\\0\\r\\n")
+                      response = conn.recv(256).rstrip(b"\0\r\n")
                       if not response.endswith(b" OK"):
                           raise RuntimeError("ClamAV scan engine not yet ready")
                   print("ClamAV PING and clean INSTREAM both succeeded")
