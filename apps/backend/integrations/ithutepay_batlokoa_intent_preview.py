@@ -84,7 +84,37 @@ def sign_preview(*, secret: str, timestamp: int, nonce: str, body: bytes) -> dic
     }
 
 
-def verify_preview_response(value: object, *, amount: str) -> dict:
+def expected_preview_fingerprint(*, request_body: bytes) -> str:
+    """Independently reproduce IthutePay's versioned request fingerprint.
+
+    This confirms the remote preview corresponds to the exact request we
+    sent. It is not a payment authorization or an idempotency reservation.
+    """
+    try:
+        payload = json.loads(request_body)
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid preview request")
+        canonical = json.dumps(
+            {
+                "version": 1,
+                "company_id": COMPANY_ID,
+                "merchant_id": MASTER_ID,
+                "application_id": APPLICATION_ID,
+                "operation": "collection",
+                "currency": "LSL",
+                "amount": payload["amount"],
+                "source_reference": payload["source_reference"],
+                "idempotency_key": payload["idempotency_key"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise BatlokoaPreviewError("Invalid local preview request") from exc
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def verify_preview_response(value: object, *, amount: str, expected_fingerprint: str | None = None) -> dict:
     if not isinstance(value, dict):
         raise BatlokoaPreviewError("Invalid IthutePay preview response")
     expected = {
@@ -109,6 +139,10 @@ def verify_preview_response(value: object, *, amount: str) -> dict:
     fingerprint = value.get("request_fingerprint")
     if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         raise BatlokoaPreviewError("Invalid request fingerprint")
+    if expected_fingerprint is not None and not hmac.compare_digest(
+        fingerprint, expected_fingerprint,
+    ):
+        raise BatlokoaPreviewError("Preview fingerprint does not match signed request")
     if "source_reference" in value or "idempotency_key" in value:
         raise BatlokoaPreviewError("Preview unexpectedly exposed private request identifiers")
     return {key: value[key] for key in (*expected, "request_fingerprint")}
@@ -160,4 +194,8 @@ def perform_readonly_collection_preview(
         value = response.json()
     except ValueError as exc:
         raise BatlokoaPreviewError("IthutePay preview returned invalid JSON") from exc
-    return verify_preview_response(value, amount=json.loads(body)["amount"])
+    return verify_preview_response(
+        value,
+        amount=json.loads(body)["amount"],
+        expected_fingerprint=expected_preview_fingerprint(request_body=body),
+    )
