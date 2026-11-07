@@ -137,7 +137,7 @@ func (ui *pcUI) decideReview(ctx context.Context,r *http.Request,session *pcUISe
 func (ui *pcUI) serveReviewPreview(ctx context.Context,w http.ResponseWriter,
     session *pcUISession,fileID string){
     if session.client==nil || !wacomUUID.MatchString(fileID) {
-        http.NotFound(w,nil)
+        http.Error(w,"Review image unavailable",http.StatusNotFound)
         return
     }
     present:=false
