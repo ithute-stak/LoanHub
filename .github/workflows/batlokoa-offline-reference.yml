@@ -1,0 +1,44 @@
+name: Batlokoa offline financial reference gate
+
+on:
+  pull_request:
+    paths:
+      - "docs/reference/batlokoa_phase35/**"
+      - ".github/workflows/batlokoa-offline-reference.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/reference/batlokoa_phase35/**"
+      - ".github/workflows/batlokoa-offline-reference.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference-contracts:
+    name: Offline financial contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs/reference/batlokoa_phase35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test-only dependencies
+        run: python -m pip install --disable-pip-version-check "sqlalchemy>=2.0,<3" "pytest>=8,<10"
+      - name: Verify reference files and Python syntax
+        run: python verify_reference.py
+      - name: Test signed wire reference
+        run: python -m unittest -v test_wire_contract_reference
+      - name: Test financial allocation, journals and reconciliation
+        run: python -m unittest -v test_financial_engine
+      - name: Test future-only lifecycle transition rules
+        run: python -m unittest -v test_payment_lifecycle
+      - name: Test mock idempotency reference
+        run: python -m pytest -q test_postgres_reservation.py
