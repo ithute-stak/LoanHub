@@ -7,7 +7,6 @@ EICAR is a standard harmless anti-malware test signature, never malware.
 from __future__ import annotations
 
 import os
-import socket
 
 import pytest
 from fastapi import HTTPException
@@ -54,9 +53,11 @@ def test_actual_clamav_detects_standard_harmless_eicar_test_pattern(clamd):
     assert error.value.status_code == 422
 
 
-def test_actual_clamav_rejects_incorrect_instream_content(clamd):
-    """ClamAV must not interpret arbitrary garbage as a clean scan."""
-    with pytest.raises((scanner.MalwareDetectedError, scanner.MalwareScannerUnavailableError)):
-        # This payload is a real EICAR signature with a byte appended; ClamAV
-        # may respond FOUND or ERROR, but never an accepted clean result.
-        scanner._clamav_instream("".join(_EICAR_FRAGMENTS).encode("ascii")) + b"\x00"
+def test_clamav_connection_failure_is_denied(clamd, monkeypatch):
+    """Scanner outage must return HTTP 503, not accept handwriting evidence."""
+    monkeypatch.setattr(scanner.settings, "CLAMAV_PORT", 1)
+    with pytest.raises(scanner.MalwareScannerUnavailableError):
+        scanner.scan_upload(synthetic_png())
+    with pytest.raises(HTTPException) as error:
+        file_service._scan_content(synthetic_png())
+    assert error.value.status_code == 503
