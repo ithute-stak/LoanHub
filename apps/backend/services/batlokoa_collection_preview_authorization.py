@@ -69,7 +69,7 @@ def authorize_batlokoa_collection_preview(
         raise BatlokoaCollectionAuthorizationError("Invalid collection amount") from None
     if (not requested.is_finite() or requested <= 0 or
             requested.as_tuple().exponent < -2 or
-            len(requested.as_tuple().digits) > 18):
+            requested > Decimal('9999999999999999.99')):
         raise BatlokoaCollectionAuthorizationError("Collection amount must be positive LSL cents")
 
     loan = db.get(ClientCompanyLoan, loan_id)
