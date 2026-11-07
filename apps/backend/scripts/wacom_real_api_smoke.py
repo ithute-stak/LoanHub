@@ -108,9 +108,13 @@ class LoanHubAPI:
         memberships = user.get("memberships") or []
         if (
             not isinstance(token, str) or not token or
-            user.get("must_change_password") or
+            user.get("must_change_password") is not False or
+            user.get("is_active") is not True or
+            not isinstance(memberships, list) or
             not any(
-                item.get("company_id") == company_id and item.get("is_active")
+                isinstance(item, dict)
+                and item.get("company_id") == company_id
+                and item.get("is_active") is True
                 for item in memberships
             )
         ):
@@ -182,6 +186,18 @@ def main() -> int:
                 raise RuntimeError(f"Client lookup failed (HTTP {status})")
             if found.get("may_sign_contract") is not False or found.get("may_reuse") is not False:
                 raise RuntimeError("Unsafe client signing permissions returned")
+            if found.get("status") not in {"matched", "not_found", "conflict"}:
+                raise RuntimeError("Unexpected client lookup result status")
+            if found["status"] == "matched" and (
+                not isinstance(found.get("client"), dict)
+                or not found["client"].get("borrower_id")
+                or found["client"].get("signature_status") not in {
+                    "missing", "pending_review", "verified_capture", "active",
+                }
+            ):
+                raise RuntimeError("Matched client lookup has inconsistent shape")
+            if found["status"] != "matched" and found.get("client") is not None:
+                raise RuntimeError("Unmatched client unexpectedly returned identity")
             print("PASS: tenant client lookup handled; no customer details printed")
 
         if args.upload_operator_test:
