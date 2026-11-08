@@ -32,6 +32,7 @@ func (session *pcUISession) discardCapture() {
 
 func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     session.discardCapture()
+    session.lastDocumentCaptureID=""
     if ui.sdkCapture==nil || session.client==nil {
         session.feedback="Capture unavailable on this workstation"
         return
@@ -68,6 +69,16 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     default:
         session.feedback="Invalid signer selection"
         return
+    }
+    if session.documentIntent!=nil {
+        if kind!="client" || session.documentIntent.Status!="consented" ||
+            session.documentIntent.BorrowerID!=borrowerID {
+            session.feedback="Document intent and client capture do not match";return
+        }
+    }
+    if session.documentIntent!=nil && session.documentIntent.Status=="consented" &&
+        ref != session.documentIntent.ConsentReference {
+        session.feedback="Capture consent reference must match exact document consent";return
     }
     if enteredName=="" || !strings.EqualFold(strings.Join(strings.Fields(enteredName)," "),
         strings.Join(strings.Fields(signerName)," ")) {
@@ -131,6 +142,10 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     if err!=nil || receipt.Status!="pending_review" || receipt.UsableForSigning {
         session.feedback="LoanHub did not confirm receipt; upload remains unapproved"
         return
+    }
+    if session.documentIntent!=nil && session.documentIntent.Status=="consented" &&
+        capture.signerKind=="client" && capture.borrowerID==session.documentIntent.BorrowerID {
+        session.lastDocumentCaptureID=receipt.FileID
     }
     session.discardCapture()
     session.lastClient=nil

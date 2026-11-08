@@ -1,0 +1,21 @@
+Case,Expected,Verification,Current evidence
+Employee A approved PC login,Allow after Ed25519 PoP,Go full flow and staging,Not run on physical device
+Employee B same PC,Separate login and session,Go switch operator and staging,Offline code only
+Borrower-only account,403 or no company membership,Staging negative API,Not run
+Company A operator using Company B credential,403,PostgreSQL auth matrix,Not run
+Revoked employee previous 5-minute session,403,Management revocation DB integration,Not run in staging
+Revoked workstation all operators,403,PostgreSQL DB integration,Not run in staging
+Concurrent challenge plus management revoke,No new usable session,Concurrent real PostgreSQL test,PR 632 pending merge
+Missing Wacom bridge session,403 when strict backend flag=1,Staging API,Not run
+Expired bridge session,403 and Go re-proof,Go and staging,Not run physical
+Changed public IP,Authenticated on device identity not public IP,Staging through second uplink,Not run
+Wrong borrower contract,404,API route test using existing loan model,Not run
+Changed document PDF hash,409,Contract owner and source PDF verification,Not run
+Duplicate document intent,409,PostgreSQL uniqueness test,Not run
+Consent for altered PDF,409,Policy+API test,Policy tests only
+Operator tries to review own capture,403,API test,Not run
+Signature evidence reused without consent,403 or 409,End-to-end company portal integration,Not run
+Handwriting uploaded before review,Quarantined evidence only,STU-540/LoanHub staging,Not run
+Unexpected automatic signing permission,Reject,Go domain test,Go isolated tests pass
+Signatures usable for PDF signing,Disabled pending legally operative design,Review existing contract signing domain,Not implemented
+Production container rollout,No change until approved,Infrastructure change control,Not performed

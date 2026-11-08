@@ -15,6 +15,7 @@ import (
     "io"
     "net/http"
     "net/url"
+    "os"
     "strings"
     "time"
 )
@@ -108,7 +109,10 @@ func (c *LoanHubPCClient) do(ctx context.Context, method, path string, payload a
     if err != nil { return errors.New("cannot construct LoanHub request") }
     req.Header.Set("Accept", "application/json")
     if payload != nil { req.Header.Set("Content-Type", "application/json") }
-    if protected && strings.HasPrefix(path,"/api/v1/local-signatures/") && c.workstationKeyDir != "" {
+    if protected && (strings.HasPrefix(path,"/api/v1/local-signatures/") || strings.HasPrefix(path,"/api/v1/wacom-document-intents")) && c.workstationKeyDir == "" && os.Getenv("LOANHUB_WACOM_PC_STRICT") == "1" {
+        return errors.New("Secure device identity required for Wacom PC API")
+    }
+    if protected && (strings.HasPrefix(path,"/api/v1/local-signatures/") || strings.HasPrefix(path,"/api/v1/wacom-document-intents")) && c.workstationKeyDir != "" {
         // Re-prove the same workstation when its 5-minute capability has
         // expired; renewal is a fresh server challenge, never token replay.
         if c.bridgeSessionToken == "" || !time.Now().Add(15*time.Second).Before(c.bridgeSessionExpires) {
