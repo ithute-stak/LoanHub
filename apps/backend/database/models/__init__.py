@@ -311,3 +311,5 @@ from database.models.borrower_signature import BorrowerSavedSignature, BorrowerS
 from database.models.wacom_workstation import WacomWorkstationEnrollment, WacomWorkstationChallengeRecord
 
 from database.models.wacom_workstation_operator import WacomWorkstationOperator
+
+from database.models.wacom_bridge_challenge import WacomBridgeChallenge
