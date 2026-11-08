@@ -43,7 +43,10 @@ class BridgeProofRequest(BaseModel):
 
 def _eligible_device(db: Session, ctx: TenantContext, workstation_id: UUID):
     require_tenant_roles(ctx, LENDING_ROLES)
-    # Row locks are held until the challenge/proof transaction commits.\n    # Enrollment is locked first, then assignment: management revocation\n    # must not race an approval check and newly issued bridge session.\n    pc = db.query(WacomWorkstationEnrollment).filter(
+    # Row locks are held until the challenge/proof transaction commits.
+    # Enrollment is locked first, then assignment: management revocation
+    # must not race an approval check and newly issued bridge session.
+    pc = db.query(WacomWorkstationEnrollment).filter(
         WacomWorkstationEnrollment.company_id == ctx.company_id,
         WacomWorkstationEnrollment.workstation_id == workstation_id,
         WacomWorkstationEnrollment.status == "active",
