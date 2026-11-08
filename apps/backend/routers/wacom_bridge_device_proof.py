@@ -137,7 +137,7 @@ def verify_bridge_device_proof(
         "bridge_session_expires_at": session_row.expires_at.isoformat(),
         "employee_user_id": str(ctx.user.id),
         "workstation_id": str(body.workstation_id),
-        "bridge_session_authorized": False,
+        "bridge_session_authorized": True,
         "capture_authorized": False,
         "contract_signed": False,
     }
