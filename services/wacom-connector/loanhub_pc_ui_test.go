@@ -121,3 +121,77 @@ func TestPCUIMaliciousBrowserCannotSubmitWithoutSession(t *testing.T) {
     ui.ServeHTTP(recorder,request)
     if recorder.Code!=403 { t.Fatal("login allowed without session cookie") }
 }
+
+
+func TestPCUIRejectsSessionWhenOperatorAuthorizationCheckFails(t *testing.T) {
+    companyID := "4236a21f-5164-48aa-90f3-a35eccd23ae2"
+    api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+        case "/api/v1/local-signatures/me/status":
+            http.Error(w, "Forbidden", http.StatusForbidden)
+        default:
+            t.Fatalf("unexpected API request %s", r.URL.Path)
+        }
+    }))
+    defer api.Close()
+    ui, err := newPCUI(api.URL)
+    if err != nil { t.Fatal(err) }
+    ui.transport = api.Client()
+    cookie, csrf, _ := localUIGet(t, ui)
+    result := localUIPost(ui, cookie, "/login", url.Values{
+        "csrf": {csrf}, "phone": {"59000000"}, "password": {"synthetic-password"},
+    }, pcUIOrigin)
+    body := result.Body.String()
+    if !strings.Contains(body, "Access denied") || !strings.Contains(body, "Operator sign in") ||
+        strings.Contains(body, "Find a client") || strings.Contains(body, "Bearer synthetic") {
+        t.Fatal("unauthorized operator retained an authenticated local session")
+    }
+}
+
+func TestPCUISwitchOperatorClearsPreviousCaptureAndClient(t *testing.T) {
+    companyID := "4236a21f-5164-48aa-90f3-a35eccd23ae2"
+    api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _, _ = w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+        case "/api/v1/local-signatures/me/status":
+            _, _ = w.Write([]byte(`{"operator_id":"operator","company_id":"`+companyID+`","signature_status":"missing","requires_capture":true,"usable_for_signing":false}`))
+        default:
+            t.Fatalf("unexpected API request %s", r.URL.Path)
+        }
+    }))
+    defer api.Close()
+    ui, err := newPCUI(api.URL)
+    if err != nil { t.Fatal(err) }
+    ui.transport = api.Client()
+    cookie, csrf, _ := localUIGet(t, ui)
+    result := localUIPost(ui, cookie, "/login", url.Values{
+        "csrf": {csrf}, "phone": {"59000000"}, "password": {"synthetic-password"},
+    }, pcUIOrigin)
+    if !strings.Contains(result.Body.String(), "Operator status") {
+        t.Fatal("synthetic login failed")
+    }
+    session, ok := ui.sessions[cookie.Value]
+    if !ok { t.Fatal("missing local session") }
+    session.mu.Lock()
+    session.lastClient = &LoanHubClientLookup{Status: "matched", Client: &LoanHubClientIdentity{
+        BorrowerID: "synthetic", FullName: "PRIVATE PERSON", SignatureStatus: "missing",
+    }}
+    session.feedback = "private"
+    session.mu.Unlock()
+    result = localUIPost(ui, cookie, "/switch-operator", url.Values{"csrf": {csrf}}, pcUIOrigin)
+    if result.Code != 200 || !strings.Contains(result.Body.String(), "Next operator must sign in") ||
+        strings.Contains(result.Body.String(), "PRIVATE PERSON") || strings.Contains(result.Body.String(), "Find a client") {
+        t.Fatal("operator switch failed to clear previous operator's data")
+    }
+    session.mu.Lock()
+    defer session.mu.Unlock()
+    if session.client != nil || session.status != nil || session.lastClient != nil ||
+        session.capture != nil || len(session.reviewQueue) != 0 {
+        t.Fatal("operator switch retained sensitive session state")
+    }
+}
