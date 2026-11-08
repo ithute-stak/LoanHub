@@ -22,6 +22,7 @@ from core.access_control import (
 )
 from database.models.wacom_workstation import WacomWorkstationEnrollment
 from database.session import get_db
+from database.models.wacom_bridge_session import WacomBridgeSession
 
 router = APIRouter(prefix="/contract-signing/workstations", tags=["Wacom Workstation Enrollment"])
 
@@ -129,6 +130,13 @@ def revoke_wacom_workstation(
         raise HTTPException(409, "Workstation enrollment already closed")
     row.status = "revoked"
     row.revoked_at = datetime.now(timezone.utc)
+    # All operator sessions on this workstation become invalid in the
+    # enrollment revocation transaction, not merely after TTL expiry.
+    db.query(WacomBridgeSession).filter(
+        WacomBridgeSession.company_id == context.company_id,
+        WacomBridgeSession.workstation_id == row.workstation_id,
+        WacomBridgeSession.revoked_at.is_(None),
+    ).update({WacomBridgeSession.revoked_at: row.revoked_at}, synchronize_session=False)
     row.updated_by = str(context.user.id)
     db.commit()
     return {
