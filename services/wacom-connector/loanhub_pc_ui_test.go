@@ -4,6 +4,8 @@ import (
     "net/http"
     "net/http/httptest"
     "net/url"
+    "os"
+    "path/filepath"
     "regexp"
     "strings"
     "testing"
@@ -194,4 +196,74 @@ func TestPCUISwitchOperatorClearsPreviousCaptureAndClient(t *testing.T) {
         session.capture != nil || len(session.reviewQueue) != 0 {
         t.Fatal("operator switch retained sensitive session state")
     }
+}
+
+
+func TestPCUIWorkstationKeyModeDeniesUnenrolledOperator(t *testing.T) {
+    companyID := "4236a21f-5164-48aa-90f3-a35eccd23ae2"
+    var calls []string
+    api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+        calls=append(calls,r.URL.Path)
+        w.Header().Set("Content-Type","application/json")
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _,_=w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+        case "/api/v1/contract-signing/workstations/12345678-1234-4234-8234-123456789012/my-assignment":
+            http.Error(w,"Forbidden",http.StatusForbidden)
+        default:
+            t.Fatalf("Unauthorized operator unexpectedly reached: %s",r.URL.Path)
+        }
+    }))
+    defer api.Close()
+    ui,err:=newPCUI(api.URL)
+    if err!=nil{t.Fatal(err)}
+    ui.transport=api.Client()
+    ui.workstationKeyDir=filepath.Join(t.TempDir(),"unprovisioned")
+    cookie,csrf,_:=localUIGet(t,ui)
+    result:=localUIPost(ui,cookie,"/login",url.Values{
+        "csrf":{csrf},"phone":{"59000000"},"password":{"synthetic-password"},
+    },pcUIOrigin)
+    if result.Code!=200 || !strings.Contains(result.Body.String(),"Access denied") ||
+        strings.Contains(result.Body.String(),"Find a client") {
+        t.Fatal("Unprovisioned identity allowed access")
+    }
+    if len(calls)!=1 {t.Fatalf("Only login expected, got %d backend calls",len(calls))}
+    session:=ui.sessions[cookie.Value]
+    if session.client!=nil {t.Fatal("Access token retained after device verification failed")}
+}
+
+func TestPCUIWorkstationProofRejectsWrongAssignmentBeforeOperatorStatus(t *testing.T) {
+    companyID := "4236a21f-5164-48aa-90f3-a35eccd23ae2"
+    dir:=filepath.Join(t.TempDir(),"identity")
+    if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)}
+    identity,err:=initializeWorkstationIdentity(dir)
+    if err!=nil{t.Fatal(err)}
+    count:=0
+    api:=httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+        count++
+        w.Header().Set("Content-Type","application/json")
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _,_=w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+companyID+`","is_active":true}]}}`))
+        case "/api/v1/contract-signing/workstations/"+identity.WorkstationID+"/my-assignment":
+            http.Error(w,"Forbidden",http.StatusForbidden)
+        default:
+            t.Fatalf("Disallowed employee reached %s",r.URL.Path)
+        }
+    }))
+    defer api.Close()
+    ui,err:=newPCUI(api.URL)
+    if err!=nil{t.Fatal(err)}
+    ui.transport=api.Client()
+    ui.workstationKeyDir=dir
+    cookie,csrf,_:=localUIGet(t,ui)
+    result:=localUIPost(ui,cookie,"/login",url.Values{
+        "csrf":{csrf},"phone":{"59000000"},"password":{"synthetic-password"},
+    },pcUIOrigin)
+    if result.Code!=200 || !strings.Contains(result.Body.String(),"Access denied") ||
+        strings.Contains(result.Body.String(),"Find a client") {
+        t.Fatal("Unassigned employee allowed bridge UI")
+    }
+    if count!=2 {t.Fatalf("Expected login plus assignment check only, got %d calls",count)}
+    if ui.sessions[cookie.Value].client!=nil {t.Fatal("Rejected device retained token")}
 }
