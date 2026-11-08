@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader, PdfWriter
+from pypdf.errors import PdfReadError
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -100,5 +101,5 @@ def build_review_evidence_pdf(*, source_pdf: bytes, source_sha256: str,
         if len(result) > MAX_SOURCE_PDF + 5 * 1024 * 1024:
             raise ValueError("Evidence package exceeds output size policy")
         return result, _digest(result)
-    except (ValueError, TypeError, KeyError, OSError, UnidentifiedImageError) as exc:
+    except (ValueError, TypeError, KeyError, OSError, UnidentifiedImageError, PdfReadError, Image.DecompressionBombError) as exc:
         raise HTTPException(422, "Unable to safely render Wacom evidence PDF") from exc
