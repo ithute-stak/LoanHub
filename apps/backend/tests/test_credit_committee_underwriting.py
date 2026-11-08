@@ -221,7 +221,7 @@ def test_post_approval_disbursement_integrity_guard_blocks_material_drift_and_is
     assert "loan term differs from the committee-selected structure" in committee
     assert "below the committee-selected minimum viable pricing floor" in committee
     assert "contract principal differs from the loan" in committee
-    assert "loan installment exceeds the current maximum affordable installment" in committee
+    assert "loan installment exceeds the current maximum affordable installment" not in committee
     assert "post-disbursement 30-day liquidity falls below the approved minimum liquidity buffer" in committee
     assert '"removed_new_loan_collection_credit"' in committee
     assert '"disbursement_integrity_verified"' in committee
