@@ -121,6 +121,7 @@ func main() {
     initWorkstation := flag.String("init-workstation", "", "Initialize local Ed25519 workstation identity in an existing private (0700) directory; print public registration only")
     diagnostics := flag.Bool("diagnostics", false, "Start local diagnostic-only status service")
     pcUI := flag.Bool("pc-ui", false, "Start local PC login/client lookup UI")
+    workstationKeys := flag.String("workstation-key-dir", "", "Absolute private 0700 workstation identity directory for required LoanHub operator device proof")
     enableCapture := flag.Bool("enable-local-capture", false, "Enable explicit STU-540 local capture and pending-review upload; requires --pc-ui and installed Wacom SDK paths")
     disposablePNG := flag.Bool("disposable-png-test", false, "Operator-triggered SDK handwriting-to-PNG verification, memory only; no upload or signing")
     loanHubOrigin := flag.String("loanhub-origin", "", "Trusted LoanHub HTTPS API origin for --pc-ui")
@@ -151,6 +152,16 @@ func main() {
         return
     }
     if *pcUI {
+        if *workstationKeys != "" {
+            if err := requirePrivateWorkstationDirectory(*workstationKeys); err != nil {
+                log.Printf("Workstation identity directory unavailable: %v", err)
+                os.Exit(2)
+            }
+            if _,_,err := loadWorkstationIdentity(*workstationKeys); err != nil {
+                log.Println("Workstation identity could not be verified at startup")
+                os.Exit(2)
+            }
+        }
         if *loanHubOrigin == "" || *initWorkstation != "" || *diagnostics || *penTest ||
             *calibrationTest || *calibratedStrokeTest || *strokeTest ||
             *sdkEnumerator != "" || len(flag.Args()) != 0 ||
@@ -167,7 +178,7 @@ func main() {
                 return captureDisposableWacomPreview(query,pen)
             }
         }
-        if err := servePCUI(*loanHubOrigin,capture); err != nil {
+        if err := servePCUIWithIdentity(*loanHubOrigin,capture,*workstationKeys); err != nil {
             log.Printf("Local Wacom PC UI failed: %v", err)
             os.Exit(1)
         }
@@ -175,6 +186,10 @@ func main() {
     }
     if *enableCapture {
         log.Println("--enable-local-capture requires --pc-ui")
+        os.Exit(2)
+    }
+    if *workstationKeys != "" {
+        log.Println("--workstation-key-dir requires --pc-ui")
         os.Exit(2)
     }
     if *loanHubOrigin != "" {
