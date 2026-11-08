@@ -43,6 +43,7 @@ type pcUI struct {
     sessions map[string]*pcUISession
     transport *http.Client // optional injected HTTPS transport in tests
     sdkCapture func() (disposableWacomPreview,error)
+    workstationKeyDir string // when configured, login requires verified LoanHub workstation proof
     captureMu sync.Mutex
 }
 
@@ -294,6 +295,13 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             err=client.Login(ctx,strings.TrimSpace(r.PostForm.Get("phone")),
                 r.PostForm.Get("password"),"", "")
             if err != nil { session.feedback="Login failed. Check credentials or account requirements. Multi-company accounts require company selection."; break }
+            if ui.workstationKeyDir != "" {
+                if err := client.VerifyLocalWorkstation(ctx,ui.workstationKeyDir); err != nil {
+                    client.Logout()
+                    session.feedback="Access denied: this employee or workstation could not be verified by LoanHub."
+                    break
+                }
+            }
             session.client=client
             status,err := client.OperatorSignatureStatus(ctx)
             if err == nil { session.status=&status } else {
@@ -349,9 +357,14 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func servePCUI(origin string, capture func() (disposableWacomPreview,error)) error {
+    return servePCUIWithIdentity(origin,capture,"")
+}
+
+func servePCUIWithIdentity(origin string, capture func() (disposableWacomPreview,error), workstationKeyDir string) error {
     ui,err := newPCUI(origin)
     if err != nil { return err }
     ui.sdkCapture=capture
+    ui.workstationKeyDir=workstationKeyDir
     listener,err := net.Listen("tcp4",pcUIAddr)
     if err != nil { return err }
     defer listener.Close()
