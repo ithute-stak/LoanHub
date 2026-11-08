@@ -313,3 +313,5 @@ from database.models.wacom_workstation import WacomWorkstationEnrollment, WacomW
 from database.models.wacom_workstation_operator import WacomWorkstationOperator
 
 from database.models.wacom_bridge_challenge import WacomBridgeChallenge
+
+from database.models.wacom_bridge_session import WacomBridgeSession
