@@ -309,3 +309,5 @@ from database.models.borrower_signature import BorrowerSavedSignature, BorrowerS
 
 # Enrollment records are registered with SQLAlchemy metadata; activation requires approval.
 from database.models.wacom_workstation import WacomWorkstationEnrollment, WacomWorkstationChallengeRecord
+
+from database.models.wacom_workstation_operator import WacomWorkstationOperator
