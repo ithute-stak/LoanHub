@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +33,7 @@ from services.wacom_document_policy import (
 )
 from services.wacom_bridge_sessions import authorize_bridge_session
 from services.wacom_finalization_preflight import finalization_blockers
+from services.wacom_pdf_evidence_package import build_review_evidence_pdf
 from services.file_service import read_file_bytes
 from services.wacom_document_policy import verify_document_bytes
 
@@ -422,3 +425,62 @@ def finalization_preflight(
         "no_mutation_performed": True,
         "requires_fresh_atomic_checks_and_explicit_approval": True,
     }
+
+
+@router.get("/{intent_id}/review-pdf")
+def download_review_evidence_pdf(
+    intent_id: UUID,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Internal, verified evidence-package preview. Never changes contract state.
+
+    It is deliberately inaccessible to borrowers or arbitrary workstation
+    sessions. It is not a legally executed or digitally signed PDF.
+    """
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    row = _current_intent(db, ctx, intent_id, lock=False)
+    contract = db.query(LoanContract).filter(
+        LoanContract.id == row.contract_id,
+        LoanContract.company_id == ctx.company_id,
+    ).one_or_none()
+    source = db.query(ManagedFile).filter(
+        ManagedFile.id == row.source_file_id,
+        ManagedFile.company_id == ctx.company_id,
+    ).one_or_none()
+    evidence = db.query(ManagedFile).filter(
+        ManagedFile.id == row.evidence_file_id,
+        ManagedFile.company_id == ctx.company_id,
+    ).one_or_none() if row.evidence_file_id else None
+    blockers = finalization_blockers(
+        intent=row, contract=contract, source=source, evidence=evidence,
+    )
+    if blockers:
+        raise HTTPException(409, "Verified document evidence unavailable for review")
+    # Require actual storage bytes to match immutable, independently reviewed
+    # checksums. Do not expose the PNG separately or store rendered copies.
+    _verified_source_pdf(source, expected_sha256=row.document_sha256)
+    original_bytes = read_file_bytes(source)
+    handwriting_bytes = read_file_bytes(evidence)
+    rendered, checksum = build_review_evidence_pdf(
+        source_pdf=original_bytes,
+        source_sha256=row.document_sha256,
+        handwriting_png=handwriting_bytes,
+        evidence_sha256=row.evidence_sha256,
+        contract_id=str(row.contract_id),
+        intent_id=str(row.id),
+        binding_sha256=row.binding_sha256,
+        consent_reference=row.consent_reference,
+        review_reference=row.review_reference,
+    )
+    return StreamingResponse(
+        BytesIO(rendered),
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Content-Disposition": f'attachment; filename="wacom-evidence-{str(row.id)}-NOT-SIGNED.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "X-Wacom-Evidence-PDF-SHA256": checksum,
+            "X-Wacom-Signing-Authorized": "false",
+        },
+    )
