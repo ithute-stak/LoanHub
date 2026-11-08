@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  BadgeCheck,
   Building2,
   Calculator,
   CheckCircle2,
@@ -15,7 +13,6 @@ import {
   RefreshCcw,
   ShieldCheck,
   UserCheck,
-  WalletCards,
 } from "lucide-react";
 
 import { originationApi } from "@/api/origination";
@@ -78,7 +75,7 @@ export default function LoanDecisionCentrePage() {
     try {
       const updated = await originationApi.refreshDraftTopUp(applicationId);
       toast.success("Draft top-up recalculated", {
-        description: `Replacement principal ${formatMoney(updated.requested_amount)} over ${updated.term_count} remaining installments. Complete a new affordability assessment before approval.`,
+        description: `Replacement principal ${formatMoney(updated.requested_amount)} over ${updated.term_count} remaining installments. Review the revised terms before approval.`,
       });
       await load();
     } catch (error: unknown) {
@@ -88,18 +85,16 @@ export default function LoanDecisionCentrePage() {
     }
   }
 
-  const assessment = workspace?.assessments[0] ?? workspace?.application.affordability_assessment ?? null;
   const readiness = workspace?.integration_readiness;
 
   const decision = readiness?.final_decision ?? "action_required";
-  const missingAssessment = !assessment && decision === "not_loanable";
-  const decisionLabel = missingAssessment ? "ASSESSMENT REQUIRED" : decision === "loanable"
+  const decisionLabel = decision === "loanable"
     ? "LOANABLE"
     : decision === "not_loanable"
       ? "NOT LOANABLE"
       : "ACTION REQUIRED";
 
-  const decisionTone = missingAssessment ? "border-amber-500/30 bg-amber-500/5" : decision === "loanable"
+  const decisionTone = decision === "loanable"
     ? "border-emerald-500/30 bg-emerald-500/5"
     : decision === "not_loanable"
       ? "border-destructive/30 bg-destructive/5"
@@ -113,13 +108,6 @@ export default function LoanDecisionCentrePage() {
       detail: `${workspace.application.application_reference} · ${workspace.application.borrower_name}`,
       date: workspace.application.created_at,
     });
-    if (assessment) {
-      items.push({
-        title: "Affordability assessed",
-        detail: `${titleCase(assessment.overridden ? assessment.override_decision ?? assessment.decision : assessment.decision)} · policy version ${assessment.policy_version}`,
-        date: assessment.created_at,
-      });
-    }
     if (readiness?.bureau.fresh) {
       items.push({
         title: "Experian evidence available",
@@ -149,7 +137,7 @@ export default function LoanDecisionCentrePage() {
       });
     }
     return items;
-  }, [assessment, readiness, workspace]);
+  }, [readiness, workspace]);
 
   if (loading) return <PageLoader rows={10} />;
   if (!workspace || !readiness) {
@@ -192,7 +180,7 @@ export default function LoanDecisionCentrePage() {
         <div className="mt-6 flex flex-col gap-3 rounded-3xl border bg-background/80 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Final decision</p>
-            <p className={`mt-1 text-3xl font-black ${missingAssessment ? "text-amber-700" : decision === "loanable" ? "text-emerald-700" : decision === "not_loanable" ? "text-destructive" : "text-amber-700"}`}>{decisionLabel}</p>
+            <p className={`mt-1 text-3xl font-black ${decision === "loanable" ? "text-emerald-700" : decision === "not_loanable" ? "text-destructive" : "text-amber-700"}`}>{decisionLabel}</p>
           </div>
           <Badge variant={readiness.ready_for_approval ? "default" : "secondary"}>
             {readiness.ready_for_approval ? "Ready for approval" : `${readiness.blockers.length} blocker(s)`}
@@ -209,7 +197,7 @@ export default function LoanDecisionCentrePage() {
           <CardContent className="space-y-3">
             {application.status === "draft" ? (
               <>
-                <p className="text-sm text-muted-foreground">Next action: skip repeated borrower forms and prepare an offer using existing verified information. LoanHub will assess affordability and identify any missing requirements.</p>
+                <p className="text-sm text-muted-foreground">Next action: skip repeated borrower forms and prepare an offer using existing verified information. LoanHub will identify any remaining independent requirements.</p>
                 <Button asChild><Link href={`/company/origination/new?application=${application.id}`}>Skip forms &amp; offer top-up</Link></Button>
                 <Badge variant="secondary">Draft — not yet approved or disbursed</Badge>
               </>
@@ -233,22 +221,11 @@ export default function LoanDecisionCentrePage() {
         <Card className="rounded-3xl">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5 text-primary" />Core LoanHub</CardTitle>
-            <CardDescription>Internal borrower, KYC and affordability decision.</CardDescription>
+            <CardDescription>Internal borrower and KYC decision.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <StateRow label="Application status" value={titleCase(readiness.core.status)} />
             <StateRow label="KYC" value={titleCase(readiness.core.kyc_status ?? "not available")} ok={readiness.core.kyc_status === "verified"} />
-            <StateRow label="Affordability" value={titleCase(readiness.core.affordability_decision ?? "not assessed")} ok={readiness.core.ready_for_approval} />
-            {assessment ? (
-              <>
-                <StateRow label="Verified income" value={formatMoney(assessment.verified_income)} />
-                <StateRow label="Current debt installments" value={formatMoney(assessment.existing_debt_installments)} />
-                <StateRow label="Proposed installment" value={formatMoney(assessment.proposed_installment)} />
-                <StateRow label="Affordable limit" value={formatMoney(assessment.maximum_affordable_installment)} ok={Number(assessment.affordability_headroom) >= 0} />
-                <StateRow label="Headroom" value={formatMoney(assessment.affordability_headroom)} ok={Number(assessment.affordability_headroom) >= 0} />
-                <StateRow label="DTI" value={`${Number(assessment.dti_percent).toFixed(1)}%`} />
-              </>
-            ) : null}
           </CardContent>
         </Card>
 
@@ -272,7 +249,6 @@ export default function LoanDecisionCentrePage() {
                 <StateRow label="Recent enquiries" value={readiness.bureau.recent_enquiries_count == null ? "—" : String(readiness.bureau.recent_enquiries_count)} />
                 <StateRow label="Identity match" value={readiness.bureau.identity_match == null ? "—" : readiness.bureau.identity_match ? "Match" : "Not matched"} ok={readiness.bureau.identity_match} />
                 <StateRow label="Monthly commitments" value={formatMoney(readiness.bureau.monthly_commitments ?? 0)} />
-                <StateRow label="Used in affordability" value={readiness.bureau.used_in_affordability ? "Yes" : "No"} />
               </>
             ) : null}
             <Button variant="outline" className="w-full" asChild>
@@ -352,32 +328,7 @@ export default function LoanDecisionCentrePage() {
         </Alert>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card className="rounded-3xl">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5 text-primary" />Affordability explanation</CardTitle>
-            <CardDescription>The reasons recorded by the affordability engine remain visible even after an override.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {assessment?.result_reasons?.length ? assessment.result_reasons.map((reason) => (
-              <div key={reason.code} className="flex gap-3 rounded-2xl border p-3">
-                {reason.severity === "error" ? <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
-                <div>
-                  <p className="text-sm font-black">{titleCase(reason.code)}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{reason.message}</p>
-                </div>
-              </div>
-            )) : <p className="text-sm text-muted-foreground">No affordability assessment has been recorded yet.</p>}
-            {assessment?.overridden ? (
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Management override recorded</AlertTitle>
-                <AlertDescription>{assessment.override_reason || "An affordability decision override was recorded."}</AlertDescription>
-              </Alert>
-            ) : null}
-          </CardContent>
-        </Card>
-
+      <div className="grid gap-5">
         <Card className="rounded-3xl">
           <CardHeader>
             <CardTitle>Decision evidence timeline</CardTitle>
