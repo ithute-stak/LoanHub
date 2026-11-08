@@ -5,6 +5,7 @@ package main
 import (
     "bytes"
     "context"
+    "crypto/ed25519"
     "crypto/sha256"
     "encoding/base64"
     "encoding/hex"
@@ -288,6 +289,80 @@ func (c *LoanHubPCClient) CheckWorkstationAssignment(ctx context.Context, workst
         result.OperatorID != c.operatorID || result.BridgeSessionAuthorized ||
         !result.DeviceProofRequired || result.SigningAuthorized {
         return errors.New("LoanHub workstation assignment response invalid or unauthorized")
+    }
+    return nil
+}
+
+
+// LoanHubBridgeChallenge is a server-issued challenge, not a browser-provided
+// authorization. All fields must match the authenticated LoanHub identity.
+type LoanHubBridgeChallenge struct {
+    ChallengeID string `json:"challenge_id"`
+    CompanyID string `json:"company_id"`
+    EmployeeUserID string `json:"employee_user_id"`
+    WorkstationID string `json:"workstation_id"`
+    Nonce string `json:"nonce"`
+    ExpiresAt string `json:"expires_at"`
+    DeviceProofRequired bool `json:"device_proof_required"`
+    SigningAuthorized bool `json:"signing_authorized"`
+}
+
+type LoanHubBridgeProofReceipt struct {
+    DeviceProofVerified bool `json:"device_proof_verified"`
+    EmployeeUserID string `json:"employee_user_id"`
+    WorkstationID string `json:"workstation_id"`
+    BridgeSessionAuthorized bool `json:"bridge_session_authorized"`
+    CaptureAuthorized bool `json:"capture_authorized"`
+    ContractSigned bool `json:"contract_signed"`
+}
+
+// VerifyLocalWorkstation is a one-time device-possession proof with LoanHub's
+// existing login, tenant context and server-issued nonce. The private key never
+// goes over the network. This DOES NOT grant permission to originate a loan,
+// capture a client's signature, or sign a contract.
+func (c *LoanHubPCClient) VerifyLocalWorkstation(ctx context.Context, directory string) error {
+    if c.operatorID == "" || c.companyID == "" {
+        return errors.New("LoanHub operator login is required")
+    }
+    workstationID, privateKey, err := loadWorkstationIdentity(directory)
+    if err != nil { return errors.New("Secure local workstation identity unavailable") }
+    if len(privateKey) != ed25519.PrivateKeySize { return errors.New("Workstation private key invalid") }
+    if err := c.CheckWorkstationAssignment(ctx, workstationID); err != nil { return err }
+    var challenge LoanHubBridgeChallenge
+    if err := c.do(ctx,http.MethodPost,"/api/v1/wacom-bridge/device-challenges",
+        map[string]string{"workstation_id":workstationID},true,&challenge);err!=nil{return err}
+    if challenge.WorkstationID != workstationID ||
+       challenge.CompanyID != c.companyID ||
+       challenge.EmployeeUserID != c.operatorID ||
+       !challenge.DeviceProofRequired || challenge.SigningAuthorized ||
+       !validUUID(challenge.ChallengeID) {
+        return errors.New("Untrusted workstation challenge scope")
+    }
+    nonce, err := base64.RawURLEncoding.Strict().DecodeString(challenge.Nonce)
+    if err != nil || len(nonce) != 32 { return errors.New("Invalid server challenge nonce") }
+    expiry, err := time.Parse(time.RFC3339Nano,challenge.ExpiresAt)
+    if err != nil || !expiry.After(time.Now()) || expiry.After(time.Now().Add(31*time.Second)) {
+        return errors.New("Server challenge expired or invalid")
+    }
+    // This byte sequence must match LoanHub's backend proof_message verbatim.
+    message := fmt.Sprintf("LOANHUB-WACOM-BRIDGE-DEVICE-V1\n%s\n%s\n%s\n%s\n%s\n%d\n",
+        c.companyID,c.operatorID,workstationID,challenge.ChallengeID,
+        challenge.Nonce,expiry.Unix())
+    sig := ed25519.Sign(privateKey,[]byte(message))
+    var receipt LoanHubBridgeProofReceipt
+    if err:=c.do(ctx,http.MethodPost,"/api/v1/wacom-bridge/device-proofs",
+        map[string]string{
+            "challenge_id":challenge.ChallengeID,
+            "workstation_id":workstationID,
+            "signature_base64":base64.StdEncoding.EncodeToString(sig),
+        },true,&receipt);err!=nil{return err}
+    if !receipt.DeviceProofVerified ||
+       receipt.EmployeeUserID!=c.operatorID ||
+       receipt.WorkstationID!=workstationID ||
+       receipt.BridgeSessionAuthorized ||
+       receipt.CaptureAuthorized ||
+       receipt.ContractSigned {
+        return errors.New("Unsafe or invalid workstation proof receipt")
     }
     return nil
 }
