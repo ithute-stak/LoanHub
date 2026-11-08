@@ -1,0 +1,27 @@
+# Review-only template. DO NOT auto-install in production repository.
+name: Batlokoa offline completion contracts
+on:
+  pull_request:
+    paths:
+      - 'docs/reference/batlokoa_completion/**'
+      - '.github/workflows/batlokoa-offline-completion.yml'
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax and unit tests
+        run: |
+          cd docs/reference/batlokoa_completion
+          python -m compileall -q remaining_engine completion_engine tests completion_tests
+          python run_all_tests.py
+  # Optional PostgreSQL integration runner must be separately approved and
+  # provisioned with an isolated service database. Never use production DSNs.

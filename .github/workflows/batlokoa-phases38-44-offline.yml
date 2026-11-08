@@ -1,0 +1,35 @@
+name: Batlokoa Phase 38-44 offline reference tests
+on:
+  pull_request:
+    paths:
+      - "docs/reference/batlokoa_phases38_44/**"
+      - ".github/workflows/batlokoa-phases38-44-offline.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/reference/batlokoa_phases38_44/**"
+      - ".github/workflows/batlokoa-phases38-44-offline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contracts:
+    name: Phase 38-44 no-network regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs/reference/batlokoa_phases38_44
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check syntax of archived source
+        run: python -m compileall -q completion_engine remaining_engine phase43_engine phase44 tests completion_tests phase43_tests
+      - name: Run pure offline financial tests
+        run: python run_all_tests.py
