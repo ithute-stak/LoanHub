@@ -35,6 +35,8 @@ type pcUISession struct {
     feedback string
     capture *pcPendingCapture
     reviewQueue []LoanHubReviewCapture
+    documentIntent *LoanHubDocumentIntent
+    lastDocumentCaptureID string
 }
 
 type pcUI struct {
@@ -56,6 +58,8 @@ type pcUIPage struct {
     Pending *pcPendingCapture
     CaptureEnabled bool
     ReviewQueue []LoanHubReviewCapture
+    DocumentIntent *LoanHubDocumentIntent
+    DocumentCaptureID string
 }
 
 var pcUITemplate = template.Must(template.New("pc").Parse(`<!doctype html>
@@ -110,6 +114,28 @@ footer{font-size:13px;color:#66758a;text-align:center}
 {{if .Client.Client.RequiresCapture}}<p class="notice warn">Client signature is required. Physical capture is not yet activated.</p>{{end}}
 {{end}}</div>{{end}}
 </section>
+<section class="panel"><h2>Document-specific evidence</h2>
+<p>Review the EXACT contract PDF in LoanHub before requesting borrower consent. This desk collects evidence only; it never signs or changes a loan.</p>
+{{if .Client}}{{if .Client.Client}}
+<form method="post" action="/document-prepare"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Contract ID</label><input name="contract_id" required>
+<label>Contract PDF managed file ID</label><input name="source_file_id" required>
+<label>Document version (number)</label><input name="document_version" value="1" required>
+<button type="submit">Prepare exact document</button></form>{{end}}{{end}}
+{{if .DocumentIntent}}
+<p>Document SHA-256: <code>{{.DocumentIntent.DocumentSHA256}}</code></p>
+<p>State: {{.DocumentIntent.Status}} (not signed)</p>
+{{if eq .DocumentIntent.Status "prepared"}}
+<form method="post" action="/document-consent">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="displayed_sha256" value="{{.DocumentIntent.DocumentSHA256}}">
+<label>Consent evidence reference</label><input name="document_consent_reference" minlength="4" required>
+<label><input type="checkbox" name="signer_confirmed" value="yes" required style="width:auto"> Borrower has reviewed this exact document and explicitly confirmed consent</label>
+<button type="submit">Record exact-document consent evidence</button></form>{{end}}
+{{if .DocumentCaptureID}}<form method="post" action="/document-attach">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit">Link captured handwriting evidence to this document</button></form>{{end}}
+{{end}}</section>
 <section class="panel"><h2>Signature capture</h2>
 
 {{if not .CaptureEnabled}}
@@ -240,6 +266,8 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
         r.URL.Path != "/switch-operator" &&
+        r.URL.Path != "/document-prepare" && r.URL.Path != "/document-consent" &&
+        r.URL.Path != "/document-attach" &&
         r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
         r.URL.Path != "/discard" && r.URL.Path != "/preview" &&
         r.URL.Path != "/review-refresh" && r.URL.Path != "/review-decision" &&
@@ -311,6 +339,12 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
                 session.status=nil
                 session.feedback="Access denied: operator permission or company status could not be verified."
             }
+        case "/document-prepare":
+            ui.documentPrepareRequest(ctx,r,session)
+        case "/document-consent":
+            ui.documentConsentRequest(ctx,r,session)
+        case "/document-attach":
+            ui.documentAttachRequest(ctx,session)
         case "/refresh":
             if session.client == nil { session.feedback="Sign in first"; break }
             status,err := session.client.OperatorSignatureStatus(ctx)
@@ -343,6 +377,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             session.status=nil
             session.lastClient=nil
             session.reviewQueue=nil
+            session.forgetDocument()
             if r.URL.Path == "/switch-operator" {
                 session.feedback="Previous operator signed out. Next operator must sign in with their own LoanHub credentials."
             } else { session.feedback="Signed out" }
@@ -357,6 +392,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         Feedback:session.feedback, Status:session.status, Client:session.lastClient,
         Pending:session.capture, CaptureEnabled:ui.sdkCapture!=nil,
         ReviewQueue:session.reviewQueue,
+        DocumentIntent:session.documentIntent, DocumentCaptureID:session.lastDocumentCaptureID,
     }); err != nil {
         log.Println("Wacom PC UI template rendering failed")
     }

@@ -41,7 +41,7 @@ def issue_bridge_session(db: Session, *, context, workstation_id):
 def authorize_bridge_session(db: Session, *, context, token: str | None, now=None) -> None:
     if not token or not _SESSION_PATTERN.fullmatch(token):
         raise HTTPException(403, "Verified Wacom workstation session required")
-    if context.company_id is None or context.staff is None:
+    if context.company_id is None or context.staff is None or not getattr(context.user, "is_active", False):
         raise HTTPException(403, "Active company staff required")
     now = now or datetime.now(timezone.utc)
     digest = hashlib.sha256(token.encode("ascii")).digest()
