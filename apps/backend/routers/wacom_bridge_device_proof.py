@@ -43,13 +43,16 @@ class BridgeProofRequest(BaseModel):
 
 def _eligible_device(db: Session, ctx: TenantContext, workstation_id: UUID):
     require_tenant_roles(ctx, LENDING_ROLES)
+    # Row locks are held until the challenge/proof transaction commits.
+    # Enrollment is locked first, then assignment: management revocation
+    # must not race an approval check and newly issued bridge session.
     pc = db.query(WacomWorkstationEnrollment).filter(
         WacomWorkstationEnrollment.company_id == ctx.company_id,
         WacomWorkstationEnrollment.workstation_id == workstation_id,
         WacomWorkstationEnrollment.status == "active",
         WacomWorkstationEnrollment.approved_at.is_not(None),
         WacomWorkstationEnrollment.revoked_at.is_(None),
-    ).one_or_none()
+    ).with_for_update().one_or_none()
     if pc is None:
         raise HTTPException(403, "No active approved Wacom workstation")
     assignment = db.query(WacomWorkstationOperator).filter(
@@ -58,7 +61,7 @@ def _eligible_device(db: Session, ctx: TenantContext, workstation_id: UUID):
         WacomWorkstationOperator.employee_user_id == ctx.user.id,
         WacomWorkstationOperator.status == "active",
         WacomWorkstationOperator.revoked_at.is_(None),
-    ).one_or_none()
+    ).with_for_update().one_or_none()
     if assignment is None:
         raise HTTPException(403, "Employee not assigned to this workstation")
     return pc
