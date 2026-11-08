@@ -28,6 +28,7 @@ func TestLoanHubPCFirstPartyDeviceProof(t *testing.T) {
     nonce := base64.RawURLEncoding.EncodeToString([]byte("01234567890123456789012345678901"))
     expiry := time.Now().Add(25*time.Second).UTC().Truncate(time.Second)
     proofCount := 0
+    bridgeToken := "wb1_"+base64.RawURLEncoding.EncodeToString([]byte("abcdefghijklmnopqrstuvwxyz012345"))
     client,server := newTestLoanHubPC(t,func(w http.ResponseWriter,r *http.Request) {
         w.Header().Set("Content-Type","application/json")
         if r.URL.Path != "/api/v1/auth/login" &&
@@ -74,7 +75,9 @@ func TestLoanHubPCFirstPartyDeviceProof(t *testing.T) {
             }
             _=json.NewEncoder(w).Encode(map[string]any{
                 "device_proof_verified":true,"employee_user_id":employee,
-                "workstation_id":identity.WorkstationID,"bridge_session_authorized":false,
+                "workstation_id":identity.WorkstationID,"bridge_session_authorized":true,
+                "bridge_session_token":bridgeToken,
+                "bridge_session_expires_at":time.Now().Add(5*time.Minute).UTC().Format(time.RFC3339Nano),
                 "capture_authorized":false,"contract_signed":false,
             })
         default:
@@ -85,7 +88,9 @@ func TestLoanHubPCFirstPartyDeviceProof(t *testing.T) {
     if err:=client.Login(context.Background(),"59000000","synthetic-password","","");err!=nil { t.Fatal(err) }
     if err:=client.VerifyLocalWorkstation(context.Background(),dir);err!=nil { t.Fatal(err) }
     if proofCount!=1 { t.Fatalf("Expected exactly one proof, got %d",proofCount) }
+    if client.bridgeSessionToken!=bridgeToken {t.Fatal("Missing bridge session token")}
     client.Logout()
+    if client.bridgeSessionToken!="" {t.Fatal("Logout retained bridge session token")}
     if err:=client.VerifyLocalWorkstation(context.Background(),dir);err==nil {
         t.Fatal("Logged-out operator could prove device")
     }
