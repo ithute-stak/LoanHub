@@ -27,6 +27,9 @@ type LoanHubPCClient struct {
     accessToken string // in-memory only; never log or persist
     companyID string
     operatorID string // derived only from the authenticated LoanHub response
+    workstationKeyDir string // optional secure PC mode, never browser supplied
+    bridgeSessionToken string // in-memory only; never log or persist
+    bridgeSessionExpires time.Time
 }
 
 type LoanHubLoginResult struct {
@@ -105,6 +108,21 @@ func (c *LoanHubPCClient) do(ctx context.Context, method, path string, payload a
     if err != nil { return errors.New("cannot construct LoanHub request") }
     req.Header.Set("Accept", "application/json")
     if payload != nil { req.Header.Set("Content-Type", "application/json") }
+    if protected && strings.HasPrefix(path,"/api/v1/local-signatures/") && c.workstationKeyDir != "" {
+        // Re-prove the same workstation when its 5-minute capability has
+        // expired; renewal is a fresh server challenge, never token replay.
+        if c.bridgeSessionToken == "" || !time.Now().Add(15*time.Second).Before(c.bridgeSessionExpires) {
+            c.bridgeSessionToken = ""
+            c.bridgeSessionExpires = time.Time{}
+            if err := c.VerifyLocalWorkstation(ctx,c.workstationKeyDir); err != nil {
+                return errors.New("Wacom workstation session renewal failed")
+            }
+        }
+        if c.bridgeSessionToken == "" || !time.Now().Before(c.bridgeSessionExpires) {
+            return errors.New("Verified Wacom workstation session required")
+        }
+        req.Header.Set("X-Wacom-Bridge-Session", c.bridgeSessionToken)
+    }
     if protected {
         if c.accessToken == "" || c.companyID == "" { return errors.New("LoanHub login and active company selection required") }
         req.Header.Set("Authorization", "Bearer "+c.accessToken)
@@ -173,6 +191,9 @@ func (c *LoanHubPCClient) Logout() {
     c.accessToken = ""
     c.companyID = ""
     c.operatorID = ""
+    c.workstationKeyDir = ""
+    c.bridgeSessionToken = ""
+    c.bridgeSessionExpires = time.Time{}
 }
 
 func (c *LoanHubPCClient) OperatorSignatureStatus(ctx context.Context) (LoanHubOperatorStatus, error) {
@@ -314,6 +335,8 @@ type LoanHubBridgeProofReceipt struct {
     BridgeSessionAuthorized bool `json:"bridge_session_authorized"`
     CaptureAuthorized bool `json:"capture_authorized"`
     ContractSigned bool `json:"contract_signed"`
+    BridgeSessionToken string `json:"bridge_session_token"`
+    BridgeSessionExpiresAt string `json:"bridge_session_expires_at"`
 }
 
 // VerifyLocalWorkstation is a one-time device-possession proof with LoanHub's
@@ -321,6 +344,8 @@ type LoanHubBridgeProofReceipt struct {
 // goes over the network. This DOES NOT grant permission to originate a loan,
 // capture a client's signature, or sign a contract.
 func (c *LoanHubPCClient) VerifyLocalWorkstation(ctx context.Context, directory string) error {
+    c.bridgeSessionToken = ""
+    c.bridgeSessionExpires = time.Time{}
     if c.operatorID == "" || c.companyID == "" {
         return errors.New("LoanHub operator login is required")
     }
@@ -359,10 +384,21 @@ func (c *LoanHubPCClient) VerifyLocalWorkstation(ctx context.Context, directory 
     if !receipt.DeviceProofVerified ||
        receipt.EmployeeUserID!=c.operatorID ||
        receipt.WorkstationID!=workstationID ||
-       receipt.BridgeSessionAuthorized ||
+       !receipt.BridgeSessionAuthorized ||
        receipt.CaptureAuthorized ||
        receipt.ContractSigned {
         return errors.New("Unsafe or invalid workstation proof receipt")
     }
+    tokenBytes, tokenErr := base64.RawURLEncoding.Strict().DecodeString(strings.TrimPrefix(receipt.BridgeSessionToken,"wb1_"))
+    validPrefix := strings.HasPrefix(receipt.BridgeSessionToken,"wb1_") && len(receipt.BridgeSessionToken)==47
+    expires, timeErr := time.Parse(time.RFC3339Nano,receipt.BridgeSessionExpiresAt)
+    now := time.Now()
+    if !validPrefix || tokenErr != nil || len(tokenBytes)!=32 ||
+       timeErr != nil || !expires.After(now.Add(10*time.Second)) ||
+       expires.After(now.Add(5*time.Minute+30*time.Second)) {
+        return errors.New("Invalid Wacom workstation session credential")
+    }
+    c.bridgeSessionToken = receipt.BridgeSessionToken
+    c.bridgeSessionExpires = expires
     return nil
 }
