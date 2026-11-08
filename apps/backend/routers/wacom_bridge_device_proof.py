@@ -21,6 +21,7 @@ from database.models.wacom_workstation import WacomWorkstationEnrollment
 from database.models.wacom_workstation_operator import WacomWorkstationOperator
 from database.session import get_db
 from services.wacom_bridge_device_proof import proof_message, verify_device_proof
+from services.wacom_bridge_sessions import issue_bridge_session
 
 router = APIRouter(prefix="/wacom-bridge", tags=["Wacom First-party Device Proof"])
 
@@ -126,9 +127,14 @@ def verify_bridge_device_proof(
     verify_device_proof(public_key=bytes(pc.ed25519_public_key),
                         signature=signature, message=message)
     row.consumed_at = now
+    token, session_row = issue_bridge_session(
+        db, context=ctx, workstation_id=body.workstation_id,
+    )
     db.commit()
     return {
         "device_proof_verified": True,
+        "bridge_session_token": token,
+        "bridge_session_expires_at": session_row.expires_at.isoformat(),
         "employee_user_id": str(ctx.user.id),
         "workstation_id": str(body.workstation_id),
         "bridge_session_authorized": False,
