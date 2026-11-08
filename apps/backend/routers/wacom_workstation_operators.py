@@ -22,6 +22,7 @@ from database.models.wacom_workstation import WacomWorkstationEnrollment
 from database.models.wacom_workstation_operator import WacomWorkstationOperator
 from database.models.audit_log import AuditLog
 from database.session import get_db
+from database.models.wacom_bridge_session import WacomBridgeSession
 
 router = APIRouter(prefix="/contract-signing/workstations", tags=["Wacom Workstation Operators"])
 
@@ -151,6 +152,14 @@ def revoke_operator(
     row.status = "revoked"
     row.revoked_by = ctx.user.id
     row.revoked_at = datetime.now(timezone.utc)
+    # Invalidate every outstanding token for this employee on this PC in
+    # the SAME transaction as assignment revocation.
+    db.query(WacomBridgeSession).filter(
+        WacomBridgeSession.company_id == ctx.company_id,
+        WacomBridgeSession.workstation_id == workstation_id,
+        WacomBridgeSession.employee_user_id == employee_id,
+        WacomBridgeSession.revoked_at.is_(None),
+    ).update({WacomBridgeSession.revoked_at: row.revoked_at}, synchronize_session=False)
     _audit(db, ctx, workstation_id, employee_id, "wacom_workstation.operator_revoked")
     db.commit()
     return {"status": "revoked", "bridge_session_authorized": False, "signing_authorized": False}
