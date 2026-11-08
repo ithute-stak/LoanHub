@@ -6,17 +6,20 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.access_control import LENDING_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.wacom_bridge_challenge import WacomBridgeChallenge
+from database.models.wacom_bridge_session import WacomBridgeSession
 from database.models.wacom_workstation import WacomWorkstationEnrollment
 from database.models.wacom_workstation_operator import WacomWorkstationOperator
 from database.session import get_db
@@ -141,3 +144,35 @@ def verify_bridge_device_proof(
         "capture_authorized": False,
         "contract_signed": False,
     }
+
+
+# Revocation is based on the authenticated LoanHub user plus the exact
+# session credential. A stolen session alone cannot revoke a different user.
+_SESSION_RE = re.compile(r"^wb1_[A-Za-z0-9_-]{43}$")
+
+
+@router.post("/sessions/revoke")
+def revoke_bridge_session(
+    response: Response,
+    x_wacom_bridge_session: str | None = Header(default=None, alias="X-Wacom-Bridge-Session"),
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    response.headers["Cache-Control"] = "no-store"
+    if x_wacom_bridge_session is None or not _SESSION_RE.fullmatch(x_wacom_bridge_session):
+        raise HTTPException(403, "Verified workstation session required")
+    if ctx.company_id is None or ctx.staff is None:
+        raise HTTPException(403, "Active company membership required")
+    digest = hashlib.sha256(x_wacom_bridge_session.encode("ascii")).digest()
+    row = db.query(WacomBridgeSession).filter(
+        WacomBridgeSession.company_id == ctx.company_id,
+        WacomBridgeSession.employee_user_id == ctx.user.id,
+        WacomBridgeSession.token_sha256 == digest,
+    ).with_for_update().one_or_none()
+    if row is None:
+        raise HTTPException(403, "Workstation session unavailable")
+    # Idempotent: an already-revoked credential never becomes valid again.
+    if row.revoked_at is None:
+        row.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"revoked": True, "signing_authorized": False}

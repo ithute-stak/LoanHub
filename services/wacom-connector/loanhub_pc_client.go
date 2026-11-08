@@ -402,3 +402,52 @@ func (c *LoanHubPCClient) VerifyLocalWorkstation(ctx context.Context, directory 
     c.bridgeSessionExpires = expires
     return nil
 }
+
+
+// RevokeBridgeSession revokes the currently held device-proof-issued capability
+// on LoanHub. It must run BEFORE Logout clears the local bearer token.
+// No new session is issued by this method and no signing permission is granted.
+func (c *LoanHubPCClient) RevokeBridgeSession(ctx context.Context) error {
+    if c.bridgeSessionToken == "" {
+        return nil // legacy session: no server-side device capability to revoke
+    }
+    if c.accessToken == "" || c.companyID == "" {
+        return errors.New("Authenticated LoanHub operator required to revoke Wacom session")
+    }
+    var reply struct {
+        Revoked bool `json:"revoked"`
+        SigningAuthorized bool `json:"signing_authorized"`
+    }
+    token := c.bridgeSessionToken
+    // The request is authenticated with both the normal LoanHub user bearer
+    // and X-Wacom-Bridge-Session. The token is not logged or sent to a browser.
+    err := c.doWithBridgeRevocation(ctx, token, &reply)
+    if err != nil { return err }
+    if !reply.Revoked || reply.SigningAuthorized {
+        return errors.New("Invalid Wacom revocation response")
+    }
+    c.bridgeSessionToken = ""
+    c.bridgeSessionExpires = time.Time{}
+    return nil
+}
+
+func (c *LoanHubPCClient) doWithBridgeRevocation(ctx context.Context, token string, reply any) error {
+    req, err := http.NewRequestWithContext(ctx,http.MethodPost,
+        c.base.String()+"/api/v1/wacom-bridge/sessions/revoke",nil)
+    if err != nil { return errors.New("Cannot construct Wacom revocation request") }
+    req.Header.Set("Accept","application/json")
+    req.Header.Set("Authorization","Bearer "+c.accessToken)
+    req.Header.Set("X-Company-ID",c.companyID)
+    req.Header.Set("X-Wacom-Bridge-Session",token)
+    response, err := c.http.Do(req)
+    if err != nil { return errors.New("Wacom revocation HTTPS request failed") }
+    defer response.Body.Close()
+    if response.StatusCode < 200 || response.StatusCode >= 300 {
+        return fmt.Errorf("Wacom revocation rejected (HTTP %d)",response.StatusCode)
+    }
+    raw, err := io.ReadAll(io.LimitReader(response.Body, maxLoanHubResponse+1))
+    if err!=nil || len(raw)>maxLoanHubResponse || json.Unmarshal(raw,reply)!=nil {
+        return errors.New("Wacom revocation response invalid")
+    }
+    return nil
+}

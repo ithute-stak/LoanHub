@@ -334,7 +334,11 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             ui.decideReview(ctx,r,session)
         case "/logout", "/switch-operator":
             session.discardCapture()
-            if session.client != nil { session.client.Logout() }
+            revokeFailed := false
+            if session.client != nil {
+                if err := session.client.RevokeBridgeSession(ctx); err != nil { revokeFailed = true }
+                session.client.Logout()
+            }
             session.client=nil
             session.status=nil
             session.lastClient=nil
@@ -342,6 +346,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             if r.URL.Path == "/switch-operator" {
                 session.feedback="Previous operator signed out. Next operator must sign in with their own LoanHub credentials."
             } else { session.feedback="Signed out" }
+            if revokeFailed { session.feedback += " Server session revocation could not be confirmed; credential expires automatically within five minutes." }
         default:
             http.NotFound(w,r); return
         }
