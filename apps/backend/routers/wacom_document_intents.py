@@ -30,6 +30,8 @@ from services.wacom_document_policy import (
     IntentIdentity, IntentStatus, consent_digest, require_transition, check_valid_until,
 )
 from services.wacom_bridge_sessions import authorize_bridge_session
+from services.file_service import read_file_bytes
+from services.wacom_document_policy import verify_document_bytes
 
 def _feature_enabled() -> None:
     if os.getenv("LOANHUB_WACOM_DOCUMENT_INTENTS_ENABLED", "") != "1":
@@ -68,6 +70,23 @@ class ReviewEvidence(BaseModel):
     consent_checked: bool
     reference: str = Field(min_length=4, max_length=180)
     reason: str = Field(min_length=8, max_length=400)
+
+
+def _verified_source_pdf(source: ManagedFile, *, expected_sha256: str) -> None:
+    """Read actual decrypted PDF bytes, not just database checksum metadata.
+
+    This is a bounded integrity check, not a PDF malware/content certification.
+    It must fail closed if storage cannot return an exact-match immutable PDF.
+    """
+    if source.size_bytes is None or not 1 <= source.size_bytes <= 20 * 1024 * 1024:
+        raise HTTPException(413, "Contract PDF size outside verified capture limits")
+    try:
+        payload = read_file_bytes(source)
+        if len(payload) != source.size_bytes or not payload.startswith(b"%PDF-"):
+            raise ValueError("Stored contract PDF bytes invalid")
+        verify_document_bytes(expected_sha256, payload)
+    except (ValueError, HTTPException) as exc:
+        raise HTTPException(409, "Contract PDF integrity could not be verified") from exc
 
 
 def _session_device(db: Session, ctx: TenantContext, token: str | None) -> UUID:
@@ -162,6 +181,7 @@ def prepare_intent(
     ).one_or_none()
     if source is None or not re.fullmatch(r"[0-9a-f]{64}", source.checksum_sha256 or ""):
         raise HTTPException(409, "Verified immutable contract PDF not available")
+    _verified_source_pdf(source, expected_sha256=source.checksum_sha256)
     identity = IntentIdentity(
         company_id=ctx.company_id, borrower_id=body.borrower_id,
         contract_id=body.contract_id, source_file_id=body.source_file_id, operator_user_id=ctx.user.id,
@@ -232,6 +252,7 @@ def record_consent(
     ).one_or_none()
     if current_pdf is None or current_pdf.checksum_sha256 != row.document_sha256:
         raise HTTPException(409, "Original PDF changed or became unavailable")
+    _verified_source_pdf(current_pdf, expected_sha256=row.document_sha256)
     # Local operator cannot assert the borrower's verified identity by code
     # alone; independent verification is still required downstream.
     try:
