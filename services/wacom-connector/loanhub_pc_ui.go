@@ -163,6 +163,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <button type="submit">Record evidence review decision</button>
 </form></div>{{end}}
 </section>
+<form method="post" action="/switch-operator"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Switch operator (sign out securely)</button></form>
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary" type="submit">Sign out</button></form>
 </section>
 {{end}}
@@ -237,6 +238,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     reviewPreview := strings.HasPrefix(r.URL.Path,"/review-preview/")
     if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
+        r.URL.Path != "/switch-operator" &&
         r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
         r.URL.Path != "/discard" && r.URL.Path != "/preview" &&
         r.URL.Path != "/review-refresh" && r.URL.Path != "/review-decision" &&
@@ -294,7 +296,12 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             if err != nil { session.feedback="Login failed. Check credentials or account requirements. Multi-company accounts require company selection."; break }
             session.client=client
             status,err := client.OperatorSignatureStatus(ctx)
-            if err == nil { session.status=&status } else { session.feedback="Signed in. Signature status unavailable." }
+            if err == nil { session.status=&status } else {
+                client.Logout()
+                session.client=nil
+                session.status=nil
+                session.feedback="Access denied: operator permission or company status could not be verified."
+            }
         case "/refresh":
             if session.client == nil { session.feedback="Sign in first"; break }
             status,err := session.client.OperatorSignatureStatus(ctx)
@@ -316,14 +323,16 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             ui.refreshReviewQueue(ctx,session)
         case "/review-decision":
             ui.decideReview(ctx,r,session)
-        case "/logout":
+        case "/logout", "/switch-operator":
             session.discardCapture()
             if session.client != nil { session.client.Logout() }
             session.client=nil
             session.status=nil
             session.lastClient=nil
             session.reviewQueue=nil
-            session.feedback="Signed out"
+            if r.URL.Path == "/switch-operator" {
+                session.feedback="Previous operator signed out. Next operator must sign in with their own LoanHub credentials."
+            } else { session.feedback="Signed out" }
         default:
             http.NotFound(w,r); return
         }
