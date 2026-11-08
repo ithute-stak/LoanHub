@@ -12,7 +12,7 @@ import hmac
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -31,8 +31,18 @@ from database.models.person import Person
 from database.session import get_db
 from services.file_service import store_bytes
 from services.wacom_png_validation import validate_wacom_png
+from services.wacom_bridge_sessions import authorize_bridge_session, bridge_enforcement_enabled
 
-router = APIRouter(prefix="/local-signatures", tags=["Local Wacom PC"])
+def _require_bridge_session(
+    x_wacom_bridge_session: str | None = Header(default=None, alias="X-Wacom-Bridge-Session"),
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+) -> None:
+    if bridge_enforcement_enabled():
+        authorize_bridge_session(db, context=context, token=x_wacom_bridge_session)
+
+
+router = APIRouter(prefix="/local-signatures", tags=["Local Wacom PC"], dependencies=[Depends(_require_bridge_session)])
 _ALLOWED = LENDING_ROLES | COMPANY_MANAGEMENT_ROLES
 _OPERATOR_CATEGORY = "wacom_operator_signature_pending"
 _CLIENT_CATEGORY = "wacom_client_signature_pending"
