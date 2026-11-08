@@ -1,14 +1,14 @@
 """Wacom multi-operator assignment foundation, additive only.
 
 Revision ID: a1b2c3d4e812
-Revises: z9n3p5q7r800
+Revises: w2c4e6g8h020
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "a1b2c3d4e812"
-down_revision = "z9n3p5q7r800"
+down_revision = "w2c4e6g8h020"
 branch_labels = None
 depends_on = None
 
