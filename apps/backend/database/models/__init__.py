@@ -317,3 +317,5 @@ from database.models.wacom_bridge_challenge import WacomBridgeChallenge
 from database.models.wacom_bridge_session import WacomBridgeSession
 
 from database.models.wacom_document_intent import WacomDocumentIntent
+
+from database.models.wacom_finalization_approval import WacomFinalizationApproval
