@@ -30,6 +30,7 @@ from services.wacom_document_policy import (
     IntentIdentity, IntentStatus, consent_digest, require_transition, check_valid_until,
 )
 from services.wacom_bridge_sessions import authorize_bridge_session
+from services.wacom_finalization_preflight import finalization_blockers
 from services.file_service import read_file_bytes
 from services.wacom_document_policy import verify_document_bytes
 
@@ -375,3 +376,49 @@ def read_intent(
     if row.operator_user_id != ctx.user.id or row.workstation_id != pc:
         raise HTTPException(403, "Document evidence belongs to another operator")
     return _response(row)
+
+
+@router.get("/{intent_id}/finalization-preflight")
+def finalization_preflight(
+    intent_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Management-only read-only preflight; not an approval or signing action."""
+    response.headers["Cache-Control"] = "no-store"
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    row = _current_intent(db, ctx, intent_id, lock=False)
+    contract = db.query(LoanContract).filter(
+        LoanContract.id == row.contract_id,
+        LoanContract.company_id == ctx.company_id,
+    ).one_or_none()
+    source = db.query(ManagedFile).filter(
+        ManagedFile.id == row.source_file_id,
+        ManagedFile.company_id == ctx.company_id,
+    ).one_or_none()
+    evidence = None
+    if row.evidence_file_id is not None:
+        evidence = db.query(ManagedFile).filter(
+            ManagedFile.id == row.evidence_file_id,
+            ManagedFile.company_id == ctx.company_id,
+        ).one_or_none()
+    blockers = finalization_blockers(intent=row, contract=contract, source=source,
+                                     evidence=evidence)
+    if not blockers and source is not None:
+        # Metadata and DB references alone cannot attest the actual PDF bytes.
+        # This read cannot produce a signature or modify any record.
+        try:
+            _verified_source_pdf(source, expected_sha256=row.document_sha256)
+        except HTTPException:
+            blockers.append("source_pdf_integrity_failed")
+    return {
+        "intent_id": str(row.id),
+        "contract_id": str(row.contract_id),
+        "eligible_for_future_finalization_review": not blockers,
+        "blockers": blockers,
+        "signing_authorized": False,
+        "signed_contract_created": False,
+        "no_mutation_performed": True,
+        "requires_fresh_atomic_checks_and_explicit_approval": True,
+    }
