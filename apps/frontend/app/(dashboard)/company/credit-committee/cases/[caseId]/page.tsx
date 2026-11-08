@@ -111,7 +111,6 @@ export default function CreditCommitteeCasePage() {
   useEffect(() => { void load(); }, [load]);
 
   const evidence = item?.evidence_snapshot ?? {};
-  const affordability = (evidence.affordability ?? {}) as Record<string, any>;
   const bureau = (evidence.credit_bureau ?? {}) as Record<string, any>;
   const kyc = (evidence.kyc ?? {}) as Record<string, any>;
   const employment = (evidence.employment ?? {}) as Record<string, any>;
@@ -235,10 +234,7 @@ export default function CreditCommitteeCasePage() {
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between"><div><div className="flex flex-wrap items-center gap-2"><Badge variant={statusVariant(item.final_decision ?? item.status)}>{titleCase(item.final_decision ?? item.status)}</Badge><span className="font-mono text-xs font-black text-primary">{item.case_reference}</span></div><h1 className="mt-3 text-3xl font-black tracking-tight">{item.borrower_name}</h1><p className="mt-2 text-sm text-muted-foreground">Application {item.application_reference} · Requested {formatMoney(item.requested_amount)} · {item.term_count} term(s)</p></div><div className="rounded-2xl border bg-muted/20 p-4 text-sm"><p className="font-black">Committee control</p><p className="text-muted-foreground">{item.required_votes} decisive votes · {item.approval_threshold_percent}% approval threshold · maker-checker {item.maker_checker_required ? "on" : "off"}</p></div></div>
         </section>
 
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <Metric label="Verified income" value={formatMoney(Number(affordability.verified_income ?? 0))} />
-          <Metric label="Household expenses" value={formatMoney(Number(affordability.household_expenses ?? 0))} />
-          <Metric label="DTI" value={`${affordability.dti_percent ?? "—"}%`} />
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <Metric label="Credit score" value={String(bureau.score ?? "—")} />
           <Metric label="KYC" value={titleCase(String(kyc.status ?? "not available"))} />
           <Metric label="Rules engine" value={titleCase(String(rules.decision ?? "not run"))} />
