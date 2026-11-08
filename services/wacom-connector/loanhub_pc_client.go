@@ -25,6 +25,7 @@ type LoanHubPCClient struct {
     http *http.Client
     accessToken string // in-memory only; never log or persist
     companyID string
+    operatorID string // derived only from the authenticated LoanHub response
 }
 
 type LoanHubLoginResult struct {
@@ -163,12 +164,14 @@ func (c *LoanHubPCClient) Login(ctx context.Context, phone, password, otp, compa
     }
     c.accessToken = result.AccessToken
     c.companyID = companyID
+    c.operatorID = result.User.ID
     return nil
 }
 
 func (c *LoanHubPCClient) Logout() {
     c.accessToken = ""
     c.companyID = ""
+    c.operatorID = ""
 }
 
 func (c *LoanHubPCClient) OperatorSignatureStatus(ctx context.Context) (LoanHubOperatorStatus, error) {
@@ -252,4 +255,39 @@ func (c *LoanHubPCClient) UploadPNG(ctx context.Context, signerKind, borrowerID,
         return LoanHubCaptureReceipt{}, errors.New("Unsafe or incomplete signature receipt")
     }
     return response, nil
+}
+
+
+// LoanHubWorkstationAssignment is an informational assignment response.
+// It explicitly does not grant an authenticated bridge session or signing.
+type LoanHubWorkstationAssignment struct {
+    Assigned bool `json:"assigned"`
+    WorkstationID string `json:"workstation_id"`
+    OperatorID string `json:"operator_id"`
+    BridgeSessionAuthorized bool `json:"bridge_session_authorized"`
+    DeviceProofRequired bool `json:"device_proof_required"`
+    SigningAuthorized bool `json:"signing_authorized"`
+}
+
+// CheckWorkstationAssignment checks that this *authenticated operator* has a
+// current company-scoped assignment to the specified workstation. This check
+// alone does NOT prove device possession; it MUST NOT authorize capture,
+// lending operations, or signing until the backend issues a verified
+// workstation-bound session.
+func (c *LoanHubPCClient) CheckWorkstationAssignment(ctx context.Context, workstationID string) error {
+    if !validUUID(workstationID) || c.operatorID == "" || c.companyID == "" {
+        return errors.New("Authenticated operator and valid workstation ID required")
+    }
+    var result LoanHubWorkstationAssignment
+    if err := c.do(ctx, http.MethodGet,
+        "/api/v1/contract-signing/workstations/"+workstationID+"/my-assignment",
+        nil, true, &result); err != nil {
+        return err
+    }
+    if !result.Assigned || result.WorkstationID != workstationID ||
+        result.OperatorID != c.operatorID || result.BridgeSessionAuthorized ||
+        !result.DeviceProofRequired || result.SigningAuthorized {
+        return errors.New("LoanHub workstation assignment response invalid or unauthorized")
+    }
+    return nil
 }
