@@ -5,10 +5,8 @@ import {
   prepareDocumentGenerationWindow,
 } from "@/lib/document-generation-overlay";
 import { loanSettingsApi } from "@/api/loan-settings";
-import type { InterestMethod } from "@/types/loan";
 import type {
   ContractTemplateStyle,
-  AffordabilityAssessment,
   ApplicationIntegrationReadiness,
   BorrowerProfileActivity,
   FinancialProfile,
@@ -114,17 +112,8 @@ export const originationApi = {
   approveTopUpException: async (applicationId: string, reason: string): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>(`/origination/applications/${applicationId}/top-up-exception/approve`, { reason })).data,
 
-  assess: async (
-    applicationId: string,
-    payload: { proposed_principal: number; proposed_rate_percent: number; proposed_months: number; processing_fee: number; interest_method: InterestMethod },
-  ): Promise<AffordabilityAssessment> =>
-    (await api.post<AffordabilityAssessment>(`/origination/applications/${applicationId}/assess`, payload)).data,
-
   submit: async (applicationId: string): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>(`/origination/applications/${applicationId}/submit`)).data,
-
-  overrideAssessment: async (assessmentId: string, payload: { decision: string; reason: string }): Promise<AffordabilityAssessment> =>
-    (await api.post<AffordabilityAssessment>(`/origination/assessments/${assessmentId}/override`, payload)).data,
 
   listContracts: async (): Promise<LoanContract[]> =>
     (await api.get<LoanContract[]>("/origination/contracts")).data,
