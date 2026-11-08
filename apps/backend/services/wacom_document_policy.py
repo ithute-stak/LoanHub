@@ -32,6 +32,7 @@ class IntentIdentity:
     company_id: UUID
     borrower_id: UUID
     contract_id: UUID
+    source_file_id: UUID
     operator_user_id: UUID
     workstation_id: UUID
     document_sha256: str
@@ -49,6 +50,7 @@ class IntentIdentity:
             "borrower_id": str(self.borrower_id),
             "company_id": str(self.company_id),
             "contract_id": str(self.contract_id),
+            "source_file_id": str(self.source_file_id),
             "document_sha256": self.document_sha256,
             "document_version": self.document_version,
             "operator_user_id": str(self.operator_user_id),
