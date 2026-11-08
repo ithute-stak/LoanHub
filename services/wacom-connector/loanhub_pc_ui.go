@@ -296,6 +296,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
                 r.PostForm.Get("password"),"", "")
             if err != nil { session.feedback="Login failed. Check credentials or account requirements. Multi-company accounts require company selection."; break }
             if ui.workstationKeyDir != "" {
+                client.workstationKeyDir=ui.workstationKeyDir
                 if err := client.VerifyLocalWorkstation(ctx,ui.workstationKeyDir); err != nil {
                     client.Logout()
                     session.feedback="Access denied: this employee or workstation could not be verified by LoanHub."
