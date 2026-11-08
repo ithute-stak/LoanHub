@@ -1,0 +1,2 @@
+# Required only when running explicitly enabled PostgreSQL integration tests.
+psycopg2-binary>=2.9,<3
