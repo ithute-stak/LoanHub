@@ -147,3 +147,58 @@ func TestLoanHubPCAutoSelectionFailsClosedForMultipleCompanies(t *testing.T) {
     }
     if client.accessToken != "" || client.companyID != "" { t.Fatal("unauthorized session state retained") }
 }
+
+
+func TestLoanHubPCAssignmentRequiresAuthenticatedOperatorAndExactDevice(t *testing.T) {
+    workstation := "12345678-1234-4234-8234-123456789012"
+    company := "22345678-1234-4234-8234-123456789012"
+    calls := 0
+    client, server := newTestLoanHubPC(t, func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        calls++
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _,_ = w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"id":"employee-test","is_active":true,"memberships":[{"company_id":"`+company+`","is_active":true}]}}`))
+        case "/api/v1/contract-signing/workstations/"+workstation+"/my-assignment":
+            if r.Header.Get("Authorization")!="Bearer synthetic" || r.Header.Get("X-Company-ID")!=company {
+                t.Fatal("Missing authenticated tenant context")
+            }
+            _,_ = w.Write([]byte(`{"assigned":true,"workstation_id":"`+workstation+`","operator_id":"employee-test","bridge_session_authorized":false,"device_proof_required":true,"signing_authorized":false}`))
+        default:
+            t.Fatalf("Unexpected endpoint %s",r.URL.Path)
+        }
+    })
+    defer server.Close()
+    if err := client.CheckWorkstationAssignment(context.Background(), workstation); err == nil {
+        t.Fatal("Unauthenticated assignment check accepted")
+    }
+    if calls != 0 { t.Fatal("Unauthenticated request reached server") }
+    if err := client.Login(context.Background(),"59000000","synthetic-password","",""); err != nil { t.Fatal(err) }
+    if err := client.CheckWorkstationAssignment(context.Background(), workstation); err != nil { t.Fatal(err) }
+    client.Logout()
+    if err := client.CheckWorkstationAssignment(context.Background(), workstation); err == nil {
+        t.Fatal("Logged-out operator retained workstation assignment")
+    }
+}
+
+func TestLoanHubPCAssignmentDoesNotAcceptOtherOperatorOrSigningPrivilege(t *testing.T) {
+    workstation := "12345678-1234-4234-8234-123456789012"
+    for _,response := range []string{
+        `{"assigned":true,"workstation_id":"12345678-1234-4234-8234-123456789012","operator_id":"other","bridge_session_authorized":false,"device_proof_required":true,"signing_authorized":false}`,
+        `{"assigned":true,"workstation_id":"12345678-1234-4234-8234-123456789012","operator_id":"employee-test","bridge_session_authorized":true,"device_proof_required":true,"signing_authorized":false}`,
+        `{"assigned":true,"workstation_id":"12345678-1234-4234-8234-123456789012","operator_id":"employee-test","bridge_session_authorized":false,"device_proof_required":true,"signing_authorized":true}`,
+        `{"assigned":false,"workstation_id":"12345678-1234-4234-8234-123456789012","operator_id":"employee-test","bridge_session_authorized":false,"device_proof_required":true,"signing_authorized":false}`,
+    } {
+        client, server := newTestLoanHubPC(t, func(w http.ResponseWriter,r *http.Request) {
+            w.Header().Set("Content-Type","application/json")
+            _,_ = w.Write([]byte(response))
+        })
+        client.accessToken="synthetic"
+        client.companyID="tenant"
+        client.operatorID="employee-test"
+        if err:=client.CheckWorkstationAssignment(context.Background(),workstation);err==nil {
+            t.Fatalf("Accepted unsafe assignment response %s", response)
+        }
+        server.Close()
+    }
+}
