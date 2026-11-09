@@ -230,3 +230,27 @@ def test_bfs_folio_preflight_is_read_only():
     assert "loans_to_move" in sql
     assert "duplicate_sequences" in sql
     assert "HAVING COUNT(*) > 1" in sql
+
+
+def test_bfs_never_falls_back_to_employer_group_when_pay_day_missing():
+    allocator = (ROOT / "apps" / "backend" / "services" / "loan_folio.py").read_text(encoding="utf-8")
+    assert 'if group_code is None:\n            raise ValueError("BFS loan requires' in allocator
+
+
+def test_bfs_three_group_backfill_audits_every_legacy_group_and_wrong_canonical_group():
+    script = (ROOT / "apps" / "backend" / "scripts" / "sql" /
+              "bfs_three_folio_books_backfill.sql").read_text(encoding="utf-8")
+    assert "LOCK TABLE client_company_loan" in script
+    assert "new_group IS DISTINCT FROM old_group_code" in script
+    assert "PARTITION BY c.company_id, c.new_group" in script
+    assert "new_group_code, old_sequence" in script
+    assert "bfs_folio_group_correction_audit" in script
+    assert "RAISE EXCEPTION 'Legacy BFS group remains" in script
+    assert "RAISE EXCEPTION 'New folio number collides with a historical folio alias" in script
+    assert "BEGIN;" in script and "COMMIT;" in script
+
+
+def test_bfs_folio_page_communicates_full_wraparound_range():
+    page = FOLIO_PAGE.read_text(encoding="utf-8")
+    assert "27–31 plus 1–14 = S/E" in page
+    assert "All folio groups" in page
