@@ -163,7 +163,7 @@ def test_real_archive_route_returns_unsigned_candidate_and_exact_retry(monkeypat
     actors = [uuid4() for _ in range(8)]
     intent.operator_user_id, intent.review_by = actors[0], actors[1]
     approval = R(requested_by=actors[2], decided_by=actors[3])
-    packet = R(created_by_user_id=actors[4])
+    packet = R(id=values["packet"].id, packet_file_id=values["packet"].packet_file_id,\n               created_by_user_id=actors[4])
     authorization.requested_by = actors[5]
     source = R(id=intent.source_file_id, company_id=tenant,
                payload=values["source_pdf"])
