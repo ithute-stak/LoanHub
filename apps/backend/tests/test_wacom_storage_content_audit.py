@@ -16,6 +16,7 @@ def snapshot():
         id=file_id, company_id=company, category="wacom_execution_candidate",
         is_deleted=False, is_encrypted=True, is_confidential=True,
         scan_status="clean", mime_type="application/pdf", checksum_sha256=digest,
+        size_bytes=len(pdf),
     )
     receipt = R(
         id=receipt_id, company_id=company,
@@ -75,6 +76,16 @@ def test_untrusted_metadata_never_reads_contents(attribute, value):
         raise AssertionError("Untrusted file was read")
     assert codes(check(rows, must_not_read)) == [
         "candidate_file_security_metadata_invalid"
+    ]
+
+
+def test_oversized_payload_rejected_before_storage_read():
+    rows, _ = snapshot()
+    rows["managed_files"][0].size_bytes = 30 * 1024 * 1024
+    def must_not_read(file):
+        raise AssertionError("Oversized evidence should not be read")
+    assert codes(check(rows, must_not_read)) == [
+        "candidate_size_outside_verified_limits"
     ]
 
 
