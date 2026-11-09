@@ -338,7 +338,7 @@ def create_application(
         )
 
     # Inherit the parent loan's active product for the compact top-up when
-    # the client has not selected another product. The assessment still
+    # the client has not selected another product. The replacement offer still
     # retains the final installment schedule.
     inherited_product_id = payload.product_id
     if payload.application_type == "top_up" and inherited_product_id is None:
@@ -512,7 +512,7 @@ def top_up_calculation_preview(
         "processing_fee": str(fee),
         "product_id": str(product.id) if product else None,
         "schedule_amounts": details["schedule_amounts"],
-        "requires_credit_assessment": True,
+        "requires_credit_assessment": False,
     }
 
 
@@ -522,7 +522,7 @@ def refresh_draft_top_up(
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    """Refresh old draft principal/remaining dates before a new assessment.
+    """Refresh old draft principal/remaining dates before manager review.
 
     No loan or payout is created. Only authorized owners/managers can refresh.
     """
