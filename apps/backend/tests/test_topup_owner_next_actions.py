@@ -23,4 +23,4 @@ def test_method_aware_settlement_quote_is_visible_before_submission():
     assert 'Verified settlement quote' in TOPUP
     assert 'application.top_up_settlement_amount' in TOPUP
     assert 'settlement quote plus additional cash' in TOPUP
-    assert 'new credit origination' not in WIZARD.lower()
+    assert 'Use saved records & review top-up' not in WIZARD
