@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 from uuid import UUID
 
 from database.models.file_management import ManagedFile
@@ -43,7 +42,7 @@ def inventory_for_company(*, storage, company_id, max_records=10000):
         return sorted(keys), True
     if storage.provider == "s3":
         # Prefix is rooted in the storage provider's configured bucket prefix.
-        query = {"Bucket": storage.bucket, "Prefix": storage._key(prefix)}
+        query = {"Bucket": storage.bucket, "Prefix": storage._key(str(company_id)) + "/"}
         keys = []
         while True:
             reply = storage.client.list_objects_v2(**query)
@@ -79,6 +78,8 @@ def audit(*, company_id, provider, limit=10000):
                     .limit(limit + 1).all())
         if len(files) > limit or len(receipts) > limit:
             raise ValueError("Database tenant snapshot exceeds limit; cannot certify completeness")
+        if any((file.storage_provider or "local").lower() != provider for file in files):
+            raise ValueError("Mixed storage providers require separate, manually reviewed snapshots")
         keys, complete = inventory_for_company(
             storage=get_storage(provider), company_id=company_id,
             max_records=limit,
