@@ -125,9 +125,11 @@ function TopUpWorkspace() {
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <div><p className="text-xs text-muted-foreground">Additional cash requested</p><p className="font-semibold">{formatMoney(Number(application.top_up_cash_requested ?? 0))}</p></div>
+            <div><p className="text-xs text-muted-foreground">Verified settlement quote</p><p className="font-semibold">{application.top_up_settlement_amount != null ? formatMoney(Number(application.top_up_settlement_amount)) : "Not available"}</p></div>
             <div><p className="text-xs text-muted-foreground">Replacement principal</p><p className="font-semibold">{formatMoney(Number(application.requested_amount))}</p></div>
             <div><p className="text-xs text-muted-foreground">Repayment period</p><p className="font-semibold">{application.term_count} months</p></div>
           </div>
+          <p className="text-xs text-muted-foreground">Replacement principal is based on the settlement quote plus additional cash, not necessarily the displayed scheduled outstanding balance.</p>
           {application.top_up_exception_requested && !application.top_up_exception_approved ? (
             <div className="space-y-2 rounded-xl border border-amber-500/40 p-4">
               <p className="font-semibold">Company-owner top-up exception required</p>
