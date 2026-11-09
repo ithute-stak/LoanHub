@@ -44,7 +44,7 @@ def test_preview_inserts_into_only_selected_page_with_clear_watermark():
     assert "Synthetic contract: page two" in preview.pages[1].extract_text()
     assert all(STAMP in page.extract_text() for page in preview.pages)
     assert preview.metadata.title.endswith("NOT EXECUTED")
-    assert "/XObject" not in str(preview.pages[0].get("/Resources", {})) or True
+    assert len(preview.pages[0].images) == 0\n    assert len(preview.pages[1].images) >= 1
 
 
 @pytest.mark.parametrize("field",[
