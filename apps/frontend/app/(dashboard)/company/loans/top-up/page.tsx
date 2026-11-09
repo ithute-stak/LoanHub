@@ -3,13 +3,12 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2 } from "lucide-react";
 import { getLoan } from "@/api/loans";
 import { originationApi } from "@/api/origination";
 import { CompactTopUpDialog } from "@/components/loans/compact-top-up-dialog";
 import { Button } from "@/components/ui/button";
-import { PageLoader } from "@/components/ui/page-loader";
-import { useTenant } from "@/contexts/TenantContext";
+import { useTenant } from "@/provider/tenantProvider";
 import { formatMoney } from "@/lib/format";
 import type { Loan } from "@/types/loan";
 import type { OriginationApplication } from "@/types/origination";
