@@ -94,6 +94,7 @@ def execution_ceremony_blockers(
         or getattr(candidate_file, "scan_status", None) != "clean"
         or getattr(candidate_file, "mime_type", None) != "application/pdf"
         or not isinstance(candidate_pdf, bytes)
+        or not 5 <= len(candidate_pdf) <= 25 * 1024 * 1024
         or not candidate_pdf.startswith(b"%PDF-")
         or not hash_match(
             hashlib.sha256(candidate_pdf).hexdigest(),
