@@ -411,7 +411,7 @@ def test_pricing_optimization_solves_economic_floor_without_approving_credit():
     assert "Generate pricing evidence pack" in centre
 
 
-def test_credit_deal_structuring_combines_pricing_affordability_liquidity_and_concentration_without_auto_approval():
+def test_credit_deal_structuring_combines_pricing_liquidity_and_concentration_without_auto_approval():
     router = (ROOT / "backend" / "routers" / "company_operating_system.py").read_text(encoding="utf-8")
     schema = (ROOT / "backend" / "database" / "schemas" / "company_operating_system.py").read_text(encoding="utf-8")
     api = (ROOT / "frontend" / "api" / "companyOperatingSystem.ts").read_text(encoding="utf-8")
@@ -421,7 +421,7 @@ def test_credit_deal_structuring_combines_pricing_affordability_liquidity_and_co
     assert "class DealStructuringPackRequest" in schema
 
     assert "def _deal_structuring_intelligence(" in router
-    assert "quick_loan_affordability(" in router
+    assert "quick_loan_affordability(" not in router
     assert "_minimum_viable_pricing(" in router
     assert "_prudential_intelligence(" in router
     assert '@router.post("/pricing/deal-structures")' in router
