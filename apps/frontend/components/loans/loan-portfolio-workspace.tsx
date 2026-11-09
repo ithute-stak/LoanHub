@@ -422,6 +422,19 @@ export function LoanPortfolioWorkspace({
         () => new Map(branches.map((branch) => [branch.id, branch])),
         [branches],
     );
+    // Only the persisted replacement-loan relationship proves why a completed
+    // loan closed. A zero balance alone must never be labelled a top-up.
+    const fundedTopUpByParent = useMemo(() => {
+        const replacements = new Map<string, Loan>();
+        for (const child of loans) {
+            if (!child.is_top_up || !child.parent_loan_id || !["active", "completed"].includes(child.status) || !child.disbursed_at) continue;
+            const existing = replacements.get(child.parent_loan_id);
+            if (!existing || (child.disbursed_at ?? "") > (existing.disbursed_at ?? "")) {
+                replacements.set(child.parent_loan_id, child);
+            }
+        }
+        return replacements;
+    }, [loans]);
 
     const rows = useMemo<PortfolioRow[]>(() => loans.map((loan) => {
         const client = clientByBorrower.get(loan.borrower_id);
@@ -485,9 +498,9 @@ export function LoanPortfolioWorkspace({
         label: client?.full_name
             ? `${client.full_name} · ${loan.folio_number || loan.loan_reference}`
             : (loan.folio_number || loan.loan_reference),
-        description: [`Loan ${loan.loan_reference}`, titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
+        description: [`Loan ${loan.loan_reference}`, loan.status === "completed" && fundedTopUpByParent.has(loan.id) ? "Settled via top-up" : titleCase(loan.status), formatMoney(loan.balance), nextDueDate ? `Due ${formatDate(nextDueDate)}` : null].filter(Boolean).join(" · "),
         keywords: [loan.loan_reference, loan.folio_number, loan.folio_group_code, String(loan.folio_sequence), loan.id, loan.borrower_id, client?.phone ?? "", client?.national_id ?? "", client?.employer_name ?? ""],
-    })), [rows]);
+    })), [rows, fundedTopUpByParent]);
 
     const optionSets = useMemo(() => ({
         statuses: uniqueStrings(rows.map(({loan}) => loan.status)),
@@ -1144,6 +1157,12 @@ function LoanTable({
                     const blockedPayout = canDisburse && loan.status === "approved" && signedContractRequired && contract?.status !== "signed";
                     const safeProgress = Math.max(0, Math.min(100, progress));
                     const operationalReference = loan.folio_number || loan.loan_reference;
+                    const replacement = loan.status === "completed" && Number(loan.balance) <= 0.005
+                        ? fundedTopUpByParent.get(loan.id)
+                        : undefined;
+                    const originalLoan = loan.is_top_up && loan.parent_loan_id
+                        ? loans.find((item) => item.id === loan.parent_loan_id)
+                        : undefined;
 
                     return <TableRow key={loan.id} className="group hover:bg-muted/35">
                         <TableCell className="pl-4">
@@ -1194,15 +1213,25 @@ function LoanTable({
                         <TableCell>
                             <div className="w-full min-w-[88px]">
                                 <div className="mb-1 flex items-center justify-between gap-2">
-                                    <span className="text-[10px] font-bold tabular-nums">{safeProgress.toFixed(0)}%</span>
+                                    <span className="text-[10px] font-bold tabular-nums" title={replacement ? "Cash repayment progress is separate from internal top-up settlement" : undefined}>{replacement ? "Refinanced" : `${safeProgress.toFixed(0)}%`}</span>
                                 </div>
-                                <Progress className="h-1.5" value={safeProgress}/>
+                                <Progress className="h-1.5" value={replacement ? 100 : safeProgress}/>
                             </div>
                         </TableCell>
 
                         <TableCell>
                             <div className="flex flex-col items-start gap-1">
-                                <Badge variant={loan.status === "active" || loan.status === "completed" ? "default" : "secondary"} className="h-5 rounded-full px-2 text-[9px] font-bold">{titleCase(loan.status)}</Badge>
+                                {replacement ? (
+                                    <>
+                                        <Badge variant="secondary" className="h-5 rounded-full px-2 text-[9px] font-bold" title="Old facility settled internally through an authorised replacement top-up; not a normal cash repayment">Settled via top-up</Badge>
+                                        <Link className="max-w-[160px] text-[9px] font-medium text-primary underline-offset-2 hover:underline" href={`/company/loans?folio=${encodeURIComponent(replacement.folio_number || replacement.loan_reference)}`} title={`Open replacement loan ${replacement.loan_reference}`}>
+                                            Replaced by {replacement.folio_number || replacement.loan_reference}
+                                        </Link>
+                                    </>
+                                ) : (
+                                    <Badge variant={loan.status === "active" || loan.status === "completed" ? "default" : "secondary"} className="h-5 rounded-full px-2 text-[9px] font-bold">{titleCase(loan.status)}</Badge>
+                                )}
+                                {originalLoan ? <span className="max-w-[160px] text-[9px] text-muted-foreground" title={`Replaced original loan ${originalLoan.loan_reference}`}>Top-up of {originalLoan.folio_number || originalLoan.loan_reference}</span> : null}
                                 {loan.is_overdue ? <Badge variant="destructive" className="h-5 rounded-full px-2 text-[9px]">Overdue</Badge> : <span className="text-[9px] text-muted-foreground">{titleCase(loan.risk_level)} risk</span>}
                             </div>
                         </TableCell>
