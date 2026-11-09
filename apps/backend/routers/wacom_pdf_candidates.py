@@ -74,7 +74,18 @@ def _cleanup_failed_candidate(stored):
         pass
 
 
-def _verify_existing(db, ctx, row, intent, authorization):
+def _verify_existing(db, ctx, row, intent, authorization, contract):
+    # An archived candidate is NOT a signed document. Never acknowledge
+    # a stale reservation as usable once its source contract has changed.
+    if (contract is None or contract.company_id != ctx.company_id
+            or contract.id != intent.contract_id
+            or contract.borrower_id != intent.borrower_id
+            or contract.pdf_file_id != intent.source_file_id
+            or str(contract.version) != intent.document_version
+            or contract.status == "signed"
+            or contract.borrower_signed_at is not None
+            or contract.locked_at is not None):
+        raise HTTPException(409, "Contract changed since candidate archival")
     if (row.company_id != ctx.company_id or row.intent_id != intent.id
             or row.authorization_id != authorization.id
             or row.contract_id != intent.contract_id
@@ -134,7 +145,7 @@ def archive_pdf_candidate(
         WacomExecutionReceipt.contract_id == intent.contract_id,
     ).with_for_update().one_or_none()
     if receipt is not None:
-        return _verify_existing(db, ctx, receipt, intent, authorization)
+        return _verify_existing(db, ctx, receipt, intent, authorization, contract)
 
     # Do not permit replay by the capture/review/approval/archival actors.
     if ctx.user.id in {
