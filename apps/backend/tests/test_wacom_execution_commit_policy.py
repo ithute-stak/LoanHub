@@ -28,7 +28,8 @@ def example():
     receipt = R(
         company_id=company, contract_id=contract, intent_id=intent_id,
         authorization_id=authorization_id, packet_id=packet_id,
-        status="reserved", executed_file_id=None, executed_at=None,
+        status="reserved", executed_file_id=None, executed_pdf_sha256=digest,
+        executed_at=None,
         reserved_by=operator, reserved_at=now-timedelta(seconds=10),
         document_sha256=intent.document_sha256,
         evidence_sha256=intent.evidence_sha256,
@@ -41,6 +42,7 @@ def example():
         mime_type="application/pdf", category="wacom_execution_candidate",
         checksum_sha256=digest,
     )
+    receipt.executed_file_id = file.id
     return dict(
         intent=intent, approval=approval, packet=packet,
         execution_authorization=authorization, receipt=receipt,
@@ -67,7 +69,7 @@ def test_commit_gate_accepts_consistent_synthetic_candidate():
 
 
 @pytest.mark.parametrize("record,field,value,denial", [
-    ("receipt", "status", "executed", "execution_receipt_not_reserved"),
+    ("receipt", "status", "executed", "execution_receipt_not_bound_to_candidate"),
     ("receipt", "executed_at", datetime.now(timezone.utc), "execution_receipt_not_reserved"),
     ("receipt", "authorization_id", uuid4(), "execution_receipt_scope_mismatch"),
     ("receipt", "field_binding_sha256", "0"*64, "execution_receipt_field_changed"),
