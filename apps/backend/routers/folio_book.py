@@ -22,6 +22,7 @@ from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import UserRole
 from database.session import get_db
 from services.folio_book_service import FolioBookFilters, _company_loans_query, _row_payload, build_folio_book, folio_book_csv
+from services.folio_performance_service import build_folio_performance
 
 
 router = APIRouter(prefix="/folio-book", tags=["Loan Folio Book"])
@@ -118,6 +119,15 @@ def _filters(
         status=status,
         branch_id=branch_id,
     )
+
+
+@router.get("/performance")
+def folio_performance(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    require_tenant_roles(context, FOLIO_BOOK_ROLES)
+    return build_folio_performance(db, context=context)
 
 
 @router.get("")

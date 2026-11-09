@@ -166,3 +166,31 @@ export async function downloadFolioDueInstallmentsPdf(groupCode?: string): Promi
     ? `LoanHub-Due-Installments-${groupCode}.pdf`
     : "LoanHub-Due-Installments-All-Groups.pdf");
 }
+
+
+export type FolioPerformanceMetrics = {
+  loan_count: number;
+  active_loans: number;
+  overdue_loans: number;
+  principal: number;
+  lifetime_paid: number;
+  outstanding_balance: number;
+  month_scheduled: number;
+  month_unpaid: number;
+  overdue_instalments: number;
+  recorded_month_collections: number;
+};
+
+export type FolioPerformance = {
+  as_of: string;
+  month: string;
+  currency: string;
+  scope: "company" | "branch";
+  totals: FolioPerformanceMetrics;
+  groups: Array<FolioPerformanceMetrics & { group_code: string }>;
+  definitions: Record<string, string>;
+};
+
+export async function getFolioPerformance(): Promise<FolioPerformance> {
+  return (await api.get<FolioPerformance>("/folio-book/performance")).data;
+}
