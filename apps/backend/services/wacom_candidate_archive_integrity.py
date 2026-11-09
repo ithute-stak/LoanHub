@@ -113,6 +113,8 @@ def candidate_archive_blockers(
         expected_sha256=intent.document_sha256,
     ):
         errors.append("approved_field_binding_changed")
+    if isinstance(candidate_pdf, bytes) and candidate_pdf == source_pdf:
+        errors.append("candidate_does_not_change_original")
     if (not isinstance(candidate_pdf, bytes)
             or len(candidate_pdf) > 25 * 1024 * 1024
             or not candidate_pdf.startswith(b"%PDF-")):
