@@ -63,6 +63,7 @@ def verify_workstation_key(
     # Normal LoanHub staff login AND independently verified PC bridge session.
     authorize_bridge_session(
         db, context=ctx, token=x_wacom_bridge_session,
+        workstation_id=body.workstation_id,
     )
     enrollment = _eligible_device(db, ctx, body.workstation_id)
     row = db.query(WacomExecutionCeremonyChallenge).filter(
@@ -122,9 +123,11 @@ def verify_workstation_key(
             "contract_signed": False,
         },
     ))
-    if datetime.now(timezone.utc) >= row.expires_at.replace(
-        tzinfo=timezone.utc
-    ) if row.expires_at.tzinfo is None else datetime.now(timezone.utc) >= row.expires_at:
+    expiry = row.expires_at
+    if expiry is None or expiry.tzinfo is None or expiry.utcoffset() is None:
+        db.rollback()
+        raise HTTPException(409, "Invalid ceremony expiry")
+    if datetime.now(timezone.utc) >= expiry:
         db.rollback()
         raise HTTPException(409, "Ceremony expired before workstation proof commit")
     db.commit()
