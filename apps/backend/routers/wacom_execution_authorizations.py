@@ -27,6 +27,7 @@ from database.models.wacom_execution_authorization import WacomExecutionAuthoriz
 from database.session import get_db
 from routers.wacom_finalization_approvals import _review_sources
 from services.file_service import read_file_bytes
+from services.wacom_approved_field import bind_approved_field, stored_field_matches
 from services.wacom_execution_authorization_policy import (
     authorization_request_blockers, authorization_decision_blockers,
 )
@@ -46,11 +47,22 @@ router = APIRouter(
 )
 
 
+class FieldRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page_index: int = Field(ge=0, le=99)
+    page_count: int = Field(ge=1, le=100)
+    x: float
+    y: float
+    width: float
+    height: float
+
+
 class AuthorizationDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: str = Field(pattern=r"^(approve|reject)$")
     reference: str = Field(min_length=8, max_length=180)
     exact_document_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    exact_field_binding_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 def _response(row):
@@ -60,6 +72,7 @@ def _response(row):
         "intent_id": str(row.intent_id),
         "contract_id": str(row.contract_id),
         "packet_id": str(row.packet_id),
+        "field_binding_sha256": row.field_binding_sha256,
         "status": row.status,
         "expires_at": row.expires_at,
         "contract_signed": False,
@@ -125,6 +138,7 @@ def _audit(db, ctx, row, action):
 @router.post("/intents/{intent_id}", status_code=201)
 def request_execution_authorization(
     intent_id: UUID,
+    body: FieldRequest,
     response: Response,
     db: Session = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
@@ -140,6 +154,21 @@ def request_execution_authorization(
         raise HTTPException(409, "Wacom execution authorization prerequisites not met")
     _review_sources(db, ctx, intent)
     _confirm_packet(db, ctx, packet)
+    source_record = db.query(ManagedFile).filter(
+        ManagedFile.id == intent.source_file_id,
+        ManagedFile.company_id == ctx.company_id,
+    ).one_or_none()
+    if source_record is None:
+        raise HTTPException(409, "Original contract PDF missing")
+    try:
+        field, field_digest = bind_approved_field(
+            source_pdf=read_file_bytes(source_record),
+            expected_sha256=intent.document_sha256,
+            page_index=body.page_index, expected_page_count=body.page_count,
+            x=body.x, y=body.y, width=body.width, height=body.height,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, "Signature field invalid for approved contract PDF") from exc
     existing = db.query(WacomExecutionAuthorization).filter(
         WacomExecutionAuthorization.company_id == ctx.company_id,
         WacomExecutionAuthorization.contract_id == intent.contract_id,
@@ -158,6 +187,10 @@ def request_execution_authorization(
         evidence_sha256=intent.evidence_sha256, binding_sha256=intent.binding_sha256,
         status="pending", requested_by=ctx.user.id,
         requested_at=now, expires_at=expires_at,
+        field_page_index=field.page_index, field_page_count=field.page_count,
+        field_x=field.x, field_y=field.y,
+        field_width=field.width, field_height=field.height,
+        field_binding_sha256=field_digest,
     )
     db.add(row)
     _audit(db, ctx, row, "wacom.execution_authorization_requested")
@@ -200,6 +233,17 @@ def decide_execution_authorization(
         raise HTTPException(409, "Authorization invalid, expired or not independent")
     if body.exact_document_sha256 != row.document_sha256:
         raise HTTPException(409, "Exact document confirmation mismatch")
+    if body.exact_field_binding_sha256 != row.field_binding_sha256:
+        raise HTTPException(409, "Approved signature field confirmation mismatch")
+    source_record = db.query(ManagedFile).filter(
+        ManagedFile.id == intent.source_file_id,
+        ManagedFile.company_id == ctx.company_id,
+    ).one_or_none()
+    if source_record is None or not stored_field_matches(
+        authorization=row, source_pdf=read_file_bytes(source_record),
+        expected_sha256=intent.document_sha256,
+    ):
+        raise HTTPException(409, "Signature field or source PDF changed")
     _review_sources(db, ctx, intent)
     _confirm_packet(db, ctx, packet)
     row.status = "approved" if body.decision == "approve" else "rejected"
