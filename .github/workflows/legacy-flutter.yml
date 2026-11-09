@@ -53,7 +53,7 @@ jobs:
         run: flutter build apk --debug --dart-define=LOANHUB_API_URL=https://api.loanhub.co.ls/api/v1
 
       - name: Publish Android test APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: loanhub-legacy-csv-android-debug
           path: apps/legacy_csv_flutter/build/app/outputs/flutter-apk/app-debug.apk
