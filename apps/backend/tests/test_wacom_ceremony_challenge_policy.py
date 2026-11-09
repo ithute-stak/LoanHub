@@ -20,6 +20,7 @@ def sample():
         id=authorization_id, company_id=company, intent_id=intent_id,
         contract_id=contract_id, status="approved", consumed_at=None,
         authorized_by=actors[2], requested_by=actors[3],
+        expires_at=now+timedelta(seconds=90),
         field_binding_sha256="b"*64,
     )
     receipt = R(
@@ -81,6 +82,12 @@ def test_rejects_existing_challenge_and_reviewer_reuse():
     v=sample()
     v["requesting_user_id"] = v["authorization"].authorized_by
     assert "ceremony_requester_not_independent" in blockers(**v)
+
+
+def test_expired_authorization_cannot_issue_new_challenge():
+    v = sample()
+    v["authorization"].expires_at = v["now"]-timedelta(seconds=1)
+    assert "ceremony_not_eligible" in blockers(**v)
 
 
 def test_two_minute_challenge_is_bound_to_clock():
