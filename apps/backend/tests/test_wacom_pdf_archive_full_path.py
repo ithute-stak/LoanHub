@@ -139,3 +139,113 @@ def test_no_double_execution_or_reusing_original_contract():
     options, _ = fixture()
     options["candidate_file"].id = options["intent"].source_file_id
     assert "candidate_overwrites_original" in policy.execution_commit_blockers(**options)
+
+
+def test_real_archive_route_returns_unsigned_candidate_and_exact_retry(monkeypatch):
+    """Drive the actual endpoint through PDF rendering, receipt and two requests.
+
+    Storage and database boundaries are fakes; the renderer and final commit
+    gate are real. This is synthetic, not an authenticated HTTP/hardware test.
+    """
+    from fastapi import Response
+    from database.models.file_management import ManagedFile
+    from database.models.origination import LoanContract
+    from database.models.wacom_execution_authorization import WacomExecutionAuthorization
+    from database.models.wacom_execution_receipt import WacomExecutionReceipt
+    from database.models.enums import UserRole
+    from routers import wacom_pdf_candidates as endpoint
+
+    values, _ = fixture()
+    intent = values["intent"]
+    authorization = values["execution_authorization"]
+    tenant = intent.company_id
+    # Completely independent actors for archive vs prior review/approval.
+    actors = [uuid4() for _ in range(8)]
+    intent.operator_user_id, intent.review_by = actors[0], actors[1]
+    approval = R(requested_by=actors[2], decided_by=actors[3])
+    packet = R(created_by_user_id=actors[4])
+    authorization.requested_by = actors[5]
+    source = R(id=intent.source_file_id, company_id=tenant,
+               payload=values["source_pdf"])
+    intent.evidence_file_id = uuid4()
+    evidence = R(id=intent.evidence_file_id, company_id=tenant,
+                 payload=values["handwriting_png"])
+    context = R(
+        company_id=tenant, branch_id=None,
+        staff=R(role=UserRole.COMPANY_ADMIN),
+        user=R(id=actors[7]),
+        is_platform_admin=False,
+    )
+    contract = R(id=intent.contract_id, company_id=tenant)
+    state = {"receipt": None, "saved": None, "managed_calls": 0, "commits": 0}
+    class Query:
+        def __init__(self, model):
+            self.model = model
+        def filter(self, *clauses):
+            return self
+        def with_for_update(self):
+            return self
+        def one_or_none(self):
+            if self.model is WacomExecutionAuthorization:
+                return authorization
+            if self.model is LoanContract:
+                return contract
+            if self.model is WacomExecutionReceipt:
+                return state["receipt"]
+            if self.model is ManagedFile:
+                state["managed_calls"] += 1
+                if state["managed_calls"] == 1:
+                    return source
+                if state["managed_calls"] == 2:
+                    return evidence
+                return state["saved"]
+            raise AssertionError(f"unexpected query: {self.model}")
+    class Db:
+        def query(self, model):
+            return Query(model)
+        def add(self, row):
+            if isinstance(row, WacomExecutionReceipt):
+                state["receipt"] = row
+        def commit(self):
+            state["commits"] += 1
+        def rollback(self):
+            raise AssertionError("Valid archive unexpectedly rolled back")
+
+    def store_bytes(_db, *, content, **kwargs):
+        saved = R(
+            id=uuid4(), company_id=tenant, payload=content,
+            is_deleted=False, is_encrypted=True, is_confidential=True,
+            scan_status="clean", mime_type="application/pdf",
+            category="wacom_execution_candidate",
+            checksum_sha256=sha256(content).hexdigest(),
+        )
+        state["saved"] = saved
+        return saved
+
+    monkeypatch.setattr(endpoint, "_locked_sources",
+                        lambda *args: (approval, intent, packet))
+    monkeypatch.setattr(endpoint, "_review_sources", lambda *args: None)
+    monkeypatch.setattr(endpoint, "_confirm_packet", lambda *args: None)
+    monkeypatch.setattr(endpoint, "store_bytes", store_bytes)
+    monkeypatch.setattr(endpoint, "read_file_bytes", lambda file: file.payload)
+    # Source preflight has its own tests, but is not the focus here.
+    monkeypatch.setattr(endpoint, "reserve_execution_blockers", lambda **kwargs: [])
+    # The final commit policy remains real, including PDF/field/hash checks.
+    db = Db()
+    first = endpoint.archive_pdf_candidate(
+        authorization_id=authorization.id, response=Response(), db=db, ctx=context,
+    )
+    assert first["status"] == "candidate_archived_not_signed"
+    assert first["duplicate"] is False
+    assert first["contract_signed"] is False
+    assert state["commits"] == 1
+    assert state["receipt"].status == "reserved"
+    assert state["receipt"].executed_at is None
+    assert sha256(state["saved"].payload).hexdigest() == first["candidate_pdf_sha256"]
+    # The real route must not create a second file or receipt on exact retry.
+    again = endpoint.archive_pdf_candidate(
+        authorization_id=authorization.id, response=Response(), db=db, ctx=context,
+    )
+    assert again["duplicate"] is True
+    assert again["candidate_file_id"] == first["candidate_file_id"]
+    assert state["commits"] == 1
