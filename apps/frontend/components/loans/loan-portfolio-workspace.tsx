@@ -1215,7 +1215,7 @@ function LoanTable({
                                 <div className="mb-1 flex items-center justify-between gap-2">
                                     <span className="text-[10px] font-bold tabular-nums" title={replacement ? "Cash repayment progress is separate from internal top-up settlement" : undefined}>{replacement ? "Refinanced" : `${safeProgress.toFixed(0)}%`}</span>
                                 </div>
-                                <Progress className="h-1.5" value={replacement ? 100 : safeProgress}/>
+                                {!replacement ? <Progress className="h-1.5" value={safeProgress}/> : <p className="text-[9px] text-muted-foreground">Internal settlement, not cash repaid</p>}
                             </div>
                         </TableCell>
 
