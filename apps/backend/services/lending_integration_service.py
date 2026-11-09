@@ -144,9 +144,6 @@ def application_integration_readiness(
         .first()
     )
     cdas_selected = bool(application.cdas_collection_enabled)
-    # Top-up approval must never depend on a retired affordability/capacity decision.
-    # CDAS mandate creation retains its independent provider-side validation.
-    enforce_cdas_capacity_in_readiness = application.application_type != "top_up"
     cdas_verified = bool(
         cdas_profile
         and cdas_profile.verified
@@ -165,7 +162,6 @@ def application_integration_readiness(
         cdas_verified
         and cdas_provider_configured
         and cdas_provider_enabled
-        and (not enforce_cdas_capacity_in_readiness or bool(cdas_capacity["capacity_sufficient"]))
     )
     if cdas_selected and not cdas_verified:
         blockers.append(
@@ -176,9 +172,6 @@ def application_integration_readiness(
                 "action_path": f"/company/cdas?application={application.id}",
             }
         )
-
-    if cdas_selected and cdas_verified and enforce_cdas_capacity_in_readiness and not cdas_capacity["capacity_sufficient"]:
-        blockers.extend(cdas_capacity["blockers"])
 
     if cdas_selected and not cdas_provider_configured:
         blockers.append(
