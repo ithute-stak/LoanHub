@@ -56,8 +56,16 @@ def execution_commit_blockers(
             or receipt.authorization_id != execution_authorization.id
             or receipt.packet_id != packet.id):
         reasons.append("execution_receipt_scope_mismatch")
-    if receipt.status != "reserved" or receipt.executed_file_id is not None or receipt.executed_at is not None:
-        reasons.append("execution_receipt_not_reserved")
+    # The candidate is already durably written and assigned to the new
+    # reserved receipt before this final pre-commit validation. Requiring
+    # executed_file_id to be NULL rejects every legitimate archive.
+    # This is candidate archival, not legally operative contract execution.
+    if (receipt.status != "reserved"
+            or receipt.executed_at is not None
+            or receipt.executed_file_id is None
+            or receipt.executed_file_id != candidate_file.id
+            or receipt.executed_pdf_sha256 != candidate_sha256):
+        reasons.append("execution_receipt_not_bound_to_candidate")
     if receipt.reserved_by != executing_user_id or _utc(receipt.reserved_at) is None:
         reasons.append("execution_reservation_owner_changed")
     if any(
