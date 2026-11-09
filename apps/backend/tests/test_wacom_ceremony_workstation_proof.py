@@ -19,7 +19,7 @@ from routers import wacom_ceremony_proofs as routes
 
 def context():
     now = datetime.now(timezone.utc)
-    secret = base64.urlsafe_b64encode(b"synthetic-nonce-" * 4).decode("ascii").rstrip("=")
+    secret = base64.urlsafe_b64encode(b"synthetic-nonce-" * 3).decode("ascii").rstrip("=")
     assert len(secret) == 64
     key = Ed25519PrivateKey.generate()
     company, pc, operator = uuid4(), uuid4(), uuid4()
