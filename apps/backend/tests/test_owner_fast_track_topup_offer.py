@@ -20,4 +20,4 @@ def test_topup_creates_draft_then_requests_management_approval():
     assert "originationApi.approveTopUpException(application.id" in DIRECT
     assert '"draft"' in DIRECT
     assert 'disburseLoan(' not in DIRECT
-    assert 'No affordability assessment' not in DIRECT or 'no credit origination wizard or affordability assessment' in DIRECT
+    assert "originationApi.submit(application.id)" in DIRECT
