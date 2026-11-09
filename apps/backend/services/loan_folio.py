@@ -165,6 +165,8 @@ def assign_loan_folio(_mapper: Any, connection: Any, target: Any) -> None:
     group_code = None
     if company_code == "BFS":
         group_code = bfs_paydate_folio_group(loan_pay_day(target))
+        if group_code is None:
+            raise ValueError("BFS loan requires a valid contractual pay day (1–31) before folio allocation")
     if group_code is None:
         group_code = employer_folio_code(
             group_code=employer.get("group_code"),
