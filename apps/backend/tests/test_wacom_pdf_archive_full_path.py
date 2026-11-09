@@ -177,7 +177,12 @@ def test_real_archive_route_returns_unsigned_candidate_and_exact_retry(monkeypat
         user=R(id=actors[7]),
         is_platform_admin=False,
     )
-    contract = R(id=intent.contract_id, company_id=tenant)
+    intent.document_version = "1"
+    contract = R(
+        id=intent.contract_id, company_id=tenant,
+        borrower_id=intent.borrower_id, pdf_file_id=intent.source_file_id,
+        version=1, status="draft", borrower_signed_at=None, locked_at=None,
+    )
     state = {"receipt": None, "saved": None, "managed_calls": 0, "commits": 0}
     class Query:
         def __init__(self, model):
@@ -250,3 +255,29 @@ def test_real_archive_route_returns_unsigned_candidate_and_exact_retry(monkeypat
     assert again["duplicate"] is True
     assert again["candidate_file_id"] == first["candidate_file_id"]
     assert state["commits"] == 1
+
+def test_candidate_retry_rejects_changed_or_signed_contract():
+    from fastapi import HTTPException
+    from routers.wacom_pdf_candidates import _verify_existing
+    values, _ = fixture()
+    intent = values["intent"]
+    intent.document_version = "1"
+    contract = R(
+        id=intent.contract_id, company_id=intent.company_id,
+        borrower_id=intent.borrower_id, pdf_file_id=intent.source_file_id,
+        version=1, status="draft", borrower_signed_at=None, locked_at=None,
+    )
+    ctx = R(company_id=intent.company_id)
+    for field, changed in (
+        ("status", "signed"),
+        ("borrower_signed_at", datetime.now(timezone.utc)),
+        ("version", 2),
+        ("pdf_file_id", uuid4()),
+        ("borrower_id", uuid4()),
+        ("company_id", uuid4()),
+    ):
+        modified = R(**vars(contract))
+        setattr(modified, field, changed)
+        with pytest.raises(HTTPException) as exc:
+            _verify_existing(None, ctx, R(), intent, values["execution_authorization"], modified)
+        assert exc.value.status_code == 409
