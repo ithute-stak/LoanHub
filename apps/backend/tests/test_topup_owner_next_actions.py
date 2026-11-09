@@ -1,24 +1,26 @@
-"""Owner top-up decision centre should only show stage-appropriate actions."""
+"""Owner top-up decision centre must navigate to the direct top-up page."""
 from pathlib import Path
 
-SOURCE = (Path(__file__).resolve().parents[2] / "frontend/app/(dashboard)/company/origination/decision-centre/[applicationId]/page.tsx").read_text()
+ROOT = Path(__file__).resolve().parents[2] / "frontend"
+DECISION = (ROOT / "app/(dashboard)/company/origination/decision-centre/[applicationId]/page.tsx").read_text()
+TOPUP = (ROOT / "app/(dashboard)/company/loans/top-up/page.tsx").read_text()
+DIALOG = (ROOT / "components/loans/compact-top-up-dialog.tsx").read_text()
+WIZARD = (ROOT / "app/(dashboard)/company/origination/new/page.tsx").read_text()
 
 
-def test_owner_uses_draft_fast_track_and_waits_for_authorized_approval():
-    assert 'application.status === "draft"' in SOURCE
-    assert 'Skip forms &amp; offer top-up' in SOURCE
-    assert '["submitted", "under_review"].includes(application.status)' in SOURCE
-    assert 'Review and decide top-up' in SOURCE
-    assert 'application.status === "approved" && application.loan_id' in SOURCE
-    assert 'Open approved loan for contract &amp; disbursement' in SOURCE
-    assert 'do not pay out directly from this application screen' in SOURCE
+def test_decision_centre_directs_topups_to_separate_screen():
+    assert 'application.application_type === "top_up" ? `/company/loans/top-up?application=' in DECISION
+    assert '<Link href={`/company/loans/top-up?application=' in DECISION
+    assert "Open direct top-up" in DECISION
+    assert 'Review and decide top-up' in DECISION
+    assert 'Open approved loan for contract &amp; disbursement' in DECISION
+    assert 'do not pay out directly from this application screen' in DECISION
 
 
-WIZARD = (Path(__file__).resolve().parents[2] / "frontend/app/(dashboard)/company/origination/new/page.tsx").read_text()
-
-
-def test_wizard_uses_method_aware_settlement_instead_of_original_scheduled_balance():
-    assert '/top-up-settlement-preview' in WIZARD
-    assert 'const topUpSettlement = topUpSettlementQuote ?? 0;' in WIZARD
-    assert 'Number(topUpEligibility?.loan?.balance ?? 0)' not in WIZARD
-    assert 'Wait for the verified top-up settlement quote' in WIZARD
+def test_method_aware_settlement_quote_is_visible_before_submission():
+    assert '/top-up-settlement-preview' in DIALOG
+    assert '/top-up-calculation-preview' in DIALOG
+    assert 'Verified settlement quote' in TOPUP
+    assert 'application.top_up_settlement_amount' in TOPUP
+    assert 'settlement quote plus additional cash' in TOPUP
+    assert 'Use saved records & review top-up' not in WIZARD

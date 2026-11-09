@@ -1,18 +1,23 @@
-"""Owner top-up fast track retains underwriting and signing controls."""
+"""Owner top-up direct-entry flow retains management and settlement protections."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WIZARD = (ROOT / "frontend/app/(dashboard)/company/origination/new/page.tsx").read_text()
+DIRECT = (ROOT / "frontend/app/(dashboard)/company/loans/top-up/page.tsx").read_text()
+DECISION = (ROOT / "frontend/app/(dashboard)/company/origination/decision-centre/[applicationId]/page.tsx").read_text()
 
 
-def test_fast_track_skips_form_entry_not_actual_assessment():
-    assert "Skip forms & offer top-up" in WIZARD
-    assert 'activeRole === "company_owner"' in WIZARD
-    section = WIZARD.split("async function skipToTopUpOffer()", 1)[1].split("async function submitApplication()", 1)[0]
-    assert "await ensureApplication()" in section
-    assert "originationApi.assess(current.id" in section
-    assert "proposed_principal: Number(current.requested_amount)" in section
-    assert "originationApi.submit(current.id)" in section
-    assert "setStep(6)" in section
-    assert "originationApi.approve" not in section
-    assert "disburse" not in section
+def test_owner_fast_track_uses_direct_topup_not_origination_wizard():
+    assert 'Open direct top-up' in DECISION
+    assert '/company/loans/top-up?application=' in DECISION
+    assert 'Skip forms &amp; offer top-up' not in DECISION
+    assert '>Top-up existing loan</p>' not in WIZARD
+    assert 'Use saved records & review top-up' not in WIZARD
+
+
+def test_topup_creates_draft_then_requests_management_approval():
+    assert "originationApi.submit(application.id)" in DIRECT
+    assert "originationApi.approveTopUpException(application.id" in DIRECT
+    assert '"draft"' in DIRECT
+    assert 'disburseLoan(' not in DIRECT
+    assert "originationApi.submit(application.id)" in DIRECT
