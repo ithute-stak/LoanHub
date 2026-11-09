@@ -212,3 +212,21 @@ def test_folio_lookup_can_resolve_historical_folios_with_company_and_branch_scop
     assert '"company_id": context.company_id' in router
     assert "ClientCompanyLoan.id == old_loan_id" in router
     assert "_base_query(db, context).filter(" in router
+
+
+def test_corrected_historical_folio_numbers_are_reserved_from_reissue():
+    allocator = (ROOT / "apps" / "backend" / "services" / "loan_folio.py").read_text(encoding="utf-8")
+    assert "to_regclass('bfs_folio_group_correction_audit')" in allocator
+    assert "MAX(old_sequence)" in allocator
+    assert "old_group_code = :group_code" in allocator
+    assert "max(int(next_sequence), int(archived_max_sequence) + 1)" in allocator
+
+
+def test_bfs_folio_preflight_is_read_only():
+    sql = (ROOT / "apps" / "backend" / "scripts" / "sql" /
+           "bfs_se_folio_backfill_preflight.sql").read_text(encoding="utf-8")
+    assert "BEGIN TRANSACTION READ ONLY;" in sql
+    assert "pay_day BETWEEN 1 AND 14" in sql
+    assert "loans_to_move" in sql
+    assert "duplicate_sequences" in sql
+    assert "HAVING COUNT(*) > 1" in sql
