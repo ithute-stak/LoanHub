@@ -70,7 +70,7 @@ def test_commit_gate_accepts_consistent_synthetic_candidate():
 
 @pytest.mark.parametrize("record,field,value,denial", [
     ("receipt", "status", "executed", "execution_receipt_not_bound_to_candidate"),
-    ("receipt", "executed_at", datetime.now(timezone.utc), "execution_receipt_not_reserved"),
+    ("receipt", "executed_at", datetime.now(timezone.utc), "execution_receipt_not_bound_to_candidate"),
     ("receipt", "authorization_id", uuid4(), "execution_receipt_scope_mismatch"),
     ("receipt", "field_binding_sha256", "0"*64, "execution_receipt_field_changed"),
     ("receipt", "document_sha256", "0"*64, "execution_receipt_hashes_changed"),
