@@ -32,11 +32,11 @@ WITH eligible AS (
              NULLIF(l.preferred_payment_day, 0),
              EXTRACT(DAY FROM l.first_payment_due)::integer,
              CASE WHEN (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')
-                           ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                           ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
                THEN EXTRACT(DAY FROM (l.calculation_breakdown #>> '{schedule_rows,0,due_date}')::date)::integer
              END,
              CASE WHEN (l.calculation_breakdown #>> '{due_dates,0}')
-                           ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                           ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
                THEN EXTRACT(DAY FROM (l.calculation_breakdown #>> '{due_dates,0}')::date)::integer
              END
            ) AS pay_day
