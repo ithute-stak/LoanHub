@@ -40,6 +40,7 @@ class WacomExecutionReceipt(Base):
     document_sha256 = Column(String(64), nullable=False)
     evidence_sha256 = Column(String(64), nullable=False)
     binding_sha256 = Column(String(64), nullable=False)
+    field_binding_sha256 = Column(String(64), nullable=False)
     status = Column(String(16), nullable=False, default="reserved")
     reserved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     reserved_at = Column(DateTime(timezone=True), nullable=False)
