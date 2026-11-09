@@ -267,3 +267,30 @@ func TestPCUIWorkstationProofRejectsWrongAssignmentBeforeOperatorStatus(t *testi
     if count!=2 {t.Fatalf("Expected login plus assignment check only, got %d calls",count)}
     if ui.sessions[cookie.Value].client!=nil {t.Fatal("Rejected device retained token")}
 }
+
+
+func TestPCUIChromeSameOriginLoginAndStrictOrigin(t *testing.T) {
+    ui,err:=newPCUI("https://loanhub.example")
+    if err!=nil {t.Fatal(err)}
+    cookie,csrf,html:=localUIGet(t,ui)
+    if !strings.Contains(html,`<meta name="referrer" content="same-origin">`) {
+        t.Fatal("local browser must preserve same-origin referrer policy")
+    }
+    req:=httptest.NewRequest(http.MethodGet,pcUIOrigin+"/",nil)
+    response:=httptest.NewRecorder()
+    ui.ServeHTTP(response,req)
+    if got:=response.Header().Get("Referrer-Policy"); got!="same-origin" {
+        t.Fatalf("unexpected referrer policy: %q",got)
+    }
+    payload:=url.Values{"csrf":{csrf},"phone":{"59000000"},"password":{"synthetic-password"}}
+    for _,origin:=range []string{"null","","https://evil.example","http://localhost:8767"} {
+        post:=localUIPost(ui,cookie,"/login",payload,origin)
+        if post.Code!=http.StatusForbidden {
+            t.Fatalf("origin %q unexpectedly accepted: %d",origin,post.Code)
+        }
+    }
+    post:=localUIPost(ui,cookie,"/login",payload,pcUIOrigin)
+    if post.Code!=http.StatusOK {
+        t.Fatalf("same-origin login POST blocked: %d",post.Code)
+    }
+}
