@@ -189,6 +189,28 @@ def assign_loan_folio(_mapper: Any, connection: Any, target: Any) -> None:
         {"company_id": target.company_id, "group_code": group_code},
     ).scalar_one()
 
+    # Keep historical folio identifiers reserved after the separately approved
+    # BFS reclassification. Otherwise an old Force/CIVIL/employer folio could
+    # be reissued to another loan and make archived contract lookup ambiguous.
+    # The audit table may not yet exist on installations awaiting the backfill.
+    if company_code == "BFS":
+        audit_exists = connection.execute(
+            text("SELECT to_regclass('bfs_folio_group_correction_audit') IS NOT NULL")
+        ).scalar()
+        if audit_exists:
+            archived_max_sequence = connection.execute(
+                text(
+                    """
+                    SELECT COALESCE(MAX(old_sequence), 0)
+                    FROM bfs_folio_group_correction_audit
+                    WHERE company_id = :company_id
+                      AND old_group_code = :group_code
+                    """
+                ),
+                {"company_id": target.company_id, "group_code": group_code},
+            ).scalar_one()
+            next_sequence = max(int(next_sequence), int(archived_max_sequence) + 1)
+
     target.folio_company_code = company_code
     target.folio_group_code = group_code
     target.folio_sequence = int(next_sequence)
