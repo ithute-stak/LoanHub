@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import io
-from decimal import Decimal
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageChops, UnidentifiedImageError
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
 from reportlab.lib.utils import ImageReader
@@ -42,7 +42,14 @@ def render_final_pdf_candidate(
             len(handwriting_png) > MAX_PNG_BYTES or
             hashlib.sha256(handwriting_png).hexdigest() != expected_handwriting_sha256):
         raise HTTPException(409, "Handwriting evidence changed")
+    now = datetime.now(timezone.utc)
+    expiry = getattr(authorization, "expires_at", None)
     if (authorization is None
+            or getattr(authorization, "status", None) != "approved"
+            or getattr(authorization, "consumed_at", None) is not None
+            or getattr(authorization, "authorized_by", None) is None
+            or not isinstance(expiry, datetime) or expiry.tzinfo is None
+            or expiry.utcoffset() is None or expiry <= now
             or authorization.document_sha256 != expected_source_sha256
             or authorization.evidence_sha256 != expected_handwriting_sha256
             or not stored_field_matches(
@@ -67,11 +74,15 @@ def render_final_pdf_candidate(
         if ink.getbbox() is None:
             raise ValueError("Blank handwriting")
         if ink.mode == "RGBA":
-            alpha = ink.getchannel("A")
-            if alpha.getextrema()[1] == 0:
-                raise ValueError("Fully transparent handwriting")
-        elif ink.convert("L").getextrema() == (255, 255):
-            raise ValueError("Blank white handwriting")
+            ink_on_white = Image.new("RGBA", ink.size, (255, 255, 255, 255))
+            ink_on_white.alpha_composite(ink)
+            visible = ink_on_white.convert("RGB")
+        else:
+            visible = ink
+        if ImageChops.difference(
+            visible.convert("RGB"), Image.new("RGB", visible.size, "white")
+        ).getbbox() is None:
+            raise ValueError("No visible handwriting")
 
         writer = PdfWriter()
         field = authorization
