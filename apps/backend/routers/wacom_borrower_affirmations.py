@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from typing import Literal
 
-from core.access_control import get_current_active_user
+from core.access_control import TenantContext, get_user_context
 from database.models.user import User
 from database.models.enums import UserRole
 from database.models.borrower import Borrower
@@ -126,14 +126,14 @@ def _check(*, db, borrower, challenge_id, user_id, lock, displayed_candidate_sha
 def review_candidate_pdf(
     challenge_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    ctx: TenantContext = Depends(get_user_context),
 ):
-    borrower = _borrower(db, current_user)
+    borrower = _borrower(db, ctx.user)
     challenge, authorization, receipt, candidate = _records(db, borrower, challenge_id)
     pdf = _verified_bytes(candidate)
     if borrower_affirmation_blockers(
         challenge=challenge, borrower=borrower, authorization=authorization,
-        receipt=receipt, candidate_file=candidate, user_id=current_user.id,
+        receipt=receipt, candidate_file=candidate, user_id=ctx.user.id,
         candidate_pdf=pdf, displayed_candidate_sha256=challenge.candidate_sha256,
         displayed_field_sha256=challenge.field_binding_sha256,
     ):
@@ -166,7 +166,7 @@ def affirm_exact_candidate(
         displayed_candidate_sha256=body.displayed_candidate_sha256,
         displayed_field_sha256=body.displayed_field_sha256,
     )
-    challenge.borrower_affirmed_user_id = current_user.id
+    challenge.borrower_affirmed_user_id = ctx.user.id
     challenge.borrower_affirmed_at = now
     challenge.borrower_affirmation_sha256 = affirmation_digest(
         challenge_id=challenge.id, user_id=current_user.id,
@@ -174,7 +174,7 @@ def affirm_exact_candidate(
         field_sha256=body.displayed_field_sha256, now=now,
     )
     db.add(AuditLog(
-        user_id=current_user.id, company_id=challenge.company_id,
+        user_id=ctx.user.id, company_id=challenge.company_id,
         action="wacom.borrower_pdf_candidate_affirmed",
         table_name="wacom_execution_ceremony_challenges",
         entity_type="wacom_execution_ceremony_challenge",
