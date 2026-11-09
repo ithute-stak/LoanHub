@@ -45,6 +45,8 @@ def ceremony_challenge_blockers(
         or authorization.status != "approved"
         or authorization.consumed_at is not None
         or not authorization.authorized_by
+        or _utc(getattr(authorization, "expires_at", None)) is None
+        or _utc(authorization.expires_at) <= now
     ):
         denial.append("ceremony_not_eligible")
     if (
