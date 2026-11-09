@@ -827,6 +827,8 @@ export function LoanPortfolioWorkspace({
                     </div>
                 </div>
                 <LoanTable
+                    allLoans={loans}
+                    fundedTopUpByParent={fundedTopUpByParent}
                     rows={pageRows}
                     canDisburse={canDisburse}
                     signedContractRequired={signedContractRequired}
@@ -1012,6 +1014,8 @@ export function LoanPortfolioWorkspace({
 
                         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
                             <LoanTable
+                    allLoans={loans}
+                    fundedTopUpByParent={fundedTopUpByParent}
                                 rows={pageRows}
                                 canDisburse={canDisburse}
                                 signedContractRequired={signedContractRequired}
@@ -1100,6 +1104,8 @@ function LinkedSelect({value, onValueChange}: {value: LinkedFilter; onValueChang
 
 function LoanTable({
     rows,
+    allLoans,
+    fundedTopUpByParent,
     canDisburse,
     signedContractRequired,
     onOpenSchedule,
@@ -1109,6 +1115,8 @@ function LoanTable({
     compact = false,
 }: {
     rows: PortfolioRow[];
+    allLoans: Loan[];
+    fundedTopUpByParent: Map<string, Loan>;
     canDisburse: boolean;
     signedContractRequired: boolean;
     onOpenSchedule: (loan: Loan) => void;
@@ -1161,7 +1169,7 @@ function LoanTable({
                         ? fundedTopUpByParent.get(loan.id)
                         : undefined;
                     const originalLoan = loan.is_top_up && loan.parent_loan_id
-                        ? loans.find((item) => item.id === loan.parent_loan_id)
+                        ? allLoans.find((item) => item.id === loan.parent_loan_id)
                         : undefined;
 
                     return <TableRow key={loan.id} className="group hover:bg-muted/35">
