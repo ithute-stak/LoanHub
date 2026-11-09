@@ -109,7 +109,9 @@ def test_receipt_replay_does_not_re_read_same_candidate():
         executed_pdf_sha256=sha256(pdf).hexdigest(),
     ))
     reads = []
-    assert check(rows, lambda f: reads.append(f.id) or pdf) == []
+    assert "candidate_referenced_by_multiple_receipts" in codes(
+        check(rows, lambda f: reads.append(f.id) or pdf)
+    )
     assert len(reads) == 1
 
 
