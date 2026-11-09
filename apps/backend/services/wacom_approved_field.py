@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from services.wacom_pdf_signature_placement import SignatureField
 
 MAX_PAGES = 100
@@ -81,7 +82,7 @@ def bind_approved_field(*, source_pdf: bytes, expected_sha256: str,
             page_height=float(page.mediabox.height),
             pages=expected_page_count,
         )
-    except (ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+    except (ValueError, TypeError, KeyError, IndexError, OSError, PdfReadError) as exc:
         raise ValueError("Source PDF field cannot be authorized") from exc
     field = ApprovedField(page_index, *fixed, expected_page_count)
     canonical = {
