@@ -57,6 +57,14 @@ def verify_candidate_contents(
                 file_id=str(f.id), receipt_id=str(receipt.id),
             ))
             continue
+        # Fail closed before decrypting or materializing an oversized object.
+        size = getattr(f, "size_bytes", None)
+        if not isinstance(size, int) or not 1 <= size <= 25 * 1024 * 1024:
+            findings.append(Finding(
+                "candidate_size_outside_verified_limits",
+                file_id=str(f.id), receipt_id=str(receipt.id),
+            ))
+            continue
         try:
             data = read_bytes(f)
         except Exception:
@@ -66,7 +74,7 @@ def verify_candidate_contents(
                 file_id=str(f.id), receipt_id=str(receipt.id),
             ))
             continue
-        if not isinstance(data, bytes) or not data.startswith(b"%PDF-"):
+        if not isinstance(data, bytes) or len(data) != size or not data.startswith(b"%PDF-"):
             findings.append(Finding(
                 "candidate_contents_not_pdf",
                 file_id=str(f.id), receipt_id=str(receipt.id),
