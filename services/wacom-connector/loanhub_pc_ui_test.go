@@ -355,3 +355,25 @@ func TestPCUIMultiCompanyLoginRequiresAuthorizedSelection(t *testing.T) {
         t.Fatal("backend did not receive exact selected company")
     }
 }
+
+
+func TestPCUINewBorrowerLookupClearsPreviousDocumentEvidence(t *testing.T) {
+    ui,err:=newPCUI("https://loanhub.example")
+    if err!=nil { t.Fatal(err) }
+    cookie,csrf,_:=localUIGet(t,ui)
+    session:=ui.sessions[cookie.Value]
+    session.documentIntent=&LoanHubDocumentIntent{IntentID:"old-intent",BorrowerID:"old-borrower",Status:"consented"}
+    session.lastDocumentCaptureID="old-capture"
+    session.capture=&pcPendingCapture{preview:disposableWacomPreview{PNG:[]byte{1,2,3}}}
+    result:=localUIPost(ui,cookie,"/lookup",url.Values{
+        "csrf":{csrf},"national_id":{"new-synthetic-borrower"},
+    },pcUIOrigin)
+    if result.Code!=200 { t.Fatalf("lookup status: %d",result.Code) }
+    if session.documentIntent!=nil || session.lastDocumentCaptureID!="" || session.capture!=nil {
+        t.Fatal("new lookup retained previous borrower document or capture")
+    }
+    if strings.Contains(result.Body.String(),"old-intent") ||
+        strings.Contains(result.Body.String(),"old-capture") {
+        t.Fatal("previous borrower reference leaked into new lookup screen")
+    }
+}
