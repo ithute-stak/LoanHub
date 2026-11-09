@@ -148,7 +148,7 @@ def test_no_contract_execution_in_routes():
 
 def test_preview_requires_authenticated_borrower_and_valid_file_bytes():
     source = inspect.getsource(routes.review_candidate_pdf)
-    assert "_borrower(db, current_user)" in source
+    assert "_borrower(db, ctx.user)" in source
     assert "_verified_bytes(candidate)" in source
     assert "borrower_affirmation_blockers(" in source
     assert 'Cache-Control": "no-store, private"' in source
