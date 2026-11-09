@@ -29,6 +29,7 @@ from database.session import get_db
 from routers.wacom_execution_authorizations import _locked_sources, _confirm_packet
 from routers.wacom_finalization_approvals import _review_sources
 from services.file_service import read_file_bytes, store_bytes
+from services.object_storage_service import get_storage
 from services.wacom_execution_receipt_policy import reserve_execution_blockers
 from services.wacom_execution_commit_policy import execution_commit_blockers
 from services.wacom_final_pdf_candidate import render_final_pdf_candidate
@@ -58,6 +59,19 @@ def _receipt_response(row, *, duplicate):
         "contract_signed": False,
         "execution_performed": False,
     }
+
+
+def _cleanup_failed_candidate(stored):
+    """Best-effort removal only after a definitely uncommitted transaction.
+
+    NEVER call following an uncertain commit result: SQL may already be durable.
+    Abandoned objects after process crashes still require out-of-band inventory.
+    """
+    try:
+        get_storage(stored.storage_provider).delete(stored.storage_key)
+    except Exception:
+        # Preserve original error; orphan inventory/reconciliation remains required.
+        pass
 
 
 def _verify_existing(db, ctx, row, intent, authorization):
@@ -175,28 +189,38 @@ def archive_pdf_candidate(
     )
     if not stored.is_encrypted or stored.scan_status != "clean":
         db.rollback()
+        _cleanup_failed_candidate(stored)
         raise HTTPException(503, "Candidate storage must be encrypted and scanned")
 
+    # A lengthy malware scan must not extend the permit's two-minute window.
+    commit_now = datetime.now(timezone.utc)
     receipt = WacomExecutionReceipt(
         id=uuid4(), company_id=ctx.company_id, contract_id=intent.contract_id,
         intent_id=intent.id, authorization_id=authorization.id,
         packet_id=packet.id, document_sha256=intent.document_sha256,
         evidence_sha256=intent.evidence_sha256, binding_sha256=intent.binding_sha256,
         field_binding_sha256=authorization.field_binding_sha256,
-        status="reserved", reserved_by=ctx.user.id, reserved_at=now,
+        status="reserved", reserved_by=ctx.user.id, reserved_at=commit_now,
         executed_file_id=stored.id, executed_pdf_sha256=digest,
         # IMPORTANT: executed_at intentionally remains NULL.
         executed_at=None,
     )
+    try:
+        stored_pdf = read_file_bytes(stored)
+    except Exception:
+        db.rollback()
+        _cleanup_failed_candidate(stored)
+        raise
     if execution_commit_blockers(
         intent=intent, approval=approval, packet=packet,
         execution_authorization=authorization, receipt=receipt,
         contract=contract, source=source, evidence=evidence,
         candidate_file=stored, executing_user_id=ctx.user.id,
         source_pdf=source_pdf, handwriting_png=handwriting_png,
-        candidate_pdf=read_file_bytes(stored), candidate_sha256=digest, now=now,
+        candidate_pdf=stored_pdf, candidate_sha256=digest, now=commit_now,
     ):
         db.rollback()
+        _cleanup_failed_candidate(stored)
         raise HTTPException(409, "Wacom candidate commit validation failed")
 
     db.add(receipt)
@@ -216,9 +240,18 @@ def archive_pdf_candidate(
             "contract_signed": False, "execution_performed": False,
         },
     ))
+    # Repeat expiry check immediately before commit. Do not allow a slow scan,
+    # rendering step or audit serialization to resurrect an expired permit.
+    from services.wacom_execution_preflight import _utc
+    expiry = _utc(authorization.expires_at)
+    if expiry is None or expiry <= datetime.now(timezone.utc):
+        db.rollback()
+        _cleanup_failed_candidate(stored)
+        raise HTTPException(409, "Execution permit expired before database commit")
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        _cleanup_failed_candidate(stored)
         raise HTTPException(409, "Wacom contract candidate already archived") from exc
     return _receipt_response(receipt, duplicate=False)
