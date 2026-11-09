@@ -17,11 +17,12 @@ def test_topup_has_no_legacy_affordability_submission_or_approval_gates():
     assert "A positive affordability assessment is required" not in submit
 
 
-def test_topup_skips_retired_cdas_capacity_readiness_gate_but_keeps_cdas_identity():
-    assert 'enforce_cdas_capacity_in_readiness = application.application_type != "top_up"' in READINESS
-    assert 'not enforce_cdas_capacity_in_readiness or bool(cdas_capacity["capacity_sufficient"])' in READINESS
-    assert 'cdas_verified and enforce_cdas_capacity_in_readiness and not cdas_capacity["capacity_sufficient"]' in READINESS
+def test_all_loans_skip_retired_capacity_gate_but_keep_cdas_identity():
+    assert "enforce_cdas_capacity_in_readiness" not in READINESS
+    assert 'cdas_verified and not cdas_capacity["capacity_sufficient"]' not in READINESS
+    assert 'cdas_capacity["blockers"]' not in READINESS
     assert '"payroll_profile_not_verified"' in READINESS
+    assert "cdas_provider_configured" in READINESS
 
 
 def test_topup_preview_and_compact_dialog_do_not_request_affordability():
