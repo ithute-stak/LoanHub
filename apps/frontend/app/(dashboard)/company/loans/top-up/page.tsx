@@ -93,7 +93,7 @@ function TopUpWorkspace() {
       setApplication(result);
       toast.success("Top-up submitted for management approval");
     } catch (cause: unknown) {
-      toast.error(getErrorMessage(cause, "Top-up could not be submitted. Check KYC and independent approval requirements."));
+      toast.error(getErrorMessage(cause, "Top-up could not be submitted. Check the displayed approval requirements."));
     } finally { setSaving(false); }
   }
 
@@ -135,7 +135,7 @@ function TopUpWorkspace() {
               {activeRole === "company_owner" ? <Button type="button" disabled={saving} onClick={() => void approveException()}>Approve exception</Button> : <p className="text-sm">Ask the company owner to approve the exception.</p>}
             </div>
           ) : null}
-          <p className="text-sm text-muted-foreground">Submission preserves KYC, company policy, verified CDAS payroll requirements when selected, management review and contract/disbursement controls.</p>
+          <p className="text-sm text-muted-foreground">KYC verification is optional when submitting a top-up for management review. Company policy, verified CDAS payroll requirements when selected, management approval, contract and disbursement controls still apply.</p>
           <div className="flex flex-wrap gap-3">
             {application.status === "draft" ? <Button disabled={saving || (application.top_up_exception_requested && !application.top_up_exception_approved)} onClick={() => void submitForApproval()}><CheckCircle2 className="mr-2 h-4 w-4" />Submit for management approval</Button> : null}
             <Button variant="outline" asChild><Link href={`/company/marketplace?workspace=applications&application=${encodeURIComponent(application.id)}`}>Open approval workspace</Link></Button>
