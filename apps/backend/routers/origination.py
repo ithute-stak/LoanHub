@@ -69,7 +69,6 @@ from services.lending_integration_service import application_integration_readine
 from services.top_up_settlement import preview_top_up_settlement, replacement_principal
 from services.interest_calculation_service import calculate_loan_terms
 from services.origination_service import (
-    assessment_effective_decision,
     borrower_identity,
     duplicate_exposure,
     enforce_duplicate_policy,
@@ -162,9 +161,6 @@ def _application_payload(db: Session, application: DirectLoanApplication) -> dic
     data["identity"] = identity
     product = db.get(LoanProduct, application.product_id) if application.product_id else None
     data["product_name"] = product.name if product else None
-    assessment = db.get(AffordabilityAssessment, application.affordability_assessment_id) if application.affordability_assessment_id else None
-    data["affordability_decision"] = assessment_effective_decision(assessment)
-    data["affordability_assessment"] = serialize(assessment) if assessment else None
     kyc = financial_profile_payload(db, company_id=application.company_id, borrower_id=application.borrower_id)["kyc"]
     data["kyc_status"] = (kyc or {}).get("status") if kyc else None
     loan = db.get(ClientCompanyLoan, application.loan_id) if application.loan_id else None
@@ -767,18 +763,11 @@ def application_workspace(
     policy = get_or_create_policy(db, context.company_id, context.user.id)
     profile = financial_profile_payload(db, company_id=context.company_id, borrower_id=application.borrower_id)
     exposure = duplicate_exposure(db, borrower_id=application.borrower_id, exclude_application_id=application.id, exclude_loan_id=application.loan_id)
-    assessments = (
-        db.query(AffordabilityAssessment)
-        .filter(AffordabilityAssessment.application_id == application.id)
-        .order_by(AffordabilityAssessment.assessment_number.desc())
-        .all()
-    )
     return {
         "application": _application_payload(db, application),
         "policy": serialize(policy),
         "profile": profile,
         "duplicate_check": exposure,
-        "assessments": [serialize(item) for item in assessments],
         "integration_readiness": application_integration_readiness(
             db,
             application=application,
