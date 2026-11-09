@@ -985,13 +985,6 @@ export type DealStructuringResult = {
     interest_method: string;
     candidate_count: number;
   };
-  borrower_affordability_policy: {
-    policy_id: string;
-    version: number;
-    max_dti_percent: number;
-    max_installment_income_percent: number;
-    disposable_income_usage_percent: number;
-  };
   portfolio_constraints: {
     existing_borrower_exposure: number;
     total_equity: number;
@@ -1015,12 +1008,6 @@ export type DealStructureOption = {
   monthly_installment?: number | null;
   total_repayable?: number | null;
   pricing_status: string;
-  affordability: {
-    status: "pass" | "fail" | "not_assessed";
-    maximum_affordable_installment?: number | null;
-    headroom?: number | null;
-    dti_percent?: number | null;
-  };
   liquidity: {
     status: "pass" | "breach";
     baseline_30d_minimum_cash: number;
