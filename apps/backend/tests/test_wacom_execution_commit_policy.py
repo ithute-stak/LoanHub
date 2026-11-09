@@ -128,3 +128,23 @@ def test_no_implicit_signing_or_storage_in_policy():
     code = inspect.getsource(policy)
     for forbidden in ("db.commit(", "store_bytes(", "borrower_signed_at =", "contract.status ="):
         assert forbidden not in code
+
+@pytest.mark.parametrize("mutation", [
+    "future_reservation", "reservation_before_authorization",
+    "future_authorization", "naive_reservation",
+])
+def test_denies_impossible_reservation_chronology(mutation):
+    data = example()
+    now = data["now"]
+    if mutation == "future_reservation":
+        data["receipt"].reserved_at = now + timedelta(seconds=30)
+    elif mutation == "reservation_before_authorization":
+        data["receipt"].reserved_at = now - timedelta(seconds=30)
+    elif mutation == "future_authorization":
+        data["execution_authorization"].authorized_at = now + timedelta(seconds=1)
+    else:
+        data["receipt"].reserved_at = now.replace(tzinfo=None)
+    reasons = blockers(data)
+    assert ("execution_reservation_chronology_invalid" in reasons
+            or (mutation == "naive_reservation"
+                and "execution_reservation_owner_changed" in reasons))
