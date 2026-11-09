@@ -155,21 +155,21 @@ def affirm_exact_candidate(
     body: AffirmCandidate,
     response: Response,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    ctx: TenantContext = Depends(get_user_context),
 ):
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
-    borrower = _borrower(db, current_user)
+    borrower = _borrower(db, ctx.user)
     challenge, _, now = _check(
         db=db, borrower=borrower, challenge_id=challenge_id,
-        user_id=current_user.id, lock=True,
+        user_id=ctx.user.id, lock=True,
         displayed_candidate_sha256=body.displayed_candidate_sha256,
         displayed_field_sha256=body.displayed_field_sha256,
     )
     challenge.borrower_affirmed_user_id = ctx.user.id
     challenge.borrower_affirmed_at = now
     challenge.borrower_affirmation_sha256 = affirmation_digest(
-        challenge_id=challenge.id, user_id=current_user.id,
+        challenge_id=challenge.id, user_id=ctx.user.id,
         candidate_sha256=body.displayed_candidate_sha256,
         field_sha256=body.displayed_field_sha256, now=now,
     )
