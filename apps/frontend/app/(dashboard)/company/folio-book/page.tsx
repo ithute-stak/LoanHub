@@ -115,7 +115,7 @@ export default function FolioBookPage() {
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Loan Folio Book</h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-              Every loan keeps one operational folio. For BFS, folios are grouped by contractual pay day: 15–22 = Force, 23–26 = CIVIL, and 27–month end = S/E. Each group has its own sequence, for example BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Existing gaps are reported for audit and are never recycled after the pay-date migration.
+              Every loan keeps one operational folio. For BFS, folios are grouped by contractual pay day: 15–22 = Force, 23–26 = CIVIL, and 27–31 plus 1–14 = S/E. Each group has its own sequence, for example BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Existing gaps are reported for audit and are never recycled after the pay-date migration.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -214,9 +214,9 @@ export default function FolioBookPage() {
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
               </div>
               <Select value={groupCode} onValueChange={setGroupCode}>
-                <SelectTrigger><SelectValue placeholder="Work group" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Folio group" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>All work groups</SelectItem>
+                  <SelectItem value={ALL}>All folio groups</SelectItem>
                   {books.map((book) => <SelectItem key={book.group_code} value={book.group_code}>{book.group_code} · {book.group_name ?? "Work group"}</SelectItem>)}
                 </SelectContent>
               </Select>
