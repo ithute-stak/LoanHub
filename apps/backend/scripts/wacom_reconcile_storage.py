@@ -17,6 +17,8 @@ from database.models.wacom_execution_receipt import WacomExecutionReceipt
 from database.session import SessionLocal
 from services.object_storage_service import get_storage
 from services.wacom_storage_reconciliation import reconcile_wacom_candidates
+from services.wacom_storage_content_audit import verify_candidate_contents
+from services.file_service import read_file_bytes
 
 
 def inventory_for_company(*, storage, company_id, max_records=10000):
@@ -66,7 +68,7 @@ def inventory_for_company(*, storage, company_id, max_records=10000):
     raise ValueError("Only explicitly selected local and s3 inventory supported")
 
 
-def audit(*, company_id, provider, limit=10000):
+def audit(*, company_id, provider, limit=10000, verify_bytes=False):
     if not 1 <= limit <= 10000:
         raise ValueError("Inventory limit must be between 1 and 10000")
     with SessionLocal() as db:
@@ -89,7 +91,13 @@ def audit(*, company_id, provider, limit=10000):
             storage_keys=keys, inventory_complete=complete,
             max_records=limit,
         )
+        if verify_bytes:
+            result.extend(verify_candidate_contents(
+                company_id=company_id, managed_files=files,
+                receipts=receipts, read_bytes=read_file_bytes, max_records=limit,
+            ))
         return {
+            "candidate_bytes_verified": verify_bytes,
             "company_id": str(company_id),
             "provider": provider,
             "inventory_complete": complete,
@@ -107,10 +115,11 @@ def main():
     parser.add_argument("--company-id", required=True, type=UUID)
     parser.add_argument("--provider", required=True, choices=("local", "s3"))
     parser.add_argument("--max-records", type=int, default=10000)
+    parser.add_argument("--verify-candidate-bytes", action="store_true", help="Read and verify archived candidate PDF contents (may be expensive)")
     args = parser.parse_args()
     result = audit(
         company_id=args.company_id, provider=args.provider,
-        limit=args.max_records,
+        limit=args.max_records, verify_bytes=args.verify_candidate_bytes,
     )
     print(json.dumps(result, sort_keys=True))
     if result["findings"] or not result["inventory_complete"]:
