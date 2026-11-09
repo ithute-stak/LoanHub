@@ -294,3 +294,64 @@ func TestPCUIChromeSameOriginLoginAndStrictOrigin(t *testing.T) {
         t.Fatalf("same-origin login POST blocked: %d",post.Code)
     }
 }
+
+
+func TestPCUIMultiCompanyLoginRequiresAuthorizedSelection(t *testing.T) {
+    primary := "4236a21f-5164-48aa-90f3-a35eccd23ae2"
+    secondary := "5de34c2e-9211-44e9-94eb-1620e98bc916"
+    outsider := "6a2b9830-015b-45b8-a32c-728489d361ae"
+    var selectedCompany string
+    api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        switch r.URL.Path {
+        case "/api/v1/auth/login":
+            _,_ = w.Write([]byte(`{"access_token":"synthetic","token_type":"bearer","user":{"is_active":true,"id":"operator","memberships":[{"company_id":"`+primary+`","is_active":true},{"company_id":"`+secondary+`","is_active":true}]}}`))
+        case "/api/v1/local-signatures/me/status":
+            selectedCompany = r.Header.Get("X-Company-ID")
+            if selectedCompany != secondary {
+                t.Errorf("wrong selected tenant: %q", selectedCompany)
+                http.Error(w, "unauthorized", http.StatusForbidden)
+                return
+            }
+            _,_ = w.Write([]byte(`{"operator_id":"operator","company_id":"`+secondary+`","signature_status":"missing","requires_capture":true,"usable_for_signing":false}`))
+        default:
+            t.Errorf("Unexpected endpoint %q", r.URL.Path)
+            http.NotFound(w,r)
+        }
+    }))
+    defer api.Close()
+    ui,err := newPCUI(api.URL)
+    if err!=nil {t.Fatal(err)}
+    ui.transport=api.Client()
+    cookie,csrf,html:=localUIGet(t,ui)
+    if !strings.Contains(html,`name="company_id"`) {
+        t.Fatal("company selector absent from local login")
+    }
+    values:=url.Values{
+        "csrf":{csrf}, "phone":{"59000000"},
+        "password":{"synthetic-password"},
+    }
+    for _,company:=range []string{"",outsider} {
+        values.Set("company_id",company)
+        resp:=localUIPost(ui,cookie,"/login",values,pcUIOrigin)
+        if resp.Code!=http.StatusOK || !strings.Contains(resp.Body.String(),"Login failed") ||
+            strings.Contains(resp.Body.String(),"Find a client") {
+            t.Fatalf("unselected or unauthorized company %q granted PC access",company)
+        }
+        if ui.sessions[cookie.Value].client!=nil {
+            t.Fatal("invalid tenant retained a local access token")
+        }
+    }
+    if selectedCompany!="" {
+        t.Fatal("invalid membership reached privileged operator status")
+    }
+    values.Set("company_id",secondary)
+    result:=localUIPost(ui,cookie,"/login",values,pcUIOrigin)
+    if result.Code!=http.StatusOK || !strings.Contains(result.Body.String(),"Operator status") ||
+        !strings.Contains(result.Body.String(),"Find a client") {
+        t.Fatalf("authorized second company failed local login: %d",result.Code)
+    }
+    if selectedCompany!=secondary {
+        t.Fatal("backend did not receive exact selected company")
+    }
+}
