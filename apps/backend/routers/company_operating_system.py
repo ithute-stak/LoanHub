@@ -38,7 +38,6 @@ from database.models.lending_operations import (
     ReconciliationException,
     WorkflowInstance,
 )
-from database.models.origination import OriginationPolicy
 from database.models.payment import PaymentTransaction
 from database.models.repayment import RepaymentInstallment
 from database.models.reporting import GeneratedReport
@@ -920,7 +919,7 @@ def collections_strategy(db: Session = Depends(get_db), context: TenantContext =
     snapshot = _collections_snapshot(db, context)
     snapshot["recommended_actions"] = {
         "1_7": "Friendly reminder and confirm payment channel.",
-        "8_30": "Collector contact, promise-to-pay and affordability check.",
+        "8_30": "Collector contact, promise-to-pay and repayment review.",
         "31_60": "Formal arrangement / settlement review and supervisor escalation.",
         "61_90": "Senior collections review and legal-readiness assessment.",
         "90_plus": "Legal/recovery committee review subject to company policy and applicable law.",
