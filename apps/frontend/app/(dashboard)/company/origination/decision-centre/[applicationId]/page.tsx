@@ -173,7 +173,7 @@ export default function LoanDecisionCentrePage() {
               </Button>
             ) : null}
             <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh evidence</Button>
-            <Button variant="outline" asChild><Link href={`/company/origination/new?application=${application.id}`}><Calculator className="h-4 w-4" />Edit / recalculate</Link></Button>
+            <Button variant="outline" asChild><Link href={application.application_type === "top_up" ? `/company/loans/top-up?application=${encodeURIComponent(application.id)}` : `/company/origination/new?application=${encodeURIComponent(application.id)}`}><Calculator className="h-4 w-4" />Edit / recalculate</Link></Button>
             <Button asChild><Link href={`/company/marketplace?workspace=applications&application=${application.id}`}><FileSearch className="h-4 w-4" />Manager decision</Link></Button>
           </div>
         </div>
@@ -199,7 +199,7 @@ export default function LoanDecisionCentrePage() {
             {application.status === "draft" ? (
               <>
                 <p className="text-sm text-muted-foreground">Next action: skip repeated borrower forms and prepare an offer using existing verified information. LoanHub will identify any remaining independent requirements.</p>
-                <Button asChild><Link href={`/company/origination/new?application=${application.id}`}>Skip forms &amp; offer top-up</Link></Button>
+                <Button asChild><Link href={`/company/loans/top-up?application=${encodeURIComponent(application.id)}`}>Open direct top-up</Link></Button>
                 <Badge variant="secondary">Draft — not yet approved or disbursed</Badge>
               </>
             ) : ["submitted", "under_review"].includes(application.status) ? (
