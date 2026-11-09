@@ -38,7 +38,7 @@ def issue_bridge_session(db: Session, *, context, workstation_id):
     return token, row
 
 
-def authorize_bridge_session(db: Session, *, context, token: str | None, now=None) -> None:
+def authorize_bridge_session(db: Session, *, context, token: str | None, now=None, workstation_id=None) -> None:
     if not token or not _SESSION_PATTERN.fullmatch(token):
         raise HTTPException(403, "Verified Wacom workstation session required")
     if context.company_id is None or context.staff is None or not getattr(context.user, "is_active", False):
@@ -52,7 +52,7 @@ def authorize_bridge_session(db: Session, *, context, token: str | None, now=Non
         WacomBridgeSession.revoked_at.is_(None),
         WacomBridgeSession.expires_at > now,
     ).one_or_none()
-    if row is None:
+    if row is None or (workstation_id is not None and row.workstation_id != workstation_id):
         raise HTTPException(403, "Wacom session expired or unavailable")
     active_pc = db.query(WacomWorkstationEnrollment.id).filter(
         WacomWorkstationEnrollment.company_id == context.company_id,

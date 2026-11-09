@@ -32,6 +32,13 @@ class WacomExecutionCeremonyChallenge(Base):
             "(status = 'consumed' AND verified_at IS NOT NULL AND consumed_at IS NOT NULL)",
             name="ck_wacom_ceremony_state_evidence",
         ),
+        CheckConstraint(
+            "(workstation_proof_at IS NULL AND workstation_proof_by IS NULL AND "
+            "workstation_proof_sha256 IS NULL) OR "
+            "(workstation_proof_at IS NOT NULL AND workstation_proof_by IS NOT NULL "
+            "AND length(workstation_proof_sha256) = 64)",
+            name="ck_wacom_ceremony_workstation_proof_complete",
+        ),
         Index("ix_wacom_ceremony_company_status", "company_id", "status"),
     )
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="RESTRICT"), nullable=False)
@@ -50,3 +57,7 @@ class WacomExecutionCeremonyChallenge(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     verified_at = Column(DateTime(timezone=True))
     consumed_at = Column(DateTime(timezone=True))
+    # Workstation-key possession ONLY; never equate with physical pen or borrower consent.
+    workstation_proof_at = Column(DateTime(timezone=True))
+    workstation_proof_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    workstation_proof_sha256 = Column(String(64))
