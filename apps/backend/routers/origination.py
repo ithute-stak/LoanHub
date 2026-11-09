@@ -36,8 +36,6 @@ from database.models.origination import (
 )
 from database.models.professional_lending import DirectLoanApplication
 from database.schemas.origination import (
-    AffordabilityCalculateRequest,
-    AffordabilityOverrideRequest,
     ContractBorrowerSignRequest,
     ContractCompanySignRequest,
     ContractGenerateRequest,
@@ -73,7 +71,6 @@ from services.interest_calculation_service import calculate_loan_terms
 from services.origination_service import (
     assessment_effective_decision,
     borrower_identity,
-    calculate_affordability,
     duplicate_exposure,
     enforce_duplicate_policy,
     financial_profile_payload,
@@ -84,7 +81,7 @@ from services.origination_service import (
     update_policy,
 )
 
-router = APIRouter(prefix="/origination", tags=["Credit Origination, KYC and Affordability"])
+router = APIRouter(prefix="/origination", tags=["Credit Origination and KYC"])
 
 ORIGINATION_VIEW_ROLES = LENDING_ROLES | {
     UserRole.RISK_MANAGER,
@@ -342,7 +339,7 @@ def create_application(
 
     # Inherit the parent loan's active product for the compact top-up when
     # the client has not selected another product. The assessment still
-    # recalculates affordability and the final installment schedule.
+    # retains the final installment schedule.
     inherited_product_id = payload.product_id
     if payload.application_type == "top_up" and inherited_product_id is None:
         source = (
@@ -807,120 +804,6 @@ def application_integration_status(
     )
 
 
-@router.post("/applications/{application_id}/assess")
-async def assess_application(
-    application_id: UUID,
-    payload: AffordabilityCalculateRequest,
-    db: Session = Depends(get_db),
-    context: TenantContext = Depends(get_user_context),
-):
-    require_tenant_roles(context, ORIGINATION_EDIT_ROLES)
-    application = _application(db, context=context, application_id=application_id, lock=True)
-
-    verified_cdas_profile = (
-        db.query(CDASPayrollProfile)
-        .filter(
-            CDASPayrollProfile.company_id == context.company_id,
-            CDASPayrollProfile.borrower_id == application.borrower_id,
-            CDASPayrollProfile.employee_number.isnot(None),
-            CDASPayrollProfile.employee_number != "",
-            CDASPayrollProfile.verified.is_(True),
-        )
-        .first()
-    )
-    live_cdas_affordability = None
-    if verified_cdas_profile:
-        subscription = require_approved_subscription(db, company_id=context.company_id)
-        cdas_configuration = get_configuration(db, context.company_id)
-        environment = selected_environment(cdas_configuration)
-        assert_live_credit_available(
-            db,
-            subscription=subscription,
-            environment=environment,
-            operation_type="affordability",
-        )
-        client = get_company_cdas_client(db, context.company_id)
-        try:
-            live_cdas_affordability = await client.check_affordability(
-                str(verified_cdas_profile.employee_number)
-            )
-        except CdasError as exc:
-            raise HTTPException(
-                status_code=exc.status_code if 400 <= exc.status_code <= 599 else 502,
-                detail=f"CDAS affordability could not be verified: {exc.message}",
-            ) from exc
-        record_successful_operation(
-            db,
-            company_id=context.company_id,
-            environment=environment,
-            operation_type="affordability",
-            actor_user_id=context.user.id,
-            billing_key=f"cdas-affordability:{application.id}:{uuid4().hex}",
-            source_reference=str(application.id),
-            metadata={
-                "request_origin": "origination_affordability",
-                "employee_number_present": True,
-            },
-        )
-
-    assessment = calculate_affordability(
-        db,
-        company_id=context.company_id,
-        borrower_id=application.borrower_id,
-        application=application,
-        principal=payload.proposed_principal,
-        rate_percent=payload.proposed_rate_percent,
-        months=payload.proposed_months,
-        processing_fee=payload.processing_fee,
-        interest_method=payload.interest_method,
-        calculated_by_user_id=context.user.id,
-        live_cdas_affordability=live_cdas_affordability,
-    )
-    return serialize(assessment)
-
-
-@router.post("/assessments/{assessment_id}/override")
-def override_assessment(
-    assessment_id: UUID,
-    payload: AffordabilityOverrideRequest,
-    db: Session = Depends(get_db),
-    context: TenantContext = Depends(get_user_context),
-):
-    require_tenant_roles(context, ORIGINATION_OVERRIDE_ROLES)
-    assessment = (
-        db.query(AffordabilityAssessment)
-        .filter(
-            AffordabilityAssessment.id == assessment_id,
-            AffordabilityAssessment.company_id == context.company_id,
-        )
-        .with_for_update()
-        .first()
-    )
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Affordability assessment not found")
-    policy = get_or_create_policy(db, context.company_id, context.user.id)
-    # The company owner may explicitly accept credit risk even when routine
-    # management affordability overrides are disabled. This does not waive KYC,
-    # sanctions, identity, payroll or other statutory safeguards.
-    owner_risk_acceptance = context.role == UserRole.COMPANY_OWNER and payload.decision in {"eligible", "conditionally_eligible"}
-    if owner_risk_acceptance:
-        non_waivable = {"age_missing", "age_outside_policy", "compliance_block", "cdas_live_affordability_missing", "cdas_live_affordability_insufficient"}
-        reasons = assessment.result_reasons or []
-        blocked = [item.get("code") for item in reasons if isinstance(item, dict) and item.get("code") in non_waivable]
-        if blocked:
-            raise HTTPException(status_code=409, detail="Owner risk acceptance cannot waive identity, sanctions or mandatory payroll controls: " + ", ".join(blocked))
-    if not policy.manager_override_enabled and not owner_risk_acceptance:
-        raise HTTPException(status_code=403, detail="Affordability overrides are disabled by company policy")
-    assessment.overridden = True
-    assessment.override_decision = payload.decision
-    assessment.override_reason = payload.reason
-    assessment.overridden_by_user_id = context.user.id
-    assessment.overridden_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(assessment)
-    return serialize(assessment)
-
-
 @router.post("/applications/{application_id}/top-up-exception/approve")
 def approve_top_up_exception(
     application_id: UUID,
@@ -970,10 +853,6 @@ def submit_application(
     profile = financial_profile_payload(db, company_id=context.company_id, borrower_id=application.borrower_id)
     if policy.require_kyc_verified and (not profile["kyc"] or profile["kyc"]["status"] != "verified"):
         raise HTTPException(status_code=409, detail="KYC must be verified before the application is submitted")
-    assessment = db.get(AffordabilityAssessment, application.affordability_assessment_id) if application.affordability_assessment_id else None
-    decision = assessment_effective_decision(assessment)
-    if decision not in {"eligible", "conditionally_eligible"}:
-        raise HTTPException(status_code=409, detail="A positive affordability assessment is required before submission")
     if application.cdas_collection_enabled:
         _require_cdas_payroll_profile(
             db,

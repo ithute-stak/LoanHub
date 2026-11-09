@@ -57,53 +57,6 @@ def application_integration_readiness(
     affordability_decision = _assessment_decision(assessment)
 
     core_ready = True
-    if application.channel == "credit_origination" and affordability_decision not in {
-        "eligible",
-        "conditionally_eligible",
-    }:
-        core_ready = False
-        reason_codes = {
-            reason.get("code")
-            for reason in (assessment.result_reasons or [])
-            if isinstance(reason, dict)
-        } if assessment else set()
-        compliance_hold = bool(reason_codes & {
-            "compliance_block", "kyc_incomplete", "age_missing",
-            "age_outside_policy", "cdas_live_affordability_missing",
-            "cdas_live_affordability_insufficient",
-        })
-        blockers.append(
-            {
-                "source": "core",
-                "code": "compliance_review_required" if compliance_hold else "affordability_not_positive",
-                "message": (
-                    "Identity, KYC, sanctions/fraud or payroll checks require review before approval. "
-                    "Financial affordability is assessed separately."
-                    if compliance_hold
-                    else "Review the affordability recommendation or record an authorised financial-risk exception."
-                ),
-                "action_path": f"/company/origination/new?application={application.id}",
-            }
-        )
-
-    # A previous positive decision cannot authorize a top-up with revised
-    # installments. Compare the assessment actually made against the
-    # currently proposed repayment, not merely its eligible label.
-    if (
-        application.application_type == "top_up"
-        and assessment is not None
-        and proposed_installment is not None
-        and abs(Decimal(assessment.proposed_installment) - Decimal(proposed_installment)) > Decimal("0.01")
-    ):
-        core_ready = False
-        blockers.append(
-            {
-                "source": "core",
-                "code": "top_up_affordability_outdated",
-                "message": "The top-up installment changed since the affordability assessment. Recalculate affordability before approval.",
-                "action_path": f"/company/origination/new?application={application.id}",
-            }
-        )
 
     bureau_row, bureau_policy = company_experian_policy(db, application.company_id)
     bureau_enabled = bool(bureau_row and bureau_row.is_enabled)
@@ -119,17 +72,7 @@ def application_integration_readiness(
         and has_credentials_for_environment(platform_bureau, bureau_environment)
         and environment_test_status(platform_bureau, bureau_environment) == "connected"
     )
-    bureau_required_affordability = bool(
-        application.application_type != "top_up"
-        and bureau_enabled
-        and experian_required_for_application(
-            bureau_policy,
-            application,
-            stage="affordability",
-            amount=amount,
-            product_id=product_id,
-        )
-    )
+    bureau_required_affordability = False  # Legacy response field; no affordability stage remains.
     bureau_required_approval = bool(
         application.application_type != "top_up"
         and bureau_enabled
@@ -164,22 +107,6 @@ def application_integration_readiness(
             bureau_ready = False
             blockers.extend(bureau_snapshot["blockers"])
         warnings.extend(bureau_snapshot["warnings"])
-
-        if bureau_policy.get("include_bureau_commitments_in_affordability") and assessment:
-            input_snapshot = dict(assessment.input_snapshot or {})
-            bureau_snapshot = input_snapshot.get("credit_bureau")
-            bureau_snapshot = dict(bureau_snapshot) if isinstance(bureau_snapshot, dict) else {}
-            assessment_enquiry_id = str(bureau_snapshot.get("enquiry_id") or "")
-            if assessment_enquiry_id != str(latest_bureau.id):
-                core_ready = False
-                blockers.append(
-                    {
-                        "source": "core",
-                        "code": "affordability_stale_after_bureau",
-                        "message": "A newer Experian report is available than the one used for affordability. Recalculate affordability before approval.",
-                        "action_path": f"/company/origination/new?application={application.id}",
-                    }
-                )
 
     if bureau_required_approval and not bureau_fresh:
         blockers.append(
@@ -310,13 +237,10 @@ def application_integration_readiness(
             }
         )
 
-    ready_for_affordability = not (
-        bureau_required_affordability and not bureau_fresh
-    )
+    ready_for_affordability = True
     ready_for_approval = bool(core_ready and bureau_ready and cdas_ready)
 
     hard_decline_codes = {
-        "affordability_not_positive",
         "score_below_decline_threshold",
         "defaults_blocked",
         "identity_match_required",
@@ -368,11 +292,7 @@ def application_integration_readiness(
             "collections_count": bureau_snapshot["collections_count"] if latest_bureau else None,
             "recent_enquiries_count": bureau_snapshot["recent_enquiries_count"] if latest_bureau else None,
             "identity_match": bureau_snapshot["identity_match"] if latest_bureau else None,
-            "used_in_affordability": bool(
-                bureau_enabled
-                and bureau_fresh
-                and bureau_policy.get("include_bureau_commitments_in_affordability")
-            ),
+            "used_in_affordability": False,
             "debt_mode": str(bureau_policy.get("bureau_debt_mode") or "max"),
         },
         "cdas": {

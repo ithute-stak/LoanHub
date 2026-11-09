@@ -233,24 +233,7 @@ export function InternalApplicationsWorkspace() {
         });
         setRejectReason("");
         setCalculation(null);
-        if (application.application_type === "top_up" && application.affordability_assessment_id) {
-            // The approval form must begin with the exact terms that were
-            // assessed. Falling back to product defaults silently changes
-            // interest/fees and causes a false "stale affordability" block.
-            void originationApi.getWorkspace(application.id).then((workspace) => {
-                const assessed = workspace.assessments.find((item) => item.id === application.affordability_assessment_id);
-                const proposal = assessed?.input_snapshot?.proposal as Record<string, unknown> | undefined;
-                if (!proposal) return;
-                setApproval((current) => ({
-                    ...current,
-                    approved_amount: Number(proposal.principal ?? current.approved_amount),
-                    interest_rate: Number(proposal.rate_percent ?? current.interest_rate),
-                    processing_fee: Number(proposal.processing_fee ?? current.processing_fee),
-                }));
-            }).catch((error: unknown) => {
-                toast.error(getErrorMessage(error, "Could not load the original top-up assessment terms. Review the rate and fees before approval."));
-            });
-        }
+
     }
 
     function replaceApplication(updated: DirectLoanApplication) {
@@ -375,7 +358,7 @@ export function InternalApplicationsWorkspace() {
 
         <CustomDialog open={Boolean(selected)} onOpenChange={(open) => !open && !working && setSelected(null)} title={selected ? `${selected.application_reference} — ${selected.borrower_name}` : "Process application"} description={selected ? `${formatMoney(selected.requested_amount)} requested for ${selected.term_count} months · ${titleCase(selected.status)}` : undefined}>
             {selected ? <form onSubmit={approveApplication} className="space-y-6 p-6 sm:p-8">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Info label="Client number" value={selected.account_reference ?? "Not available"}/><Info label="Monthly income" value={formatMoney(numberFromRecord(selected.affordability_snapshot, "monthly_income"))}/><Info label="Existing loans" value={formatMoney(numberFromRecord(selected.affordability_snapshot, "existing_loan_total"))}/><Info label="Channel" value="Internal company application"/></div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Info label="Client number" value={selected.account_reference ?? "Not available"}/><Info label="Channel" value="Internal company application"/></div>
 
                 {selected.status !== "approved" && selected.status !== "rejected" ? <Alert variant={selectedCase?.final_decision === "rejected" ? "destructive" : undefined}><Gavel className="h-4 w-4"/><AlertTitle>Credit Committee: {committeeLabel(selectedCase, selectedAwaitingIntake)} · Optional</AlertTitle><AlertDescription><div className="flex flex-wrap items-center justify-between gap-3"><span>{selectedCommitteeApproved ? "Committee review is complete. You may proceed with the lending decision." : selectedCase?.final_decision === "rejected" ? "The committee recorded a rejection. Credit Committee review is optional here, so authorised management may still make the lending decision using the available verified information and should record the approval rationale if proceeding." : "Credit Committee review is optional. You may approve using the available verified application information, or continue the committee workflow for additional governance review."}</span>{selectedCase ? <Button type="button" size="sm" variant="outline" asChild><Link href={`/company/credit-committee/cases/${selectedCase.id}`}>View Committee Case</Link></Button> : selectedAwaitingIntake && canReview ? <Button type="button" size="sm" variant="outline" onClick={() => void sendToCommittee(selected)} disabled={committeeWorking === selected.id}>Send to Committee</Button> : null}</div></AlertDescription></Alert> : null}
 
@@ -390,13 +373,13 @@ export function InternalApplicationsWorkspace() {
                         <InstallmentDueDateFields count={selected.term_count} value={approval.installment_due_dates} onChange={(dates) => setApproval((current) => ({...current, installment_due_dates: dates}))}/>
                         <Field label={`${selectedProduct ? selectedProduct.interest_method.replaceAll("_", " ") : "Interest"} rate (%)`}><Input type="number" required min={0} max={100} step="0.001" value={approval.interest_rate} onChange={(event) => setApproval((current) => ({...current, interest_rate: Number(event.target.value || 0)}))}/></Field>
                         <Field label="Processing fee"><Input type="number" required min={0} step="0.01" value={approval.processing_fee} onChange={(event) => setApproval((current) => ({...current, processing_fee: Number(event.target.value || 0)}))}/></Field>
-                        <div className="space-y-2 sm:col-span-2"><Label>Review or approval notes</Label><Textarea value={approval.decision_notes} onChange={(event) => setApproval((current) => ({...current, decision_notes: event.target.value}))} placeholder="Affordability assessment, verified documents and conditions"/></div>
+                        <div className="space-y-2 sm:col-span-2"><Label>Review or approval notes</Label><Textarea value={approval.decision_notes} onChange={(event) => setApproval((current) => ({...current, decision_notes: event.target.value}))} placeholder="Verified documents and loan conditions"/></div>
                     </div>
                     <MicroLoanPreview calculation={calculation} calculating={calculating}/>
                     {canApprove ? <div className="space-y-2"><Label>Rejection reason</Label><Textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Required only when rejecting the application"/></div> : null}
                     <DialogFooter className="mx-0 mb-0 flex-wrap">
                         <Button type="button" variant="outline" onClick={() => setSelected(null)} disabled={working}>Close</Button>
-                        {selected.status === "draft" ? <Button type="button" variant="outline" asChild><Link href={`/company/origination/new?application=${selected.id}`}>Complete assessment and submit draft</Link></Button> : null}
+                        {selected.status === "draft" ? <Button type="button" variant="outline" asChild><Link href={`/company/origination/new?application=${selected.id}`}>Complete application and submit draft</Link></Button> : null}
                         {selected.status === "submitted" && canReview ? <LoadingButton type="button" variant="secondary" loading={working} loadingText="Starting review…" onClick={() => void startReview()}><BookOpenCheck className="h-4 w-4"/>Start review</LoadingButton> : null}
                         {canApprove && ["submitted", "under_review"].includes(selected.status) ? <LoadingButton type="button" variant="destructive" loading={working} loadingText="Rejecting…" disabled={rejectReason.trim().length < 3} onClick={() => void rejectApplication()}><XCircle className="h-4 w-4"/>Reject</LoadingButton> : null}
                         {canApprove && ["submitted", "under_review"].includes(selected.status) ? <LoadingButton type="submit" loading={working} loadingText="Approving and creating loan…" disabled={!selectedProduct || !calculation || calculating}><CheckCircle2 className="h-4 w-4"/>Approve and create loan</LoadingButton> : null}

@@ -1057,24 +1057,6 @@ def _post_approval_deal_integrity(
         checks["contract_status"] = contract.status
     checks["contract_required"] = contract_required
 
-    affordability = _latest_affordability(db, application)
-    if not affordability:
-        drift.append("current affordability assessment is missing")
-    else:
-        max_installment = Decimal(str(affordability.maximum_affordable_installment or 0))
-        loan_installment = Decimal(str(loan.installment_amount or 0))
-        affordability_decision = str(affordability.override_decision or affordability.decision or "").lower()
-        if affordability_decision not in {"pass", "approved", "approve", "affordable"}:
-            drift.append("current affordability assessment is not approved/passing")
-        if loan_installment > max_installment + Decimal("0.01"):
-            drift.append("loan installment exceeds the current maximum affordable installment")
-        checks["affordability"] = {
-            "assessment_id": str(affordability.id),
-            "decision": affordability_decision,
-            "maximum_affordable_installment": str(money(max_installment)),
-            "loan_installment": str(money(loan_installment)),
-        }
-
     from services.accounting_service import treasury_cash_forecast
 
     horizon_end = date.today() + timedelta(days=30)

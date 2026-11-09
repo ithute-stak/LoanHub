@@ -39,7 +39,7 @@ def test_approval_uses_unified_core_bureau_cdas_gate() -> None:
     assert "collections_blocked" in external
     assert "identity_match_required" in external
     assert "deduction_capacity_insufficient" in external
-    assert "affordability_stale_after_bureau" in service
+    assert "affordability_stale_after_bureau" not in service
     assert "payroll_profile_not_verified" in service
 
 

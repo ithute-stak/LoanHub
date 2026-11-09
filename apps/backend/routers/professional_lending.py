@@ -477,7 +477,7 @@ def approve_direct(
                 status_code=409,
                 detail=(
                     "The top-up settlement or application amount is outdated. "
-                    "Recalculate the draft top-up and repeat affordability assessment "
+                    "Recalculate the draft top-up loan terms "
                     "before approving."
                 ),
             )

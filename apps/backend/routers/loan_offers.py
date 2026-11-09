@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from core.access_control import (
-    COMPANY_MANAGEMENT_ROLES,
     LENDING_ROLES,
     TenantContext,
     assert_branch_scope,
@@ -14,8 +13,6 @@ from core.access_control import (
     require_tenant_roles,
     resolve_tenant_context,
 )
-from database.models.borrower import Borrower
-from database.models.lending_operations import CDASPayrollProfile
 from database.models.enums import LoanRequestStatus, OfferStatus, UserRole
 from database.models.loan_offer import LoanOffer
 from database.models.loan_request import LoanRequest
@@ -24,22 +21,10 @@ from database.schemas.loan_offer import (
     LoanOfferCreate,
     LoanOfferResponse,
     LoanOfferUpdate,
-    QuickLoanAffordabilityPreview,
 )
 from database.session import get_db
-from integrations.cdas import CdasError
 from services.billing_service import company_has_request_access
-from services.cdas_config_service import get_company_cdas_client, get_configuration, selected_environment
-from services.credit_bureau_policy_service import company_experian_policy, latest_fresh_borrower_experian_enquiry
-from services.external_underwriting_evidence_service import bureau_evidence
-from services.platform_cdas_service import (
-    assert_live_credit_available,
-    record_successful_operation,
-    require_approved_subscription,
-)
 from services.loan_service import calculate_offer_totals
-from services.origination_service import get_or_create_policy
-from services.quick_loan_affordability_service import quick_loan_affordability
 
 
 router = APIRouter(prefix="/loan-offers", tags=["Loan Offers"])
@@ -52,7 +37,7 @@ def offer_or_404(db: Session, offer_id: UUID) -> LoanOffer:
     return offer
 
 
-async def _quick_affordability_for_terms(
+async def _calculate_offer_terms(
     db: Session,
     *,
     request: LoanRequest,
@@ -68,10 +53,10 @@ async def _quick_affordability_for_terms(
     if len(installment_due_dates) != term_months:
         raise HTTPException(
             status_code=422,
-            detail=f"Enter exactly {term_months} installment due dates before checking affordability",
+            detail=f"Enter exactly {term_months} installment due dates",
         )
     try:
-        monthly, total, calculation_breakdown = calculate_offer_totals(
+        return calculate_offer_totals(
             approved_amount,
             interest_rate_percent or 0,
             term_months,
@@ -82,167 +67,12 @@ async def _quick_affordability_for_terms(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
-    borrower = db.query(Borrower).filter(Borrower.id == request.borrower_id).first()
-    if not borrower:
-        raise HTTPException(status_code=404, detail="Borrower not found")
-    policy = get_or_create_policy(db, company_id)
-
-    bureau_integration, bureau_policy = company_experian_policy(db, company_id)
-    if not bureau_integration or not bureau_integration.is_enabled:
-        raise HTTPException(
-            status_code=409,
-            detail="Credit-bureau integration must be enabled before quick affordability can be calculated.",
-        )
-    bureau = latest_fresh_borrower_experian_enquiry(
-        db,
-        company_id=company_id,
-        borrower_id=request.borrower_id,
-        max_report_age_hours=int(bureau_policy["max_report_age_hours"]),
-        environment=str(bureau_policy.get("environment") or "sandbox"),
-    )
-    if not bureau:
-        raise HTTPException(
-            status_code=409,
-            detail="A fresh credit-bureau report is required before quick affordability can be calculated.",
-        )
-
-    verified_cdas_profile = (
-        db.query(CDASPayrollProfile)
-        .filter(
-            CDASPayrollProfile.company_id == company_id,
-            CDASPayrollProfile.borrower_id == request.borrower_id,
-            CDASPayrollProfile.employee_number.isnot(None),
-            CDASPayrollProfile.employee_number != "",
-            CDASPayrollProfile.verified.is_(True),
-        )
-        .first()
-    )
-    live_cdas_affordability = None
-    if verified_cdas_profile:
-        subscription = require_approved_subscription(db, company_id=company_id)
-        cdas_configuration = get_configuration(db, company_id)
-        environment = selected_environment(cdas_configuration)
-        assert_live_credit_available(
-            db,
-            subscription=subscription,
-            environment=environment,
-            operation_type="affordability",
-        )
-        client = get_company_cdas_client(db, company_id)
-        try:
-            live_cdas_affordability = await client.check_affordability(
-                str(verified_cdas_profile.employee_number)
-            )
-        except CdasError as exc:
-            raise HTTPException(
-                status_code=exc.status_code if 400 <= exc.status_code <= 599 else 502,
-                detail=f"CDAS affordability could not be verified: {exc.message}",
-            ) from exc
-        record_successful_operation(
-            db,
-            company_id=company_id,
-            environment=environment,
-            operation_type="affordability",
-            actor_user_id=actor_user_id,
-            billing_key=f"cdas-quick-affordability:{request.id}:{uuid4().hex}",
-            source_reference=str(request.id),
-            metadata={
-                "request_origin": "marketplace_quick_affordability",
-                "employee_number_present": True,
-            },
-        )
-
-    affordability = quick_loan_affordability(
-        borrower=borrower,
-        policy=policy,
-        proposed_installment=monthly,
-        bureau_monthly_commitments=Decimal(str(bureau.monthly_obligations or 0)),
-        live_cdas_affordability=live_cdas_affordability,
-    )
-    bureau_policy_evidence = bureau_evidence(
-        bureau,
-        policy=bureau_policy,
-        application_id=request.id,
-    )
-    affordability["external_evidence"] = {
-        "credit_bureau": bureau_policy_evidence,
-        "cdas": {
-            "employee_number_present": bool(verified_cdas_profile),
-            "live_affordability": str(live_cdas_affordability) if live_cdas_affordability is not None else None,
-        },
-    }
-    if bureau_policy_evidence["blockers"]:
-        affordability["passed"] = False
-        affordability["decision"] = "fail"
-        affordability["reasons"].extend(
-            {
-                "severity": "error",
-                "code": item["code"],
-                "message": item["message"],
-            }
-            for item in bureau_policy_evidence["blockers"]
-        )
-    elif bureau_policy_evidence["warnings"]:
-        affordability["reasons"].extend(
-            {
-                "severity": "warning",
-                "code": item["code"],
-                "message": item["message"],
-            }
-            for item in bureau_policy_evidence["warnings"]
-        )
-    affordability["approved_amount"] = str(approved_amount)
-    affordability["term_months"] = int(term_months)
-    affordability["total_repayment"] = str(total)
-    affordability["calculation_method"] = calculation_breakdown["method"]
-    return affordability, monthly, total, calculation_breakdown
-
 
 def request_or_404(db: Session, request_id: UUID) -> LoanRequest:
     request = db.query(LoanRequest).filter(LoanRequest.id == request_id).first()
     if not request:
         raise HTTPException(status_code=404, detail="Loan request not found")
     return request
-
-
-@router.post("/quick-affordability-preview")
-async def preview_quick_loan_affordability(
-    payload: QuickLoanAffordabilityPreview,
-    db: Session = Depends(get_db),
-    context: TenantContext = Depends(get_tenant_context),
-):
-    require_tenant_roles(context, LENDING_ROLES)
-    if context.is_platform_admin or not context.company_id:
-        raise HTTPException(status_code=400, detail="A loan-company context is required")
-    request = request_or_404(db, payload.loan_request_id)
-    if not company_has_request_access(
-        db,
-        company_id=context.company_id,
-        loan_request_id=request.id,
-    ):
-        raise HTTPException(status_code=402, detail="Unlock this loan request before checking affordability")
-
-    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
-        db,
-        request=request,
-        company_id=context.company_id,
-        approved_amount=payload.approved_amount,
-        interest_rate_percent=payload.interest_rate_percent,
-        term_months=payload.term_months,
-        processing_fee=payload.processing_fee,
-        calculation_method=payload.calculation_method,
-        installment_due_dates=payload.installment_due_dates,
-        actor_user_id=context.user.id,
-    )
-    policy = get_or_create_policy(db, context.company_id)
-    return {
-        "affordability": affordability,
-        "monthly_repayment": monthly,
-        "total_repayment": total,
-        "calculation_method": calculation_breakdown["method"],
-        "own_risk_override_available": bool(policy.manager_override_enabled),
-        "own_risk_override_roles": sorted(role.value if hasattr(role, "value") else str(role) for role in COMPANY_MANAGEMENT_ROLES),
-    }
 
 
 @router.post("/", response_model=LoanOfferResponse, status_code=status.HTTP_201_CREATED)
@@ -278,7 +108,7 @@ async def create_offer(
     if duplicate:
         raise HTTPException(status_code=409, detail="Your company already submitted an offer")
 
-    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
+    monthly, total, calculation_breakdown = await _calculate_offer_terms(
         db,
         request=request,
         company_id=context.company_id,
@@ -290,50 +120,7 @@ async def create_offer(
         installment_due_dates=payload.installment_due_dates,
         actor_user_id=context.user.id,
     )
-    policy = get_or_create_policy(db, context.company_id)
-    own_risk_reason = (payload.own_risk_reason or "").strip()
-    if not affordability["passed"]:
-        if not payload.approve_at_own_risk:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "The borrower did not pass affordability for these offer terms.",
-                    "affordability": affordability,
-                    "own_risk_override_available": bool(policy.manager_override_enabled),
-                },
-            )
-        if context.role not in COMPANY_MANAGEMENT_ROLES:
-            raise HTTPException(
-                status_code=403,
-                detail="Only authorized company management can approve a failed affordability check at their own risk",
-            )
-        if not policy.manager_override_enabled:
-            raise HTTPException(
-                status_code=403,
-                detail="At-risk affordability overrides are disabled by company policy",
-            )
-        if len(own_risk_reason) < 10:
-            raise HTTPException(
-                status_code=422,
-                detail="Give a clear reason of at least 10 characters for the at-risk approval",
-            )
-
     calculation_breakdown = dict(calculation_breakdown or {})
-    calculation_breakdown["quick_affordability"] = {
-        **affordability,
-        "override": {
-            "used": bool(not affordability["passed"] and payload.approve_at_own_risk),
-            "reason": own_risk_reason if not affordability["passed"] and payload.approve_at_own_risk else None,
-            "approved_by_user_id": str(context.user.id) if not affordability["passed"] and payload.approve_at_own_risk else None,
-            "approved_by_role": context.role.value if hasattr(context.role, "value") else str(context.role),
-            "approved_at": datetime.now(timezone.utc).isoformat() if not affordability["passed"] and payload.approve_at_own_risk else None,
-        },
-        "approval_basis": (
-            "manager_at_own_risk_override"
-            if not affordability["passed"] and payload.approve_at_own_risk
-            else "affordability_passed"
-        ),
-    }
     offer = LoanOffer(
         loan_request_id=request.id,
         company_id=context.company_id,
@@ -446,7 +233,7 @@ async def update_offer(
             detail=f"Enter exactly {offer.term_months} installment due dates before updating the offer",
         )
     request = request_or_404(db, offer.loan_request_id)
-    affordability, monthly, total, calculation_breakdown = await _quick_affordability_for_terms(
+    monthly, total, calculation_breakdown = await _calculate_offer_terms(
         db,
         request=request,
         company_id=context.company_id,
@@ -458,39 +245,7 @@ async def update_offer(
         installment_due_dates=supplied_due_dates,
         actor_user_id=context.user.id,
     )
-    policy = get_or_create_policy(db, context.company_id)
-    if not affordability["passed"]:
-        if not approve_at_own_risk:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "The borrower did not pass affordability for the updated offer terms.",
-                    "affordability": affordability,
-                    "own_risk_override_available": bool(policy.manager_override_enabled),
-                },
-            )
-        if context.role not in COMPANY_MANAGEMENT_ROLES:
-            raise HTTPException(
-                status_code=403,
-                detail="Only authorized company management can approve a failed affordability check at their own risk",
-            )
-        if not policy.manager_override_enabled:
-            raise HTTPException(status_code=403, detail="At-risk affordability overrides are disabled by company policy")
-        if len(own_risk_reason) < 10:
-            raise HTTPException(status_code=422, detail="Give a clear reason of at least 10 characters for the at-risk approval")
-
     calculation_breakdown = dict(calculation_breakdown or {})
-    calculation_breakdown["quick_affordability"] = {
-        **affordability,
-        "override": {
-            "used": bool(not affordability["passed"] and approve_at_own_risk),
-            "reason": own_risk_reason if not affordability["passed"] and approve_at_own_risk else None,
-            "approved_by_user_id": str(context.user.id) if not affordability["passed"] and approve_at_own_risk else None,
-            "approved_by_role": context.role.value if hasattr(context.role, "value") else str(context.role),
-            "approved_at": datetime.now(timezone.utc).isoformat() if not affordability["passed"] and approve_at_own_risk else None,
-        },
-        "approval_basis": "manager_at_own_risk_override" if not affordability["passed"] and approve_at_own_risk else "affordability_passed",
-    }
     offer.monthly_repayment = monthly
     offer.total_repayment = total
     offer.calculation_method = calculation_breakdown["method"]

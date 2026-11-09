@@ -15,7 +15,6 @@ import {
   ArrowRight,
   BadgeCheck,
   BriefcaseBusiness,
-  Calculator,
   CheckCircle2,
   CircleAlert,
   FileCheck2,
@@ -58,7 +57,6 @@ import type { CompanyClient } from "@/types/companyClient";
 import type { MicroLoanCalculation } from "@/types/loan";
 import type { LoanProduct } from "@/types/loanProduct";
 import type {
-  AffordabilityAssessment,
   ApplicationIntegrationReadiness,
   BankAccountInput,
   DebtObligationInput,
@@ -80,7 +78,6 @@ const steps = [
   { label: "Employment", icon: BriefcaseBusiness },
   { label: "Expenses & debt", icon: WalletCards },
   { label: "Banking", icon: Landmark },
-  { label: "Affordability", icon: Calculator },
   { label: "Review & submit", icon: FileCheck2 },
 ] as const;
 
@@ -197,7 +194,6 @@ function OriginationWizard() {
   const [calculating, setCalculating] = useState(false);
   const [uploadingKyc, setUploadingKyc] = useState(false);
   const [calculation, setCalculation] = useState<MicroLoanCalculation | null>(null);
-  const [assessment, setAssessment] = useState<AffordabilityAssessment | null>(null);
   const [integrationReadiness, setIntegrationReadiness] = useState<ApplicationIntegrationReadiness | null>(null);
   const [integrationRefreshing, setIntegrationRefreshing] = useState(false);
 
@@ -374,7 +370,6 @@ function OriginationWizard() {
         );
         setCdasCollectionEnabled(Boolean(workspace.application.cdas_collection_enabled));
         setRate(Number(workspace.application.interest_rate ?? 20));
-        setAssessment(workspace.assessments[0] ?? null);
         setStep(Math.min(Math.max((workspace.application.application_step ?? 1) - 1, 0), steps.length - 1));
         applyProfile(workspace.profile, clientRows.find((client) => client.borrower_id === workspace.application.borrower_id));
       } else if (requestedBorrowerId) {
@@ -508,10 +503,9 @@ function OriginationWizard() {
       const updated = await originationApi.updateApplication(application.id, { installment_due_dates: reschedulePreview });
       setApplication(updated);
       setInstallmentDueDates(reschedulePreview);
-      setAssessment(null);
       setCalculation(null);
       setReschedulePreview(null);
-      toast.success("Repayment dates updated. Recalculate affordability before approval.");
+      toast.success("Repayment dates updated. Review revised repayment terms before approval.");
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Could not reschedule the top-up."));
     } finally {
@@ -596,21 +590,7 @@ function OriginationWizard() {
         const saved = await originationApi.saveFinancialProfile(current.borrower_id, profilePayload());
         applyProfile(saved);
         await originationApi.updateApplication(current.id, { application_step: step + 2 });
-      } else if (step === 5) {
-        const current = await ensureApplication();
-        const saved = await originationApi.saveFinancialProfile(current.borrower_id, profilePayload());
-        applyProfile(saved);
-        const result = await originationApi.assess(current.id, {
-          proposed_principal: applicationType === "top_up" ? topUpTotal : requestedAmount,
-          proposed_rate_percent: rate,
-          proposed_months: termCount,
-          processing_fee: processingFee,
-          interest_method: selectedProduct?.interest_method ?? "micro_loan",
-        });
-        setAssessment(result);
-        setApplication((row) => row ? { ...row, affordability_assessment_id: result.id, affordability_decision: result.decision } : row);
-        await refreshIntegrationReadiness(current.id);
-        toast.success("Affordability calculated", { description: titleCase(result.decision) });
+
       }
       setStep((current) => Math.min(current + 1, steps.length - 1));
     } catch (error: unknown) {
@@ -624,62 +604,18 @@ function OriginationWizard() {
     if (applicationType !== "top_up" || (application && application.status !== "draft")) return;
     setWorking(true);
     try {
-      // A top-up offer reuses the existing financial profile. The owner need
-      // not enter the seven application screens again.
       const current = await ensureApplication();
-      const result = await originationApi.assess(current.id, {
-        proposed_principal: Number(current.requested_amount),
-        proposed_rate_percent: rate,
-        proposed_months: current.term_count,
-        processing_fee: processingFee,
-        interest_method: selectedProduct?.interest_method ?? "micro_loan",
-      });
-      setAssessment(result);
-      setApplication({ ...current, affordability_assessment_id: result.id, affordability_decision: result.decision });
-      await refreshIntegrationReadiness(current.id);
-      const decision = result.overridden ? result.override_decision ?? result.decision : result.decision;
-      if (["eligible", "conditionally_eligible"].includes(decision)) {
-        try {
-          await originationApi.submit(current.id);
-          toast.success("Top-up offered for manager decision", {
-            description: "Existing records were reused; no duplicate KYC or banking forms were required.",
-          });
-          router.push(`/company/marketplace?workspace=applications&application=${encodeURIComponent(current.id)}`);
-          return;
-        } catch (error: unknown) {
-          // Keep the application in draft when legal/policy evidence is missing.
-          toast.error(getErrorMessage(error, "Top-up offer saved, but approval prerequisites remain."));
-        }
-      } else {
-        toast.error("Top-up needs review: open the affordability result to see whether saved records need updating or a financial-risk exception is available.");
+      try {
+        await originationApi.submit(current.id);
+        toast.success("Top-up offered for manager decision", { description: "Existing records reused; independent compliance checks still apply." });
+        router.push(`/company/marketplace?workspace=applications&application=${encodeURIComponent(current.id)}`);
+        return;
+      } catch (error: unknown) {
+        toast.error(getErrorMessage(error, "Top-up saved; approval prerequisites remain."));
       }
-      setStep(6);
+      setStep(5);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Unable to create the top-up offer."));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function acceptAffordabilityRisk() {
-    if (activeRole !== "company_owner" || !assessment || !application) return;
-    const reason = window.prompt("Company owner risk acceptance: explain why this loan or top-up should be considered despite the affordability warning (minimum 10 characters). KYC and compliance checks still apply.");
-    if (reason === null) return;
-    if (reason.trim().length < 10) {
-      toast.error("Provide a risk acceptance reason of at least 10 characters.");
-      return;
-    }
-    setWorking(true);
-    try {
-      const updated = await originationApi.overrideAssessment(assessment.id, {
-        decision: "conditionally_eligible",
-        reason: reason.trim(),
-      });
-      setAssessment(updated);
-      setApplication((current) => current ? { ...current, affordability_decision: "conditionally_eligible" } : current);
-      toast.success("Owner risk acceptance recorded", { description: "Financial advice is retained. Mandatory identity, KYC and compliance controls still apply." });
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Unable to record the owner's risk decision."));
     } finally {
       setWorking(false);
     }
@@ -762,7 +698,7 @@ function OriginationWizard() {
                   <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} />
                   <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
                     <p className="font-bold">Do you want to go for extra checking?</p>
-                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment, expenses and affordability manually. No: reuse the client&apos;s saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
+                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment and expenses manually. No: reuse the client&apos;s saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
                     <div className="flex flex-wrap gap-3">
                       <Button type="button" variant="outline" disabled={working} onClick={() => setStep(1)}>Yes, extra checking</Button>
                       <LoadingButton type="button" loading={working} loadingText="Preparing top-up…" onClick={() => void skipToTopUpOffer()}>No, just offer top-up</LoadingButton>
@@ -791,7 +727,7 @@ function OriginationWizard() {
                         <div className="space-y-3">
                           <p className="text-sm font-semibold">Original: {installmentDueDates.join(", ") || "Not set"}</p>
                           <p className="text-sm font-semibold">Revised: {reschedulePreview.join(", ")}</p>
-                          <p className="text-xs text-muted-foreground">Confirming updates the draft application, preserves an audit trail and requires a fresh affordability calculation. Review financial and contractual changes before approval.</p>
+                          <p className="text-xs text-muted-foreground">Confirming updates the draft application, preserves an audit trail and requires review of revised repayment terms. Review financial and contractual changes before approval.</p>
                           <LoadingButton type="button" loading={working} onClick={() => void confirmTopUpReschedule()}>Confirm rescheduled dates</LoadingButton>
                         </div>
                       ) : null}
@@ -812,22 +748,11 @@ function OriginationWizard() {
             {step === 3 ? <ExpensesStep expenses={expenses} onExpensesChange={setExpenses} debts={debts} onDebtsChange={setDebts} /> : null}
             {step === 4 ? <BankingStep values={bankAccounts} onChange={setBankAccounts} identityName={profile?.identity.full_name ?? selectedClient?.full_name ?? ""} /> : null}
             {step === 5 ? <>
-              <AffordabilityStep calculation={calculation} assessment={assessment} totalExpenses={totalExpenses} totalDebts={totalDebts} verifiedIncome={employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0)} />
-              {assessment && Number(calculation?.monthly_installment ?? 0) > Number(assessment.maximum_affordable_installment) && !assessment.overridden && activeRole === "company_owner" ? (
-                <div className="rounded-2xl border border-amber-400/50 p-4 space-y-3">
-                  <p className="font-semibold">Company owner: accept lending risk</p>
-                  <p className="text-sm text-muted-foreground">The proposed instalment exceeds the recommended financial limit. A company owner may document acceptance of this credit risk, subject to separate KYC and compliance checks.</p>
-                  <Button type="button" variant="outline" disabled={working} onClick={() => void acceptAffordabilityRisk()}>Record owner risk acceptance</Button>
-                </div>
-              ) : null}
-              {assessment?.overridden ? <p className="text-sm">Recorded decision: {titleCase(assessment.override_decision ?? assessment.decision)}. Owner/manager reason: {assessment.override_reason ?? "Not recorded"}. Original recommendation: {titleCase(assessment.decision)}.</p> : null}
-            </> : null}
-            {step === 6 ? <>
-              <ReviewStep application={application} profile={profile} assessment={assessment} calculation={calculation} product={selectedProduct} totalExpenses={totalExpenses} totalDebts={totalDebts} />
+              <ReviewStep application={application} profile={profile} calculation={calculation} product={selectedProduct} totalExpenses={totalExpenses} totalDebts={totalDebts} />
               {application?.application_type === "top_up" && application.top_up_exception_requested && !application.top_up_exception_approved ? (
                 <div className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
                   <p className="font-semibold">Early top-up exception requires owner approval</p>
-                  <p className="text-sm text-muted-foreground">The normal repayment threshold has not been met. This is a business-risk decision, separate from affordability. The Company Owner can approve the exception with a written reason; normal compliance and final loan approval still apply.</p>
+                  <p className="text-sm text-muted-foreground">The normal repayment threshold has not been met. This is a business-risk decision. The Company Owner can approve the exception with a written reason; normal compliance and final loan approval still apply.</p>
                   {activeRole === "company_owner" ? (
                     <Button type="button" disabled={working} onClick={() => void approveTopUpExceptionFromReview()}>Approve top-up exception as owner</Button>
                   ) : <p className="text-sm">Ask the Company Owner to review and approve this exception.</p>}
@@ -838,7 +763,7 @@ function OriginationWizard() {
 
             <div className="flex flex-wrap justify-between gap-3 border-t pt-5">
               <Button type="button" variant="outline" disabled={step === 0 || working} onClick={() => setStep((current) => Math.max(current - 1, 0))}><ArrowLeft className="h-4 w-4" />Previous</Button>
-              {step < steps.length - 1 ? <LoadingButton type="button" loading={working} loadingText="Saving step…" onClick={() => void goNext()}>Save and continue<ArrowRight className="h-4 w-4" /></LoadingButton> : <LoadingButton type="button" loading={working} loadingText="Submitting…" disabled={!assessment || !["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision)} onClick={() => void submitApplication()}><CheckCircle2 className="h-4 w-4" />Submit for manager decision</LoadingButton>}
+              {step < steps.length - 1 ? <LoadingButton type="button" loading={working} loadingText="Saving step…" onClick={() => void goNext()}>Save and continue<ArrowRight className="h-4 w-4" /></LoadingButton> : <LoadingButton type="button" loading={working} loadingText="Submitting…" onClick={() => void submitApplication()}><CheckCircle2 className="h-4 w-4" />Submit for manager decision</LoadingButton>}
             </div>
           </CardContent>
         </Card>
@@ -937,8 +862,8 @@ function OriginationWizard() {
               </CardContent>
             </Card>
           ) : null}
-          <Card className="rounded-3xl border-primary/20 bg-gradient-to-br from-primary/10 via-card to-emerald-500/10"><CardHeader><CardTitle className="flex items-center gap-2"><BadgeCheck className="h-5 w-5 text-primary" />Application health</CardTitle></CardHeader><CardContent className="space-y-3"><Health label="Client selected" ok={Boolean(borrowerId)} />{applicationType === "top_up" ? <Health label="Top-up rule or owner exception" ok={Boolean(topUpEligibility?.eligible || application?.top_up_exception_approved)} /> : null}<Health label="Loan terms calculated" ok={Boolean(calculation)} /><Health label="KYC verified" ok={kyc.status === "verified"} /><Health label="Income verified" ok={employment.verification_status === "verified" && employment.verified_net_income > 0} /><Health label="Banking captured" ok={bankAccounts.length > 0} /><Health label="Financial instalment within limit" ok={Boolean(assessment && Number(assessment.proposed_installment) <= Number(assessment.maximum_affordable_installment))} /><Health label="Compliance cleared for submission" ok={Boolean(assessment && ["eligible", "conditionally_eligible"].includes(assessment.overridden ? assessment.override_decision ?? "" : assessment.decision))} /></CardContent></Card>
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Financial snapshot</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><Line label="Verified income" value={formatMoney(employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0))} /><Line label="Household expenses" value={formatMoney(totalExpenses)} /><Line label="Debt instalments" value={formatMoney(totalDebts)} /><Line label="Proposed instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} /><Line label="Affordability limit" value={formatMoney(assessment?.maximum_affordable_installment ?? 0)} /></CardContent></Card>
+          <Card className="rounded-3xl border-primary/20 bg-gradient-to-br from-primary/10 via-card to-emerald-500/10"><CardHeader><CardTitle className="flex items-center gap-2"><BadgeCheck className="h-5 w-5 text-primary" />Application health</CardTitle></CardHeader><CardContent className="space-y-3"><Health label="Client selected" ok={Boolean(borrowerId)} />{applicationType === "top_up" ? <Health label="Top-up rule or owner exception" ok={Boolean(topUpEligibility?.eligible || application?.top_up_exception_approved)} /> : null}<Health label="Loan terms calculated" ok={Boolean(calculation)} /><Health label="KYC verified" ok={kyc.status === "verified"} /><Health label="Income verified" ok={employment.verification_status === "verified" && employment.verified_net_income > 0} /><Health label="Banking captured" ok={bankAccounts.length > 0} /></CardContent></Card>
+          <Card className="rounded-3xl"><CardHeader><CardTitle>Financial snapshot</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><Line label="Verified income" value={formatMoney(employment.verified_net_income + incomeSources.filter((item) => item.is_verified).reduce((sum, item) => sum + item.verified_amount, 0))} /><Line label="Household expenses" value={formatMoney(totalExpenses)} /><Line label="Debt instalments" value={formatMoney(totalDebts)} /><Line label="Proposed instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} /></CardContent></Card>
           <Alert><CircleAlert className="h-4 w-4" /><AlertTitle>Payment-card security</AlertTitle><AlertDescription>LoanHub never captures or stores CVV/CVC, PIN or a full card number. Only provider tokens and masked card details are accepted.</AlertDescription></Alert>
         </div>
       </div>
@@ -1101,7 +1026,7 @@ function ExpensesStep({ expenses, onExpensesChange, debts, onDebtsChange }: { ex
 
       <div>
         <ArrayHeader title="Tracked existing debt obligations" onAdd={() => onDebtsChange([...debts, emptyDebt()])} />
-        <p className="mt-1 text-sm text-muted-foreground">Each obligation keeps its start date, current balance, installment schedule and remaining installments for later affordability assessments.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Each obligation keeps its start date, current balance, installment schedule and remaining installments.</p>
         {debts.length === 0 ? <EmptyRows message="No existing debts captured. Confirm this with the borrower and any available bureau report." /> : (
           <div className="mt-3 space-y-4">
             {debts.map((item, index) => (
@@ -1165,52 +1090,8 @@ function BankingStep({
   );
 }
 
-function AffordabilityStep({ calculation, assessment, totalExpenses, totalDebts, verifiedIncome }: { calculation: MicroLoanCalculation | null; assessment: AffordabilityAssessment | null; totalExpenses: number; totalDebts: number; verifiedIncome: number }) {
-  const installment = Number(calculation?.monthly_installment ?? 0);
-  const capacity = Number(assessment?.maximum_affordable_installment ?? 0);
-  const financiallyAffordable = installment > 0 && installment <= capacity;
-  const complianceCodes = new Set(["compliance_block", "enhanced_due_diligence", "kyc_incomplete", "age_missing", "age_outside_policy", "cdas_live_affordability_missing", "cdas_live_affordability_insufficient"]);
-  const complianceIssues = assessment?.result_reasons.filter((reason) => complianceCodes.has(reason.code) && reason.severity !== "pass") ?? [];
-  const financialIssues = assessment?.result_reasons.filter((reason) => !complianceCodes.has(reason.code) && reason.severity !== "pass") ?? [];
-  const effectiveDecision = assessment?.overridden ? assessment.override_decision ?? assessment.decision : assessment?.decision;
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Summary label="Verified income" value={formatMoney(verifiedIncome)} />
-        <Summary label="Household expenses" value={formatMoney(totalExpenses)} />
-        <Summary label="Debt instalments" value={formatMoney(totalDebts)} />
-        <Summary label="Proposed instalment" value={formatMoney(installment)} accent />
-      </div>
-      {assessment ? (
-        <div className="space-y-4">
-          <div className={`rounded-3xl border p-5 ${financiallyAffordable ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/40 bg-amber-500/10"}`}>
-            <p className="text-xs font-bold uppercase tracking-wide">Financial affordability · advisory</p>
-            <h3 className="mt-1 text-2xl font-bold">{financiallyAffordable ? "Within the calculated limit" : "Exceeds the calculated limit"}</h3>
-            <p className="mt-2 text-sm">Maximum recommended instalment: {formatMoney(capacity)} · Proposed: {formatMoney(installment)} · Headroom: {formatMoney(assessment.affordability_headroom)}</p>
-            <p className="mt-2 text-sm text-muted-foreground">This is a financial-risk recommendation, not an automatic loan approval or rejection. An authorised owner may record a reasoned decision to accept credit risk.</p>
-            {financialIssues.length > 0 ? <div className="mt-3 space-y-2">{financialIssues.map((reason) => <p key={reason.code} className="rounded-xl bg-background/70 p-3 text-sm">{reason.message}</p>)}</div> : null}
-          </div>
-          <div className={`rounded-3xl border p-5 ${complianceIssues.length ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
-            <p className="text-xs font-bold uppercase tracking-wide">Identity, KYC and compliance · separate review</p>
-            <h3 className="mt-1 text-xl font-bold">{complianceIssues.length ? "Review required before approval" : "No outstanding compliance alerts in this assessment"}</h3>
-            {complianceIssues.length ? <div className="mt-3 space-y-2">{complianceIssues.map((reason) => <p key={reason.code} className="rounded-xl bg-background/70 p-3 text-sm">{reason.message}</p>)}</div> : null}
-            <p className="mt-3 text-sm text-muted-foreground">If a flag is incorrect, an authorised reviewer must correct the KYC record with supporting evidence and recalculate the assessment. Accepting financial risk does not clear sanctions, fraud or mandatory payroll requirements.</p>
-          </div>
-          <div className="rounded-2xl border p-4">
-            <p className="text-sm font-semibold">{complianceIssues.length && financiallyAffordable ? "Overall status: Compliance review required" : `Application recommendation: ${titleCase(effectiveDecision ?? "not calculated")}`}</p>
-            {complianceIssues.length && financiallyAffordable ? <p className="mt-1 text-sm text-muted-foreground">Financial affordability passed. The recorded overall decision is on hold because of separate identity or compliance checks; it is not a financial rejection.</p> : null}
-            {assessment.overridden ? <p className="mt-1 text-sm text-muted-foreground">Original recommendation: {titleCase(assessment.decision)}. The recorded exception is retained for audit.</p> : null}
-          </div>
-        </div>
-      ) : (
-        <Alert><Calculator className="h-4 w-4" /><AlertTitle>Ready to calculate</AlertTitle><AlertDescription>Save and continue to calculate affordability using the recorded income, expenses, debts and company policy.</AlertDescription></Alert>
-      )}
-    </div>
-  );
-}
-
-function ReviewStep({ application, profile, assessment, calculation, product, totalExpenses, totalDebts }: { application: OriginationApplication | null; profile: FinancialProfile | null; assessment: AffordabilityAssessment | null; calculation: MicroLoanCalculation | null; product: LoanProduct | null; totalExpenses: number; totalDebts: number }) {
-  return <div className="space-y-6"><Alert><FileCheck2 className="h-4 w-4" /><AlertTitle>Submission creates a manager decision item</AlertTitle><AlertDescription>The loan is not created and no disbursement is recorded yet. A Branch Manager, Company Administrator or Company Owner must approve it. A signed contract is then required before Finance records money out.</AlertDescription></Alert><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Summary label="Applicant" value={profile?.identity.full_name ?? "Not selected"} /><Summary label="Product" value={product?.name ?? "Not selected"} /><Summary label="Application" value={application?.application_reference ?? "Draft not saved"} /><Summary label="KYC" value={titleCase(profile?.kyc?.status ?? "not started")} /><Summary label="Affordability" value={titleCase(assessment?.decision ?? "not calculated")} /><Summary label="Monthly instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} accent /><Summary label="Total expenses" value={formatMoney(totalExpenses)} /><Summary label="Debt instalments" value={formatMoney(totalDebts)} /><Summary label="Collection method" value={application?.cdas_collection_enabled ? "CDAS payroll" : "Cash / Bank / Other"} /><Summary label="First pay date" value={application?.first_payment_date ?? "Not saved"} /></div></div>;
+function ReviewStep({ application, profile, calculation, product, totalExpenses, totalDebts }: { application: OriginationApplication | null; profile: FinancialProfile | null; calculation: MicroLoanCalculation | null; product: LoanProduct | null; totalExpenses: number; totalDebts: number }) {
+  return <div className="space-y-6"><Alert><FileCheck2 className="h-4 w-4" /><AlertTitle>Submission creates a manager decision item</AlertTitle><AlertDescription>The loan is not created and no disbursement is recorded yet. A Branch Manager, Company Administrator or Company Owner must approve it. A signed contract is then required before Finance records money out.</AlertDescription></Alert><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Summary label="Applicant" value={profile?.identity.full_name ?? "Not selected"} /><Summary label="Product" value={product?.name ?? "Not selected"} /><Summary label="Application" value={application?.application_reference ?? "Draft not saved"} /><Summary label="KYC" value={titleCase(profile?.kyc?.status ?? "not started")} /><Summary label="Monthly instalment" value={formatMoney(calculation?.monthly_installment ?? 0)} accent /><Summary label="Total expenses" value={formatMoney(totalExpenses)} /><Summary label="Debt instalments" value={formatMoney(totalDebts)} /><Summary label="Collection method" value={application?.cdas_collection_enabled ? "CDAS payroll" : "Cash / Bank / Other"} /><Summary label="First pay date" value={application?.first_payment_date ?? "Not saved"} /></div></div>;
 }
 
 function stepDescription(step: number): string {
@@ -1220,7 +1101,6 @@ function stepDescription(step: number): string {
     "Capture employment, salary evidence and all verified recurring income.",
     "Capture household living costs and every existing monthly debt obligation.",
     "Record protected bank-account details and optional provider-tokenized card information.",
-    "Run the official versioned LoanHub affordability rules and review every decision reason.",
     "Confirm the complete application before it enters the manager decision queue.",
   ][step];
 }
