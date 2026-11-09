@@ -153,6 +153,10 @@ def issue_ceremony_challenge(
             "contract_signed": False, "device_verified": False,
         },
     ))
+    # Long reads/audit construction must not revive a one-time expired permit.
+    if datetime.now(timezone.utc) >= expires:
+        db.rollback()
+        raise HTTPException(409, "Ceremony challenge expired before persistence")
     try:
         db.commit()
     except IntegrityError as exc:
