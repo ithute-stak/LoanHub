@@ -24,7 +24,6 @@ from database.models.lending_operations import (
     CreditDecision,
 )
 from database.models.origination import (
-    AffordabilityAssessment,
     BorrowerDebtObligation,
     BorrowerEmploymentProfile,
     BorrowerKYCProfile,
@@ -135,24 +134,7 @@ def _event(db: Session, case: CreditCommitteeCase, event_type: str, actor_user_i
     ))
 
 
-def _latest_affordability(db: Session, application: DirectLoanApplication) -> AffordabilityAssessment | None:
-    if application.affordability_assessment_id:
-        row = db.get(AffordabilityAssessment, application.affordability_assessment_id)
-        if row and row.company_id == application.company_id:
-            return row
-    return (
-        db.query(AffordabilityAssessment)
-        .filter(
-            AffordabilityAssessment.company_id == application.company_id,
-            AffordabilityAssessment.application_id == application.id,
-        )
-        .order_by(AffordabilityAssessment.assessment_number.desc(), AffordabilityAssessment.created_at.desc())
-        .first()
-    )
-
-
 def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> dict[str, Any]:
-    affordability = _latest_affordability(db, application)
     kyc = db.query(BorrowerKYCProfile).filter(
         BorrowerKYCProfile.borrower_id == application.borrower_id,
     ).first()
@@ -204,7 +186,7 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
         bureau_policy=bureau_policy,
         cdas_profile=payroll,
         cdas_selected=bool(application.cdas_collection_enabled),
-        proposed_installment=(affordability.proposed_installment if affordability else 0),
+        proposed_installment=Decimal("0"),
     )
     return {
         "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -221,21 +203,6 @@ def build_evidence_snapshot(db: Session, application: DirectLoanApplication) -> 
             "cdas_collection_enabled": bool(application.cdas_collection_enabled),
             "credit_warning": application.credit_warning or {},
             "top_up_eligibility_snapshot": application.top_up_eligibility_snapshot or {},
-        },
-        "affordability": {
-            "available": bool(affordability),
-            "decision": affordability.decision if affordability else None,
-            "verified_income": str(money(affordability.verified_income)) if affordability else "0.00",
-            "household_expenses": str(money(affordability.household_expenses)) if affordability else "0.00",
-            "existing_debt_installments": str(money(affordability.existing_debt_installments)) if affordability else str(money(debt_installments)),
-            "dti_percent": str(affordability.dti_percent or 0) if affordability else None,
-            "maximum_affordable_installment": str(money(affordability.maximum_affordable_installment)) if affordability else "0.00",
-            "proposed_installment": str(money(affordability.proposed_installment)) if affordability else "0.00",
-            "affordability_headroom": str(money(affordability.affordability_headroom)) if affordability else "0.00",
-            "reasons": list(affordability.result_reasons or []) if affordability else [],
-            "overridden": bool(affordability.overridden) if affordability else False,
-            "override_decision": affordability.override_decision if affordability else None,
-            "override_reason": affordability.override_reason if affordability else None,
         },
         "kyc": {
             "available": bool(kyc),

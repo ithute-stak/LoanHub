@@ -40,7 +40,6 @@ def build_credit_committee_pdf(db: Session, case: CreditCommitteeCase) -> bytes:
     company = db.get(LoanCompany, case.company_id)
     assessment = payload.get("latest_assessment") or {}
     evidence = payload.get("evidence_snapshot") or {}
-    affordability = evidence.get("affordability") or {}
     bureau = evidence.get("credit_bureau") or {}
     kyc = evidence.get("kyc") or {}
     employment = evidence.get("employment") or {}
@@ -64,16 +63,13 @@ def build_credit_committee_pdf(db: Session, case: CreditCommitteeCase) -> bytes:
     ], columns=4, styles=styles))
 
     story.extend(section(
-        "Application and affordability evidence",
+        "Application and independent verification evidence",
         "The memo preserves the evidence snapshot used by the analyst. Automated rules are supporting evidence only; the final committee decision remains separately recorded.",
         styles=styles,
     ))
     evidence_table = Table([
         ["Borrower", payload.get("borrower_name"), "Application", payload.get("application_reference")],
         ["Requested amount", money_text(payload.get("requested_amount") or 0), "Application type", _text(payload.get("application_type")).replace("_", " ").title()],
-        ["Verified income", money_text(affordability.get("verified_income") or 0), "Household expenses", money_text(affordability.get("household_expenses") or 0)],
-        ["Existing debt installments", money_text(affordability.get("existing_debt_installments") or 0), "DTI", f"{_text(affordability.get('dti_percent'))}%"],
-        ["Affordability result", _text(affordability.get("decision")).replace("_", " ").title(), "Headroom", money_text(affordability.get("affordability_headroom") or 0)],
         ["Credit score", _text(bureau.get("score")), "Bureau risk grade", _text(bureau.get("risk_grade"))],
         ["KYC status", _text(kyc.get("status")).replace("_", " ").title(), "Employment verification", _text(employment.get("verification_status")).replace("_", " ").title()],
         ["Rules-engine result", _text(rules.get("decision")).replace("_", " ").title(), "Rules score", _text(rules.get("score"))],

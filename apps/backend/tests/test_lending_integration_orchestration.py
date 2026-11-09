@@ -21,7 +21,7 @@ def test_origination_workspace_exposes_one_cross_system_readiness_view() -> None
     assert '"core": {' in service
     assert '"bureau": {' in service
     assert '"cdas": {' in service
-    assert '"ready_for_affordability": ready_for_affordability' in service
+    assert '"ready_for_affordability": ready_for_affordability' not in service
     assert '"ready_for_approval": ready_for_approval' in service
 
 

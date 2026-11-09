@@ -38,7 +38,6 @@ from database.models.lending_operations import (
     ReconciliationException,
     WorkflowInstance,
 )
-from database.models.origination import AffordabilityAssessment, OriginationPolicy
 from database.models.payment import PaymentTransaction
 from database.models.repayment import RepaymentInstallment
 from database.models.reporting import GeneratedReport
@@ -78,7 +77,6 @@ from database.schemas.company_operating_system import (
 )
 from database.session import get_db
 from services.interest_calculation_service import calculate_loan_terms, generate_monthly_due_dates
-from services.quick_loan_affordability_service import quick_loan_affordability
 from services.analytics_service import build_management_command_intelligence
 from services.accounting_service import accounting_audit_compliance_pack, financial_ratio_analysis, treasury_cash_forecast
 from services.crypto_service import encrypt_control_secret
@@ -854,10 +852,6 @@ def borrower_risk_view(
         CreditBureauEnquiry.company_id == context.company_id,
         CreditBureauEnquiry.borrower_id == borrower_id,
     ).order_by(CreditBureauEnquiry.requested_at.desc()).first()
-    latest_affordability = db.query(AffordabilityAssessment).filter(
-        AffordabilityAssessment.company_id == context.company_id,
-        AffordabilityAssessment.borrower_id == borrower_id,
-    ).order_by(AffordabilityAssessment.created_at.desc()).first()
     score = 100
     factors = []
     if overdue:
@@ -873,9 +867,6 @@ def borrower_risk_view(
     if latest_bureau and latest_bureau.adverse_records:
         score -= min(30, int(latest_bureau.adverse_records) * 10)
         factors.append("Credit-bureau enquiry contains adverse records")
-    if latest_affordability and _money(latest_affordability.affordability_headroom) < 0:
-        score -= 20
-        factors.append("Latest affordability assessment has negative headroom")
     score = max(0, min(100, score))
     band = "low" if score >= 80 else "moderate" if score >= 60 else "high" if score >= 40 else "very_high"
     return {
@@ -884,11 +875,6 @@ def borrower_risk_view(
         "risk_band": band,
         "factors": factors or ["No material negative factor was found in the available company-scoped LoanHub records."],
         "loan_exposure": sum((_money(item.balance) for item in loans), Decimal("0")),
-        "latest_affordability": None if not latest_affordability else {
-            "decision": latest_affordability.decision,
-            "dti_percent": latest_affordability.dti_percent,
-            "affordability_headroom": latest_affordability.affordability_headroom,
-        },
         "latest_bureau": None if not latest_bureau else {
             "provider": latest_bureau.provider,
             "score": latest_bureau.score,
@@ -923,7 +909,7 @@ def simulate_product_pricing(
         "contractual_margin": margin,
         "margin_percent_of_principal": round(float(margin / payload.principal * Decimal("100")), 2),
         "details": details,
-        "note": "Pricing simulation is a planning tool. Published product rules, affordability and approval controls still apply.",
+        "note": "Pricing simulation is a planning tool. Published product rules and independent approval controls still apply.",
     }
 
 
@@ -933,7 +919,7 @@ def collections_strategy(db: Session = Depends(get_db), context: TenantContext =
     snapshot = _collections_snapshot(db, context)
     snapshot["recommended_actions"] = {
         "1_7": "Friendly reminder and confirm payment channel.",
-        "8_30": "Collector contact, promise-to-pay and affordability check.",
+        "8_30": "Collector contact, promise-to-pay and repayment review.",
         "31_60": "Formal arrangement / settlement review and supervisor escalation.",
         "61_90": "Senior collections review and legal-readiness assessment.",
         "90_plus": "Legal/recovery committee review subject to company policy and applicable law.",
@@ -2672,7 +2658,7 @@ def _minimum_viable_pricing(
             else "minimum_rate_calculated"
         ),
         "policy_note": (
-            "Minimum viable pricing is management decision support. It does not approve or reject a borrower, does not replace affordability or legal pricing limits, "
+            "Minimum viable pricing is management decision support. It does not approve or reject a borrower, does not replace legal pricing limits, "
             "and does not claim APR. The solver uses LoanHub's authoritative contractual interest engine and a simple annualized yield proxy to cover explicit funding, "
             "expected-loss, operating-cost, capital-hurdle and target-margin assumptions."
         ),
@@ -2689,13 +2675,6 @@ def _deal_structuring_intelligence(
     borrower = db.query(Borrower).filter(Borrower.id == payload.borrower_id).first()
     if not borrower:
         raise HTTPException(status_code=404, detail="Borrower profile was not found")
-
-    policy = db.query(OriginationPolicy).filter(
-        OriginationPolicy.company_id == context.company_id,
-        OriginationPolicy.is_active.is_(True),
-    ).first()
-    if not policy:
-        raise HTTPException(status_code=409, detail="Active origination affordability policy is required for deal structuring")
 
     candidate_count = int(
         ((Decimal(payload.maximum_principal) - Decimal(payload.minimum_principal)) / Decimal(payload.principal_step))
@@ -2766,17 +2745,10 @@ def _deal_structuring_intelligence(
             minimum_rate = pricing.get("minimum_viable_rate_percent")
             minimum_terms = pricing.get("minimum_viable_terms")
 
-            affordability = None
-            affordability_pass = False
-            monthly_installment = None
-            if minimum_terms is not None:
-                monthly_installment = Decimal(str(minimum_terms["monthly_installment"]))
-                affordability = quick_loan_affordability(
-                    borrower=borrower,
-                    policy=policy,
-                    proposed_installment=monthly_installment,
-                )
-                affordability_pass = bool(affordability.get("passed"))
+            monthly_installment = (
+                Decimal(str(minimum_terms["monthly_installment"]))
+                if minimum_terms is not None else None
+            )
 
             stressed_min_cash = baseline_min_cash - principal
             liquidity_pass = stressed_min_cash >= configured_liquidity_buffer
@@ -2799,7 +2771,6 @@ def _deal_structuring_intelligence(
             pricing_pass = pricing.get("solver_status") == "solved"
             hard_fail = (
                 not pricing_pass
-                or not affordability_pass
                 or not liquidity_pass
                 or concentration_pass is False
             )
@@ -2824,12 +2795,6 @@ def _deal_structuring_intelligence(
                 "monthly_installment": float(monthly_installment) if monthly_installment is not None else None,
                 "total_repayable": minimum_terms.get("total_repayable") if minimum_terms else None,
                 "pricing_status": pricing.get("solver_status"),
-                "affordability": {
-                    "status": "pass" if affordability_pass else "fail" if affordability is not None else "not_assessed",
-                    "maximum_affordable_installment": float(Decimal(str(affordability["maximum_affordable_installment"]))) if affordability else None,
-                    "headroom": float(Decimal(str(affordability["affordability_headroom"]))) if affordability else None,
-                    "dti_percent": float(Decimal(str(affordability["dti_percent"]))) if affordability else None,
-                },
                 "liquidity": {
                     "status": "pass" if liquidity_pass else "breach",
                     "baseline_30d_minimum_cash": float(baseline_min_cash.quantize(Decimal("0.01"))),
@@ -2854,7 +2819,6 @@ def _deal_structuring_intelligence(
         key=lambda row: (
             rank_order[row["status"]],
             -row["principal"],
-            -(row["affordability"]["headroom"] or Decimal("-999999999")),
             row["minimum_viable_rate_percent"] if row["minimum_viable_rate_percent"] is not None else 999999,
             row["term_months"],
         )
@@ -2874,13 +2838,6 @@ def _deal_structuring_intelligence(
             "interest_method": payload.interest_method,
             "candidate_count": len(options),
         },
-        "borrower_affordability_policy": {
-            "policy_id": str(policy.id),
-            "version": int(policy.version or 1),
-            "max_dti_percent": float(policy.max_dti_percent or 0),
-            "max_installment_income_percent": float(policy.max_installment_income_percent or 0),
-            "disposable_income_usage_percent": float(policy.disposable_income_usage_percent or 0),
-        },
         "portfolio_constraints": {
             "existing_borrower_exposure": float(existing_borrower_exposure.quantize(Decimal("0.01"))),
             "total_equity": float(equity.quantize(Decimal("0.01"))),
@@ -2898,7 +2855,7 @@ def _deal_structuring_intelligence(
         ),
         "policy_note": (
             "Deal Structuring Intelligence is pre-approval decision support only. It does not approve credit or change the application. "
-            "Affordability uses the company's active origination policy. Pricing uses the minimum viable rate engine. "
+            "Pricing uses the minimum viable rate engine. "
             "Liquidity uses a conservative 30-day cash proxy that deducts the proposed disbursement without assuming future repayments from the new loan. "
             "Single-borrower exposure is tested only when an explicit prudential threshold and equity evidence are available."
         ),
