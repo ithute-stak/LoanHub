@@ -39,6 +39,13 @@ class WacomExecutionCeremonyChallenge(Base):
             "AND length(workstation_proof_sha256) = 64)",
             name="ck_wacom_ceremony_workstation_proof_complete",
         ),
+        CheckConstraint(
+            "(borrower_affirmed_at IS NULL AND borrower_affirmed_user_id IS NULL AND "
+            "borrower_affirmation_sha256 IS NULL) OR "
+            "(borrower_affirmed_at IS NOT NULL AND borrower_affirmed_user_id IS NOT NULL "
+            "AND length(borrower_affirmation_sha256) = 64)",
+            name="ck_wacom_ceremony_borrower_affirmation_complete",
+        ),
         Index("ix_wacom_ceremony_company_status", "company_id", "status"),
     )
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="RESTRICT"), nullable=False)
@@ -61,3 +68,8 @@ class WacomExecutionCeremonyChallenge(Base):
     workstation_proof_at = Column(DateTime(timezone=True))
     workstation_proof_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
     workstation_proof_sha256 = Column(String(64))
+    # An explicit action by the authenticated borrower's LoanHub account.
+    # This is not independently verified physical STU-540 pen evidence.
+    borrower_affirmed_at = Column(DateTime(timezone=True))
+    borrower_affirmed_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    borrower_affirmation_sha256 = Column(String(64))
