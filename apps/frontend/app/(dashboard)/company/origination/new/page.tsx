@@ -199,7 +199,7 @@ function OriginationWizard() {
 
   const [borrowerId, setBorrowerId] = useState(requestedBorrowerId ?? "");
   const [productId, setProductId] = useState("");
-  const [applicationType, setApplicationType] = useState<"new_loan" | "top_up">(requestedType === "top_up" ? "top_up" : "new_loan");
+  const [applicationType, setApplicationType] = useState<"new_loan" | "top_up">("new_loan");
   const [topUpEligibility, setTopUpEligibility] = useState<TopUpEligibility | null>(null);
   const [topUpSettlementQuote, setTopUpSettlementQuote] = useState<number | null>(null);
   const [topUpCashRequested, setTopUpCashRequested] = useState(0);
@@ -343,6 +343,10 @@ function OriginationWizard() {
   }, []);
 
   const load = useCallback(async () => {
+    if (requestedType === "top_up") {
+      router.replace(requestedLoanId ? `/company/loans/top-up?loan=${encodeURIComponent(requestedLoanId)}` : "/company/loans");
+      return;
+    }
     setLoading(true);
     try {
       const [clientRows, productRows] = await Promise.all([listCompanyClients(), listLoanProducts()]);
@@ -351,6 +355,10 @@ function OriginationWizard() {
 
       if (requestedApplicationId) {
         const workspace = await originationApi.getWorkspace(requestedApplicationId);
+        if (workspace.application.application_type === "top_up") {
+          router.replace(`/company/loans/top-up?application=${encodeURIComponent(workspace.application.id)}`);
+          return;
+        }
         setApplication(workspace.application);
         setIntegrationReadiness(workspace.integration_readiness);
         setBorrowerId(workspace.application.borrower_id);
@@ -389,7 +397,7 @@ function OriginationWizard() {
     } finally {
       setLoading(false);
     }
-  }, [applyProfile, requestedApplicationId, requestedBorrowerId, requestedLoanId, requestedType]);
+  }, [applyProfile, requestedApplicationId, requestedBorrowerId, requestedLoanId, requestedType, router]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -672,11 +680,7 @@ function OriginationWizard() {
             <h1 className="mt-2 text-3xl font-black tracking-tight">{application?.application_reference ?? "New credit application"}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{profile?.identity.full_name ?? selectedClient?.full_name ?? "Select an existing company client"} · Step {step + 1} of {steps.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2">{applicationType === "top_up" && (!application || application.status === "draft") ? (
-            <LoadingButton loading={working} loadingText="Preparing top-up offer…" onClick={() => void skipToTopUpOffer()}>
-              <ArrowRight className="h-4 w-4" />Use saved records & review top-up
-            </LoadingButton>
-          ) : null}<Button variant="outline" asChild><Link href="/company/origination"><ArrowLeft className="h-4 w-4" />Origination queue</Link></Button><LoadingButton variant="outline" loading={working} loadingText="Saving…" onClick={() => void saveCurrent()}><Save className="h-4 w-4" />Save progress</LoadingButton></div>
+          <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link href="/company/origination"><ArrowLeft className="h-4 w-4" />Origination queue</Link></Button><LoadingButton variant="outline" loading={working} loadingText="Saving…" onClick={() => void saveCurrent()}><Save className="h-4 w-4" />Save progress</LoadingButton></div>
         </div>
         <Progress value={progress} className="mt-6 h-2" />
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
@@ -690,21 +694,7 @@ function OriginationWizard() {
           <CardContent className="space-y-6">
             {step === 0 ? (
               <div className="space-y-6">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button type="button" disabled={Boolean(application)} onClick={() => setApplicationType("new_loan")} className={`rounded-3xl border p-5 text-left ${applicationType === "new_loan" ? "border-primary bg-primary/10" : "bg-card"}`}><p className="font-black">New loan</p><p className="mt-1 text-sm text-muted-foreground">Use when the borrower has no active loan with this company.</p></button>
-                  <button type="button" disabled={Boolean(application) || !topUpEligibility?.loan} onClick={() => setApplicationType("top_up")} className={`rounded-3xl border p-5 text-left ${applicationType === "top_up" ? "border-primary bg-primary/10" : "bg-card"}`}><p className="font-black">Top-up existing loan</p><p className="mt-1 text-sm text-muted-foreground">Settle the old balance inside the new facility and pay only the extra cash to the borrower.</p></button>
-                </div>
-                {applicationType === "top_up" ? <>
-                  <TopUpPanel eligibility={topUpEligibility} cashRequested={topUpCashRequested} onCashRequested={setTopUpCashRequested} exceptionReason={topUpExceptionReason} onExceptionReason={setTopUpExceptionReason} />
-                  <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
-                    <p className="font-bold">Do you want to go for extra checking?</p>
-                    <p className="text-sm text-muted-foreground">Yes: review KYC, employment and expenses manually. No: reuse the client&apos;s saved records and prepare the top-up offer automatically. Required verification and approval checks still apply.</p>
-                    <div className="flex flex-wrap gap-3">
-                      <Button type="button" variant="outline" disabled={working} onClick={() => setStep(1)}>Yes, extra checking</Button>
-                      <LoadingButton type="button" loading={working} loadingText="Preparing top-up…" onClick={() => void skipToTopUpOffer()}>No, just offer top-up</LoadingButton>
-                    </div>
-                  </div>
-                </> : null}
+                <p className="text-sm text-muted-foreground">New loan application. For top-ups, open the existing loan under Loans &amp; Contracts.</p>
                 <div className="grid gap-5 sm:grid-cols-2">
                   <Field label="Borrower"><Select value={borrowerId} onValueChange={(value) => { setBorrowerId(value); setApplicationType("new_loan"); setTopUpCashRequested(0); setTopUpExceptionReason(""); setCdasCollectionEnabled(false); void Promise.all([originationApi.getFinancialProfile(value), originationApi.topUpEligibility(value).catch(() => null)]).then(([profileRow, eligibility]) => { applyProfile(profileRow, clients.find((client) => client.borrower_id === value)); setTopUpEligibility(eligibility); }); }} disabled={Boolean(application)}><SelectTrigger><SelectValue placeholder="Select company client" /></SelectTrigger><SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.borrower_id}>{client.full_name} · {client.account_reference}</SelectItem>)}</SelectContent></Select></Field>
                   <Field label="Loan product"><Select value={productId} onValueChange={chooseProduct}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · {interestMethodLabel(product.interest_method)} · {Number(product.interest_rate_percent)}%</SelectItem>)}</SelectContent></Select>{selectedProduct ? <p className="text-xs text-muted-foreground">Allowed {formatMoney(selectedProduct.min_amount)}–{formatMoney(selectedProduct.max_amount)} · {selectedProduct.min_term_months}–{selectedProduct.max_term_months} months</p> : null}</Field>
