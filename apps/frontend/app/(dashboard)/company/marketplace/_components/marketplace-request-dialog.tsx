@@ -112,6 +112,8 @@ export function MarketplaceRequestDialog({
         return () => window.clearTimeout(timer);
     }, [approvedAmount, installmentDueDates, interestMethod, interestRate, processingFee, termMonths]);
 
+    if (!request) return null;
+
     const requestId = request.id;
 
     async function handleUnlock(event: FormEvent<HTMLFormElement>) {
