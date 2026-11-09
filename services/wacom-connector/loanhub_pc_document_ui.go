@@ -9,6 +9,8 @@ import (
 )
 
 func (ui *pcUI) documentPrepareRequest(ctx context.Context,r *http.Request,s *pcUISession) {
+    // Preparing a different contract invalidates any pending local handwriting.
+    s.discardCapture()
     s.documentIntent=nil
     s.lastDocumentCaptureID=""
     if s.client==nil || s.lastClient==nil || s.lastClient.Status!="matched" ||
