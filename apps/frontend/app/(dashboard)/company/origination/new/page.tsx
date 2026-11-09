@@ -367,10 +367,6 @@ function OriginationWizard() {
         setTopUpCashRequested(Number(workspace.application.top_up_cash_requested ?? 0));
         setTopUpExceptionReason(workspace.application.top_up_exception_reason ?? "");
         setRequestedAmount(Number(workspace.application.requested_amount));
-        if (workspace.application.application_type === "top_up") {
-          const eligibility = await originationApi.topUpEligibility(workspace.application.borrower_id, workspace.application.parent_loan_id);
-          setTopUpEligibility(eligibility);
-        }
         setTermCount(workspace.application.term_count);
         setPurpose(workspace.application.purpose ?? "");
         setInstallmentDueDates(
@@ -387,10 +383,6 @@ function OriginationWizard() {
         ]);
         applyProfile(profileRow, clientRows.find((client) => client.borrower_id === requestedBorrowerId));
         setTopUpEligibility(eligibility);
-        if (requestedType === "top_up") {
-          setApplicationType("top_up");
-          setRequestedAmount(Number(eligibility?.loan?.balance ?? 0));
-        }
       }
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "The origination workspace could not be loaded."));
