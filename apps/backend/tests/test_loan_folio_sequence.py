@@ -32,13 +32,15 @@ def test_batlokoa_and_ldf_folio_codes_match_sequence_book_format():
 
 
 def test_bfs_paydate_groups_match_required_boundaries():
-    assert bfs_paydate_folio_group(14) is None
+    assert bfs_paydate_folio_group(1) == "S/E"
+    assert bfs_paydate_folio_group(14) == "S/E"
     assert bfs_paydate_folio_group(15) == "Force"
     assert bfs_paydate_folio_group(22) == "Force"
     assert bfs_paydate_folio_group(23) == "CIVIL"
     assert bfs_paydate_folio_group(26) == "CIVIL"
     assert bfs_paydate_folio_group(27) == "S/E"
     assert bfs_paydate_folio_group(31) == "S/E"
+    assert bfs_paydate_folio_group(0) is None
     assert bfs_paydate_folio_group(None) is None
     assert _FOLIO_PATTERN.fullmatch("BFS-Force-00001")
     assert _FOLIO_PATTERN.fullmatch("BFS-CIVIL-00001")
@@ -188,3 +190,25 @@ def test_frontend_has_searchable_folio_book_borrower_history_and_portfolio():
     assert 'placeholder="Folio, loan, borrower, ID, phone, employer, branch, contract..."' in portfolio
     assert '>Folio / loan</TableHead>' in portfolio
     assert "/company/folio-book" in legacy
+
+
+def test_bfs_se_backfill_preserves_existing_sequences_and_audits_changes():
+    script = (ROOT / "apps" / "backend" / "scripts" / "sql" /
+              "bfs_se_folio_wraparound_backfill.sql").read_text(encoding="utf-8")
+    assert "BEGIN;" in script and "COMMIT;" in script
+    assert "LOCK TABLE client_company_loan" in script
+    assert "bfs_folio_group_correction_audit" in script
+    assert "l.folio_group_code <> 'S/E'" in script
+    assert "e.pay_day BETWEEN 1 AND 14" in script
+    assert "MAX(s.folio_sequence)" in script
+    assert "ROW_NUMBER() OVER" in script
+    assert "RAISE EXCEPTION" in script
+
+
+def test_folio_lookup_can_resolve_historical_folios_with_company_and_branch_scope():
+    router = FOLIO_ROUTER.read_text(encoding="utf-8")
+    assert "to_regclass('bfs_folio_group_correction_audit')" in router
+    assert "upper(old_folio_number) = upper(:folio)" in router
+    assert '"company_id": context.company_id' in router
+    assert "ClientCompanyLoan.id == old_loan_id" in router
+    assert "_base_query(db, context).filter(" in router

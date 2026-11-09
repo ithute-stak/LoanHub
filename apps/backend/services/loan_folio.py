@@ -130,7 +130,7 @@ def bfs_paydate_folio_group(pay_day: int | None) -> str | None:
         return "Force"
     if 23 <= pay_day <= 26:
         return "CIVIL"
-    if 27 <= pay_day <= 31:
+    if 27 <= pay_day <= 31 or 1 <= pay_day <= 14:
         return "S/E"
     return None
 

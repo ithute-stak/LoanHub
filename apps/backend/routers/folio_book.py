@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from core.access_control import (
@@ -152,6 +152,31 @@ def folio_lookup(
     loan = _base_query(db, context).filter(
         func.upper(ClientCompanyLoan.folio_number) == normalized.upper()
     ).first()
+    if not loan:
+        # Historical BFS folios can still resolve after the approved S/E data
+        # correction. The audit table is installed separately, so older
+        # deployments without it keep their normal lookup behaviour.
+        audit_table_exists = db.execute(
+            text("SELECT to_regclass('bfs_folio_group_correction_audit') IS NOT NULL")
+        ).scalar()
+        if audit_table_exists:
+            old_loan_id = db.execute(
+                text(
+                    """
+                    SELECT loan_id
+                    FROM bfs_folio_group_correction_audit
+                    WHERE company_id = :company_id
+                      AND upper(old_folio_number) = upper(:folio)
+                    LIMIT 1
+                    """
+                ),
+                {"company_id": context.company_id, "folio": normalized},
+            ).scalar()
+            if old_loan_id:
+                # Reapply active company/branch scope to the resolved loan.
+                loan = _base_query(db, context).filter(
+                    ClientCompanyLoan.id == old_loan_id
+                ).first()
     if not loan:
         raise HTTPException(status_code=404, detail="Folio number was not found in the active company scope")
     return _row(loan)
