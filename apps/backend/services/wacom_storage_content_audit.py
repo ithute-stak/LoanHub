@@ -44,6 +44,10 @@ def verify_candidate_contents(
             ))
             continue
         if f.id in seen:
+            findings.append(Finding(
+                "candidate_referenced_by_multiple_receipts",
+                file_id=str(f.id), receipt_id=str(receipt.id),
+            ))
             continue
         seen.add(f.id)
         if (f.is_deleted or not f.is_encrypted or not f.is_confidential
