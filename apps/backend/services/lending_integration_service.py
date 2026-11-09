@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from database.models.lending_operations import CDASPayrollProfile
-from database.models.origination import AffordabilityAssessment, BorrowerEmploymentProfile, BorrowerKYCProfile
+from database.models.origination import BorrowerEmploymentProfile, BorrowerKYCProfile
 from database.models.platform_credit_bureau import PlatformCreditBureauConfiguration
 from database.models.professional_lending import DirectLoanApplication
 from services.cdas_config_service import configuration_summary as cdas_configuration_summary, get_configuration as get_cdas_configuration
@@ -20,12 +20,6 @@ from services.external_underwriting_evidence_service import (
     bureau_evidence,
     cdas_deduction_capacity,
 )
-
-
-def _assessment_decision(assessment: AffordabilityAssessment | None) -> str | None:
-    if not assessment:
-        return None
-    return assessment.override_decision if assessment.overridden else assessment.decision
 
 
 def application_integration_readiness(
@@ -49,13 +43,6 @@ def application_integration_readiness(
         .filter(BorrowerKYCProfile.borrower_id == application.borrower_id)
         .first()
     )
-    assessment = (
-        db.get(AffordabilityAssessment, application.affordability_assessment_id)
-        if application.affordability_assessment_id
-        else None
-    )
-    affordability_decision = _assessment_decision(assessment)
-
     core_ready = True
 
     bureau_row, bureau_policy = company_experian_policy(db, application.company_id)
@@ -72,7 +59,6 @@ def application_integration_readiness(
         and has_credentials_for_environment(platform_bureau, bureau_environment)
         and environment_test_status(platform_bureau, bureau_environment) == "connected"
     )
-    bureau_required_affordability = False  # Legacy response field; no affordability stage remains.
     bureau_required_approval = bool(
         application.application_type != "top_up"
         and bureau_enabled
@@ -240,7 +226,6 @@ def application_integration_readiness(
             }
         )
 
-    ready_for_affordability = True
     ready_for_approval = bool(core_ready and bureau_ready and cdas_ready)
 
     hard_decline_codes = {
@@ -263,7 +248,6 @@ def application_integration_readiness(
         "application_id": str(application.id),
         "application_reference": application.application_reference,
         "borrower_id": str(application.borrower_id),
-        "ready_for_affordability": ready_for_affordability,
         "ready_for_approval": ready_for_approval,
         "final_decision": final_decision,
         "blockers": blockers,
@@ -271,8 +255,6 @@ def application_integration_readiness(
         "core": {
             "status": application.status,
             "kyc_status": kyc.status if kyc else None,
-            "affordability_decision": affordability_decision,
-            "affordability_assessment_id": str(assessment.id) if assessment else None,
             "ready_for_approval": core_ready,
         },
         "bureau": {
@@ -280,7 +262,6 @@ def application_integration_readiness(
             "environment": bureau_environment,
             "platform_ready": bureau_platform_ready,
             "requirement_mode": str(bureau_policy.get("requirement_mode") or "optional"),
-            "required_before_affordability": bureau_required_affordability,
             "required_before_approval": bureau_required_approval,
             "fresh": bureau_fresh,
             "max_report_age_hours": int(bureau_policy["max_report_age_hours"]),
@@ -295,7 +276,6 @@ def application_integration_readiness(
             "collections_count": bureau_snapshot["collections_count"] if latest_bureau else None,
             "recent_enquiries_count": bureau_snapshot["recent_enquiries_count"] if latest_bureau else None,
             "identity_match": bureau_snapshot["identity_match"] if latest_bureau else None,
-            "used_in_affordability": False,
             "debt_mode": str(bureau_policy.get("bureau_debt_mode") or "max"),
         },
         "cdas": {
