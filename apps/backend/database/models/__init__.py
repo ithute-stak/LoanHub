@@ -321,3 +321,5 @@ from database.models.wacom_document_intent import WacomDocumentIntent
 from database.models.wacom_finalization_approval import WacomFinalizationApproval
 
 from database.models.wacom_finalization_packet import WacomFinalizationPacket
+
+from database.models.wacom_execution_authorization import WacomExecutionAuthorization
