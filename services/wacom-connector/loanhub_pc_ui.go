@@ -89,6 +89,8 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="phone">LoanHub phone number</label><input id="phone" name="phone" maxlength="30" required autocomplete="username">
 <label for="pass">Password</label><input id="pass" type="password" name="password" maxlength="128" required autocomplete="current-password">
+<label for="company_id">Company ID (only if you belong to more than one company)</label><input id="company_id" name="company_id" maxlength="36" pattern="[0-9a-fA-F-]{36}" autocomplete="off" placeholder="Optional company UUID">
+<p>LoanHub verifies your company membership and rejects unauthorized selections.</p>
 <button type="submit">Sign in securely</button>
 </form></section>
 {{else}}
@@ -321,8 +323,8 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             client,err := NewLoanHubPCClient(ui.origin,ui.transport)
             if err != nil { session.feedback="LoanHub origin configuration unavailable"; break }
             err=client.Login(ctx,strings.TrimSpace(r.PostForm.Get("phone")),
-                r.PostForm.Get("password"),"", "")
-            if err != nil { session.feedback="Login failed. Check credentials or account requirements. Multi-company accounts require company selection."; break }
+                r.PostForm.Get("password"),"", strings.TrimSpace(r.PostForm.Get("company_id")))
+            if err != nil { session.feedback="Login failed. Check credentials, company membership or account requirements. If you belong to multiple companies, enter your company ID."; break }
             if ui.workstationKeyDir != "" {
                 client.workstationKeyDir=ui.workstationKeyDir
                 if err := client.VerifyLocalWorkstation(ctx,ui.workstationKeyDir); err != nil {
