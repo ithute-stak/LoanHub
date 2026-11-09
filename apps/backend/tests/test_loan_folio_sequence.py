@@ -32,13 +32,15 @@ def test_batlokoa_and_ldf_folio_codes_match_sequence_book_format():
 
 
 def test_bfs_paydate_groups_match_required_boundaries():
-    assert bfs_paydate_folio_group(14) is None
+    assert bfs_paydate_folio_group(1) == "S/E"
+    assert bfs_paydate_folio_group(14) == "S/E"
     assert bfs_paydate_folio_group(15) == "Force"
     assert bfs_paydate_folio_group(22) == "Force"
     assert bfs_paydate_folio_group(23) == "CIVIL"
     assert bfs_paydate_folio_group(26) == "CIVIL"
     assert bfs_paydate_folio_group(27) == "S/E"
     assert bfs_paydate_folio_group(31) == "S/E"
+    assert bfs_paydate_folio_group(0) is None
     assert bfs_paydate_folio_group(None) is None
     assert _FOLIO_PATTERN.fullmatch("BFS-Force-00001")
     assert _FOLIO_PATTERN.fullmatch("BFS-CIVIL-00001")
