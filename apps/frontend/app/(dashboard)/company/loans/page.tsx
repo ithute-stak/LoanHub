@@ -55,7 +55,6 @@ import {
     installmentDueDatesComplete,
 } from "@/components/loans/installment-due-date-fields";
 import {EarlySettlementDialog} from "@/components/loans/early-settlement-dialog";
-import {CompactTopUpDialog} from "@/components/loans/compact-top-up-dialog";
 import {EmailOtpSigningPanel} from "@/components/contracts/email-otp-signing-panel";
 import {ContractPadPreflight} from "@/components/contracts/contract-pad-preflight";
 import {LoanPortfolioWorkspace} from "@/components/loans/loan-portfolio-workspace";
@@ -204,7 +203,6 @@ export default function CompanyLoansPage() {
         finally { setCorrectionWorking(false); }
     }
     const [settlementLoan, setSettlementLoan] = useState<Loan | null>(null);
-    const [topUpLoan, setTopUpLoan] = useState<Loan | null>(null);
     const [editingInstallment, setEditingInstallment] = useState<RepaymentInstallment | null>(null);
     const [extendedDueDate, setExtendedDueDate] = useState("");
     const [extensionNote, setExtensionNote] = useState("");
@@ -1572,7 +1570,7 @@ export default function CompanyLoansPage() {
                         ).map((item) => (
                             <Button key={item.id} variant="outline" onClick={() => {
                                 setScheduleOpen(false);
-                                router.push(`/company/origination/new?application=${item.id}`);
+                                router.push(`/company/loans/top-up?application=${encodeURIComponent(item.id)}`);
                             }}>
                                 <FileClock className="h-4 w-4"/>
                                 Top-up {item.status}: {item.application_reference}
@@ -1582,8 +1580,8 @@ export default function CompanyLoansPage() {
                             <Button onClick={() => {
                                 const existing = pendingTopUps.find((item) => item.parent_loan_id === selectedLoan.id);
                                 setScheduleOpen(false);
-                                if (existing) router.push(`/company/origination/new?application=${existing.id}`);
-                                else setTopUpLoan(selectedLoan);
+                                if (existing) router.push(`/company/loans/top-up?application=${encodeURIComponent(existing.id)}`);
+                                else router.push(`/company/loans/top-up?loan=${encodeURIComponent(selectedLoan.id)}`);
                             }}>
                                 <Sparkles className="h-4 w-4"/>
                                 {pendingTopUps.some((item) => item.parent_loan_id === selectedLoan.id) ? "Continue existing top-up" : "Apply for loan top-up"}
@@ -1592,15 +1590,6 @@ export default function CompanyLoansPage() {
                     </DialogFooter>
                 </div>
             </CustomDialog>
-
-            <CompactTopUpDialog
-                loan={topUpLoan}
-                onClose={() => setTopUpLoan(null)}
-                onCreated={(applicationId) => {
-                    setTopUpLoan(null);
-                    router.push(`/company/origination/new?application=${applicationId}`);
-                }}
-            />
 
             <EarlySettlementDialog
                 open={Boolean(settlementLoan)}

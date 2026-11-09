@@ -21,6 +21,7 @@ type Props = {
   loan: Loan | null;
   onClose: () => void;
   onCreated: (applicationId: string) => void;
+  inline?: boolean;
 };
 
 function inheritedDates(loan: Loan): string[] {
@@ -43,7 +44,7 @@ function inheritedDates(loan: Loan): string[] {
   return dates;
 }
 
-export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
+export function CompactTopUpDialog({ loan, onClose, onCreated, inline = false }: Props) {
   const [cash, setCash] = useState("");
   const [exceptionReason, setExceptionReason] = useState("");
   const [eligibility, setEligibility] = useState<TopUpEligibility | null>(null);
@@ -134,8 +135,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
     }
   }
 
-  return (
-    <CustomDialog open={Boolean(loan)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
+  const content = (
       <div className="space-y-5 p-5">
         <div>
           <h2 className="text-xl font-bold">Top up existing loan</h2>
@@ -176,6 +176,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
           <Button onClick={() => void create()} disabled={!canCreate}>{saving ? "Submitting..." : ownerException ? "Request owner exception" : "Submit top-up"}</Button>
         </div>
       </div>
-    </CustomDialog>
   );
+  if (inline) return <section className="rounded-3xl border bg-card shadow-sm">{content}</section>;
+  return <CustomDialog open={Boolean(loan)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>{content}</CustomDialog>;
 }
