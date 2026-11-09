@@ -120,6 +120,9 @@ export default function FolioBookPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" asChild>
+              <Link href="/company/folio-book/performance">Performance dashboard</Link>
+            </Button>
+            <Button variant="outline" asChild>
               <Link href="/company/loans">Loans & contracts</Link>
             </Button>
             <Button variant="outline" onClick={() => void load()} disabled={loading}>
