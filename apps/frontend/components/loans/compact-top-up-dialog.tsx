@@ -124,7 +124,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
         purpose: "Loan top-up on existing loan " + loan.loan_reference,
       });
       toast.success("Top-up application created", {
-        description: ownerException ? "Owner exception requested. A company owner must approve it before standard credit assessment and approval." : "Existing borrower details inherited. Assessment and approval are still required.",
+        description: ownerException ? "Owner exception requested. A company owner must approve it before normal management approval." : "Existing borrower details inherited. Management approval is still required.",
       });
       onCreated(created.id);
     } catch (error: unknown) {
@@ -170,7 +170,7 @@ export function CompactTopUpDialog({ loan, onClose, onCreated }: Props) {
         ) : eligibility && !eligibility.eligible ? (
           <p role="alert" className="text-sm text-destructive">Top-up unavailable: {eligibility.reason}</p>
         ) : null}
-        <p className="text-xs text-muted-foreground">Submitting creates an application, not an approved loan. LoanHub must still validate current affordability, policy, contract and approval requirements before funds can be released.</p>
+        <p className="text-xs text-muted-foreground">Submitting creates an application, not an approved loan. LoanHub still requires manager approval, accurate settlement, required contracts and authorized disbursement. No affordability assessment is required.</p>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={() => void create()} disabled={!canCreate}>{saving ? "Submitting..." : ownerException ? "Request owner exception" : "Submit top-up"}</Button>
