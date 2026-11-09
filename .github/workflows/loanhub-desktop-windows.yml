@@ -1,0 +1,31 @@
+name: LoanHub Desktop Windows Build
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/loanhub-desktop-windows.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/loanhub-desktop-windows.yml'
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish Windows executable
+        shell: pwsh
+        run: ./packaging/build-windows.ps1
+      - name: Upload portable Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: LoanHub-Desktop-win-x64
+          path: desktop/artifacts/LoanHub-Desktop-win-x64.zip
+          if-no-files-found: error
