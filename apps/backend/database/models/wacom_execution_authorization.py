@@ -3,7 +3,7 @@
 This table is not itself an executed signature, and storing an approval
 does not change contract state or release any signing key.
 """
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database.base import Base
 
@@ -40,3 +40,11 @@ class WacomExecutionAuthorization(Base):
     authorization_reference = Column(String(180))
     consumed_at = Column(DateTime(timezone=True))
     consumed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    # Null for legacy permits: legacy permits must never execute without a field binding.
+    field_page_index = Column(Integer)
+    field_page_count = Column(Integer)
+    field_x = Column(Numeric(10, 3))
+    field_y = Column(Numeric(10, 3))
+    field_width = Column(Numeric(10, 3))
+    field_height = Column(Numeric(10, 3))
+    field_binding_sha256 = Column(String(64))
