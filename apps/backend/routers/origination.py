@@ -839,9 +839,18 @@ def submit_application(
         parent_loan_id=application.parent_loan_id,
         top_up_exception_approved=bool(application.top_up_exception_approved),
     )
-    profile = financial_profile_payload(db, company_id=context.company_id, borrower_id=application.borrower_id)
-    if policy.require_kyc_verified and (not profile["kyc"] or profile["kyc"]["status"] != "verified"):
-        raise HTTPException(status_code=409, detail="KYC must be verified before the application is submitted")
+    # KYC completion is optional at the top-up *submission for review* stage.
+    # Keep the policy-enforced KYC gate for new loans. This exemption does not
+    # authorize a disbursement or override subsequent compliance checks.
+    if application.application_type != "top_up" and policy.require_kyc_verified:
+        profile = financial_profile_payload(
+            db, company_id=context.company_id, borrower_id=application.borrower_id
+        )
+        if not profile["kyc"] or profile["kyc"]["status"] != "verified":
+            raise HTTPException(
+                status_code=409,
+                detail="KYC must be verified before the application is submitted",
+            )
     if application.cdas_collection_enabled:
         _require_cdas_payroll_profile(
             db,
