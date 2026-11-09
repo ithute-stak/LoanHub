@@ -6,8 +6,11 @@ on:
     branches: [main]
 
 concurrency:
-  group: loanhub-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Release images require a successful CI run for the exact main commit.
+  # Do not cancel a previous main commit's CI when a newer commit arrives.
+  # For PRs, older commits may still be superseded to conserve runners.
+  group: ${{ github.event_name == 'push' && format('loanhub-ci-main-{0}', github.sha) || format('loanhub-ci-pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

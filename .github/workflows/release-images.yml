@@ -19,7 +19,7 @@ jobs:
     name: Publish tested images
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 110
     env:
       RELEASE_SHA: ${{ github.sha }}
       BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/loanhub-backend
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking LoanHub CI for ${TARGET_SHA}"
-          for attempt in $(seq 1 90); do
+          for attempt in $(seq 1 180); do
             runs="$(gh api -X GET "repos/${REPOSITORY}/actions/workflows/ci.yml/runs" -f head_sha="${TARGET_SHA}" -f per_page=30 -f event=push 2>/dev/null || true)"
             conclusion="$(echo "$runs" | jq -r '[.workflow_runs[]? | select(.head_sha == env.TARGET_SHA and .event == "push")] | sort_by(.created_at) | last | .conclusion // empty' 2>/dev/null || true)"
             case "$conclusion" in
@@ -46,7 +46,7 @@ jobs:
                 exit 1 ;;
               *)
                 if [ "$attempt" -eq 90 ]; then
-                  echo "No successful main-branch CI for ${TARGET_SHA} within 30 minutes" >&2
+                  echo "No successful main-branch CI for ${TARGET_SHA} within 60 minutes" >&2
                   exit 1
                 fi
                 sleep 20 ;;
