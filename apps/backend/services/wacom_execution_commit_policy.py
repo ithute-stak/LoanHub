@@ -66,8 +66,14 @@ def execution_commit_blockers(
             or receipt.executed_file_id != candidate_file.id
             or receipt.executed_pdf_sha256 != candidate_sha256):
         reasons.append("execution_receipt_not_bound_to_candidate")
-    if receipt.reserved_by != executing_user_id or _utc(receipt.reserved_at) is None:
+    reserved_at = _utc(receipt.reserved_at)
+    authorized_at = _utc(execution_authorization.authorized_at)
+    if receipt.reserved_by != executing_user_id or reserved_at is None:
         reasons.append("execution_reservation_owner_changed")
+    if (reserved_at is not None
+            and (reserved_at > now or authorized_at is None
+                 or authorized_at > reserved_at)):
+        reasons.append("execution_reservation_chronology_invalid")
     if any(
         getattr(receipt, name, None) != getattr(intent, name, None)
         for name in ("document_sha256", "evidence_sha256", "binding_sha256")
