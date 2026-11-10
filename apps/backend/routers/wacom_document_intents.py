@@ -141,6 +141,62 @@ def _response(row: WacomDocumentIntent) -> dict:
     }
 
 
+
+@router.get("/borrowers/{borrower_id}/eligible-contracts")
+def list_eligible_contracts(
+    borrower_id: UUID,
+    response: Response,
+    x_wacom_bridge_session: str | None = Header(default=None, alias="X-Wacom-Bridge-Session"),
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only, workstation-authenticated contract choices, not signing grants."""
+    response.headers["Cache-Control"] = "no-store"
+    _session_device(db, ctx, x_wacom_bridge_session)
+    account = db.query(CompanyBorrowerAccount).filter(
+        CompanyBorrowerAccount.company_id == ctx.company_id,
+        CompanyBorrowerAccount.borrower_id == borrower_id,
+    ).one_or_none()
+    if account is None or (
+        ctx.staff.role not in COMPANY_MANAGEMENT_ROLES
+        and (ctx.branch_id is None or account.branch_id != ctx.branch_id)
+    ):
+        raise HTTPException(404, "Borrower unavailable in authorized company branch")
+
+    contracts = db.query(LoanContract).filter(
+        LoanContract.company_id == ctx.company_id,
+        LoanContract.borrower_id == borrower_id,
+        LoanContract.pdf_file_id.isnot(None),
+        LoanContract.borrower_signed_at.is_(None),
+        LoanContract.locked_at.is_(None),
+    ).order_by(LoanContract.contract_number).limit(50).all()
+    choices = []
+    for contract in contracts:
+        if (contract.status == "signed" or contract.loan is None
+                or (ctx.staff.role not in COMPANY_MANAGEMENT_ROLES
+                    and contract.loan.branch_id != ctx.branch_id)):
+            continue
+        source = db.query(ManagedFile).filter(
+            ManagedFile.id == contract.pdf_file_id,
+            ManagedFile.company_id == ctx.company_id,
+            ManagedFile.mime_type == "application/pdf",
+            ManagedFile.is_encrypted.is_(True),
+            ManagedFile.is_deleted.is_(False),
+            ManagedFile.scan_status == "clean",
+        ).one_or_none()
+        if source is None or not re.fullmatch(r"[0-9a-f]{64}", source.checksum_sha256 or ""):
+            continue
+        choices.append({
+            "contract_id": str(contract.id),
+            "contract_number": contract.contract_number,
+            "source_file_id": str(source.id),
+            "document_version": str(contract.version),
+            "borrower_id": str(borrower_id),
+        })
+    return {"borrower_id": str(borrower_id), "contracts": choices,
+            "signing_authorized": False, "contract_signed": False}
+
+
 @router.post("", status_code=201)
 def prepare_intent(
     body: PrepareDocument, response: Response,
@@ -425,6 +481,77 @@ def finalization_preflight(
         "no_mutation_performed": True,
         "requires_fresh_atomic_checks_and_explicit_approval": True,
     }
+
+
+@router.get("/{intent_id}/source-pdf")
+def preview_original_contract(
+    intent_id: UUID,
+    x_wacom_bridge_session: str | None = Header(default=None, alias="X-Wacom-Bridge-Session"),
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Original PDF only, bound to the authenticated workstation and borrower.
+
+    Reading is not consent, signing, approval or a contract mutation.
+    """
+    workstation_id = _session_device(db, ctx, x_wacom_bridge_session)
+    row = _current_intent(db, ctx, intent_id, lock=False)
+    if (row.operator_user_id != ctx.user.id or row.workstation_id != workstation_id
+            or row.status not in (IntentStatus.PREPARED, IntentStatus.CONSENTED)):
+        raise HTTPException(403, "Original contract review unavailable")
+    check_valid_until(row.expires_at)
+    account = db.query(CompanyBorrowerAccount).filter(
+        CompanyBorrowerAccount.company_id == ctx.company_id,
+        CompanyBorrowerAccount.borrower_id == row.borrower_id,
+    ).one_or_none()
+    if account is None or (
+        ctx.staff.role not in COMPANY_MANAGEMENT_ROLES
+        and (ctx.branch_id is None or account.branch_id != ctx.branch_id)
+    ):
+        raise HTTPException(404, "Borrower unavailable in authorized branch")
+    contract = db.query(LoanContract).filter(
+        LoanContract.id == row.contract_id,
+        LoanContract.company_id == ctx.company_id,
+        LoanContract.borrower_id == row.borrower_id,
+        LoanContract.pdf_file_id == row.source_file_id,
+    ).one_or_none()
+    if (contract is None or contract.loan is None
+            or str(contract.version) != row.document_version
+            or contract.status == "signed" or contract.locked_at is not None
+            or contract.borrower_signed_at is not None
+            or (ctx.staff.role not in COMPANY_MANAGEMENT_ROLES
+                and contract.loan.branch_id != ctx.branch_id)):
+        raise HTTPException(409, "Original contract has changed")
+    source = db.query(ManagedFile).filter(
+        ManagedFile.id == row.source_file_id,
+        ManagedFile.company_id == ctx.company_id,
+        ManagedFile.mime_type == "application/pdf",
+        ManagedFile.is_encrypted.is_(True),
+        ManagedFile.is_deleted.is_(False),
+        ManagedFile.scan_status == "clean",
+    ).one_or_none()
+    if source is None or source.checksum_sha256 != row.document_sha256:
+        raise HTTPException(409, "Original contract PDF unavailable")
+    _verified_source_pdf(source, expected_sha256=row.document_sha256)
+    # Read-and-check again so returned bytes themselves are hash-bound.
+    try:
+        payload = read_file_bytes(source)
+        verify_document_bytes(row.document_sha256, payload)
+        if len(payload) != source.size_bytes or not payload.startswith(b"%PDF-"):
+            raise ValueError("Original PDF content changed")
+    except (ValueError, HTTPException) as exc:
+        raise HTTPException(409, "Original PDF integrity check failed") from exc
+    return StreamingResponse(
+        BytesIO(payload), media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Content-Disposition": 'inline; filename="loanhub-contract-REVIEW-NOT-SIGNED.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "X-Wacom-Original-SHA256": row.document_sha256,
+            "X-Wacom-Signing-Authorized": "false",
+        },
+    )
 
 
 @router.get("/{intent_id}/review-pdf")

@@ -32,6 +32,7 @@ type pcUISession struct {
     client *LoanHubPCClient
     status *LoanHubOperatorStatus
     lastClient *LoanHubClientLookup
+    eligibleContracts []LoanHubEligibleContract
     feedback string
     capture *pcPendingCapture
     reviewQueue []LoanHubReviewCapture
@@ -55,6 +56,7 @@ type pcUIPage struct {
     Feedback string
     Status *LoanHubOperatorStatus
     Client *LoanHubClientLookup
+    EligibleContracts []LoanHubEligibleContract
     Pending *pcPendingCapture
     CaptureEnabled bool
     ReviewQueue []LoanHubReviewCapture
@@ -119,12 +121,21 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <section class="panel"><h2>Document-specific evidence</h2>
 <p>Review the EXACT contract PDF in LoanHub before requesting borrower consent. This desk collects evidence only; it never signs or changes a loan.</p>
 {{if .Client}}{{if .Client.Client}}
+<form method="post" action="/contracts-refresh"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<button class="secondary" type="submit">Load eligible contracts</button></form>
+{{if .EligibleContracts}}
 <form method="post" action="/document-prepare"><input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Contract ID</label><input name="contract_id" required>
-<label>Contract PDF managed file ID</label><input name="source_file_id" required>
-<label>Document version (number)</label><input name="document_version" value="1" required>
-<button type="submit">Prepare exact document</button></form>{{end}}{{end}}
+<label for="contract_id">Loan contract</label>
+<select id="contract_id" name="contract_id" required>
+{{range .EligibleContracts}}<option value="{{.ContractID}}">{{.ContractNumber}} (version {{.DocumentVersion}})</option>{{end}}
+</select>
+<button type="submit">Prepare selected contract</button></form>
+{{end}}{{end}}{{end}}
 {{if .DocumentIntent}}
+{{if eq .DocumentIntent.Status "prepared"}}
+<p class="notice warn">ORIGINAL CONTRACT PREVIEW — NOT SIGNED. Review the full PDF with the borrower before recording consent.</p>
+<iframe src="/document-preview" title="Original unsigned loan contract" style="width:100%;height:590px;border:1px solid #ccd7e1" loading="eager"></iframe>
+{{end}}
 <p>Document SHA-256: <code>{{.DocumentIntent.DocumentSHA256}}</code></p>
 <p>State: {{.DocumentIntent.Status}} (not signed)</p>
 {{if eq .DocumentIntent.Status "prepared"}}
@@ -250,7 +261,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Cache-Control", "no-store")
     w.Header().Set("X-Content-Type-Options", "nosniff")
     w.Header().Set("X-Frame-Options", "DENY")
-    w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+    w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; frame-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
     w.Header().Set("Referrer-Policy", "same-origin")
     if r.Host != pcUIAddr || r.URL.RawQuery != "" {
         http.Error(w,"Forbidden",http.StatusForbidden)
@@ -268,8 +279,8 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
         r.URL.Path != "/switch-operator" &&
-        r.URL.Path != "/document-prepare" && r.URL.Path != "/document-consent" &&
-        r.URL.Path != "/document-attach" &&
+        r.URL.Path != "/document-prepare" && r.URL.Path != "/contracts-refresh" && r.URL.Path != "/document-consent" &&
+        r.URL.Path != "/document-attach" && r.URL.Path != "/document-preview" &&
         r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
         r.URL.Path != "/discard" && r.URL.Path != "/preview" &&
         r.URL.Path != "/review-refresh" && r.URL.Path != "/review-decision" &&
@@ -277,7 +288,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         http.NotFound(w,r)
         return
     }
-    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" && !reviewPreview {
+    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" && r.URL.Path != "/document-preview" && !reviewPreview {
         http.NotFound(w,r)
         return
     }
@@ -292,6 +303,16 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             http.Error(w,"Invalid form submission",http.StatusForbidden)
             return
         }
+    }
+    if r.URL.Path == "/document-preview" {
+        if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
+        // Allow ONLY the authenticated same-origin PDF to be framed by this PC UI.
+        w.Header().Set("X-Frame-Options","SAMEORIGIN")
+        w.Header().Set("Content-Security-Policy","default-src 'none'; frame-ancestors 'self'")
+        ctx,cancel:=context.WithTimeout(r.Context(),30*time.Second)
+        defer cancel()
+        ui.serveOriginalDocumentPreview(ctx,w,session)
+        return
     }
     if reviewPreview {
         if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
@@ -341,6 +362,8 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
                 session.status=nil
                 session.feedback="Access denied: operator permission or company status could not be verified."
             }
+        case "/contracts-refresh":
+            ui.documentContractsRequest(ctx,session)
         case "/document-prepare":
             ui.documentPrepareRequest(ctx,r,session)
         case "/document-consent":
@@ -356,6 +379,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             // Never allow an earlier borrower\u0027s document evidence to survive identity changes.
             session.discardCapture()
             session.forgetDocument()
+            session.eligibleContracts=nil
             session.lastClient=nil
             if session.client == nil { session.feedback="Sign in first"; break }
             result,err := session.client.FindClient(ctx,strings.TrimSpace(r.PostForm.Get("national_id")))
@@ -381,6 +405,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             session.client=nil
             session.status=nil
             session.lastClient=nil
+            session.eligibleContracts=nil
             session.reviewQueue=nil
             session.forgetDocument()
             if r.URL.Path == "/switch-operator" {
@@ -395,6 +420,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     if err := pcUITemplate.Execute(w,pcUIPage{
         CSRF:session.csrf, Authenticated:session.client != nil,
         Feedback:session.feedback, Status:session.status, Client:session.lastClient,
+        EligibleContracts:session.eligibleContracts,
         Pending:session.capture, CaptureEnabled:ui.sdkCapture!=nil,
         ReviewQueue:session.reviewQueue,
         DocumentIntent:session.documentIntent, DocumentCaptureID:session.lastDocumentCaptureID,

@@ -112,3 +112,42 @@ func (c *LoanHubPCClient) AttachWacomDocumentEvidence(ctx context.Context, inten
 // uploaded through the existing /local-signatures/captures quarantine path.
 // This client only links the quarantined file to exact-document evidence.
 // It never draws a signature onto a contract or writes a PDF.
+
+type LoanHubEligibleContract struct {
+    ContractID string `json:"contract_id"`
+    ContractNumber string `json:"contract_number"`
+    SourceFileID string `json:"source_file_id"`
+    DocumentVersion string `json:"document_version"`
+    BorrowerID string `json:"borrower_id"`
+}
+
+type LoanHubEligibleContracts struct {
+    BorrowerID string `json:"borrower_id"`
+    Contracts []LoanHubEligibleContract `json:"contracts"`
+    SigningAuthorized bool `json:"signing_authorized"`
+    ContractSigned bool `json:"contract_signed"`
+}
+
+func (c *LoanHubPCClient) EligibleWacomContracts(ctx context.Context, borrowerID string) ([]LoanHubEligibleContract,error) {
+    if c.workstationKeyDir == "" || !validUUID(borrowerID) {
+        return nil, errors.New("Verified workstation and borrower required")
+    }
+    var response LoanHubEligibleContracts
+    if err := c.do(ctx,http.MethodGet,
+        "/api/v1/wacom-document-intents/borrowers/"+borrowerID+"/eligible-contracts",
+        nil,true,&response);err!=nil {return nil,err}
+    if response.BorrowerID != borrowerID || response.SigningAuthorized || response.ContractSigned ||
+        len(response.Contracts)>50 {
+        return nil, errors.New("Unsafe contract discovery response")
+    }
+    seen:=map[string]bool{}
+    for _, contract:=range response.Contracts {
+        if !validUUID(contract.ContractID) || !validUUID(contract.SourceFileID) ||
+            contract.BorrowerID!=borrowerID || contract.ContractNumber=="" ||
+            contract.DocumentVersion=="" || seen[contract.ContractID] {
+            return nil, errors.New("Invalid or duplicate contract selection")
+        }
+        seen[contract.ContractID]=true
+    }
+    return response.Contracts,nil
+}
