@@ -113,6 +113,18 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
         return
     }
     capture:=session.capture
+    // The document can change between physical capture and upload.
+    // A stale capture must never be linked to a different contract intent.
+    if session.documentIntent != nil &&
+        (capture.signerKind != "client" ||
+            session.documentIntent.Status != "consented" ||
+            capture.borrowerID != session.documentIntent.BorrowerID ||
+            capture.consentReference != session.documentIntent.ConsentReference) {
+        session.discardCapture()
+        session.lastDocumentCaptureID = ""
+        session.feedback = "Document consent changed; recapture handwriting for the exact document"
+        return
+    }
     if time.Now().After(capture.expires) {
         session.discardCapture()
         session.feedback="Capture expired; please capture again"
