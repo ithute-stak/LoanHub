@@ -308,7 +308,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
         // Allow ONLY the authenticated same-origin PDF to be framed by this PC UI.
         w.Header().Set("X-Frame-Options","SAMEORIGIN")
-        w.Header().Set("Content-Security-Policy","default-src 'none'; frame-ancestors 'self'; sandbox")
+        w.Header().Set("Content-Security-Policy","default-src 'none'; frame-ancestors 'self'")
         ctx,cancel:=context.WithTimeout(r.Context(),30*time.Second)
         defer cancel()
         ui.serveOriginalDocumentPreview(ctx,w,session)
