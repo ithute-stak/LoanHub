@@ -132,6 +132,10 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <button type="submit">Prepare selected contract</button></form>
 {{end}}{{end}}{{end}}
 {{if .DocumentIntent}}
+{{if eq .DocumentIntent.Status "prepared"}}
+<p class="notice warn">ORIGINAL CONTRACT PREVIEW — NOT SIGNED. Review the full PDF with the borrower before recording consent.</p>
+<iframe src="/document-preview" title="Original unsigned loan contract" style="width:100%;height:590px;border:1px solid #ccd7e1" loading="eager"></iframe>
+{{end}}
 <p>Document SHA-256: <code>{{.DocumentIntent.DocumentSHA256}}</code></p>
 <p>State: {{.DocumentIntent.Status}} (not signed)</p>
 {{if eq .DocumentIntent.Status "prepared"}}
@@ -257,7 +261,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Cache-Control", "no-store")
     w.Header().Set("X-Content-Type-Options", "nosniff")
     w.Header().Set("X-Frame-Options", "DENY")
-    w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+    w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; frame-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
     w.Header().Set("Referrer-Policy", "same-origin")
     if r.Host != pcUIAddr || r.URL.RawQuery != "" {
         http.Error(w,"Forbidden",http.StatusForbidden)
@@ -276,7 +280,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
         r.URL.Path != "/switch-operator" &&
         r.URL.Path != "/document-prepare" && r.URL.Path != "/contracts-refresh" && r.URL.Path != "/document-consent" &&
-        r.URL.Path != "/document-attach" &&
+        r.URL.Path != "/document-attach" && r.URL.Path != "/document-preview" &&
         r.URL.Path != "/capture" && r.URL.Path != "/upload" &&
         r.URL.Path != "/discard" && r.URL.Path != "/preview" &&
         r.URL.Path != "/review-refresh" && r.URL.Path != "/review-decision" &&
@@ -284,7 +288,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         http.NotFound(w,r)
         return
     }
-    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" && !reviewPreview {
+    if r.Method == http.MethodGet && r.URL.Path != "/" && r.URL.Path != "/preview" && r.URL.Path != "/document-preview" && !reviewPreview {
         http.NotFound(w,r)
         return
     }
@@ -299,6 +303,14 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             http.Error(w,"Invalid form submission",http.StatusForbidden)
             return
         }
+    }
+    if r.URL.Path == "/document-preview" {
+        if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
+        w.Header().Set("X-Frame-Options","SAMEORIGIN")
+        ctx,cancel:=context.WithTimeout(r.Context(),30*time.Second)
+        defer cancel()
+        ui.serveOriginalDocumentPreview(ctx,w,session)
+        return
     }
     if reviewPreview {
         if r.Method != http.MethodGet {http.Error(w,"Method not allowed",http.StatusMethodNotAllowed);return}
