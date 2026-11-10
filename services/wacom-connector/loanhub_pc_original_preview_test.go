@@ -7,6 +7,7 @@ import (
     "net/http"
     "net/http/httptest"
     "testing"
+    "strings"
     "time"
 )
 
@@ -71,5 +72,27 @@ func TestLocalPreviewDeniesUnboundOrUnavailableSession(t *testing.T) {
     }
     if recorder.Header().Get("Cache-Control")!="no-store" {
         t.Fatal("local preview was cacheable")
+    }
+}
+
+func TestLocalPDFPreviewAllowsOnlySameOriginFraming(t *testing.T) {
+    ui,err:=newPCUI("https://loanhub.example")
+    if err!=nil {t.Fatal(err)}
+    cookie,_,_:=localUIGet(t,ui)
+    request:=httptest.NewRequest(http.MethodGet,pcUIOrigin+"/document-preview",nil)
+    request.AddCookie(cookie)
+    result:=httptest.NewRecorder()
+    ui.ServeHTTP(result,request)
+    // The missing authenticated document must still be rejected.
+    if result.Code!=http.StatusForbidden {t.Fatalf("unauthorized preview: %d",result.Code)}
+    if result.Header().Get("X-Frame-Options")!="SAMEORIGIN" ||
+        !strings.Contains(result.Header().Get("Content-Security-Policy"),"frame-ancestors 'self'") {
+        t.Fatal("same-origin PDF frame remains blocked")
+    }
+    pageRequest:=httptest.NewRequest(http.MethodGet,pcUIOrigin+"/",nil)
+    pageResult:=httptest.NewRecorder()
+    ui.ServeHTTP(pageResult,pageRequest)
+    if !strings.Contains(pageResult.Header().Get("Content-Security-Policy"),"frame-ancestors 'none'") {
+        t.Fatal("ordinary UI lost clickjacking protection")
     }
 }
