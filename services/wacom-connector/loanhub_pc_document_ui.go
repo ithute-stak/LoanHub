@@ -8,6 +8,28 @@ import (
     "strings"
 )
 
+func (ui *pcUI) documentContractsRequest(ctx context.Context,s *pcUISession) {
+    s.discardCapture()
+    s.forgetDocument()
+    s.eligibleContracts=nil
+    if s.client==nil || s.lastClient==nil || s.lastClient.Status!="matched" ||
+        s.lastClient.Client==nil || ui.workstationKeyDir=="" {
+        s.feedback="Authenticated workstation and borrower lookup required"
+        return
+    }
+    contracts,err:=s.client.EligibleWacomContracts(ctx,s.lastClient.Client.BorrowerID)
+    if err!=nil {
+        s.feedback="No authorized contract list available for this borrower"
+        return
+    }
+    s.eligibleContracts=contracts
+    if len(contracts)==0 {
+        s.feedback="No eligible unsigned contracts are available"
+    } else {
+        s.feedback="Choose a contract by number; LoanHub verifies the original PDF before consent"
+    }
+}
+
 func (ui *pcUI) documentPrepareRequest(ctx context.Context,r *http.Request,s *pcUISession) {
     // Preparing a different contract invalidates any pending local handwriting.
     s.discardCapture()
@@ -19,12 +41,24 @@ func (ui *pcUI) documentPrepareRequest(ctx context.Context,r *http.Request,s *pc
     }
     workstationID,_,err:=loadWorkstationIdentity(ui.workstationKeyDir)
     if err!=nil {s.feedback="Approved workstation identity unavailable";return}
+    selectedID:=strings.TrimSpace(r.PostForm.Get("contract_id"))
+    var selected *LoanHubEligibleContract
+    for i:=range s.eligibleContracts {
+        if s.eligibleContracts[i].ContractID==selectedID {
+            selected=&s.eligibleContracts[i]
+            break
+        }
+    }
+    if selected==nil || selected.BorrowerID!=s.lastClient.Client.BorrowerID {
+        s.feedback="Select an eligible contract loaded for this borrower first"
+        return
+    }
     req:=LoanHubPrepareDocument{
         BorrowerID:s.lastClient.Client.BorrowerID,
-        ContractID:strings.TrimSpace(r.PostForm.Get("contract_id")),
-        SourceFileID:strings.TrimSpace(r.PostForm.Get("source_file_id")),
+        ContractID:selected.ContractID,
+        SourceFileID:selected.SourceFileID,
         WorkstationID:workstationID,
-        DocumentVersion:strings.TrimSpace(r.PostForm.Get("document_version")),
+        DocumentVersion:selected.DocumentVersion,
     }
     doc,err:=s.client.PrepareWacomDocument(ctx,req)
     if err!=nil {s.feedback="Document unavailable or unauthorized. Verify contract, borrower and source PDF.";return}
