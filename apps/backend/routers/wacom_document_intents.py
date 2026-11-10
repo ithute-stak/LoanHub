@@ -534,10 +534,13 @@ def preview_original_contract(
         raise HTTPException(409, "Original contract PDF unavailable")
     _verified_source_pdf(source, expected_sha256=row.document_sha256)
     # Read-and-check again so returned bytes themselves are hash-bound.
-    payload = read_file_bytes(source)
-    verify_document_bytes(row.document_sha256, payload)
-    if len(payload) != source.size_bytes or not payload.startswith(b"%PDF-"):
-        raise HTTPException(409, "Original PDF content changed")
+    try:
+        payload = read_file_bytes(source)
+        verify_document_bytes(row.document_sha256, payload)
+        if len(payload) != source.size_bytes or not payload.startswith(b"%PDF-"):
+            raise ValueError("Original PDF content changed")
+    except (ValueError, HTTPException) as exc:
+        raise HTTPException(409, "Original PDF integrity check failed") from exc
     return StreamingResponse(
         BytesIO(payload), media_type="application/pdf",
         headers={
