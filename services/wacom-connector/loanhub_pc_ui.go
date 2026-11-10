@@ -352,7 +352,10 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             status,err := session.client.OperatorSignatureStatus(ctx)
             if err != nil { session.feedback="Could not refresh signature status." } else { session.status=&status }
         case "/lookup":
+            // A new borrower lookup invalidates all prior contract and capture bindings.
+            // Never allow an earlier borrower\u0027s document evidence to survive identity changes.
             session.discardCapture()
+            session.forgetDocument()
             session.lastClient=nil
             if session.client == nil { session.feedback="Sign in first"; break }
             result,err := session.client.FindClient(ctx,strings.TrimSpace(r.PostForm.Get("national_id")))
