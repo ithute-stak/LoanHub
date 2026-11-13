@@ -16,7 +16,7 @@ def setup():
     )
     approval=SimpleNamespace(
         company_id=company, intent_id=intent_id, contract_id=contract_id,
-        status="approved", decided_by=uuid4(), consumed_at=None,
+        status="approved", requested_by=uuid4(), decided_by=uuid4(), consumed_at=None,
         decision_reference="TEST-APPROVAL",
         expires_at=now+timedelta(minutes=3),
         document_sha256="a"*64, evidence_sha256="b"*64,
@@ -89,3 +89,21 @@ def test_archive_does_not_mutate_loan_contract():
     assert "borrower_signed_at =" not in src
     assert "company_signed_at =" not in src
     assert "contract.status =" not in src
+
+
+def test_requester_or_approver_cannot_archive_their_own_approval():
+    intent, approval, _ = setup()
+    for actor in (approval.requested_by, approval.decided_by):
+        assert "independent_archiver_required" in packet_blockers(
+            approval=approval, intent=intent, executor_id=actor,
+        )
+
+
+def test_distinct_archiver_remains_eligible():
+    intent, approval, _ = setup()
+    actor = uuid4()
+    assert actor not in {
+        intent.operator_user_id, intent.review_by,
+        approval.requested_by, approval.decided_by,
+    }
+    assert packet_blockers(approval=approval, intent=intent, executor_id=actor) == []
