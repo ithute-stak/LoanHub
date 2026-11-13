@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {useRouter} from "next/navigation";
-import {useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
 import {
     Banknote,
     Calculator,
@@ -282,11 +282,15 @@ export default function CompanyLoansPage() {
         }
     }, [canDisburse, canManageContracts, activeRole]);
 
+    // A deep-linked loan should open once, not reopen after the operator
+    // closes its schedule and the portfolio refreshes in the background.
+    const openedDeepLinkLoanId = useRef<string | null>(null);
     useEffect(() => {
         const requestedId = new URLSearchParams(window.location.search).get("loan");
-        if (!requestedId || loading) return;
+        if (!requestedId || loading || openedDeepLinkLoanId.current === requestedId) return;
         const matching = loans.find(loan => loan.id === requestedId);
         if (matching) {
+            openedDeepLinkLoanId.current = requestedId;
             setTab("portfolio");
             setSelectedLoan(matching);
             setScheduleOpen(true);
