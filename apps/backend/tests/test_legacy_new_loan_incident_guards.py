@@ -59,3 +59,14 @@ def test_audit_uses_readonly_transaction_and_explicit_loan_links() -> None:
     statements = "\n".join(line for line in lowered.splitlines() if not line.lstrip().startswith("--"))
     import re
     assert not re.search(r"\b(update|delete|insert|truncate|alter|drop|create)\s+", statements)
+
+
+def test_deep_link_schedule_is_not_reopened_after_refresh() -> None:
+    """A URL-selected loan must not reopen after the user closes its schedule."""
+    page = (FRONTEND / "app/(dashboard)/company/loans/page.tsx").read_text()
+    assert "openedDeepLinkLoanId = useRef<string | null>(null)" in page
+    assert "openedDeepLinkLoanId.current === requestedId" in page
+    assert "openedDeepLinkLoanId.current = requestedId" in page
+    assert page.index("openedDeepLinkLoanId.current = requestedId") < page.index(
+        'setScheduleOpen(true);', page.index("openedDeepLinkLoanId.current = requestedId")
+    )
