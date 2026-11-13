@@ -1254,6 +1254,16 @@ def reverse_loan_payment(db: Session, payment: PaymentTransaction) -> None:
             db.get(RepaymentInstallment, allocation.installment_id)
             for allocation in allocations
         ]
+        # Never reverse installments assigned to a different loan. A malformed
+        # historical allocation must be reconciled, not applied to another loan.
+        if any(
+            installment is None or installment.loan_id != loan.id
+            for installment in allocated_installments
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Repayment allocation has a missing or mismatched loan installment; manual reconciliation required.",
+            )
         if any(installment and getattr(installment, "is_superseded", False) for installment in allocated_installments):
             raise HTTPException(
                 status_code=409,
