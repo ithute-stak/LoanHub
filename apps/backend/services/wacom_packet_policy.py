@@ -28,6 +28,7 @@ def packet_blockers(*, approval, intent, executor_id, now=None):
             approval.evidence_sha256 != intent.evidence_sha256 or
             approval.binding_sha256 != intent.binding_sha256):
         reasons.append("approved_document_changed")
-    if executor_id in {intent.operator_user_id, intent.review_by,\n                       approval.requested_by, approval.decided_by}:
+    if executor_id in {intent.operator_user_id, intent.review_by, 
+                       approval.requested_by, approval.decided_by}:
         reasons.append("independent_archiver_required")
     return reasons
