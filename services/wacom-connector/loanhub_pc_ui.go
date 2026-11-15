@@ -109,6 +109,10 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <form method="post" action="/lookup"><input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="national_id">Client National ID</label><input id="national_id" name="national_id" maxlength="50" required>
 <button type="submit">Find client</button></form>
+<p>Already selected a loan in LoanHub? Use its borrower ID instead of searching by National ID.</p>
+<form method="post" action="/lookup-borrower"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="borrower_id">Selected loan borrower ID</label><input id="borrower_id" name="borrower_id" maxlength="36" minlength="36" required>
+<button type="submit">Load selected borrower</button></form>
 {{if .Client}}
 <div class="client"><p>Result: <strong>{{.Client.Status}}</strong></p>
 {{if .Client.Client}}
@@ -276,7 +280,7 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         return
     }
     reviewPreview := strings.HasPrefix(r.URL.Path,"/review-preview/")
-    if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" &&
+    if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/lookup" && r.URL.Path != "/lookup-borrower" &&
         r.URL.Path != "/refresh" && r.URL.Path != "/logout" &&
         r.URL.Path != "/switch-operator" &&
         r.URL.Path != "/document-prepare" && r.URL.Path != "/contracts-refresh" && r.URL.Path != "/document-consent" &&
@@ -384,6 +388,20 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             if session.client == nil { session.feedback="Sign in first"; break }
             result,err := session.client.FindClient(ctx,strings.TrimSpace(r.PostForm.Get("national_id")))
             if err != nil { session.feedback="Client lookup unavailable or not authorized." } else { session.lastClient=&result }
+        case "/lookup-borrower":
+            // Same capture/document reset as National ID lookup; never reuse a previous signer.
+            session.discardCapture()
+            session.forgetDocument()
+            session.eligibleContracts=nil
+            session.lastClient=nil
+            if session.client == nil { session.feedback="Sign in first"; break }
+            result,err := session.client.FindClientByBorrowerID(ctx,strings.TrimSpace(r.PostForm.Get("borrower_id")))
+            if err != nil { session.feedback="Borrower lookup unavailable or not authorized." } else {
+                session.lastClient=&result
+                if result.Client != nil && result.Status == "matched" {
+                    ui.documentContractsRequest(ctx,session)
+                }
+            }
         case "/capture":
             ui.captureRequest(r,session)
         case "/upload":
