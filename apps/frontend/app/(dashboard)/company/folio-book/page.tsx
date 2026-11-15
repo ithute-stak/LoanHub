@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BookOpenCheck,
@@ -47,6 +47,7 @@ export default function FolioBookPage() {
   const [groupCode, setGroupCode] = useState(ALL);
   const [status, setStatus] = useState(ALL);
   const [page, setPage] = useState(1);
+  const requestSequence = useRef(0);
 
   const query = useMemo(() => ({
     search: search.trim() || undefined,
@@ -57,19 +58,31 @@ export default function FolioBookPage() {
   }), [groupCode, search, status, page]);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
-      setPayload(await getFolioBook(query));
+      const result = await getFolioBook(query);
+      if (sequence === requestSequence.current) {
+        setPayload(result);
+      }
     } catch (error) {
-      toast.error(error, { description: "The loan folio sequence book could not be loaded." });
+      if (sequence === requestSequence.current) {
+        toast.error(error, { description: "The loan folio sequence book could not be loaded." });
+      }
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [query]);
 
   useEffect(() => {
+    // Invalidate older requests as soon as filters or page change, even
+    // while the new request is waiting for the search debounce.
+    requestSequence.current += 1;
     const timer = window.setTimeout(() => void load(), 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
 
 
