@@ -40,13 +40,16 @@ export default function FolioBookPage() {
   const [search, setSearch] = useState("");
   const [groupCode, setGroupCode] = useState(ALL);
   const [status, setStatus] = useState(ALL);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
   const query = useMemo(() => ({
     search: search.trim() || undefined,
     group_code: groupCode === ALL ? undefined : groupCode,
     status: status === ALL ? undefined : status,
-    limit: 2000,
-  }), [groupCode, search, status]);
+    skip: (page - 1) * pageSize,
+    limit: pageSize,
+  }), [groupCode, search, status, page]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +100,10 @@ export default function FolioBookPage() {
   const summary = payload?.summary;
   const rows = payload?.rows ?? [];
   const books = payload?.sequence_books ?? [];
+  const total = payload?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const firstRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastRow = Math.min(page * pageSize, total);
   const integrityCount = summary
     ? summary.missing_folio_count
       + summary.invalid_format_count
@@ -214,16 +221,16 @@ export default function FolioBookPage() {
             <div className="grid w-full gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_180px] xl:w-[760px]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
+                <Input value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
               </div>
-              <Select value={groupCode} onValueChange={setGroupCode}>
+              <Select value={groupCode} onValueChange={(value) => { setPage(1); setGroupCode(value); }}>
                 <SelectTrigger><SelectValue placeholder="Folio group" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All folio groups</SelectItem>
                   {books.map((book) => <SelectItem key={book.group_code} value={book.group_code}>{book.group_code} · {book.group_name ?? "Work group"}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Select value={status} onValueChange={setStatus}>
+              <Select value={status} onValueChange={(value) => { setPage(1); setStatus(value); }}>
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All statuses</SelectItem>
@@ -241,7 +248,7 @@ export default function FolioBookPage() {
           {(groupCode !== ALL || status !== ALL || search) ? (
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Badge variant="secondary">{payload?.total ?? 0} matching</Badge>
-              <Button size="sm" variant="ghost" onClick={() => { setSearch(""); setGroupCode(ALL); setStatus(ALL); }}>Clear filters</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setPage(1); setSearch(""); setGroupCode(ALL); setStatus(ALL); }}>Clear filters</Button>
             </div>
           ) : null}
         </CardHeader>
@@ -302,6 +309,15 @@ export default function FolioBookPage() {
                 ))}
               </TableBody>
             </Table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              Showing {firstRow}–{lastRow} of {total} folios · Page {page} of {pageCount}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={loading || page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button>
+              <Button type="button" size="sm" variant="outline" disabled={loading || page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</Button>
+            </div>
           </div>
         </CardContent>
       </Card>
