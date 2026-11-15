@@ -406,6 +406,12 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
                 session.lastClient=&result
                 if result.Client != nil && result.Status == "matched" {
                     ui.documentContractsRequest(ctx,session)
+                    // Only auto-prepare when the selected loan resolves to exactly one
+                    // eligible contract. Never infer a contract from borrower identity alone.
+                    if session.selectedLoanID!="" && len(session.eligibleContracts)==1 {
+                        r.PostForm.Set("contract_id",session.eligibleContracts[0].ContractID)
+                        ui.documentPrepareRequest(ctx,r,session)
+                    }
                 }
             }
         case "/capture":
