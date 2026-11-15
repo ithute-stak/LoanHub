@@ -63,7 +63,8 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         signerName=*session.status.FullName
     case "client":
         if session.lastClient==nil || session.lastClient.Status!="matched" ||
-            session.lastClient.Client==nil || !session.lastClient.Client.RequiresCapture {
+            session.lastClient.Client==nil ||
+            (!session.lastClient.Client.RequiresCapture && session.documentIntent==nil) {
             session.feedback="Find a client requiring a signature first"
             return
         }
@@ -145,7 +146,8 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
         }
     } else {
         if session.lastClient==nil || session.lastClient.Client==nil ||
-            session.lastClient.Status!="matched" || !session.lastClient.Client.RequiresCapture ||
+            session.lastClient.Status!="matched" ||
+            (!session.lastClient.Client.RequiresCapture && session.documentIntent==nil) ||
             session.lastClient.Client.BorrowerID!=capture.borrowerID {
             session.discardCapture()
             session.feedback="Client identity changed; capture discarded"
