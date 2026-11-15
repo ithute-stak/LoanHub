@@ -219,6 +219,53 @@ func (c *LoanHubPCClient) OperatorSignatureStatus(ctx context.Context) (LoanHubO
     return response, nil
 }
 
+// FindClientByBorrowerID resolves a borrower selected in the company loan list.
+// It does not grant signing permission and must use the connector's authenticated session.
+func (c *LoanHubPCClient) FindClientByBorrowerID(ctx context.Context, borrowerID string) (LoanHubClientLookup, error) {
+    var response LoanHubClientLookup
+    borrowerID = strings.TrimSpace(borrowerID)
+    if len(borrowerID) != 36 {
+        return response, errors.New("Invalid borrower ID")
+    }
+    for i, char := range borrowerID {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            if char != '-' { return response, errors.New("Invalid borrower ID") }
+        } else if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+            return response, errors.New("Invalid borrower ID")
+        }
+    }
+    if err := c.do(ctx, http.MethodGet,
+        "/api/v1/local-signatures/clients/by-borrower/"+borrowerID,
+        nil, true, &response); err != nil {
+        return LoanHubClientLookup{}, err
+    }
+    if response.MayReuse || response.MaySignContract {
+        return LoanHubClientLookup{}, errors.New("LoanHub returned unsafe client signing permissions")
+    }
+    switch response.Status {
+    case "not_found", "conflict":
+        if response.Client != nil {
+            return LoanHubClientLookup{}, errors.New("LoanHub exposed unexpected client identity")
+        }
+    case "matched":
+        if response.Client == nil || response.Client.BorrowerID != borrowerID ||
+            strings.TrimSpace(response.Client.FullName) == "" {
+            return LoanHubClientLookup{}, errors.New("LoanHub borrower identity mismatch")
+        }
+        switch response.Client.SignatureStatus {
+        case "missing", "pending_review", "verified_capture", "active":
+        default:
+            return LoanHubClientLookup{}, errors.New("Unexpected client signature status")
+        }
+        if response.Client.RequiresCapture != (response.Client.SignatureStatus == "missing") {
+            return LoanHubClientLookup{}, errors.New("Inconsistent client capture requirements")
+        }
+    default:
+        return LoanHubClientLookup{}, errors.New("Unexpected LoanHub client lookup result")
+    }
+    return response, nil
+}
+
 func (c *LoanHubPCClient) FindClient(ctx context.Context, nationalID string) (LoanHubClientLookup, error) {
     var response LoanHubClientLookup
     nationalID = strings.TrimSpace(nationalID)
