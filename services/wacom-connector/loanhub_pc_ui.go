@@ -175,7 +175,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <label for="signer_kind">Signer</label>
 <select id="signer_kind" name="signer_kind" required>
 <option value="operator">Logged-in operator</option>
-{{if .Client}}{{if .Client.Client}}{{if .Client.Client.RequiresCapture}}<option value="client">Located client: {{.Client.Client.FullName}}</option>{{end}}{{end}}{{end}}
+{{if .Client}}{{if .Client.Client}}{{if or .Client.Client.RequiresCapture (and $.DocumentIntent (eq $.DocumentIntent.Status "consented"))}}<option value="client">Located client: {{.Client.Client.FullName}}</option>{{end}}{{end}}{{end}}
 </select>
 <label for="confirm_name">Type the signer's full name to confirm</label>
 <input id="confirm_name" name="confirm_name" maxlength="200" required>
