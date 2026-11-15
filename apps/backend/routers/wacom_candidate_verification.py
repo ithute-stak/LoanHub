@@ -17,6 +17,7 @@ from database.models.wacom_finalization_approval import WacomFinalizationApprova
 from database.models.wacom_finalization_packet import WacomFinalizationPacket
 from database.models.wacom_execution_authorization import WacomExecutionAuthorization
 from database.models.wacom_execution_receipt import WacomExecutionReceipt
+from database.models.wacom_execution_ceremony_challenge import WacomExecutionCeremonyChallenge
 from database.session import get_db
 from services.file_service import read_file_bytes
 from services.wacom_candidate_archive_integrity import candidate_archive_blockers
@@ -45,6 +46,46 @@ def _row(db, model, company_id, record_id):
 
 def _file(db, company_id, file_id):
     return _row(db, ManagedFile, company_id, file_id) if file_id else None
+
+
+@router.get("/contracts/{contract_id}/workflow-status")
+def contract_workflow_status(
+    contract_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Tenant-scoped read-only progress for the desktop signing workspace.
+
+    An archived PDF candidate, borrower affirmation or workstation proof is
+    never represented as a completed signature.
+    """
+    response.headers["Cache-Control"] = "no-store, private"
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    contract = _row(db, LoanContract, ctx.company_id, contract_id)
+    if contract is None:
+        raise HTTPException(404, "Contract unavailable")
+    receipt = db.query(WacomExecutionReceipt).filter(
+        WacomExecutionReceipt.company_id == ctx.company_id,
+        WacomExecutionReceipt.contract_id == contract_id,
+    ).one_or_none()
+    challenge = db.query(WacomExecutionCeremonyChallenge).filter(
+        WacomExecutionCeremonyChallenge.company_id == ctx.company_id,
+        WacomExecutionCeremonyChallenge.contract_id == contract_id,
+    ).one_or_none()
+    return {
+        "contract_id": str(contract.id),
+        "candidate_archived": bool(receipt and receipt.status == "reserved"
+                                   and receipt.executed_file_id),
+        "candidate_sha256": receipt.executed_pdf_sha256 if receipt else None,
+        "ceremony_status": challenge.status if challenge else "not_started",
+        "borrower_affirmed": bool(challenge and challenge.borrower_affirmed_at),
+        "workstation_key_verified": bool(challenge and challenge.workstation_proof_at),
+        "physical_stu540_verified": False,
+        "legal_execution_verified": False,
+        "contract_signed": bool(contract.status == "signed"
+                                and contract.borrower_signed_at is not None),
+    }
 
 
 @router.get("/receipts/{receipt_id}")
