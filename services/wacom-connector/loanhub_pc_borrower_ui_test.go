@@ -3,6 +3,7 @@ package main
 import (
     "net/http"
     "net/url"
+    "strings"
     "testing"
 )
 
