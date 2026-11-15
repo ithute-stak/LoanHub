@@ -15,6 +15,7 @@ import {
 import {
   downloadFolioBookCsv,
   downloadFolioDueInstallmentsPdf,
+  downloadFolioNextInstallmentsPdf,
   getFolioBook,
   type FolioBookPayload,
   type FolioBookRow,
@@ -37,6 +38,9 @@ export default function FolioBookPage() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [exportingDue, setExportingDue] = useState(false);
+  const [exportingNext, setExportingNext] = useState(false);
+  const [nextFromDate, setNextFromDate] = useState("");
+  const [nextThroughDate, setNextThroughDate] = useState("");
   const [search, setSearch] = useState("");
   const [groupCode, setGroupCode] = useState(ALL);
   const [status, setStatus] = useState(ALL);
@@ -89,6 +93,28 @@ export default function FolioBookPage() {
       toast.error(error, { description: "Could not generate the due instalments report." });
     } finally {
       setExportingDue(false);
+    }
+  }
+
+  async function exportNextPdf() {
+    if (nextFromDate && nextThroughDate && nextFromDate > nextThroughDate) {
+      toast.error("Start date must not be after end date.");
+      return;
+    }
+    setExportingNext(true);
+    try {
+      await downloadFolioNextInstallmentsPdf({
+        search: search.trim() || undefined,
+        group_code: groupCode === ALL ? undefined : groupCode,
+        status: status === ALL ? undefined : status,
+        from_date: nextFromDate || undefined,
+        through_date: nextThroughDate || undefined,
+      });
+      toast.success("Next installment PDF generated");
+    } catch (error) {
+      toast.error(error, { description: "Could not generate the next installment report." });
+    } finally {
+      setExportingNext(false);
     }
   }
 
@@ -237,6 +263,20 @@ export default function FolioBookPage() {
             <Button type="button" disabled={exportingDue} onClick={() => void exportDuePdf()}>
               <Download className="h-4 w-4" />{exportingDue ? "Generating due PDF…" : "Download due instalments PDF"}
             </Button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3 border-t pt-3">
+            <div className="space-y-1">
+              <label htmlFor="next-from-date" className="text-xs font-semibold">Payment from</label>
+              <Input id="next-from-date" type="date" value={nextFromDate} onChange={(event) => setNextFromDate(event.target.value)} className="w-[170px]" />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="next-through-date" className="text-xs font-semibold">Payment through</label>
+              <Input id="next-through-date" type="date" value={nextThroughDate} onChange={(event) => setNextThroughDate(event.target.value)} className="w-[170px]" />
+            </div>
+            <Button type="button" variant="outline" disabled={exportingNext} onClick={() => void exportNextPdf()}>
+              <Download className="h-4 w-4" />{exportingNext ? "Generating…" : "Download next payments PDF"}
+            </Button>
+            <p className="text-xs text-muted-foreground">One earliest unpaid instalment per loan. Uses the search, group and status filters above. Leave dates empty to include overdue and future payments.</p>
           </div>
           {(groupCode !== ALL || status !== ALL || search) ? (
             <div className="flex flex-wrap items-center gap-2 pt-2">
