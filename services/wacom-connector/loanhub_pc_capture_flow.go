@@ -46,6 +46,9 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         session.feedback="A valid consent evidence reference is required"
         return
     }
+    if session.selectedLoanID!="" && session.documentIntent==nil {
+        session.feedback="Review the selected loan PDF and record exact-document consent before capture";return
+    }
     kind:=r.PostForm.Get("signer_kind")
     enteredName:=strings.TrimSpace(r.PostForm.Get("confirm_name"))
     signerName:=""
