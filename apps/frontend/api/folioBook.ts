@@ -194,3 +194,18 @@ export type FolioPerformance = {
 export async function getFolioPerformance(): Promise<FolioPerformance> {
   return (await api.get<FolioPerformance>("/folio-book/performance")).data;
 }
+
+export async function downloadFolioNextInstallmentsPdf(query: {
+  search?: string;
+  group_code?: string;
+  status?: string;
+  branch_id?: string;
+  from_date?: string;
+  through_date?: string;
+}): Promise<void> {
+  const response = await api.get<Blob>("/folio-book/next-installments.pdf", {
+    params: queryParams(query),
+    responseType: "blob",
+  });
+  downloadBlob(response.data, "LoanHub-Next-Installments.pdf");
+}
