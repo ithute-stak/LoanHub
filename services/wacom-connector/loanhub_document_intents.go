@@ -115,6 +115,7 @@ func (c *LoanHubPCClient) AttachWacomDocumentEvidence(ctx context.Context, inten
 
 type LoanHubEligibleContract struct {
     ContractID string `json:"contract_id"`
+    LoanID string `json:"loan_id"`
     ContractNumber string `json:"contract_number"`
     SourceFileID string `json:"source_file_id"`
     DocumentVersion string `json:"document_version"`
