@@ -70,6 +70,9 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         session.feedback="Invalid signer selection"
         return
     }
+    if session.selectedLoanID!="" && session.documentIntent==nil {
+        session.feedback="Review the selected loan PDF and record exact-document consent before capture";return
+    }
     if session.documentIntent!=nil {
         if kind!="client" || session.documentIntent.Status!="consented" ||
             session.documentIntent.BorrowerID!=borrowerID {
