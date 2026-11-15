@@ -33,6 +33,7 @@ import { toast } from "@/utils/toast";
 
 const ALL = "__all__";
 const PAGE_SIZE = 25;
+const LOAN_STATUSES = ["pending", "approved", "active", "completed", "defaulted", "rejected", "cancelled"] as const;
 
 export default function FolioBookPage() {
   const [payload, setPayload] = useState<FolioBookPayload | null>(null);
@@ -71,10 +72,6 @@ export default function FolioBookPage() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const statuses = useMemo(
-    () => Array.from(new Set((payload?.rows ?? []).map((row) => row.status).filter(Boolean))).sort(),
-    [payload?.rows],
-  );
 
   async function exportCsv() {
     setExporting(true);
@@ -260,7 +257,7 @@ export default function FolioBookPage() {
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All statuses</SelectItem>
-                  {statuses.map((item) => <SelectItem key={item} value={item}>{titleCase(item)}</SelectItem>)}
+                  {LOAN_STATUSES.map((item) => <SelectItem key={item} value={item}>{titleCase(item)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -288,7 +285,7 @@ export default function FolioBookPage() {
           {(groupCode !== ALL || status !== ALL || search) ? (
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Badge variant="secondary">{payload?.total ?? 0} matching</Badge>
-              <Button size="sm" variant="ghost" onClick={() => { setSearch(""); setGroupCode(ALL); setStatus(ALL); }}>Clear filters</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setSearch(""); setGroupCode(ALL); setStatus(ALL); setPage(1); }}>Clear filters</Button>
             </div>
           ) : null}
         </CardHeader>
