@@ -125,6 +125,18 @@ def test_no_future_dated_affirmation():
     assert "fresh_borrower_affirmation_missing" in deny(values)
 
 
+def test_future_dated_device_proof_rejected():
+    values = fixtures()
+    values["device_proof"].verified_at = values["now"] + timedelta(seconds=1)
+    assert "fresh_physical_device_proof_missing" in deny(values)
+
+
+def test_legal_release_must_follow_device_proof():
+    values = fixtures()
+    values["legal_release"].released_at = values["device_proof"].verified_at - timedelta(seconds=1)
+    assert "independent_legal_release_missing" in deny(values)
+
+
 def test_changed_candidate_bytes_rejected():
     values = fixtures()
     values["candidate_pdf"] += b"tampered"
