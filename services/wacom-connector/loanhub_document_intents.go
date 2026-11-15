@@ -143,7 +143,7 @@ func (c *LoanHubPCClient) EligibleWacomContracts(ctx context.Context, borrowerID
     }
     seen:=map[string]bool{}
     for _, contract:=range response.Contracts {
-        if !validUUID(contract.ContractID) || !validUUID(contract.SourceFileID) ||
+        if !validUUID(contract.ContractID) || !validUUID(contract.LoanID) || !validUUID(contract.SourceFileID) ||
             contract.BorrowerID!=borrowerID || contract.ContractNumber=="" ||
             contract.DocumentVersion=="" || seen[contract.ContractID] {
             return nil, errors.New("Invalid or duplicate contract selection")
