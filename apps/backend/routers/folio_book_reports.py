@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -11,6 +11,7 @@ from collections import defaultdict
 from database.models.repayment import RepaymentInstallment
 from database.models.origination import BorrowerEmploymentProfile
 from services.folio_due_report_service import build_folio_due_pdf
+from services.folio_next_installment_report_service import build_folio_next_installment_pdf
 
 from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.client_loan_company import ClientCompanyLoan
@@ -155,5 +156,78 @@ def export_group_due_installments_pdf(
     pdf = build_folio_due_pdf(db=db, context=context, rows=rows, group_code=group_code, through_date=cutoff)
     return Response(content=pdf, media_type="application/pdf", headers={
         "Content-Disposition": "attachment; filename=loanhub-folio-due-installments.pdf",
+        "Cache-Control": "no-store",
+    })
+
+
+@router.get("/next-installments.pdf")
+def export_next_installments_pdf(
+    group_code: str | None = Query(default=None, max_length=40),
+    status: str | None = Query(default=None, max_length=40),
+    search: str | None = Query(default=None, max_length=200),
+    branch_id: UUID | None = None,
+    from_date: date | None = None,
+    through_date: date | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """One earliest outstanding, non-superseded installment per active loan."""
+    require_tenant_roles(context, COMPANY_ROLES)
+    if from_date and through_date and from_date > through_date:
+        raise HTTPException(status_code=422, detail="Start date must not exceed end date")
+    query = _base_query(db, context).filter(
+        ClientCompanyLoan.status.in_(["active", "defaulted"]),
+        ClientCompanyLoan.balance > 0,
+    )
+    if group_code:
+        query = query.filter(ClientCompanyLoan.folio_group_code == group_code)
+    if status:
+        if status not in {"active", "defaulted"}:
+            query = query.filter(False)
+        else:
+            query = query.filter(ClientCompanyLoan.status == status)
+    if branch_id:
+        query = query.filter(ClientCompanyLoan.branch_id == branch_id)
+    loans = query.all()
+    by_id = {loan.id: loan for loan in loans}
+    installments = db.query(RepaymentInstallment).filter(
+        RepaymentInstallment.loan_id.in_(list(by_id)),
+        RepaymentInstallment.is_superseded.is_(False),
+        RepaymentInstallment.total_due > RepaymentInstallment.paid_amount,
+    ).order_by(RepaymentInstallment.due_date.asc(), RepaymentInstallment.id.asc()).all() if by_id else []
+    next_by_loan = {}
+    for installment in installments:
+        next_by_loan.setdefault(installment.loan_id, installment)
+    rows = []
+    term = (search or "").strip().casefold()
+    for loan_id, installment in next_by_loan.items():
+        loan = by_id[loan_id]
+        due = installment.due_date
+        if from_date and due < from_date:
+            continue
+        if through_date and due > through_date:
+            continue
+        row = _row(loan)
+        if term and not any(term in str(row.get(key) or "").casefold() for key in (
+            "folio_number", "loan_reference", "borrower_name", "borrower_identity",
+            "employer_name", "employer_group_name", "branch_name", "status",
+        )):
+            continue
+        user = loan.borrower.user if loan.borrower else None
+        row["contact_phone"] = user.phone if user else None
+        row["occupation"] = row.get("employer_group_name") or row.get("employer_name")
+        row["due_date"] = due.isoformat()
+        row["due_amount"] = min(
+            max(Decimal("0"), Decimal(installment.total_due) - Decimal(installment.paid_amount or 0)),
+            Decimal(loan.balance or 0),
+        )
+        rows.append(row)
+    rows.sort(key=lambda row: (row["due_date"], row.get("folio_number") or "", row["loan_reference"]))
+    pdf = build_folio_next_installment_pdf(
+        db=db, context=context, rows=rows,
+        group_code=group_code, from_date=from_date, through_date=through_date,
+    )
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": "attachment; filename=loanhub-next-installments.pdf",
         "Cache-Control": "no-store",
     })
