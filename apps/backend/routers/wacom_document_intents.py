@@ -188,6 +188,7 @@ def list_eligible_contracts(
             continue
         choices.append({
             "contract_id": str(contract.id),
+            "loan_id": str(contract.loan_id),
             "contract_number": contract.contract_number,
             "source_file_id": str(source.id),
             "document_version": str(contract.version),

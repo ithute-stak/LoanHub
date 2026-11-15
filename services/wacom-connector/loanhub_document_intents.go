@@ -115,6 +115,7 @@ func (c *LoanHubPCClient) AttachWacomDocumentEvidence(ctx context.Context, inten
 
 type LoanHubEligibleContract struct {
     ContractID string `json:"contract_id"`
+    LoanID string `json:"loan_id"`
     ContractNumber string `json:"contract_number"`
     SourceFileID string `json:"source_file_id"`
     DocumentVersion string `json:"document_version"`
@@ -142,7 +143,7 @@ func (c *LoanHubPCClient) EligibleWacomContracts(ctx context.Context, borrowerID
     }
     seen:=map[string]bool{}
     for _, contract:=range response.Contracts {
-        if !validUUID(contract.ContractID) || !validUUID(contract.SourceFileID) ||
+        if !validUUID(contract.ContractID) || !validUUID(contract.LoanID) || !validUUID(contract.SourceFileID) ||
             contract.BorrowerID!=borrowerID || contract.ContractNumber=="" ||
             contract.DocumentVersion=="" || seen[contract.ContractID] {
             return nil, errors.New("Invalid or duplicate contract selection")

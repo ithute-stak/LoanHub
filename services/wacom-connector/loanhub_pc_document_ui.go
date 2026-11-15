@@ -22,6 +22,13 @@ func (ui *pcUI) documentContractsRequest(ctx context.Context,s *pcUISession) {
         s.feedback="No authorized contract list available for this borrower"
         return
     }
+    if s.selectedLoanID!="" {
+        filtered:=make([]LoanHubEligibleContract,0,1)
+        for _, contract:=range contracts {
+            if contract.LoanID==s.selectedLoanID { filtered=append(filtered,contract) }
+        }
+        contracts=filtered
+    }
     s.eligibleContracts=contracts
     if len(contracts)==0 {
         s.feedback="No eligible unsigned contracts are available"
