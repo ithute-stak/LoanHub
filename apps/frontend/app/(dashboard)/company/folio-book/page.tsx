@@ -32,6 +32,7 @@ import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { toast } from "@/utils/toast";
 
 const ALL = "__all__";
+const PAGE_SIZE = 25;
 
 export default function FolioBookPage() {
   const [payload, setPayload] = useState<FolioBookPayload | null>(null);
@@ -44,13 +45,15 @@ export default function FolioBookPage() {
   const [search, setSearch] = useState("");
   const [groupCode, setGroupCode] = useState(ALL);
   const [status, setStatus] = useState(ALL);
+  const [page, setPage] = useState(1);
 
   const query = useMemo(() => ({
     search: search.trim() || undefined,
     group_code: groupCode === ALL ? undefined : groupCode,
     status: status === ALL ? undefined : status,
-    limit: 2000,
-  }), [groupCode, search, status]);
+    skip: (page - 1) * PAGE_SIZE,
+    limit: PAGE_SIZE,
+  }), [groupCode, search, status, page]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,7 +79,7 @@ export default function FolioBookPage() {
   async function exportCsv() {
     setExporting(true);
     try {
-      await downloadFolioBookCsv(query);
+      await downloadFolioBookCsv({ search: query.search, group_code: query.group_code, status: query.status });
     } catch (error) {
       toast.error(error, { description: "The folio book CSV could not be downloaded." });
     } finally {
@@ -122,6 +125,10 @@ export default function FolioBookPage() {
 
   const summary = payload?.summary;
   const rows = payload?.rows ?? [];
+  const totalRows = payload?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const firstRow = totalRows ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const lastRow = Math.min(page * PAGE_SIZE, totalRows);
   const books = payload?.sequence_books ?? [];
   const integrityCount = summary
     ? summary.missing_folio_count
@@ -240,16 +247,16 @@ export default function FolioBookPage() {
             <div className="grid w-full gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_180px] xl:w-[760px]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
+                <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
               </div>
-              <Select value={groupCode} onValueChange={setGroupCode}>
+              <Select value={groupCode} onValueChange={(value) => { setGroupCode(value); setPage(1); }}>
                 <SelectTrigger><SelectValue placeholder="Folio group" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All folio groups</SelectItem>
                   {books.map((book) => <SelectItem key={book.group_code} value={book.group_code}>{book.group_code} · {book.group_name ?? "Work group"}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Select value={status} onValueChange={setStatus}>
+              <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL}>All statuses</SelectItem>
@@ -342,6 +349,13 @@ export default function FolioBookPage() {
                 ))}
               </TableBody>
             </Table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-2 py-4 text-sm">
+            <span className="text-muted-foreground">Showing {firstRow}–{lastRow} of {totalRows} folios · Page {page} of {totalPages}</span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={loading || page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={loading || page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</Button>
+            </div>
           </div>
         </CardContent>
       </Card>
