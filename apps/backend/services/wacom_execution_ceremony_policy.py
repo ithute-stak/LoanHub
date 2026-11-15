@@ -171,6 +171,7 @@ def execution_ceremony_blockers(
         or not getattr(legal_release, "reviewer_user_id", None)
         or release_time is None or release_time > now
         or consent_time is None or release_time < consent_time
+        or proof_time is None or release_time < proof_time
     ):
         issues.append("independent_legal_release_missing")
 
