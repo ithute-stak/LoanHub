@@ -52,8 +52,27 @@ function normalizeLoanCurrentState(loan: Loan): Loan {
   };
 }
 
+/** Load every tenant-authorised loan rather than silently truncating the company portfolio. */
 export async function listLoans(): Promise<Loan[]> {
-  return (await api.get<Loan[]>("/loans/")).data.map(normalizeLoanCurrentState);
+  const pageSize = 500;
+  const loans: Loan[] = [];
+  const seen = new Set<string>();
+  for (let skip = 0; ; skip += pageSize) {
+    const {data} = await api.get<Loan[]>("/loans/", {
+      params: {skip, limit: pageSize},
+    });
+    if (!Array.isArray(data) || data.length > pageSize) {
+      throw new Error("Loan portfolio returned an invalid page.");
+    }
+    for (const loan of data) {
+      if (!loan.id) throw new Error("Loan portfolio returned a loan without an identifier.");
+      if (!seen.has(loan.id)) {
+        seen.add(loan.id);
+        loans.push(normalizeLoanCurrentState(loan));
+      }
+    }
+    if (data.length < pageSize) return loans;
+  }
 }
 
 /** Retrieve the full tenant-authorised history for one borrower, not just page one. */
