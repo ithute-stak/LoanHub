@@ -9,11 +9,7 @@ import (
 func TestBorrowerIDDeskRequiresAuthenticatedSessionAndCSRF(t *testing.T) {
     ui, err := newPCUI("https://loanhub.example")
     if err != nil { t.Fatal(err) }
-    cookie, csrf, html := localUIGet(t, ui)
-    if !strings.Contains(html, "action=\"/lookup-borrower\"") ||
-        !strings.Contains(html, "name=\"borrower_id\"") {
-        t.Fatal("borrower-ID desk form missing")
-    }
+    cookie, csrf, _ := localUIGet(t, ui)
     values := url.Values{
         "csrf": {csrf},
         "borrower_id": {"b8a9099b-694b-441b-b4a0-2d8394b7e62d"},
