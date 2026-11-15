@@ -22,13 +22,7 @@ func (ui *pcUI) documentContractsRequest(ctx context.Context,s *pcUISession) {
         s.feedback="No authorized contract list available for this borrower"
         return
     }
-    if s.selectedLoanID!="" {
-        filtered:=make([]LoanHubEligibleContract,0,1)
-        for _, contract:=range contracts {
-            if contract.LoanID==s.selectedLoanID { filtered=append(filtered,contract) }
-        }
-        contracts=filtered
-    }
+    contracts=contractsForSelectedLoan(contracts,s.selectedLoanID)
     s.eligibleContracts=contracts
     if len(contracts)==0 {
         s.feedback="No eligible unsigned contracts are available"
@@ -56,7 +50,8 @@ func (ui *pcUI) documentPrepareRequest(ctx context.Context,r *http.Request,s *pc
             break
         }
     }
-    if selected==nil || selected.BorrowerID!=s.lastClient.Client.BorrowerID {
+    if selected==nil || selected.BorrowerID!=s.lastClient.Client.BorrowerID ||
+        (s.selectedLoanID!="" && selected.LoanID!=s.selectedLoanID) {
         s.feedback="Select an eligible contract loaded for this borrower first"
         return
     }
@@ -106,4 +101,15 @@ func (ui *pcUI) documentAttachRequest(ctx context.Context,s *pcUISession) {
 func (s *pcUISession) forgetDocument() {
     s.documentIntent=nil
     s.lastDocumentCaptureID=""
+}
+
+// contractsForSelectedLoan keeps the borrower-wide list restricted to the
+// exact loan selected in IthuteSign. An empty ID preserves manual lookup.
+func contractsForSelectedLoan(contracts []LoanHubEligibleContract, loanID string) []LoanHubEligibleContract {
+    if loanID=="" { return contracts }
+    filtered:=make([]LoanHubEligibleContract,0,1)
+    for _, contract:=range contracts {
+        if contract.LoanID==loanID { filtered=append(filtered,contract) }
+    }
+    return filtered
 }
