@@ -90,5 +90,8 @@ def test_frontend_normalizes_loan_state_before_portfolio_rendering() -> None:
     assert "function normalizeLoanCurrentState(loan: Loan): Loan" in source
     assert 'status === "active" || status === "defaulted"' in source
     assert "hasOutstandingBalance" in source
-    assert ".data.map(normalizeLoanCurrentState)" in source
+    # Company portfolio pagination normalizes each distinct loan as pages are collected.
+    assert "loans.push(normalizeLoanCurrentState(loan))" in source
+    assert "seen.has(loan.id)" in source
+    assert "params: {skip, limit: pageSize}" in source
     assert "return normalizeLoanCurrentState(" in source
