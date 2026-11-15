@@ -232,6 +232,68 @@ def lookup_client(
     }
 
 
+@router.get("/clients/by-borrower/{borrower_id}")
+def lookup_client_by_borrower(
+    borrower_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Resolve an already selected company loan's borrower without National ID re-entry."""
+    response.headers["Cache-Control"] = "no-store"
+    _authorized(context)
+    query = (
+        db.query(CompanyBorrowerAccount.borrower_id, Person.first_name,
+                 Person.middle_name, Person.last_name)
+        .join(Borrower, Borrower.id == CompanyBorrowerAccount.borrower_id)
+        .join(Person, Person.user_id == Borrower.user_id)
+        .filter(
+            CompanyBorrowerAccount.company_id == context.company_id,
+            CompanyBorrowerAccount.borrower_id == borrower_id,
+        )
+    )
+    if context.staff.role not in COMPANY_MANAGEMENT_ROLES:
+        if context.branch_id is None:
+            raise HTTPException(403, "Active company branch required")
+        query = query.filter(CompanyBorrowerAccount.branch_id == context.branch_id)
+    _reserve_lookup_attempt(db, context)
+    matches = query.limit(2).all()
+    if len(matches) != 1:
+        return {"status": "not_found" if not matches else "conflict", "client": None}
+    _, first, middle, last = matches[0]
+    full_name = " ".join(n.strip() for n in (first, middle, last) if n and n.strip())
+    if not full_name:
+        return {"status": "conflict", "client": None}
+    existing = db.query(BorrowerSavedSignature.id).filter(
+        BorrowerSavedSignature.company_id == context.company_id,
+        BorrowerSavedSignature.borrower_id == borrower_id,
+        BorrowerSavedSignature.status == "active",
+    ).first()
+    pending = _pending_file(
+        db, context, category=_CLIENT_CATEGORY,
+        kind="wacom_client", identity=borrower_id,
+    ).first()
+    verified = _pending_file(
+        db, context, category=_CLIENT_VERIFIED_CATEGORY,
+        kind="wacom_client", identity=borrower_id,
+    ).first()
+    signature_status = (
+        "active" if existing else "verified_capture" if verified
+        else "pending_review" if pending else "missing"
+    )
+    return {
+        "status": "matched",
+        "client": {
+            "borrower_id": str(borrower_id),
+            "full_name": full_name,
+            "signature_status": signature_status,
+            "requires_capture": signature_status == "missing",
+        },
+        "may_reuse": False,
+        "may_sign_contract": False,
+    }
+
+
 @router.post("/captures", status_code=202)
 def upload_capture(
     body: CaptureSubmission,
