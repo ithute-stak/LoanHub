@@ -33,6 +33,7 @@ type pcUISession struct {
     status *LoanHubOperatorStatus
     lastClient *LoanHubClientLookup
     eligibleContracts []LoanHubEligibleContract
+    selectedLoanID string
     feedback string
     capture *pcPendingCapture
     reviewQueue []LoanHubReviewCapture
@@ -112,6 +113,7 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <p>Already selected a loan in LoanHub? Use its borrower ID instead of searching by National ID.</p>
 <form method="post" action="/lookup-borrower"><input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="borrower_id">Selected loan borrower ID</label><input id="borrower_id" name="borrower_id" maxlength="36" minlength="36" required>
+<label for="loan_id">Selected Loan ID (optional for manual lookup)</label><input id="loan_id" name="loan_id" maxlength="36">
 <button type="submit">Load selected borrower</button></form>
 {{if .Client}}
 <div class="client"><p>Result: <strong>{{.Client.Status}}</strong></p>
@@ -394,7 +396,11 @@ func (ui *pcUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             session.forgetDocument()
             session.eligibleContracts=nil
             session.lastClient=nil
+            session.selectedLoanID=""
             if session.client == nil { session.feedback="Sign in first"; break }
+            loanID:=strings.TrimSpace(r.PostForm.Get("loan_id"))
+            if loanID!="" && !validUUID(loanID) { session.feedback="Invalid selected loan ID"; break }
+            session.selectedLoanID=loanID
             result,err := session.client.FindClientByBorrowerID(ctx,strings.TrimSpace(r.PostForm.Get("borrower_id")))
             if err != nil { session.feedback="Borrower lookup unavailable or not authorized." } else {
                 session.lastClient=&result
