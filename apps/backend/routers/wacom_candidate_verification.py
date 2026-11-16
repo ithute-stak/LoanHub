@@ -48,6 +48,54 @@ def _file(db, company_id, file_id):
     return _row(db, ManagedFile, company_id, file_id) if file_id else None
 
 
+@router.get("/contracts/{contract_id}/receipts/{receipt_id}/execution-readiness")
+def contract_execution_readiness(
+    contract_id: UUID,
+    receipt_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Conservative read-only checklist. Never grants legal execution."""
+    response.headers["Cache-Control"] = "no-store, private"
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    contract = _row(db, LoanContract, ctx.company_id, contract_id)
+    receipt = _row(db, WacomExecutionReceipt, ctx.company_id, receipt_id)
+    if contract is None or receipt is None or receipt.contract_id != contract_id:
+        raise HTTPException(404, "Contract signing attempt unavailable")
+    challenges = db.query(WacomExecutionCeremonyChallenge).filter(
+        WacomExecutionCeremonyChallenge.company_id == ctx.company_id,
+        WacomExecutionCeremonyChallenge.contract_id == contract_id,
+        WacomExecutionCeremonyChallenge.receipt_id == receipt_id,
+    ).limit(2).all()
+    if len(challenges) > 1:
+        raise HTTPException(409, "Multiple ceremonies for this signing attempt")
+    challenge = challenges[0] if challenges else None
+    blockers = []
+    if receipt.status != "reserved" or not receipt.executed_file_id:
+        blockers.append("archived_candidate_not_reserved")
+    if challenge is None or not challenge.borrower_affirmed_at:
+        blockers.append("fresh_borrower_affirmation_not_recorded")
+    if challenge is None or not challenge.workstation_proof_at:
+        blockers.append("workstation_key_proof_not_recorded")
+    # Workstation key possession is NOT physical STU-540 attestation.
+    blockers.extend([
+        "physical_stu540_attestation_not_implemented",
+        "independent_legal_release_not_implemented",
+        "atomic_execution_commit_not_implemented",
+        "physical_end_to_end_acceptance_not_verified",
+    ])
+    if contract.status == "signed" or contract.borrower_signed_at is not None:
+        blockers.append("contract_already_signed_or_changed")
+    return {
+        "contract_id": str(contract_id),
+        "receipt_id": str(receipt_id),
+        "execution_available": False,
+        "blockers": blockers,
+        "note": "Read-only checklist; archived candidate and key proof do not execute a contract.",
+    }
+
+
 @router.get("/contracts/{contract_id}/attempts")
 def list_contract_signing_attempts(
     contract_id: UUID,
