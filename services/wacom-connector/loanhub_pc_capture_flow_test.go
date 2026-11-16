@@ -3,6 +3,8 @@ package main
 import (
     "bytes"
     "context"
+    "crypto/sha256"
+    "encoding/hex"
     "image"
     "image/color"
     "image/png"
@@ -126,4 +128,26 @@ func TestPCPreviewRequiresSignedInOwner(t *testing.T) {
     recorder=httptest.NewRecorder()
     ui.ServeHTTP(recorder,req)
     if recorder.Code!=404 {t.Fatal("expired preview served")}
+}
+
+func TestPCUploadRejectsTamperedHandwritingAfterApproval(t *testing.T) {
+    original:=testPCPreview(t)
+    digest:=sha256.Sum256(original.PNG)
+    session:=&pcUISession{
+        client:&LoanHubPCClient{},
+        status:&LoanHubOperatorStatus{RequiresCapture:true},
+        capture:&pcPendingCapture{
+            preview:original,signerKind:"operator",
+            handwritingSHA256:hex.EncodeToString(digest[:]),
+            consentReference:"consent-001",expires:time.Now().Add(time.Minute),
+        },
+    }
+    session.capture.preview.PNG[0]^=0xff
+    req:=httptest.NewRequest(http.MethodPost,pcUIOrigin+"/upload",nil)
+    req.PostForm=url.Values{"approved":{"yes"}}
+    (&pcUI{}).uploadRequest(context.Background(),req,session)
+    if session.capture!=nil || !strings.Contains(session.feedback,"handwriting changed") {
+        t.Fatal("tampered handwriting was not rejected")
+    }
+    for _,b:=range original.PNG {if b!=0 {t.Fatal("tampered ink not wiped")}}
 }

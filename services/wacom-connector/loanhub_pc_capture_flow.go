@@ -5,6 +5,8 @@ package main
 import (
     "bytes"
     "context"
+    "crypto/sha256"
+    "encoding/hex"
     "net/http"
     "strings"
     "time"
@@ -16,6 +18,7 @@ type pcPendingCapture struct {
     borrowerID string
     documentIntentID string
     selectedLoanID string
+    handwritingSHA256 string
     consentReference string
     Label string
     expires time.Time
@@ -48,7 +51,7 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         session.feedback="A valid consent evidence reference is required"
         return
     }
-    if session.selectedLoanID!="" && session.documentIntent==nil {
+    if session.selectedLoanID!="" && (session.documentIntent==nil || strings.TrimSpace(session.documentIntent.IntentID)=="") {
         session.feedback="Review the selected loan PDF and record exact-document consent before capture";return
     }
     kind:=r.PostForm.Get("signer_kind")
@@ -108,8 +111,9 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     }
     intentID := ""
     if session.documentIntent != nil { intentID = session.documentIntent.IntentID }
+    inkDigest := sha256.Sum256(preview.PNG)
     session.capture=&pcPendingCapture{
-        preview:preview, signerKind:kind, borrowerID:borrowerID, documentIntentID:intentID, selectedLoanID:session.selectedLoanID,
+        preview:preview, signerKind:kind, borrowerID:borrowerID, documentIntentID:intentID, selectedLoanID:session.selectedLoanID, handwritingSHA256:hex.EncodeToString(inkDigest[:]),
         consentReference:ref, Label:signerName, expires:time.Now().Add(2*time.Minute),
     }
     session.feedback="Capture complete. Check handwriting with the signer, then explicitly approve upload or discard."
@@ -123,7 +127,8 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     capture:=session.capture
     // The document can change between physical capture and upload.
     // A stale capture must never be linked to a different contract intent.
-    if capture.selectedLoanID != session.selectedLoanID ||
+    if (session.selectedLoanID != "" && (session.documentIntent == nil || strings.TrimSpace(session.documentIntent.IntentID) == "")) ||
+        capture.selectedLoanID != session.selectedLoanID ||
         (session.documentIntent == nil && capture.documentIntentID != "") ||
         (session.documentIntent != nil &&
         (capture.documentIntentID == "" || capture.documentIntentID != session.documentIntent.IntentID ||
@@ -143,6 +148,13 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     }
     if r.PostForm.Get("approved")!="yes" {
         session.feedback="Review of handwriting and consent confirmation required"
+        return
+    }
+    currentDigest := sha256.Sum256(capture.preview.PNG)
+    if capture.handwritingSHA256 == "" || capture.handwritingSHA256 != hex.EncodeToString(currentDigest[:]) {
+        session.discardCapture()
+        session.lastDocumentCaptureID = ""
+        session.feedback = "Captured handwriting changed; recapture on the STU-540"
         return
     }
     if capture.signerKind=="operator" {
