@@ -259,6 +259,8 @@ def carry_installment_balance(
     if loan is None:
         raise HTTPException(status_code=404, detail="Loan not found")
     assert_tenant_loan(context, loan)
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for installment rollover")
     from services.installment_arrears_rollover_service import carry_installment_shortfall
     return carry_installment_shortfall(
         db, loan=loan, installment_id=payload.installment_id,
@@ -805,6 +807,8 @@ def adjust_due_date(
 ):
     require_tenant_roles(context, LENDING_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for due-date adjustments")
     adjust_installment_due_date(
         db,
         loan=loan,
