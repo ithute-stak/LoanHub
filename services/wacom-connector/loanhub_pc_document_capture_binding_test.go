@@ -110,3 +110,30 @@ func TestUploadRejectsDocumentIntentRemovedAfterCapture(t *testing.T) {
     }
     for _,v:=range png {if v!=0 {t.Fatal("stale signature bytes were not wiped")}}
 }
+
+func TestUploadRejectsSelectedLoanChangedAfterCapture(t *testing.T) {
+    png:=[]byte{1,2,3}
+    session:=&pcUISession{
+        client:&LoanHubPCClient{},
+        selectedLoanID:"loan-replaced",
+        capture:&pcPendingCapture{
+            preview:disposableWacomPreview{PNG:png},
+            signerKind:"client",borrowerID:"borrower-1",
+            documentIntentID:"intent-1",selectedLoanID:"loan-original",
+            consentReference:"consent-001",expires:time.Now().Add(time.Minute),
+        },
+        documentIntent:&LoanHubDocumentIntent{
+            IntentID:"intent-1",BorrowerID:"borrower-1",
+            ConsentReference:"consent-001",Status:"consented",
+        },
+    }
+    form:=url.Values{"approved":{"yes"}}
+    request:=httptest.NewRequest("POST",pcUIOrigin+"/upload",strings.NewReader(form.Encode()))
+    request.Header.Set("Content-Type","application/x-www-form-urlencoded")
+    if err:=request.ParseForm();err!=nil {t.Fatal(err)}
+    (&pcUI{}).uploadRequest(context.Background(),request,session)
+    if session.capture!=nil || !strings.Contains(session.feedback,"Document consent changed") {
+        t.Fatal("signature capture reused after selected loan changed")
+    }
+    for _,v:=range png {if v!=0 {t.Fatal("rejected handwriting not wiped")}}
+}

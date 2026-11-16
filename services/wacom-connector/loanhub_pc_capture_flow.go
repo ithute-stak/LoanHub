@@ -15,6 +15,7 @@ type pcPendingCapture struct {
     signerKind string
     borrowerID string
     documentIntentID string
+    selectedLoanID string
     consentReference string
     Label string
     expires time.Time
@@ -108,7 +109,7 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
     intentID := ""
     if session.documentIntent != nil { intentID = session.documentIntent.IntentID }
     session.capture=&pcPendingCapture{
-        preview:preview, signerKind:kind, borrowerID:borrowerID, documentIntentID:intentID,
+        preview:preview, signerKind:kind, borrowerID:borrowerID, documentIntentID:intentID, selectedLoanID:session.selectedLoanID,
         consentReference:ref, Label:signerName, expires:time.Now().Add(2*time.Minute),
     }
     session.feedback="Capture complete. Check handwriting with the signer, then explicitly approve upload or discard."
@@ -122,7 +123,8 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     capture:=session.capture
     // The document can change between physical capture and upload.
     // A stale capture must never be linked to a different contract intent.
-    if (session.documentIntent == nil && capture.documentIntentID != "") ||
+    if capture.selectedLoanID != session.selectedLoanID ||
+        (session.documentIntent == nil && capture.documentIntentID != "") ||
         (session.documentIntent != nil &&
         (capture.documentIntentID == "" || capture.documentIntentID != session.documentIntent.IntentID ||
          capture.signerKind != "client" ||
