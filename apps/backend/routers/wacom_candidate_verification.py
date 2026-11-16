@@ -48,6 +48,44 @@ def _file(db, company_id, file_id):
     return _row(db, ManagedFile, company_id, file_id) if file_id else None
 
 
+@router.get("/contracts/{contract_id}/receipts/{receipt_id}/workflow-status")
+def contract_attempt_workflow_status(
+    contract_id: UUID,
+    receipt_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only status for an explicitly selected Wacom execution attempt."""
+    response.headers["Cache-Control"] = "no-store, private"
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    contract = _row(db, LoanContract, ctx.company_id, contract_id)
+    receipt = _row(db, WacomExecutionReceipt, ctx.company_id, receipt_id)
+    if contract is None or receipt is None or receipt.contract_id != contract_id:
+        raise HTTPException(404, "Contract signing attempt unavailable")
+    challenges = db.query(WacomExecutionCeremonyChallenge).filter(
+        WacomExecutionCeremonyChallenge.company_id == ctx.company_id,
+        WacomExecutionCeremonyChallenge.contract_id == contract_id,
+        WacomExecutionCeremonyChallenge.receipt_id == receipt_id,
+    ).limit(2).all()
+    if len(challenges) > 1:
+        raise HTTPException(409, "Multiple ceremonies for this signing attempt")
+    challenge = challenges[0] if challenges else None
+    return {
+        "contract_id": str(contract.id),
+        "receipt_id": str(receipt.id),
+        "candidate_archived": bool(receipt.status == "reserved" and receipt.executed_file_id),
+        "candidate_sha256": receipt.executed_pdf_sha256,
+        "ceremony_status": challenge.status if challenge else "not_started",
+        "borrower_affirmed": bool(challenge and challenge.borrower_affirmed_at),
+        "workstation_key_verified": bool(challenge and challenge.workstation_proof_at),
+        "physical_stu540_verified": False,
+        "legal_execution_verified": False,
+        "contract_signed": bool(contract.status == "signed"
+                                and contract.borrower_signed_at is not None),
+    }
+
+
 @router.get("/contracts/{contract_id}/workflow-status")
 def contract_workflow_status(
     contract_id: UUID,
