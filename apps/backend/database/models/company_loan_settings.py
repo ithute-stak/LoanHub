@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -27,6 +27,8 @@ class CompanyLoanSettings(Base):
         default="loanhub_standard",
         server_default="loanhub_standard",
     )
+
+    legacy_loan_lock_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
 
     arrears_policy = Column(JSONB, nullable=True)
 
