@@ -131,6 +131,14 @@ export default function FolioBookPage() {
     }
   }
 
+  // A loan may be removed or completed while viewing the last page.
+  // Recover from an out-of-range page after the current response settles.
+  useEffect(() => {
+    if (!loading && payload && page > Math.max(1, Math.ceil(payload.total / PAGE_SIZE))) {
+      setPage(Math.max(1, Math.ceil(payload.total / PAGE_SIZE)));
+    }
+  }, [loading, payload, page]);
+
   if (loading && !payload) return <PageLoader rows={8} />;
 
   const summary = payload?.summary;
