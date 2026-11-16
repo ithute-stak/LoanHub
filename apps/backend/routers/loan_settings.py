@@ -15,6 +15,7 @@ from core.access_control import (
 from database.models.company_loan_settings import CompanyLoanSettings
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from services.legacy_loan_lock_policy import legacy_loan_lock_enabled
+from services.legacy_loan_lock_transition import transition_legacy_loan_lock
 from database.session import get_db
 
 
@@ -126,3 +127,20 @@ def get_legacy_loan_lock_status(
         "activation_available": False,
         "activation_note": "Activation requires complete financial mutation-path audit and deployment validation.",
     }
+
+
+@router.post("/legacy-loan-lock/disable", response_model=LegacyLoanLockStatusResponse)
+def disable_legacy_loan_lock(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Authorized emergency unlock; enabling is not yet available."""
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    transition_legacy_loan_lock(
+        db,
+        company_id=context.company_id,
+        actor_user_id=context.user.id,
+        actor_role=context.role.value,
+        enabled=False,
+    )
+    return get_legacy_loan_lock_status(db=db, context=context)
