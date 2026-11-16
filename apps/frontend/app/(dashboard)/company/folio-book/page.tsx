@@ -157,19 +157,19 @@ export default function FolioBookPage() {
     : 0;
 
   return (
-    <div className="loanhub-page space-y-6 pb-12">
-      <section className="loanhub-hero overflow-hidden p-6 lg:p-8">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+    <div className="loanhub-page space-y-5 pb-12">
+      <section className="loanhub-hero overflow-hidden rounded-3xl border border-border/60 bg-gradient-to-br from-card via-card to-primary/[0.06] p-5 shadow-sm lg:p-7">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
           <div className="max-w-4xl">
             <div className="inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1.5 text-xs font-black text-primary">
               <BookOpenCheck className="h-4 w-4" /> Permanent loan sequence book
             </div>
-            <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Loan Folio Book</h1>
-            <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-              Every loan keeps one operational folio. For BFS, folios are grouped by contractual pay day: 15–22 = Force, 23–26 = CIVIL, and 27–31 plus 1–14 = S/E. Each group has its own sequence, for example BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Existing gaps are reported for audit and are never recycled after the pay-date migration.
+            <h1 className="mt-3 text-2xl font-extrabold tracking-tight sm:text-3xl">Loan Folio Book</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Track every loan folio, monitor sequence integrity, and find borrower records in one place. BFS contractual pay-day groups are 15–22 = Force, 23–26 = CIVIL, and 27–31 plus 1–14 = S/E. Examples: BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Historical gaps are preserved for audit.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2 xl:max-w-[440px] xl:justify-end">
             <Button variant="outline" asChild>
               <Link href="/company/folio-book/performance">Performance dashboard</Link>
             </Button>
@@ -186,7 +186,7 @@ export default function FolioBookPage() {
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <Metric label="Loans in folio book" value={String(summary?.total_loans ?? 0)} hint={`${payload?.total ?? 0} matching current filters`} />
         <Metric label="Sequence books" value={String(summary?.sequence_book_count ?? 0)} hint="Independent sequence per folio group" />
         <Metric label="Sequence gaps" value={String(summary?.gap_count ?? 0)} hint="Reported only; gaps are never reused" />
@@ -213,9 +213,9 @@ export default function FolioBookPage() {
       )}
 
       <Card className="loanhub-panel">
-        <CardHeader>
-          <CardTitle>Sequence books and next folios</CardTitle>
-          <CardDescription>The next number is always the highest issued sequence + 1. A historical gap is never filled automatically.</CardDescription>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold">Sequence books</CardTitle>
+          <CardDescription>Select a group to filter the register. Next folios advance from the highest issued number; historical gaps are never reused.</CardDescription>
         </CardHeader>
         <CardContent>
           {books.length === 0 ? (
@@ -227,7 +227,7 @@ export default function FolioBookPage() {
                   key={book.group_code}
                   type="button"
                   onClick={() => setGroupCode(book.group_code)}
-                  className="rounded-2xl border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-primary/[0.03]"
+                  className={`group rounded-2xl border p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${groupCode === book.group_code ? "border-primary/60 bg-primary/[0.06] ring-1 ring-primary/20" : "border-border/70 bg-card hover:bg-muted/20"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -236,9 +236,9 @@ export default function FolioBookPage() {
                     </div>
                     <Badge variant={book.gap_count ? "secondary" : "outline"}>{book.loan_count} loans</Badge>
                   </div>
-                  <div className="mt-4 rounded-xl bg-muted/40 p-3">
+                  <div className="mt-5 rounded-xl border border-border/40 bg-muted/35 p-4">
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-muted-foreground">Next folio</p>
-                    <p className="mt-1 font-mono text-sm font-black">{book.next_folio_number}</p>
+                    <p className="mt-1 break-all font-mono text-base font-bold tracking-tight">{book.next_folio_number}</p>
                   </div>
                   <p className="mt-3 text-xs text-muted-foreground">
                     Issued {book.first_sequence ?? 0}–{book.last_sequence ?? 0} · {book.gap_count} gap{book.gap_count === 1 ? "" : "s"}
@@ -256,13 +256,13 @@ export default function FolioBookPage() {
       </Card>
 
       <Card className="loanhub-panel overflow-hidden">
-        <CardHeader className="border-b">
+        <CardHeader className="space-y-4 border-b bg-muted/10">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <CardTitle>Folio register</CardTitle>
+              <CardTitle className="text-lg font-bold">Folio register</CardTitle>
               <CardDescription className="mt-1">Search by folio, borrower, identity number, loan reference, employer, work group, branch or status.</CardDescription>
             </div>
-            <div className="grid w-full gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_180px] xl:w-[760px]">
+            <div className="grid w-full gap-2 sm:grid-cols-[minmax(220px,1fr)_170px_150px] xl:w-[680px]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search folio, borrower, ID, loan…" className="pl-9" />
@@ -283,13 +283,13 @@ export default function FolioBookPage() {
               </Select>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/70 p-3">
             <p className="text-xs text-muted-foreground">Due report uses the selected work group and includes all unpaid instalments due through today, even if the table has another status or search filter.</p>
             <Button type="button" disabled={exportingDue} onClick={() => void exportDuePdf()}>
               <Download className="h-4 w-4" />{exportingDue ? "Generating due PDF…" : "Download due instalments PDF"}
             </Button>
           </div>
-          <div className="flex flex-wrap items-end gap-3 border-t pt-3">
+          <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/60 bg-background/70 p-3">
             <div className="space-y-1">
               <label htmlFor="next-from-date" className="text-xs font-semibold">Payment from</label>
               <Input id="next-from-date" type="date" value={nextFromDate} onChange={(event) => setNextFromDate(event.target.value)} className="w-[170px]" />
