@@ -32,6 +32,7 @@ from database.models.payment import PaymentTransaction
 from database.models.repayment import RepaymentInstallment
 from integrations.lelefa_paygate import LelefaPayGateClient, LelefaPayGateError
 from services.interest_calculation_service import calculate_loan_terms, generate_monthly_due_dates
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 
 
 MONEY = Decimal("0.01")
@@ -42,6 +43,8 @@ def money(value) -> Decimal:
 
 
 def create_online_mandate(db: Session, *, loan: ClientCompanyLoan, user_id: UUID, payload) -> OnlineRepaymentMandate:
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for new automatic repayments")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only an active or defaulted loan can use automatic repayment")
     if money(payload.amount) > money(loan.balance):
@@ -125,6 +128,9 @@ def run_due_mandate_collections(db: Session, *, company_id: UUID, user_id: UUID)
         if not loan or loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED} or money(loan.balance) <= 0:
             row.status = "completed"
             db.add(row)
+            continue
+        if is_legacy_loan_locked(db, company_id, loan.id):
+            # Preserve the mandate for later review; do not submit a new debit.
             continue
         debit_date = row.next_debit_date or today
         key = f"mandate-charge:{row.id}:{debit_date.isoformat()}"
@@ -300,6 +306,8 @@ def create_restructure_request(db: Session, *, loan: ClientCompanyLoan, user_id:
 
 
 def approve_restructure(db: Session, *, row: LoanRestructureRequest, user_id: UUID, approved_rate: Decimal | None, agreement_reference: str) -> LoanRestructureRequest:
+    if is_legacy_loan_locked(db, row.company_id, row.loan_id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for restructuring")
     if row.status != "requested" or not row.borrower_accepted:
         raise HTTPException(status_code=409, detail="Only an accepted pending restructure request can be approved")
     loan = db.query(ClientCompanyLoan).filter(ClientCompanyLoan.id == row.loan_id).with_for_update().first()
