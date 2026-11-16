@@ -48,6 +48,39 @@ def _file(db, company_id, file_id):
     return _row(db, ManagedFile, company_id, file_id) if file_id else None
 
 
+@router.get("/contracts/{contract_id}/attempts")
+def list_contract_signing_attempts(
+    contract_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Enumerate exact receipt identifiers without exposing signing evidence."""
+    response.headers["Cache-Control"] = "no-store, private"
+    require_tenant_roles(ctx, COMPANY_MANAGEMENT_ROLES)
+    if _row(db, LoanContract, ctx.company_id, contract_id) is None:
+        raise HTTPException(404, "Contract unavailable")
+    receipts = db.query(WacomExecutionReceipt).filter(
+        WacomExecutionReceipt.company_id == ctx.company_id,
+        WacomExecutionReceipt.contract_id == contract_id,
+    ).order_by(
+        WacomExecutionReceipt.reserved_at.desc(),
+        WacomExecutionReceipt.id.desc(),
+    ).limit(100).all()
+    return {
+        "contract_id": str(contract_id),
+        "attempts": [
+            {
+                "receipt_id": str(receipt.id),
+                "status": receipt.status,
+                "reserved_at": receipt.reserved_at.isoformat(),
+            }
+            for receipt in receipts
+        ],
+        "truncated": len(receipts) == 100,
+    }
+
+
 @router.get("/contracts/{contract_id}/receipts/{receipt_id}/workflow-status")
 def contract_attempt_workflow_status(
     contract_id: UUID,
