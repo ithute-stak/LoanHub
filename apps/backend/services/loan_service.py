@@ -38,6 +38,7 @@ from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from services.accounting_service import record_payment_accounting
 from services.interest_calculation_service import calculate_loan_terms
 from services.top_up_settlement import preview_top_up_settlement
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from utils.payment_dates import payment_date_to_utc
 
 
@@ -924,6 +925,8 @@ def record_cash_repayment(
     backdated_by_company_owner: bool = False,
 ) -> tuple[PaymentTransaction, CashTransaction | None, dict[str, Any]]:
     """Post a loan repayment through cash or a manually verified channel."""
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for new repayments")
     if payment_method != PaymentMethod.CASH and overpayment_action == "give_change":
         raise HTTPException(
             status_code=422,
@@ -1084,6 +1087,8 @@ def record_installment_repayment(
     later installments. Advance/overpayment workflows remain available through
     the payment desk.
     """
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for new installment repayments")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="This loan is not accepting repayments")
 
