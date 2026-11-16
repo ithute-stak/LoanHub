@@ -135,6 +135,20 @@ footer{font-size:13px;color:#66758a;text-align:center}
 <select id="contract_id" name="contract_id" required>
 {{range .EligibleContracts}}<option value="{{.ContractID}}">{{.ContractNumber}} (version {{.DocumentVersion}})</option>{{end}}
 </select>
+<p>Exact contract ID: <output id="selected_contract_id" for="contract_id"></output></p>
+<script>
+(function () {
+  const picker = document.getElementById("contract_id");
+  const output = document.getElementById("selected_contract_id");
+  if (!picker || !output) return;
+  function sync() {
+    const id = picker.value;
+    output.textContent = /^[0-9a-fA-F-]{36}$/.test(id) ? id : "Invalid contract identifier";
+  }
+  picker.addEventListener("change", sync);
+  sync();
+})();
+</script>
 <button type="submit">Prepare selected contract</button></form>
 {{end}}{{end}}{{end}}
 {{if .DocumentIntent}}
