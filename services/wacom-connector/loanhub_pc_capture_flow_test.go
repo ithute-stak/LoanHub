@@ -151,3 +151,24 @@ func TestPCUploadRejectsTamperedHandwritingAfterApproval(t *testing.T) {
     }
     for _,b:=range original.PNG {if b!=0 {t.Fatal("tampered ink not wiped")}}
 }
+
+func TestPCCaptureRejectsTruncatedPNGAndWipesBytes(t *testing.T) {
+    ui,cookie,csrf:=testPCUIWithCapture(t)
+    session:=testPCSession(ui,cookie)
+    session.client=&LoanHubPCClient{}
+    name:="Synthetic Operator"
+    session.status=&LoanHubOperatorStatus{FullName:&name,RequiresCapture:true}
+    malformed:=append([]byte{137,80,78,71,13,10,26,10},[]byte("truncated-png")...)
+    ui.sdkCapture=func()(disposableWacomPreview,error){
+        return disposableWacomPreview{PNG:malformed,ContactPoints:4,StrokeCount:1},nil
+    }
+    body:=url.Values{
+        "csrf":{csrf},"signer_kind":{"operator"},"confirm_name":{name},
+        "consent_reference":{"consent-001"},"consent":{"yes"},
+    }
+    localUIPost(ui,cookie,"/capture",body,pcUIOrigin)
+    if session.capture!=nil || !strings.Contains(session.feedback,"invalid PNG") {
+        t.Fatal("malformed PNG was retained as handwriting")
+    }
+    for _,b:=range malformed {if b!=0 {t.Fatal("rejected PNG bytes not wiped")}}
+}

@@ -7,6 +7,7 @@ import (
     "context"
     "crypto/sha256"
     "encoding/hex"
+    "image/png"
     "net/http"
     "strings"
     "time"
@@ -107,6 +108,14 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         // Wipe the rejected in-memory signature preview before returning.
         for i := range preview.PNG { preview.PNG[i] = 0 }
         session.feedback="STU capture failed. Please retry after checking the pad."
+        return
+    }
+    // A PNG signature alone is insufficient: reject truncated or malformed images
+    // before retaining handwriting in a session or offering it for upload.
+    config, decodeErr := png.DecodeConfig(bytes.NewReader(preview.PNG))
+    if decodeErr != nil || config.Width <= 0 || config.Height <= 0 || config.Width > 8192 || config.Height > 8192 {
+        for i := range preview.PNG { preview.PNG[i] = 0 }
+        session.feedback = "STU capture returned an invalid PNG image; please recapture"
         return
     }
     intentID := ""
