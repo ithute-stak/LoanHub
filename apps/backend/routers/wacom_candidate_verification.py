@@ -66,7 +66,9 @@ def list_contract_signing_attempts(
     ).order_by(
         WacomExecutionReceipt.reserved_at.desc(),
         WacomExecutionReceipt.id.desc(),
-    ).limit(100).all()
+    ).limit(101).all()
+    has_more = len(receipts) > 100
+    receipts = receipts[:100]
     return {
         "contract_id": str(contract_id),
         "attempts": [
@@ -77,7 +79,7 @@ def list_contract_signing_attempts(
             }
             for receipt in receipts
         ],
-        "truncated": len(receipts) == 100,
+        "truncated": has_more,
     }
 
 
