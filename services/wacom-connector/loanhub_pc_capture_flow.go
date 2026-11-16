@@ -48,7 +48,7 @@ func (ui *pcUI) captureRequest(r *http.Request, session *pcUISession) {
         session.feedback="A valid consent evidence reference is required"
         return
     }
-    if session.selectedLoanID!="" && session.documentIntent==nil {
+    if session.selectedLoanID!="" && (session.documentIntent==nil || strings.TrimSpace(session.documentIntent.IntentID)=="") {
         session.feedback="Review the selected loan PDF and record exact-document consent before capture";return
     }
     kind:=r.PostForm.Get("signer_kind")
@@ -123,7 +123,8 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
     capture:=session.capture
     // The document can change between physical capture and upload.
     // A stale capture must never be linked to a different contract intent.
-    if capture.selectedLoanID != session.selectedLoanID ||
+    if (session.selectedLoanID != "" && (session.documentIntent == nil || strings.TrimSpace(session.documentIntent.IntentID) == "")) ||
+        capture.selectedLoanID != session.selectedLoanID ||
         (session.documentIntent == nil && capture.documentIntentID != "") ||
         (session.documentIntent != nil &&
         (capture.documentIntentID == "" || capture.documentIntentID != session.documentIntent.IntentID ||
