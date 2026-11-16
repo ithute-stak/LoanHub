@@ -65,14 +65,28 @@ def contract_workflow_status(
     contract = _row(db, LoanContract, ctx.company_id, contract_id)
     if contract is None:
         raise HTTPException(404, "Contract unavailable")
-    receipt = db.query(WacomExecutionReceipt).filter(
+    # Multiple historical attempts must not be silently collapsed into a
+    # potentially unrelated receipt/challenge. Require explicit resolution
+    # before presenting evidence as belonging to the selected contract.
+    receipts = db.query(WacomExecutionReceipt).filter(
         WacomExecutionReceipt.company_id == ctx.company_id,
         WacomExecutionReceipt.contract_id == contract_id,
-    ).one_or_none()
-    challenge = db.query(WacomExecutionCeremonyChallenge).filter(
+    ).limit(2).all()
+    challenges = db.query(WacomExecutionCeremonyChallenge).filter(
         WacomExecutionCeremonyChallenge.company_id == ctx.company_id,
         WacomExecutionCeremonyChallenge.contract_id == contract_id,
-    ).one_or_none()
+    ).limit(2).all()
+    if len(receipts) > 1 or len(challenges) > 1:
+        raise HTTPException(
+            409,
+            "Multiple Wacom signing attempts exist; select an exact execution attempt.",
+        )
+    receipt = receipts[0] if receipts else None
+    challenge = challenges[0] if challenges else None
+    if challenge is not None and (
+        receipt is None or challenge.receipt_id != receipt.id
+    ):
+        raise HTTPException(409, "Wacom signing attempt evidence does not match receipt.")
     return {
         "contract_id": str(contract.id),
         "candidate_archived": bool(receipt and receipt.status == "reserved"
