@@ -166,7 +166,7 @@ export default function FolioBookPage() {
             </div>
             <h1 className="mt-3 text-2xl font-extrabold tracking-tight sm:text-3xl">Loan Folio Book</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Track every loan folio, monitor sequence integrity, and find borrower records in one place. BFS sequences follow contractual pay-day groups; historical gaps are preserved for audit.
+              Track every loan folio, monitor sequence integrity, and find borrower records in one place. BFS contractual pay-day groups are 15–22 = Force, 23–26 = CIVIL, and 27–31 plus 1–14 = S/E. Examples: BFS-Force-00001, BFS-CIVIL-00001 and BFS-S/E-00001. Historical gaps are preserved for audit.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:max-w-[440px] xl:justify-end">
