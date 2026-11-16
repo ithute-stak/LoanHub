@@ -21,6 +21,7 @@ from database.models.wacom_execution_ceremony_challenge import WacomExecutionCer
 from database.session import get_db
 from services.file_service import read_file_bytes
 from services.wacom_candidate_archive_integrity import candidate_archive_blockers
+from services.wacom_execution_challenge_gate import challenge_execution_blockers
 
 FLAG = "LOANHUB_WACOM_CANDIDATE_VERIFICATION_ENABLED"
 
@@ -72,6 +73,15 @@ def contract_execution_readiness(
         raise HTTPException(409, "Multiple ceremonies for this signing attempt")
     challenge = challenges[0] if challenges else None
     blockers = []
+    intent = _row(db, WacomDocumentIntent, ctx.company_id, receipt.intent_id)
+    authorization = _row(db, WacomExecutionAuthorization, ctx.company_id, receipt.authorization_id)
+    if challenge is None or intent is None or authorization is None:
+        blockers.append("execution_challenge_context_missing")
+    else:
+        blockers.extend(challenge_execution_blockers(
+            challenge=challenge, intent=intent, authorization=authorization,
+            receipt=receipt, candidate_sha256=receipt.executed_pdf_sha256,
+        ))
     if receipt.status != "reserved" or not receipt.executed_file_id:
         blockers.append("archived_candidate_not_reserved")
     if challenge is None or not challenge.borrower_affirmed_at:
