@@ -146,15 +146,15 @@ func (ui *pcUI) uploadRequest(ctx context.Context, r *http.Request, session *pcU
         session.feedback="Capture expired; please capture again"
         return
     }
+    if r.PostForm.Get("approved")!="yes" {
+        session.feedback="Review of handwriting and consent confirmation required"
+        return
+    }
     currentDigest := sha256.Sum256(capture.preview.PNG)
     if capture.handwritingSHA256 == "" || capture.handwritingSHA256 != hex.EncodeToString(currentDigest[:]) {
         session.discardCapture()
         session.lastDocumentCaptureID = ""
         session.feedback = "Captured handwriting changed; recapture on the STU-540"
-        return
-    }
-    if r.PostForm.Get("approved")!="yes" {
-        session.feedback="Review of handwriting and consent confirmation required"
         return
     }
     if capture.signerKind=="operator" {
