@@ -14,6 +14,7 @@ from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext
 from database.models.borrower import Borrower
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.user import User
+from services.legacy_loan_lock_policy import apply_legacy_loan_visibility
 
 
 _FOLIO_PATTERN = re.compile(r"^[A-Za-z0-9]{2,8}-[A-Za-z0-9/]{2,8}-\d{5,}$")
@@ -39,7 +40,7 @@ def _expected_folio(loan: ClientCompanyLoan) -> str | None:
 
 
 def _company_loans_query(db: Session, context: TenantContext):
-    return (
+    query = (
         db.query(ClientCompanyLoan)
         .options(
             joinedload(ClientCompanyLoan.company),
@@ -51,6 +52,7 @@ def _company_loans_query(db: Session, context: TenantContext):
         )
         .filter(ClientCompanyLoan.company_id == context.company_id)
     )
+    return apply_legacy_loan_visibility(db, context, query)
 
 
 def _borrower_values(loan: ClientCompanyLoan) -> tuple[str, str | None]:
