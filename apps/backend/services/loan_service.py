@@ -659,6 +659,8 @@ def disburse_cash_loan(
     )
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for new disbursements")
     if loan.status != LoanStatus.APPROVED:
         raise HTTPException(status_code=409, detail="Only an approved, undisbursed loan is ready for disbursement")
 
