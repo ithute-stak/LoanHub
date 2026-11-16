@@ -13,6 +13,8 @@ from core.access_control import (
     require_tenant_roles,
 )
 from database.models.company_loan_settings import CompanyLoanSettings
+from database.models.legacy_loan_capture import LegacyLoanCapture
+from services.legacy_loan_lock_policy import legacy_loan_lock_enabled
 from database.session import get_db
 
 
@@ -95,3 +97,32 @@ def list_contract_template_styles(
         {"value": value, "label": label}
         for value, label in CONTRACT_TEMPLATE_STYLES
     ]
+
+
+class LegacyLoanLockStatusResponse(BaseModel):
+    company_id: str
+    enabled: bool
+    legacy_capture_count: int
+    activation_available: bool
+    activation_note: str
+
+
+@router.get("/legacy-loan-lock", response_model=LegacyLoanLockStatusResponse)
+def get_legacy_loan_lock_status(
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Read-only company-scoped lock status; activation remains unavailable."""
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    count = (
+        db.query(LegacyLoanCapture)
+        .filter(LegacyLoanCapture.company_id == context.company_id)
+        .count()
+    )
+    return {
+        "company_id": str(context.company_id),
+        "enabled": legacy_loan_lock_enabled(db, context.company_id),
+        "legacy_capture_count": count,
+        "activation_available": False,
+        "activation_note": "Activation requires complete financial mutation-path audit and deployment validation.",
+    }
