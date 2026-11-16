@@ -12,6 +12,7 @@ from database.models.repayment import RepaymentInstallment
 from database.models.origination import BorrowerEmploymentProfile
 from services.folio_due_report_service import build_folio_due_pdf
 from services.folio_next_installment_report_service import build_folio_next_installment_pdf
+from services.legacy_loan_lock_policy import apply_legacy_loan_visibility
 
 from core.access_control import COMPANY_ROLES, TenantContext, get_tenant_context, require_tenant_roles
 from database.models.client_loan_company import ClientCompanyLoan
