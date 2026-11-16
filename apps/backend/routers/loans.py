@@ -66,6 +66,7 @@ from services.early_settlement_service import (
     quote_early_settlement,
 )
 from services.installment_service import adjust_installment_due_date
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.loan_service import (
     calculate_micro_loan_totals,
     disburse_cash_loan,
@@ -697,6 +698,8 @@ def apply_loan_interest_correction(
     loan = _tenant_loan_or_404(db, context, loan_id)
     db.query(ClientCompanyLoan).filter(ClientCompanyLoan.id == loan.id).with_for_update().one()
     db.refresh(loan)
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(status_code=409, detail="Historical loan is locked for interest-rate correction")
     if Decimal(str(loan.interest_rate)) != payload.expected_current_rate or Decimal(str(loan.total_repayable)) != payload.expected_total_repayable:
         raise HTTPException(status_code=409, detail="Loan changed since preview; refresh the correction quote")
     quote = _loan_rate_correction_quote(db, loan, payload.proposed_rate)
