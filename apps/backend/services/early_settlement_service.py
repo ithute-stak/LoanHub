@@ -26,6 +26,7 @@ from database.models.enums import (
 )
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.interest_calculation_service import (
     calculate_daily_accrued_interest,
     calculate_loan_terms,
@@ -745,6 +746,11 @@ def initiate_early_settlement_payment(
     loan = db.get(ClientCompanyLoan, quote.loan_id)
     if not loan:
         raise HTTPException(status_code=404, detail="Settlement loan was not found")
+    if is_legacy_loan_locked(db, loan.company_id, loan.id):
+        raise HTTPException(
+            status_code=409,
+            detail="This historical loan is locked. An authorized administrator must unlock it before initiating settlement.",
+        )
     if money(loan.amount_paid) != money(quote.original_amount_paid):
         raise HTTPException(status_code=409, detail="The loan changed after this quote; create a new quote")
 
