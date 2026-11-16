@@ -21,6 +21,7 @@ from database.models.enums import (
 )
 from database.models.payment import PaymentTransaction
 from services.accounting_service import record_payment_accounting
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 
 
 OUTBOUND_PURPOSES = {
@@ -115,6 +116,11 @@ def initiate_payment(
     existing = db.query(PaymentTransaction).filter(PaymentTransaction.idempotency_key == idempotency_key).first()
     if existing:
         return existing
+
+    if loan_id:
+        loan = db.get(ClientCompanyLoan, loan_id)
+        if loan and is_legacy_loan_locked(db, loan.company_id, loan.id):
+            raise HTTPException(status_code=409, detail="Historical loan is locked for new cash payments")
 
     direction = PaymentDirection.OUTBOUND if purpose in OUTBOUND_PURPOSES else PaymentDirection.INBOUND
     # provider_reference is LoanHub's unique posting reference. The external bank,
