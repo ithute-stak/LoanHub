@@ -29,6 +29,7 @@ from database.models.origination import LoanTopUpSettlement
 from database.models.payment import PaymentTransaction
 from integrations.lelefa_paygate import LelefaPayGateClient, LelefaPayGateError
 from services.accounting_service import record_payment_accounting, record_reversal_accounting
+from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.webhook_outbox_service import enqueue_webhook
 
 
@@ -264,6 +265,10 @@ def initiate_gateway_payment(
     )
     if existing:
         return existing
+    if loan_id:
+        loan = db.get(ClientCompanyLoan, loan_id)
+        if loan and is_legacy_loan_locked(db, loan.company_id, loan.id):
+            raise HTTPException(status_code=409, detail="Historical loan is locked for new gateway payments")
     if not settings.LELEFAPAYGATE_ENABLED:
         raise HTTPException(status_code=503, detail="LelefaPayGate is not enabled for LoanHub")
 
