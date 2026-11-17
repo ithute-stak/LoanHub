@@ -87,6 +87,42 @@ def upgrade():
                     "document_issuance_events", ["issuance_id", "created_at"])
 
 
+    # Restrict tenant reads and issuance registration from the beginning,
+    # rather than relying on endpoint filters alone. PostgreSQL table owners
+    # bypass normal RLS, so the deployed runtime must use a non-owner role
+    # without BYPASSRLS; do not enable the new feature until role certification.
+    tenant_predicate = (
+        "current_setting('loanhub.actor_scope', true) = 'tenant' "
+        "AND company_id = NULLIF(current_setting('loanhub.company_id', true), '')::uuid"
+    )
+    issuer_predicate = (
+        tenant_predicate
+        + " AND current_setting('loanhub.role', true) "
+          "IN ('company_owner', 'company_admin')"
+    )
+    for table in ("document_issuances", "document_issuance_events"):
+        op.execute(sa.text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
+        op.execute(sa.text(
+            f"CREATE POLICY {table}_tenant_select ON {table} "
+            f"FOR SELECT USING ({tenant_predicate})"
+        ))
+        actor_column = (
+            "issued_by_user_id" if table == "document_issuances"
+            else "actor_user_id"
+        )
+        op.execute(sa.text(
+            f"CREATE POLICY {table}_tenant_insert ON {table} "
+            f"FOR INSERT WITH CHECK ({issuer_predicate} "
+            f"AND {actor_column} = NULLIF("
+            f"current_setting('loanhub.user_id', true), '')::uuid)"
+        ))
+    # No tenant UPDATE/DELETE policy exists. The runtime role must have
+    # SELECT/INSERT only; audited transitions need a separately reviewed
+    # privileged operation.
+
+
+
+
 def downgrade():
     # Restricted to pre-production/disposable databases. A production issuance
     # ledger must never be destroyed merely to roll back an application deploy.
@@ -96,6 +132,10 @@ def downgrade():
         "OR EXISTS (SELECT 1 FROM document_issuance_events LIMIT 1)"
     )).scalar():
         raise RuntimeError("Refusing downgrade with persisted document issuance history")
+    for table in ("document_issuance_events", "document_issuances"):
+        op.execute(sa.text(f"DROP POLICY {table}_tenant_insert ON {table}"))
+        op.execute(sa.text(f"DROP POLICY {table}_tenant_select ON {table}"))
+        op.execute(sa.text(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"))
     op.drop_index("ix_document_issuance_events_issuance_time",
                   table_name="document_issuance_events")
     op.drop_index("ix_document_issuance_events_company_id",
