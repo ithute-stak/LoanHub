@@ -100,7 +100,7 @@ def render_tenant_stamp_certificate(
     if (parsed.scheme != "https" or parsed.netloc != trusted_verification_host
             or not trusted_verification_host or parsed.username
             or parsed.password or parsed.query or parsed.fragment
-            or parsed.path != "/verify/" + public_id)::
+            or parsed.path != "/verify/" + public_id):
         raise ValueError("Untrusted verification URL")
     if not isinstance(source_pdf, bytes) or not source_pdf.startswith(b"%PDF-") or len(source_pdf) > MAX_SOURCE_BYTES:
         raise ValueError("Invalid PDF source")
