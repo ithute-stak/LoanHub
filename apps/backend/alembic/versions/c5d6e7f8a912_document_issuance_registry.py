@@ -114,7 +114,8 @@ def upgrade():
         # tenant, not just claim that tenant's company_id.
         event_binding = (
             " AND EXISTS (SELECT 1 FROM document_issuances i "
-            "WHERE i.id = issuance_id AND i.company_id = company_id)"
+            "WHERE i.id = document_issuance_events.issuance_id "
+            "AND i.company_id = document_issuance_events.company_id)"
             if table == "document_issuance_events" else ""
         )
         op.execute(sa.text(
