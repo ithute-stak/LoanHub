@@ -45,25 +45,6 @@ def register_stored_pdf_issuance(
             or isinstance(stamp_configuration_version, bool)
             or stamp_configuration_version < 1):
         raise ValueError("Invalid version")
-    existing = (
-        db.query(DocumentIssuance)
-        .filter(
-            DocumentIssuance.company_id == context.company_id,
-            DocumentIssuance.idempotency_key == idempotency_key,
-        )
-        .one_or_none()
-    )
-    if existing is not None:
-        # Never approve a retry that refers to different data.
-        if (existing.artifact_key != str(managed_file_id)
-                or existing.source_type != source_type
-                or existing.source_id != source_id
-                or existing.document_type != document_type
-                or existing.version != version
-                or existing.stamp_configuration_version != stamp_configuration_version):
-            raise ValueError("Idempotency key reused for a different document")
-        return existing
-
     file = (
         db.query(ManagedFile)
         .filter(
@@ -83,6 +64,28 @@ def register_stored_pdf_issuance(
     digest = pdf_fingerprint(content)
     if digest != file.checksum_sha256:
         raise ValueError("Stored PDF fingerprint mismatch")
+
+    existing = (
+        db.query(DocumentIssuance)
+        .filter(
+            DocumentIssuance.company_id == context.company_id,
+            DocumentIssuance.idempotency_key == idempotency_key,
+        )
+        .one_or_none()
+    )
+    if existing is not None:
+        # A retry must prove the immutable stored bytes have not changed and
+        # must never silently resurrect a revoked/superseded issuance.
+        if (existing.status != "issued"
+                or existing.artifact_key != str(managed_file_id)
+                or existing.final_pdf_sha256 != digest
+                or existing.source_type != source_type
+                or existing.source_id != source_id
+                or existing.document_type != document_type
+                or existing.version != version
+                or existing.stamp_configuration_version != stamp_configuration_version):
+            raise ValueError("Idempotency key reused for a changed or inactive document")
+        return existing
 
     entry = DocumentIssuance(
         company_id=context.company_id,
