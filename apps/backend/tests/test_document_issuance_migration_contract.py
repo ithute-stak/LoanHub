@@ -23,7 +23,9 @@ def test_document_issuance_migration_matches_registered_model_columns():
         "company_id", "public_id", "idempotency_key", "source_type",
         "source_id", "document_type", "version",
         "stamp_configuration_version", "source_pdf_sha256",
-        "final_pdf_sha256", "artifact_key", "status", "issued_at",
+        "final_pdf_sha256", "artifact_key", "immutable_bucket",
+        "immutable_object_key", "immutable_version_id",
+        "immutable_retain_until", "status", "issued_at",
         "issued_by_user_id", "supersedes_id", "revoked_at",
         "revoked_by_user_id", "revocation_reason",
     }
@@ -57,3 +59,18 @@ def test_tenant_rls_policies_fail_closed_and_bind_audit_event():
     assert "i.id = document_issuance_events.issuance_id" in source
     assert "FOR UPDATE" not in source and "FOR DELETE" not in source
     assert "BYPASSRLS" in source
+
+
+def test_immutable_storage_fields_are_not_mistaken_for_retention_proof():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic/versions/c5d6e7f8a912_document_issuance_registry.py"
+    )
+    source = path.read_text(encoding="utf-8")
+    for field in ("immutable_bucket", "immutable_object_key",
+                  "immutable_version_id", "immutable_retain_until"):
+        assert field in source
+        assert field in DocumentIssuance.__table__.c
+        # Nullable until real object retention, version binding and storage
+        # authorization have been implemented; service still rejects issuance.
+        assert DocumentIssuance.__table__.c[field].nullable
