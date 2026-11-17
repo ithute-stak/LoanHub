@@ -126,8 +126,10 @@ def finalize_and_register_document(
             idempotency_key=idempotency_key, version=version,
             stamp_configuration_version=stamp_configuration_version,
             public_id=candidate.public_id,
+            source_pdf_sha256=pdf_fingerprint(source_pdf),
         )
-        if (issuance.final_pdf_sha256 != candidate.sha256_hex
+        if (issuance.source_pdf_sha256 != pdf_fingerprint(source_pdf)
+                or issuance.final_pdf_sha256 != candidate.sha256_hex
                 or issuance.public_id != candidate.public_id
                 or issuance.artifact_key != str(managed_file.id)):
             raise ValueError("Issuance record and PDF candidate disagree")
