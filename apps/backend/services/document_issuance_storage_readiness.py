@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from database.models.file_management import ManagedFile
 from services.object_storage_service import get_storage
 
 
