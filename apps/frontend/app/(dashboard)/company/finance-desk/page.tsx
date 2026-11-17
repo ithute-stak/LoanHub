@@ -185,14 +185,14 @@ export default function FinanceDeskPage() {
   }
   return <div className="mx-auto w-full max-w-[1600px] space-y-6 pb-10">
     <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div><p className="text-xs font-bold uppercase tracking-widest text-primary">Payments & Finance</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Daily Finance Desk</h1><p className="mt-2 text-sm text-muted-foreground">A focused workspace for daily cash control, expenses, borrower collections and financial reporting.</p></div>
-        <Button variant="outline" onClick={() => void reload()} disabled={loading}><RefreshCcw className="mr-2 h-4 w-4"/>Refresh</Button>
+        <Button variant="outline" className="w-full sm:w-auto" onClick={() => void reload()} disabled={loading}><RefreshCcw className="mr-2 h-4 w-4"/>Refresh</Button>
       </div>
-      <div className="mt-4 flex flex-wrap items-end gap-3 border-t pt-4">
-        {branches.length ? <div className="space-y-1"><Label htmlFor="finance-branch">Branch</Label><select id="finance-branch" className="h-11 w-full min-w-48 rounded-xl border bg-background px-3 text-sm" value={selectedBranchId ?? ""} onChange={e => setBranchSelection(e.target.value)}><option value="">All-company / unassigned cash</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div> : null}
-        <div className="space-y-1"><Label htmlFor="finance-date">Through date</Label><Input className="h-11" id="finance-date" type="date" value={asOf} onChange={e => setAsOf(e.target.value)} max={localDate(new Date())}/></div>
-        <div className="flex flex-wrap gap-1 rounded-xl border p-1">{(["day","week","month","year"] as Period[]).map(p => <Button key={p} type="button" size="sm" variant={period === p ? "default" : "ghost"} onClick={() => setPeriod(p)}>{({day:"Day",week:"Week",month:"Month",year:"Year"})[p]}</Button>)}</div>
+      <div className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-end">
+        {branches.length ? <div className="min-w-0 space-y-1"><Label htmlFor="finance-branch">Branch</Label><select id="finance-branch" className="h-11 w-full min-w-0 rounded-xl border bg-background px-3 text-sm" value={selectedBranchId ?? ""} onChange={e => setBranchSelection(e.target.value)}><option value="">All-company / unassigned cash</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div> : null}
+        <div className="min-w-0 space-y-1"><Label htmlFor="finance-date">Through date</Label><Input className="h-11" id="finance-date" type="date" value={asOf} onChange={e => setAsOf(e.target.value)} max={localDate(new Date())}/></div>
+        <div aria-label="Reporting period" className="grid grid-cols-4 gap-1 rounded-xl border p-1">{(["day","week","month","year"] as Period[]).map(p => <Button key={p} type="button" size="sm" variant={period === p ? "default" : "ghost"} onClick={() => setPeriod(p)}>{({day:"Day",week:"Week",month:"Month",year:"Year"})[p]}</Button>)}</div>
         <p className="w-full text-xs font-medium text-muted-foreground">Showing {rangeStart} to {asOf} · totals include all matching transactions</p>
       </div>
     </div>
@@ -204,12 +204,12 @@ export default function FinanceDeskPage() {
     </div>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold tracking-tight">Daily operations</h2><p className="text-xs text-muted-foreground">Choose a task below; your reports and balances stay visible above.</p></div><span className="rounded-full border bg-muted/30 px-3 py-1 text-xs font-semibold text-muted-foreground">{cashSession?.status === "closed" ? "Cash day closed" : cashSession?.status === "open" ? "Cash day open" : "Cash day not opened"}</span></div>
-      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-muted/50 p-1.5 md:grid-cols-5">
+      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-muted/50 p-1.5 sm:grid-cols-3 lg:grid-cols-5">
         <TabsTrigger value="cash" className="min-h-11 w-full rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><Wallet className="mr-2 h-4 w-4"/>Cash day</TabsTrigger>
-        <TabsTrigger value="expenses" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ReceiptText className="mr-2 h-4 w-4"/>Expenses</TabsTrigger>
-        <TabsTrigger value="payments" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><ArrowDownLeft className="mr-2 h-4 w-4"/>Payments</TabsTrigger>
+        <TabsTrigger value="expenses" className="min-h-11 w-full min-w-0 rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><ReceiptText className="mr-2 h-4 w-4"/>Expenses</TabsTrigger>
+        <TabsTrigger value="payments" className="min-h-11 w-full min-w-0 rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><ArrowDownLeft className="mr-2 h-4 w-4"/>Payments</TabsTrigger>
         <TabsTrigger value="legacy" className="min-h-11 w-full rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><BookOpen className="mr-2 h-4 w-4"/>Legacy folio</TabsTrigger>
-        <TabsTrigger value="reports" className="min-h-10 flex-1 rounded-xl px-4 sm:flex-none"><HandCoins className="mr-2 h-4 w-4"/>Reports & links</TabsTrigger>
+        <TabsTrigger value="reports" className="min-h-11 w-full min-w-0 rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><HandCoins className="mr-2 h-4 w-4"/>Reports & links</TabsTrigger>
       </TabsList>
       <TabsContent value="cash" className="space-y-4">
         <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
