@@ -77,7 +77,8 @@ def _fit(c: canvas.Canvas, value: str, *, x: float, y: float, maximum: float) ->
 
 def render_tenant_stamp_certificate(
     *, source_pdf: bytes, stamp: TenantStamp, public_id: str,
-    verification_url: str, issued_at: datetime, expected_tenant_id: UUID,\n    trusted_verification_host: str,
+    verification_url: str, issued_at: datetime, expected_tenant_id: UUID,
+    trusted_verification_host: str,
 ) -> bytes:
     """Append a clearly identified, unverified-until-registered company certificate.
 
@@ -95,7 +96,8 @@ def render_tenant_stamp_certificate(
     ):
         raise ValueError("Invalid public verification ID")
     parsed = urlparse(verification_url)
-    if (parsed.scheme != "https" or parsed.netloc != trusted_verification_host\n            or not trusted_verification_host or parsed.username
+    if (parsed.scheme != "https" or parsed.netloc != trusted_verification_host
+            or not trusted_verification_host or parsed.username
             or parsed.password or parsed.query or parsed.fragment
             or not parsed.path.endswith("/verify/" + public_id)):
         raise ValueError("Untrusted verification URL")
