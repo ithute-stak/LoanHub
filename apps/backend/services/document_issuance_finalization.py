@@ -17,6 +17,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
+from database.models.document_issuance import DocumentIssuance
 from services.document_issuance_candidate import prepare_stamped_document_candidate
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_issuance_registration import register_stored_pdf_issuance
@@ -66,6 +67,24 @@ def finalize_and_register_document(
             or type(stamp_configuration_version) is not int
             or stamp_configuration_version < 1):
         raise ValueError("Invalid document version")
+
+    # Fail closed on any previously issued idempotency key BEFORE touching
+    # object storage. We cannot safely return a prior PDF for a changed source
+    # without an independently persisted source-input hash and approval proof.
+    # The DB unique constraint remains essential for concurrent requests.
+    prior = (
+        db.query(DocumentIssuance)
+        .filter(
+            DocumentIssuance.company_id == context.company_id,
+            DocumentIssuance.idempotency_key == idempotency_key,
+        )
+        .one_or_none()
+    )
+    if prior is not None:
+        raise ValueError(
+            "Document request already registered; use the authorized issuance "
+            "retrieval workflow or request an explicitly approved new version"
+        )
 
     # No preliminary response, URL, or "verified" flag escapes this service.
     # The rendered QR and persisted issuance share the same freshly allocated ID.
