@@ -8,6 +8,14 @@ from database.models.enums import UserRole
 from services.document_issuance_finalization import finalize_and_register_document
 
 
+@pytest.fixture(autouse=True)
+def _allow_mock_database_readiness():
+    # Dedicated PostgreSQL integration tests exercise the real readiness
+    # inspection; these unit tests isolate the finalizer control flow.
+    with patch("services.document_issuance_finalization.require_document_issuance_database_ready"):
+        yield
+
+
 PDF = b"%PDF-1.4\noriginal and immutable final bytes\n"
 DIGEST = "f" * 64
 PUBLIC_ID = "example-secure-public-id-12345"
@@ -133,3 +141,16 @@ def test_revoked_request_not_resurrected_by_retry():
         with pytest.raises(ValueError, match="already registered"):
             _run(db, _context())
     store.assert_not_called()
+
+
+def test_database_readiness_failure_prevents_pdf_storage():
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
+    context = _context()
+    with patch("services.document_issuance_finalization.require_document_issuance_database_ready",
+               side_effect=PermissionError("RLS not ready")), \
+         patch("services.document_issuance_finalization.store_bytes") as store:
+        with pytest.raises(PermissionError, match="RLS not ready"):
+            _run(db, context)
+    store.assert_not_called()
+    db.commit.assert_not_called()
