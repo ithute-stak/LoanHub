@@ -40,3 +40,14 @@ def test_report_filters_are_wired_from_existing_folio_screen() -> None:
         assert name in client
         assert name in screen
     assert "downloadFolioNextInstallmentsPdf" in screen
+
+
+def test_next_installments_default_to_new_disbursements_from_september_2026() -> None:
+    source = ROUTER.read_text(encoding="utf-8")
+    report = source.split('@router.get("/next-installments.pdf")', 1)[1]
+    assert "loan_from_date: date = Query(default=date(2026, 9, 1))" in report
+    assert "ClientCompanyLoan.disbursed_at.is_not(None)" in report
+    assert "ClientCompanyLoan.disbursed_at >= loan_from_date" in report
+    assert "loan_from_date=loan_from_date" in report
+    pdf_source = (ROOT / "apps/backend/services/folio_next_installment_report_service.py").read_text(encoding="utf-8")
+    assert "loan disbursed from {loan_from_date.isoformat()}" in pdf_source
