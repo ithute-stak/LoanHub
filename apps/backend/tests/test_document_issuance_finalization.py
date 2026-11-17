@@ -42,7 +42,7 @@ def test_finalization_only_returns_after_commit():
     file = SimpleNamespace(id=uuid4(), scan_status="clean")
     entry = SimpleNamespace(
         id=uuid4(), public_id=PUBLIC_ID,
-        final_pdf_sha256=DIGEST, artifact_key=str(file.id),
+        final_pdf_sha256=DIGEST, source_pdf_sha256=DIGEST, artifact_key=str(file.id),
     )
     candidate = SimpleNamespace(pdf_bytes=PDF, public_id=PUBLIC_ID, sha256_hex=DIGEST)
     event_order = []
@@ -69,7 +69,7 @@ def test_commit_failure_does_not_release_final_pdf():
     file = SimpleNamespace(id=uuid4(), scan_status="clean")
     entry = SimpleNamespace(
         id=uuid4(), public_id=PUBLIC_ID,
-        final_pdf_sha256=DIGEST, artifact_key=str(file.id),
+        final_pdf_sha256=DIGEST, source_pdf_sha256=DIGEST, artifact_key=str(file.id),
     )
     candidate = SimpleNamespace(pdf_bytes=PDF, public_id=PUBLIC_ID, sha256_hex=DIGEST)
     with patch("services.document_issuance_finalization.prepare_stamped_document_candidate", return_value=candidate), \
