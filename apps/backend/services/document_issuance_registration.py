@@ -22,7 +22,7 @@ def register_stored_pdf_issuance(
     *, db: Session, context: TenantContext, managed_file_id: UUID,
     source_type: str, source_id: str, document_type: str,
     idempotency_key: str, version: int, stamp_configuration_version: int,
-    public_id: str,
+    public_id: str, source_pdf_sha256: str,
 ) -> DocumentIssuance:
     """Register exact bytes from the approved tenant's private ManagedFile.
 
@@ -46,6 +46,9 @@ def register_stored_pdf_issuance(
     if (not isinstance(public_id, str) or not (12 <= len(public_id) <= 96)
             or not all(c.isascii() and (c.isalnum() or c in "-_") for c in public_id)):
         raise ValueError("Invalid preallocated public document ID")
+    if (not isinstance(source_pdf_sha256, str) or len(source_pdf_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in source_pdf_sha256)):
+        raise ValueError("Invalid source PDF SHA-256")
     if (not isinstance(version, int) or isinstance(version, bool) or version < 1
             or not isinstance(stamp_configuration_version, int)
             or isinstance(stamp_configuration_version, bool)
@@ -86,6 +89,7 @@ def register_stored_pdf_issuance(
                 or existing.status != "issued"
                 or existing.artifact_key != str(managed_file_id)
                 or existing.final_pdf_sha256 != digest
+                or existing.source_pdf_sha256 != source_pdf_sha256
                 or existing.source_type != source_type
                 or existing.source_id != source_id
                 or existing.document_type != document_type
@@ -103,6 +107,7 @@ def register_stored_pdf_issuance(
         document_type=document_type,
         version=version,
         stamp_configuration_version=stamp_configuration_version,
+        source_pdf_sha256=source_pdf_sha256,
         final_pdf_sha256=digest,
         artifact_key=str(managed_file_id),
         status="issued",
