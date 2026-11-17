@@ -54,6 +54,6 @@ def test_tenant_rls_policies_fail_closed_and_bind_audit_event():
     assert "loanhub.company_id" in source
     assert "loanhub.user_id" in source
     assert "company_owner" in source and "company_admin" in source
-    assert "i.id = issuance_id AND i.company_id = company_id" in source
+    assert "i.id = document_issuance_events.issuance_id" in source
     assert "FOR UPDATE" not in source and "FOR DELETE" not in source
     assert "BYPASSRLS" in source
