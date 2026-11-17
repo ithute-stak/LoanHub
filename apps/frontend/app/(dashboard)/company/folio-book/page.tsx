@@ -291,6 +291,7 @@ export default function FolioBookPage() {
           </div>
           <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/60 bg-background/70 p-3">
             <div className="space-y-1">
+              <span className="text-xs font-semibold text-muted-foreground">New loans disbursed from 01 Sep 2026 only. Payment dates are optional filters.</span>
               <label htmlFor="next-from-date" className="text-xs font-semibold">Payment from</label>
               <Input id="next-from-date" type="date" value={nextFromDate} onChange={(event) => setNextFromDate(event.target.value)} className="w-[170px]" />
             </div>
