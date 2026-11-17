@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from sqlalchemy.orm import Session
 
 from database.models.document_issuance import DocumentIssuance
@@ -62,24 +64,35 @@ def verify_stored_issuance(
     )
     if file is None:
         return "unavailable"
-    canonical_pdf = read_file_bytes(file)
+    try:
+        canonical_pdf = read_file_bytes(file)
+    except (HTTPException, OSError, ValueError):
+        # Never mistake unavailable, unreadable, or corrupted storage for a
+        # verified issuance; do not reveal storage failures to public callers.
+        return "unavailable"
     expected = IssuanceFingerprint(
         tenant_id=authenticated_tenant_id,
         public_id=public_id,
         sha256_hex=record.final_pdf_sha256,
         status=record.status,
     )
-    canonical_status = verify_exact_document(
-        pdf=canonical_pdf, record=expected,
-        expected_tenant_id=authenticated_tenant_id,
-        requested_public_id=public_id,
-    )
+    try:
+        canonical_status = verify_exact_document(
+            pdf=canonical_pdf, record=expected,
+            expected_tenant_id=authenticated_tenant_id,
+            requested_public_id=public_id,
+        )
+    except ValueError:
+        return "stored_document_integrity_failure"
     if canonical_status != "verified":
         return "stored_document_integrity_failure"
     if submitted_pdf is None:
         return "issued_file_available_not_compared"
-    return verify_exact_document(
-        pdf=submitted_pdf, record=expected,
-        expected_tenant_id=authenticated_tenant_id,
-        requested_public_id=public_id,
-    )
+    try:
+        return verify_exact_document(
+            pdf=submitted_pdf, record=expected,
+            expected_tenant_id=authenticated_tenant_id,
+            requested_public_id=public_id,
+        )
+    except ValueError:
+        return "altered"
