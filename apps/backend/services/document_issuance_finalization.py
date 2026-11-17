@@ -20,6 +20,7 @@ from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require
 from database.models.document_issuance import DocumentIssuance
 from services.document_issuance_candidate import prepare_stamped_document_candidate
 from services.document_issuance_database_readiness import require_document_issuance_database_ready
+from services.document_issuance_storage_readiness import require_immutable_document_storage_ready
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_issuance_registration import register_stored_pdf_issuance
 from services.file_service import read_file_bytes, store_bytes
@@ -71,6 +72,7 @@ def finalize_and_register_document(
 
     # This must run on the same session/role used for issuance writes.
     require_document_issuance_database_ready(db)
+    require_immutable_document_storage_ready(db=db)
 
     # Fail closed on any previously issued idempotency key BEFORE touching
     # object storage. We cannot safely return a prior PDF for a changed source
