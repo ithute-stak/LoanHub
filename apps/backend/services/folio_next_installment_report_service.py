@@ -18,6 +18,7 @@ from services.pdf_design_system import (
 def build_folio_next_installment_pdf(
     *, db: Session, context: TenantContext, rows: list[dict[str, Any]],
     group_code: str | None, from_date: date | None, through_date: date | None,
+    loan_from_date: date,
 ) -> bytes:
     styles = document_styles()
     story: list[Any] = []
@@ -25,7 +26,7 @@ def build_folio_next_installment_pdf(
     period = f"{from_date.isoformat() if from_date else 'Any date'} to {through_date.isoformat() if through_date else 'Any date'}"
     story.extend(hero_block(
         "Next Outstanding Instalment by Folio",
-        f"Earliest unpaid instalment per loan. Due date range: {period}. "
+        f"Earliest unpaid instalment per loan disbursed from {loan_from_date.isoformat()}. Due date range: {period}. "
         "Includes overdue and future dues unless filtered.",
         f"LoanHub | {group}", styles=styles,
     ))
@@ -74,7 +75,7 @@ def build_folio_next_installment_pdf(
         context=DocumentContext(
             db=db, company=context.company,
             title="Next Outstanding Instalment by Folio",
-            reference=f"{group} | {period}",
+            reference=f"{group} | Disbursed from {loan_from_date.isoformat()} | {period}",
             footer_note=generated_timestamp(), confidential=True,
         ),
         title="LoanHub Next Instalments",
