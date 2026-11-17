@@ -12,7 +12,8 @@ from services.document_issuance_finalization import finalize_and_register_docume
 def _allow_mock_database_readiness():
     # Dedicated PostgreSQL integration tests exercise the real readiness
     # inspection; these unit tests isolate the finalizer control flow.
-    with patch("services.document_issuance_finalization.require_document_issuance_database_ready"):
+    with patch("services.document_issuance_finalization.require_document_issuance_database_ready"), \
+         patch("services.document_issuance_finalization.require_immutable_document_storage_ready"):
         yield
 
 
@@ -152,5 +153,19 @@ def test_database_readiness_failure_prevents_pdf_storage():
          patch("services.document_issuance_finalization.store_bytes") as store:
         with pytest.raises(PermissionError, match="RLS not ready"):
             _run(db, context)
+    store.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_mutable_storage_fails_before_generating_pdf():
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
+    with patch("services.document_issuance_finalization.require_immutable_document_storage_ready",
+               side_effect=PermissionError("immutable storage unavailable")), \
+         patch("services.document_issuance_finalization.prepare_stamped_document_candidate") as prepare, \
+         patch("services.document_issuance_finalization.store_bytes") as store:
+        with pytest.raises(PermissionError, match="immutable storage unavailable"):
+            _run(db, _context())
+    prepare.assert_not_called()
     store.assert_not_called()
     db.commit.assert_not_called()
