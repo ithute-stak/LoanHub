@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -1093,6 +1094,60 @@ def check_company_client_existing_loans(
         legacy_capture_count=int(legacy_capture_count),
         **exposure,
     )
+
+
+class AssistedRegistrationReviewRequest(BaseModel):
+    """Request body avoids putting a national ID in proxy access logs."""
+    national_id: str = Field(min_length=4, max_length=100)
+    branch_id: UUID
+
+
+@router.post("/registration-review", include_in_schema=False)
+def review_assisted_registration(
+    payload: AssistedRegistrationReviewRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only identity check: never links, creates or updates a borrower."""
+    from services.assisted_registration_review import decide_registration_review
+
+    require_tenant_roles(context, LENDING_ROLES)
+    assert_branch_scope(context, payload.branch_id)
+    cleaned_id = payload.national_id.strip()
+    if len(cleaned_id) < 4:
+        raise HTTPException(status_code=422, detail="Valid national ID required")
+
+    person = find_person_by_national_id(db, cleaned_id)
+    borrower = (
+        person.user.borrower_profile
+        if person is not None and person.user is not None
+        else None
+    )
+    exposure = borrower_existing_loan_exposure(
+        db, borrower=borrower, company_id=context.company_id,
+    )
+    legacy_count = (
+        db.query(func.count(LegacyLoanCapture.id))
+        .filter(
+            LegacyLoanCapture.company_id == context.company_id,
+            func.lower(func.trim(LegacyLoanCapture.national_id)) == cleaned_id.lower(),
+        )
+        .scalar()
+    ) or 0
+    result = decide_registration_review(
+        identity_match_found=person is not None,
+        legacy_capture_count=int(legacy_count),
+        already_company_client=bool(exposure["already_company_client"]),
+        has_existing_loans=bool(exposure["has_existing_loans"]),
+    )
+    # Suppress national IDs, DOB, bank and individual loan details.
+    return {
+        "decision": result.decision,
+        "can_commit": False,
+        "requires_human_review": result.requires_human_review,
+        "identity_match_found": result.identity_match_found,
+        "legacy_capture_found": result.legacy_capture_found,
+    }
 
 
 @router.get(
