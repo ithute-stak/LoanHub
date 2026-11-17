@@ -17,6 +17,7 @@ class DocumentIssuance(Base):
         UniqueConstraint("public_id", name="uq_document_issuances_public_id"),
         UniqueConstraint("company_id", "idempotency_key", name="uq_document_issuances_tenant_idempotency"),
         Index("ix_document_issuances_tenant_source", "company_id", "source_type", "source_id"),
+        UniqueConstraint("company_id", "source_type", "source_id", "document_type", "version", name="uq_document_issuances_source_version"),
         CheckConstraint("version >= 1", name="ck_document_issuances_version_positive"),
         CheckConstraint(
             "status IN ('issued', 'revoked', 'superseded')",
@@ -32,6 +33,7 @@ class DocumentIssuance(Base):
     document_type = Column(String(80), nullable=False)
     version = Column(Integer, nullable=False, default=1)
     stamp_configuration_version = Column(Integer, nullable=False, default=1)
+    source_pdf_sha256 = Column(String(64), nullable=False)
     final_pdf_sha256 = Column(String(64), nullable=False)
     # Object ID (not a public URL) referencing an immutable, private PDF.
     artifact_key = Column(String(255), nullable=False)
