@@ -69,3 +69,41 @@ def test_revoked_document_is_not_verified():
     assert verify_stored_issuance(
         db=db, authenticated_tenant_id=uuid4(), public_id="document-test-reference",
     ) == "revoked"
+
+def test_canonical_storage_read_failure_is_not_verified():
+    from fastapi import HTTPException
+    tenant = uuid4()
+    record = SimpleNamespace(
+        artifact_key=str(uuid4()), status="issued",
+        final_pdf_sha256=pdf_fingerprint(b"%PDF-1.4\\noriginal\\n"),
+    )
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.side_effect = [
+        record, SimpleNamespace(id=uuid4()),
+    ]
+    with patch("services.document_issuance_verification.read_file_bytes",
+               side_effect=HTTPException(status_code=503, detail="storage down")):
+        assert verify_stored_issuance(
+            db=db, authenticated_tenant_id=tenant,
+            public_id="document-test-reference",
+            submitted_pdf=b"%PDF-1.4\\noriginal\\n",
+        ) == "unavailable"
+
+
+def test_submitted_non_pdf_fails_closed_as_altered():
+    tenant = uuid4()
+    canonical = b"%PDF-1.4\\noriginal\\n"
+    record = SimpleNamespace(
+        artifact_key=str(uuid4()), status="issued",
+        final_pdf_sha256=pdf_fingerprint(canonical),
+    )
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.side_effect = [
+        record, SimpleNamespace(id=uuid4()),
+    ]
+    with patch("services.document_issuance_verification.read_file_bytes", return_value=canonical):
+        assert verify_stored_issuance(
+            db=db, authenticated_tenant_id=tenant,
+            public_id="document-test-reference",
+            submitted_pdf=b"not-a-pdf",
+        ) == "altered"
