@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
 from database.models.document_issuance import DocumentIssuance, DocumentIssuanceEvent
 from database.models.file_management import ManagedFile
-from services.document_issuance_integrity import new_public_document_id, pdf_fingerprint
+from services.document_issuance_integrity import pdf_fingerprint
 from services.file_service import read_file_bytes
 
 
@@ -22,6 +22,7 @@ def register_stored_pdf_issuance(
     *, db: Session, context: TenantContext, managed_file_id: UUID,
     source_type: str, source_id: str, document_type: str,
     idempotency_key: str, version: int, stamp_configuration_version: int,
+    public_id: str,
 ) -> DocumentIssuance:
     """Register exact bytes from the approved tenant's private ManagedFile.
 
@@ -40,6 +41,11 @@ def register_stored_pdf_issuance(
     ):
         if not isinstance(value, str) or not value.strip() or len(value) > limit:
             raise ValueError(f"Invalid {label}")
+    # ID is allocated by the trusted backend BEFORE rendering the QR and
+    # must be the exact same ID persisted for final-file verification.
+    if (not isinstance(public_id, str) or not (12 <= len(public_id) <= 96)
+            or not all(c.isascii() and (c.isalnum() or c in "-_") for c in public_id)):
+        raise ValueError("Invalid preallocated public document ID")
     if (not isinstance(version, int) or isinstance(version, bool) or version < 1
             or not isinstance(stamp_configuration_version, int)
             or isinstance(stamp_configuration_version, bool)
@@ -76,7 +82,8 @@ def register_stored_pdf_issuance(
     if existing is not None:
         # A retry must prove the immutable stored bytes have not changed and
         # must never silently resurrect a revoked/superseded issuance.
-        if (existing.status != "issued"
+        if (existing.public_id != public_id
+                or existing.status != "issued"
                 or existing.artifact_key != str(managed_file_id)
                 or existing.final_pdf_sha256 != digest
                 or existing.source_type != source_type
@@ -89,7 +96,7 @@ def register_stored_pdf_issuance(
 
     entry = DocumentIssuance(
         company_id=context.company_id,
-        public_id=new_public_document_id(),
+        public_id=public_id,
         idempotency_key=idempotency_key,
         source_type=source_type,
         source_id=source_id,
