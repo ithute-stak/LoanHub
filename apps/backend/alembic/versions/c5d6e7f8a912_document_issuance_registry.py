@@ -110,11 +110,19 @@ def upgrade():
             "issued_by_user_id" if table == "document_issuances"
             else "actor_user_id"
         )
+        # Event rows must also refer to an issuance visible in the same
+        # tenant, not just claim that tenant's company_id.
+        event_binding = (
+            " AND EXISTS (SELECT 1 FROM document_issuances i "
+            "WHERE i.id = issuance_id AND i.company_id = company_id)"
+            if table == "document_issuance_events" else ""
+        )
         op.execute(sa.text(
             f"CREATE POLICY {table}_tenant_insert ON {table} "
             f"FOR INSERT WITH CHECK ({issuer_predicate} "
             f"AND {actor_column} = NULLIF("
-            f"current_setting('loanhub.user_id', true), '')::uuid)"
+            f"current_setting('loanhub.user_id', true), '')::uuid"
+            f"{event_binding})"
         ))
     # No tenant UPDATE/DELETE policy exists. The runtime role must have
     # SELECT/INSERT only; audited transitions need a separately reviewed
