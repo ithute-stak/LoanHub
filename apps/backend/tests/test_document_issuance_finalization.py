@@ -37,6 +37,7 @@ def _run(db, context):
 
 def test_finalization_only_returns_after_commit():
     db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
     context = _context()
     file = SimpleNamespace(id=uuid4(), scan_status="clean")
     entry = SimpleNamespace(
@@ -105,3 +106,28 @@ def test_wrong_tenant_rejected_before_render_or_write():
             _run(db, context)
     store.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_previously_issued_request_never_creates_second_pdf():
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = (
+        SimpleNamespace(status="issued")
+    )
+    with patch("services.document_issuance_finalization.prepare_stamped_document_candidate") as prepare, \
+         patch("services.document_issuance_finalization.store_bytes") as store:
+        with pytest.raises(ValueError, match="already registered"):
+            _run(db, _context())
+    prepare.assert_not_called()
+    store.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_revoked_request_not_resurrected_by_retry():
+    db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = (
+        SimpleNamespace(status="revoked")
+    )
+    with patch("services.document_issuance_finalization.store_bytes") as store:
+        with pytest.raises(ValueError, match="already registered"):
+            _run(db, _context())
+    store.assert_not_called()
