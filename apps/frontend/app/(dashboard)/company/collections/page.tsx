@@ -573,12 +573,12 @@ export default function CollectionsPage() {
               See who needs attention, what is overdue, which promise is at risk, and the next recovery step. Every action stays attached to the case as evidence.
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button asChild variant="outline" className="rounded-xl bg-background/80"><Link href="/company/collections/maturity"><CalendarClock className="h-4 w-4" />Maturity renewals</Link></Button>
-            <Button variant="outline" className="rounded-xl bg-background/80" onClick={() => void load(true)} disabled={loading || working}>
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:w-auto">
+            <Button asChild variant="outline" className="w-full justify-center rounded-xl bg-background/80"><Link href="/company/collections/maturity"><CalendarClock className="h-4 w-4" />Maturity renewals</Link></Button>
+            <Button variant="outline" className="w-full justify-center rounded-xl bg-background/80" onClick={() => void load(true)} disabled={loading || working}>
               <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Sync arrears
             </Button>
-            <Button className="rounded-xl" onClick={() => void runYesterdayReport()} disabled={working}>
+            <Button className="w-full justify-center rounded-xl" onClick={() => void runYesterdayReport()} disabled={working}>
               <FileWarning className="h-4 w-4" />Yesterday report
             </Button>
           </div>
@@ -595,10 +595,10 @@ export default function CollectionsPage() {
 
       <Tabs defaultValue="cases" className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex flex-col gap-2 rounded-2xl border bg-background p-2 shadow-sm md:flex-row md:items-center md:justify-between">
-          <TabsList className="h-10 justify-start rounded-xl bg-muted/60 p-1">
-            <TabsTrigger value="cases" className="rounded-lg px-4">Recovery queue</TabsTrigger>
-            <TabsTrigger value="reports" className="rounded-lg px-4">Daily reports</TabsTrigger>
-            <TabsTrigger value="court" className="rounded-lg px-4">Court diary</TabsTrigger>
+          <TabsList aria-label="Collections workspace sections" className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-muted/60 p-1 md:h-10 md:w-auto">
+            <TabsTrigger value="cases" className="min-w-0 rounded-lg px-2 text-xs sm:px-4 sm:text-sm">Recovery queue</TabsTrigger>
+            <TabsTrigger value="reports" className="min-w-0 rounded-lg px-2 text-xs sm:px-4 sm:text-sm">Daily reports</TabsTrigger>
+            <TabsTrigger value="court" className="min-w-0 rounded-lg px-2 text-xs sm:px-4 sm:text-sm">Court diary</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
             <span>Filtered exposure</span>
