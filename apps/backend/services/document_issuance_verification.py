@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from database.models.document_issuance import DocumentIssuance
 from database.models.file_management import ManagedFile
 from services.document_issuance_integrity import (
-    IssuanceFingerprint, pdf_fingerprint, verify_exact_document,
+    IssuanceFingerprint, verify_exact_document,
 )
 from services.file_service import read_file_bytes
 
