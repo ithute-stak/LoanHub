@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
 from database.models.document_issuance import DocumentIssuance
 from services.document_issuance_candidate import prepare_stamped_document_candidate
+from services.document_issuance_database_readiness import require_document_issuance_database_ready
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_issuance_registration import register_stored_pdf_issuance
 from services.file_service import read_file_bytes, store_bytes
@@ -67,6 +68,9 @@ def finalize_and_register_document(
             or type(stamp_configuration_version) is not int
             or stamp_configuration_version < 1):
         raise ValueError("Invalid document version")
+
+    # This must run on the same session/role used for issuance writes.
+    require_document_issuance_database_ready(db)
 
     # Fail closed on any previously issued idempotency key BEFORE touching
     # object storage. We cannot safely return a prior PDF for a changed source
