@@ -40,3 +40,20 @@ def test_document_issuance_migration_matches_registered_model_columns():
     } <= names
     assert any(isinstance(c, CheckConstraint) and c.name == "ck_document_issuances_known_status"
                for c in constraints)
+
+
+def test_tenant_rls_policies_fail_closed_and_bind_audit_event():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "alembic/versions/c5d6e7f8a912_document_issuance_registry.py"
+    ).read_text(encoding="utf-8")
+    assert "ENABLE ROW LEVEL SECURITY" in source
+    assert 'FOR SELECT USING ({tenant_predicate})' in source
+    assert 'FOR INSERT WITH CHECK ({issuer_predicate}' in source
+    assert "loanhub.actor_scope" in source
+    assert "loanhub.company_id" in source
+    assert "loanhub.user_id" in source
+    assert "company_owner" in source and "company_admin" in source
+    assert "i.id = issuance_id AND i.company_id = company_id" in source
+    assert "FOR UPDATE" not in source and "FOR DELETE" not in source
+    assert "BYPASSRLS" in source
