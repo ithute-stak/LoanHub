@@ -2,7 +2,8 @@
 
 Never store PDF contents in this table. The final PDF must be retained in a
 separately access-controlled immutable object store. Its SHA-256 here is over
-the exact final stored bytes for the issued version, including any signatures.\nA subsequently signed file is a distinct issuance/version with its own digest.
+the exact final stored bytes for the issued version, including any signatures.
+A subsequently signed file is a distinct issuance/version with its own digest.
 """
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Index, func
 from sqlalchemy.dialects.postgresql import UUID
