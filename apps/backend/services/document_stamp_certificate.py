@@ -100,7 +100,7 @@ def render_tenant_stamp_certificate(
     if (parsed.scheme != "https" or parsed.netloc != trusted_verification_host
             or not trusted_verification_host or parsed.username
             or parsed.password or parsed.query or parsed.fragment
-            or not parsed.path.endswith("/verify/" + public_id)):
+            or parsed.path != "/verify/" + public_id)::
         raise ValueError("Untrusted verification URL")
     if not isinstance(source_pdf, bytes) or not source_pdf.startswith(b"%PDF-") or len(source_pdf) > MAX_SOURCE_BYTES:
         raise ValueError("Invalid PDF source")
@@ -109,6 +109,8 @@ def render_tenant_stamp_certificate(
         if reader.is_encrypted or not (1 <= len(reader.pages) <= MAX_SOURCE_PAGES):
             raise ValueError("Encrypted or oversized PDF")
         # This must only be applied to unsigned source PDFs.
+        if b"/ByteRange" in source_pdf:
+            raise ValueError("Potentially digitally signed PDF must not be rewritten")
         if "/AcroForm" in reader.trailer["/Root"]:
             fields = reader.get_fields() or {}
             if any(field.get("/FT") == "/Sig" for field in fields.values()):
