@@ -1,6 +1,7 @@
 from database.base import Base
 
 from database.models.audit_log import AuditLog
+from database.models.document_issuance import DocumentIssuance, DocumentIssuanceEvent
 from database.models.borrower import Borrower
 from database.models.borrower_contact import BorrowerContact
 from database.models.borrower_service_request import BorrowerServiceRequest
@@ -116,6 +117,8 @@ from database.models.cdas_official import (
 __all__ = [
     "Base",
     "AuditLog",
+    "DocumentIssuance",
+    "DocumentIssuanceEvent",
     "Borrower",
     "BorrowerContact",
     "BorrowerServiceRequest",
