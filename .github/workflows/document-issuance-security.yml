@@ -21,6 +21,20 @@ jobs:
     name: Document issuance Python and security tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: loan_db
+          POSTGRES_USER: loanhub
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loanhub -d loan_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ENVIRONMENT: test
       SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
@@ -33,6 +47,7 @@ jobs:
       DB_NAME: loan_db
       DB_USER: loanhub
       DB_PASSWORD: ci-only-postgres-password
+      LOANHUB_ISSUANCE_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
 
     steps:
       - uses: actions/checkout@v5
@@ -63,12 +78,12 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m compileall -q services/document_issuance_integrity.py services/document_stamp_certificate.py services/company_stamp_configuration.py services/document_issuance_candidate.py services/document_issuance_registration.py services/document_issuance_verification.py services/document_issuance_finalization.py database/models/document_issuance.py
-          python -m compileall -q tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py
+          python -m compileall -q tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py tests/test_document_issuance_rls_postgres.py
 
       - name: Run document issuance security regression tests
         working-directory: apps/backend
         run: |
-          python -m pytest -q -ra --maxfail=1 tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py
+          python -m pytest -q -ra --maxfail=1 tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py tests/test_document_issuance_rls_postgres.py
 
       - name: Print Alembic heads (read-only)
         working-directory: apps/backend
