@@ -167,6 +167,7 @@ def export_next_installments_pdf(
     status: str | None = Query(default=None, max_length=40),
     search: str | None = Query(default=None, max_length=200),
     branch_id: UUID | None = None,
+    loan_from_date: date = Query(default=date(2026, 9, 1)),
     from_date: date | None = None,
     through_date: date | None = None,
     db: Session = Depends(get_db),
@@ -179,6 +180,8 @@ def export_next_installments_pdf(
     query = _base_query(db, context).filter(
         ClientCompanyLoan.status.in_(["active", "defaulted"]),
         ClientCompanyLoan.balance > 0,
+        ClientCompanyLoan.disbursed_at.is_not(None),
+        ClientCompanyLoan.disbursed_at >= loan_from_date,
     )
     if group_code:
         query = query.filter(ClientCompanyLoan.folio_group_code == group_code)
@@ -227,6 +230,7 @@ def export_next_installments_pdf(
     pdf = build_folio_next_installment_pdf(
         db=db, context=context, rows=rows,
         group_code=group_code, from_date=from_date, through_date=through_date,
+        loan_from_date=loan_from_date,
     )
     return Response(content=pdf, media_type="application/pdf", headers={
         "Content-Disposition": "attachment; filename=loanhub-next-installments.pdf",
