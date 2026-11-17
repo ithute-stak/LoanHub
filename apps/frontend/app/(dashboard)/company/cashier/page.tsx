@@ -495,22 +495,22 @@ export default function CompanyCashierPage() {
 
   return (
     <div className="loanhub-page">
-      <section className="loanhub-hero p-6 sm:p-8">
-        <div className="grid gap-6 lg:grid-cols-[1fr_420px] lg:items-end">
-          <div>
+      <section className="loanhub-hero p-4 sm:p-6 lg:p-8">
+        <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] xl:items-end">
+          <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Payment desk</p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Receive a loan instalment</h1>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl xl:text-4xl">Receive a loan instalment</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
               Verify the loan and borrower, identify how the money was received, capture proof for non-cash channels, preview partial or advance allocation, and issue a receipt.
             </p>
           </div>
           <StickyFilterBar
             ariaLabel="Cashier loan and borrower search"
-            className="rounded-3xl data-[floating=true]:border"
+            className="min-w-0 rounded-2xl data-[floating=true]:border"
           >
-            <form onSubmit={lookup} className="rounded-[inherit] border bg-background/90 p-3 shadow-sm backdrop-blur">
+            <form onSubmit={lookup} className="min-w-0 rounded-[inherit] border bg-background/90 p-3 shadow-sm backdrop-blur">
               <Label htmlFor="loan-reference" className="sr-only">Loan or borrower search</Label>
-              <div className="flex gap-2">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
                 <SuggestionSearch
                   id="loan-reference"
                   value={loanReference}
@@ -531,7 +531,7 @@ export default function CompanyCashierPage() {
                   className="font-mono"
                   onSuggestionSelect={(suggestion) => void loadLoan(suggestion.value)}
                 />
-                <LoadingButton type="submit" loading={lookupLoading} loadingText="Searching"><Search className="h-4 w-4" />Find</LoadingButton>
+                <LoadingButton className="w-full justify-center sm:w-auto" type="submit" loading={lookupLoading} loadingText="Searching"><Search className="h-4 w-4" />Find</LoadingButton>
               </div>
               <p className="mt-2 px-1 text-xs text-muted-foreground">Search updates as you type. Partial fragments such as <span className="font-mono font-semibold">si-90</span> can match values such as <span className="font-mono font-semibold">Koetlisi-9088</span>.</p>
             </form>
