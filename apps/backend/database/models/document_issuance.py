@@ -37,6 +37,12 @@ class DocumentIssuance(Base):
     final_pdf_sha256 = Column(String(64), nullable=False)
     # Object ID (not a public URL) referencing an immutable, private PDF.
     artifact_key = Column(String(255), nullable=False)
+    # Optional until the version-pinned storage migration is fully certified.
+    # Never infer immutability from these fields alone.
+    immutable_bucket = Column(String(255), nullable=True)
+    immutable_object_key = Column(String(700), nullable=True)
+    immutable_version_id = Column(String(255), nullable=True)
+    immutable_retain_until = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(16), nullable=False, default="issued")
     issued_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     issued_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
