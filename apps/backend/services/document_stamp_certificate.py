@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from pypdf import PdfReader, PdfWriter
+from pypdf.errors import PdfReadError
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
@@ -170,5 +171,5 @@ def render_tenant_stamp_certificate(
         if len(PdfReader(BytesIO(result), strict=True).pages) != len(reader.pages) + 1:
             raise ValueError("PDF certificate integrity error")
         return result
-    except (KeyError, IndexError, TypeError) as exc:
+    except (KeyError, IndexError, TypeError, PdfReadError, OSError) as exc:
         raise ValueError("Invalid PDF structure") from exc
