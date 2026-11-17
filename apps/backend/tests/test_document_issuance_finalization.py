@@ -64,6 +64,7 @@ def test_finalization_only_returns_after_commit():
 
 def test_commit_failure_does_not_release_final_pdf():
     db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
     db.commit.side_effect = RuntimeError("database commit failed")
     context = _context()
     file = SimpleNamespace(id=uuid4(), scan_status="clean")
@@ -84,6 +85,7 @@ def test_commit_failure_does_not_release_final_pdf():
 
 def test_failed_malware_check_blocks_registration_and_commit():
     db = Mock()
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
     context = _context()
     file = SimpleNamespace(id=uuid4(), scan_status="validated")
     candidate = SimpleNamespace(pdf_bytes=PDF, public_id=PUBLIC_ID, sha256_hex=DIGEST)
