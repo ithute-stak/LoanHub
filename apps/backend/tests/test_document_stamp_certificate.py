@@ -38,6 +38,7 @@ def render(*, stamp=None, expected_tenant_id=None, pdf=None, url=None):
         verification_url=url or "https://verify.example.test/verify/test-reference-a93f72b4",
         issued_at=datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc),
         expected_tenant_id=tenant,
+        trusted_verification_host="verify.example.test",
     )
 
 
@@ -62,7 +63,8 @@ def test_cross_tenant_stamp_fails_closed():
 
 @pytest.mark.parametrize("url", [
     "http://verify.example.test/verify/test-reference-a93f72b4",
-    "https://attacker.test/verify/other-reference",
+    "https://attacker.test/verify/test-reference-a93f72b4",
+    "https://verify.example.test/verify/other-reference",
     "https://user:password@verify.example.test/verify/test-reference-a93f72b4",
     "https://verify.example.test/verify/test-reference-a93f72b4?secret=yes",
 ])
