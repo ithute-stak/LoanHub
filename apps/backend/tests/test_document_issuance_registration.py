@@ -23,6 +23,7 @@ def request(db, ctx, **override):
         source_type="workspace", source_id="doc-123",
         document_type="contract", idempotency_key="request-123",
         version=1, stamp_configuration_version=1,
+        public_id="issued-document-reference-a932c1",
     )
     parameters.update(override)
     return register_stored_pdf_issuance(**parameters)
@@ -41,6 +42,7 @@ def test_malformed_ids_and_versions_are_rejected_before_db_access():
         {"document_type": "a" * 81}, {"idempotency_key": "a" * 121},
         {"version": 0}, {"version": True},
         {"stamp_configuration_version": 0},
+        {"public_id": "x"},
     ):
         db = Mock()
         with pytest.raises(ValueError):
