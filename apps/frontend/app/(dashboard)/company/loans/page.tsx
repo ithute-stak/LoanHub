@@ -957,6 +957,11 @@ export default function CompanyLoansPage() {
                 </TabsContent>
 
                 {canManageContracts ? <TabsContent value="contracts" className="space-y-5">
+                    <div className="grid gap-3 sm:grid-cols-3" aria-label="Contract workflow summary">
+                        <Metric icon={FileSignature} label="Contracts registered" value={String(contracts.length)} hint="Agreements generated for company loans"/>
+                        <Metric icon={CheckCircle2} label="Fully signed" value={String(contracts.filter((contract) => Boolean(contract.borrower_signed_at && contract.company_signed_at)).length)} hint="Both borrower and company have signed"/>
+                        <Metric icon={FileClock} label="Awaiting signatures" value={String(contracts.filter((contract) => !contract.borrower_signed_at || !contract.company_signed_at).length)} hint="One or both signatures are still needed"/>
+                    </div>
                     {contractsRequired.length > 0 ?
                         <Card className="rounded-3xl border-amber-500/30 bg-amber-500/5"><CardHeader><CardTitle>Contracts
                             required</CardTitle><CardDescription>These loans are eligible for an agreement but do not
