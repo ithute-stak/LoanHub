@@ -79,21 +79,21 @@ export default function ReconciliationPage() {
   const summary = data?.summary;
 
   return (
-    <div className="space-y-6 pb-12">
-      <section className="rounded-3xl border bg-card p-5 shadow-sm md:p-8">
+    <div className="loanhub-page min-w-0 space-y-6 pb-12">
+      <section className="loanhub-hero min-w-0 rounded-3xl border bg-card p-4 shadow-sm sm:p-6 lg:p-8">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs font-black text-muted-foreground">
               <Scale className="h-4 w-4 text-primary" /> Proper Reconciliation Engine
             </div>
-            <h1 className="mt-4 text-3xl font-black tracking-tight md:text-4xl">Reconcile money before closing the books</h1>
+            <h1 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">Reconcile money before closing the books</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground md:text-base">
               Match bank, payment-provider, employer-payroll and CDAS remittance evidence against LoanHub payments. Exact evidence is matched automatically; ambiguous, short, excess, duplicate and missing-source items stay visible until a staff member resolves them.
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh</Button>
-            <Button onClick={() => setShowCreate((value) => !value)}><Plus className="mr-2 h-4 w-4" /> New batch</Button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <Button className="w-full sm:w-auto" variant="outline" onClick={() => void load()} disabled={loading}><RefreshCcw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh</Button>
+            <Button className="w-full sm:w-auto" onClick={() => setShowCreate((value) => !value)}><Plus className="mr-2 h-4 w-4" /> New batch</Button>
           </div>
         </div>
       </section>
