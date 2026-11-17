@@ -1,0 +1,62 @@
+name: LoanHub Document Issuance Security
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/services/document_issuance_*.py'
+      - 'apps/backend/services/document_stamp_certificate.py'
+      - 'apps/backend/services/company_stamp_configuration.py'
+      - 'apps/backend/database/models/document_issuance.py'
+      - 'apps/backend/tests/test_document_issuance_*.py'
+      - 'apps/backend/tests/test_document_stamp_certificate.py'
+      - 'apps/backend/tests/test_company_stamp_configuration.py'
+      - '.github/workflows/document-issuance-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  document-security:
+    name: Document issuance Python and security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
+      FERNET_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CHAT_ENCRYPTION_KEY: ci-only-chat-encryption-key
+      FILE_ENCRYPTION_KEY: ci-only-file-encryption-key
+      RATE_LIMIT_ENABLED: 'false'
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: loan_db
+      DB_USER: loanhub
+      DB_PASSWORD: ci-only-postgres-password
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/backend/requirements.txt -r apps/backend/requirements-dev.txt
+
+      - name: Compile issuance modules and tests
+        working-directory: apps/backend
+        run: |
+          python -m compileall -q services/document_issuance_integrity.py services/document_stamp_certificate.py services/company_stamp_configuration.py services/document_issuance_candidate.py services/document_issuance_registration.py services/document_issuance_verification.py services/document_issuance_finalization.py database/models/document_issuance.py
+          python -m compileall -q tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py
+
+      - name: Run document issuance security regression tests
+        working-directory: apps/backend
+        run: |
+          python -m pytest -q -ra --maxfail=1 tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py
+
+      - name: Print Alembic heads (read-only)
+        working-directory: apps/backend
+        run: python -m alembic heads
