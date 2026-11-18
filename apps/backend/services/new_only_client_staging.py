@@ -22,6 +22,7 @@ from database.models.company_client import CompanyBorrowerAccount
 from database.models.audit_log import AuditLog
 from database.models.enums import UserRole
 from services.company_client_service import account_reference
+from services.platform_finance_service import apply_company_account_opening_fee_snapshot
 from services.new_only_client_registration import NewOnlyRegistrationIntent
 
 
@@ -78,6 +79,7 @@ def stage_new_only_client_rows(
     payload: MinimalNewClient,
     password_hash: str,
     approved_internal_call: bool = False,
+    fee_config=None,
 ) -> StagedNewClient:
     """Add and flush ONLY new rows. Never commit or re-use an existing borrower.
 
@@ -130,10 +132,11 @@ def stage_new_only_client_rows(
         company_id=intent.company_id, branch_id=intent.branch_id,
         borrower_id=borrower.id, opened_by_user_id=intent.employee_id,
         account_reference=account_reference(),
-        source="assisted_registration", status="active",
+        source="new_only_registration", status="active",
         opening_fee_amount=Decimal("0"),
         opening_fee_currency="LSL", opening_fee_status="not_required",
     )
+    apply_company_account_opening_fee_snapshot(account, fee_config=fee_config)
     db.add(account)
     db.flush()
     db.add(AuditLog(
