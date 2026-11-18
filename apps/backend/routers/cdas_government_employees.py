@@ -681,7 +681,8 @@ def create_government_affordability_draft_batch(
         CdasAffordabilityBatch.idempotency_key == payload.idempotency_key,
     ).first()
     if existing is not None:
-        if existing.request_fingerprint != fingerprint:
+        if (existing.request_fingerprint != fingerprint or
+                existing.consent_evidence_reference != payload.consent_evidence_reference):
             raise HTTPException(status_code=409, detail="Idempotency key already used for a different batch")
         return {"batch_id": str(existing.id), "status": existing.status,
                 "execution_enabled": False, "idempotent_replay": True}
@@ -710,6 +711,7 @@ def create_government_affordability_draft_batch(
         created_by_user_id=context.user.id,
         idempotency_key=payload.idempotency_key,
         request_fingerprint=fingerprint,
+        consent_evidence_reference=payload.consent_evidence_reference,
         status="draft",
         total_count=len(payload.employees),
         finished_count=0,
@@ -735,7 +737,8 @@ def create_government_affordability_draft_batch(
             CdasAffordabilityBatch.company_id == context.company_id,
             CdasAffordabilityBatch.idempotency_key == payload.idempotency_key,
         ).first()
-        if existing is not None and existing.request_fingerprint == fingerprint:
+        if (existing is not None and existing.request_fingerprint == fingerprint and
+                existing.consent_evidence_reference == payload.consent_evidence_reference):
             return {"batch_id": str(existing.id), "status": existing.status,
                     "execution_enabled": False, "idempotent_replay": True}
         raise HTTPException(status_code=409, detail="Batch creation conflict") from exc
