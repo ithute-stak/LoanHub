@@ -28,6 +28,10 @@ from sqlalchemy.orm import Session
 from core.access_control import TenantContext
 from core.security import hash_password
 from database.schemas.company_clients import AssistedCompanyClientCreate
+from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
+from services.full_new_only_client_staging import (
+    _reject_unsafe_fields, stage_full_new_only_client_details,
+)
 from services.new_client_identity_locks import check_with_transaction_identity_locks
 from services.new_client_registration_idempotency import (
     reserve_new_client_registration, finalize_new_client_registration,
@@ -147,6 +151,7 @@ def create_new_client_atomically(
     payload: AssistedCompanyClientCreate,
     idempotency_key: str,
     fingerprint_secret: bytes,
+    _full_capture: FullNewOnlyClientCapture | None = None,
 ) -> AtomicRegistrationResult:
     """Private callable implementation; never used from a public API.
 
@@ -157,7 +162,29 @@ def create_new_client_atomically(
     # Validate the request and LoanHub staff role/branch BEFORE opening
     # the write transaction. The caller must supply the authoritative
     # LoanHub tenant context, not headers from Batlokoa.
-    minimal = _minimal_only(payload)
+    if _full_capture is None:
+        minimal = _minimal_only(payload)
+    else:
+        # Internal full capture is accepted only from its own validated
+        # contract. This projection is used for base new-identity rows only;
+        # all remaining fields are persisted by the detail stage below.
+        if (
+            not isinstance(_full_capture, FullNewOnlyClientCapture)
+            or payload.model_dump(mode="json", exclude_none=False)
+            != _full_capture.to_internal_full_payload().model_dump(
+                mode="json", exclude_none=False)
+        ):
+            raise AtomicRegistrationUnavailable("Full capture payload mismatch")
+        _reject_unsafe_fields(_full_capture)
+        core = {
+            field: getattr(payload, field) for field in (
+                "branch_id", "first_name", "last_name", "phone",
+                "date_of_birth", "gender", "national_id", "passport_number",
+                "district", "employment_status", "consent_to_share_profile",
+                "consent_to_credit_checks",
+            )
+        }
+        minimal = _minimal_only(AssistedCompanyClientCreate(**core))
     if payload.branch_id is None:
         raise AtomicRegistrationUnavailable("Explicit assigned branch required")
     intent = prepare_new_only_registration_intent(
@@ -282,8 +309,41 @@ def create_new_client_atomically(
             approved_internal_call=True,
             fee_config=fee,
         )
+        if _full_capture is not None:
+            # Only this protected writer calls full staging, and only after
+            # an unequivocally NEW reservation, identity and company account
+            # have been staged in the current db.begin() transaction.
+            stage_full_new_only_client_details(
+                db, payload=_full_capture, staged=account,
+                actor_user_id=intent.employee_id,
+                approved_internal_call=True,
+            )
         finalize_new_client_registration(
             db, intent=intent, reservation=reservation,
             client_account_id=account.client_account_id,
         )
         return AtomicRegistrationResult(account.client_account_id, False)
+
+
+
+def create_full_new_client_atomically(
+    db: Session, *,
+    context: TenantContext,
+    payload: FullNewOnlyClientCapture,
+    idempotency_key: str,
+    fingerprint_secret: bytes,
+) -> AtomicRegistrationResult:
+    """INTERNAL full registration; same borrower, debt and bank transaction.
+
+    No API router calls this function. Safe activation additionally requires
+    the approved normalized-index rollout and full real-Postgres certification.
+    """
+    if not isinstance(payload, FullNewOnlyClientCapture):
+        raise AtomicRegistrationUnavailable("Validated full capture required")
+    return create_new_client_atomically(
+        db, context=context,
+        payload=payload.to_internal_full_payload(),
+        idempotency_key=idempotency_key,
+        fingerprint_secret=fingerprint_secret,
+        _full_capture=payload,
+    )
