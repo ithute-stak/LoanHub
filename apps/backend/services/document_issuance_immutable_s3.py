@@ -101,6 +101,34 @@ class S3ObjectLockPdfStore:
             retain_until=locked_until,
         )
 
+    def assert_version_retention(self, record: LockedPdfObject) -> None:
+        """Re-check provider retention on the *exact* stored version.
+
+        The SQL retention timestamp is a historical claim, not a substitute
+        for the provider's current Object Lock state. A version that can no
+        longer prove COMPLIANCE retention is not certified as immutable.
+        """
+        if (record.bucket != self.bucket or not record.key
+                or not isinstance(record.version_id, str)
+                or not record.version_id or record.version_id == "null"):
+            raise ValueError("Invalid immutable artifact reference")
+        if (not isinstance(record.retain_until, datetime)
+                or record.retain_until.tzinfo is None):
+            raise StorageUnavailableError("Persisted retention deadline is invalid")
+        try:
+            retention = self.client.get_object_retention(
+                Bucket=self.bucket, Key=record.key, VersionId=record.version_id,
+            ).get("Retention") or {}
+        except Exception as exc:
+            raise StorageUnavailableError("Cannot inspect exact PDF version retention") from exc
+        provider_until = retention.get("RetainUntilDate")
+        if (retention.get("Mode") != "COMPLIANCE"
+                or not isinstance(provider_until, datetime)
+                or provider_until.tzinfo is None
+                or provider_until.astimezone(timezone.utc) < record.retain_until.astimezone(timezone.utc)
+                or provider_until.astimezone(timezone.utc) <= datetime.now(timezone.utc)):
+            raise StorageUnavailableError("Exact PDF version lacks valid COMPLIANCE retention")
+
     def read_exact_version(self, record: LockedPdfObject) -> bytes:
         if record.bucket != self.bucket or not record.version_id:
             raise ValueError("Immutable artifact does not match configured bucket")
