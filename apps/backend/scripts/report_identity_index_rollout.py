@@ -17,6 +17,7 @@ import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from services.legacy_identity_cross_reference import inspect_legacy_identity_cross_reference
 from services.identity_index_rollout_preflight import (
     inspect_index_rollout_preflight,
     IndexRolloutPreflightError,
@@ -28,7 +29,7 @@ ACK_VALUE = "read_only_identity_audit"
 ROLE_ENV = "LOANHUB_IDENTITY_AUDIT_EXPECTED_ROLE"
 
 
-def render_approval_report(preflight, *, database_role: str, database_name: str) -> dict:
+def render_approval_report(preflight, *, database_role: str, database_name: str, legacy_audit=None) -> dict:
     """Privacy-safe deterministic manifest; approval is always false."""
     if not database_role or not database_name:
         raise IndexRolloutPreflightError("Audited role and database name required")
@@ -38,8 +39,17 @@ def render_approval_report(preflight, *, database_role: str, database_name: str)
         type(n) is not int or n < 0 for n in counts + blanks
     ):
         raise IndexRolloutPreflightError("Untrustworthy aggregate audit counts")
+    legacy_counts = None
+    if legacy_audit is not None:
+        legacy_counts = {
+            "national_id_overlap_groups": legacy_audit.national_id_overlap_groups,
+            "passport_overlap_groups": legacy_audit.passport_overlap_groups,
+            "repeated_legacy_passport_groups": legacy_audit.repeated_legacy_passport_groups,
+        }
+        if any(type(value) is not int or value < 0 for value in legacy_counts.values()):
+            raise IndexRolloutPreflightError("Untrustworthy historical collision counts")
     return {
-        "report_version": 1,
+        "report_version": 2,
         "checked_at": preflight.checked_at.isoformat(),
         "database_role": database_role,
         "database_name": database_name,
@@ -50,10 +60,16 @@ def render_approval_report(preflight, *, database_role: str, database_name: str)
             ("national_id", "passport", "phone", "email"), blanks
         )),
         "candidate_index_names": list(preflight.invalid_existing_index_names),
+        "legacy_cross_source_counts": legacy_counts,
+        "legacy_cross_source_audit_complete": legacy_counts is not None,
         "requires_manual_legacy_reconciliation": (
             preflight.requires_manual_legacy_reconciliation
         ),
-        "operator_review_candidate": preflight.operator_review_candidate,
+        "operator_review_candidate": bool(
+            preflight.operator_review_candidate
+            and legacy_counts is not None
+            and not any(legacy_counts.values())
+        ),
         "index_statements_for_DBA_review_only": list(
             preflight.proposed_statements
         ),
@@ -104,8 +120,10 @@ def generate_read_only_report(url: str, *, expected_role: str) -> dict:
                 with Session(bind=connection) as session:
                     with session.begin():
                         scan = inspect_index_rollout_preflight(session)
+                        legacy = inspect_legacy_identity_cross_reference(session)
                 return render_approval_report(
-                    scan, database_role=role, database_name=db_name
+                    scan, database_role=role, database_name=db_name,
+                    legacy_audit=legacy,
                 )
     finally:
         engine.dispose()
