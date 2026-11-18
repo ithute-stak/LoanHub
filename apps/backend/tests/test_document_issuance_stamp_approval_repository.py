@@ -26,11 +26,12 @@ def _fixture():
         "rls_enabled": True, "runtime_owns_table": False,
         "superuser": False, "bypass_rls": False, "can_select": True,
         "can_insert": False, "can_update": False, "can_delete": False,
-        "tenant_policy": True, "actor_scope": "tenant",
+        "tenant_policy": True, "revocation_registry_ready": True,
+        "actor_scope": "tenant",
         "context_company_id": str(tenant), "context_user_id": str(issuer),
     }
     approval = {
-        "company_id": tenant, "configuration_version": 2,
+        "id": uuid4(), "company_id": tenant, "configuration_version": 2,
         "snapshot_sha256_hex": stamp_snapshot_sha256(
             company=company, authenticated_tenant_id=tenant,
         ),
@@ -44,6 +45,7 @@ def _fixture():
     db.execute.side_effect = [
         Mock(mappings=lambda: Mock(one_or_none=lambda: secure)),
         Mock(mappings=lambda: Mock(one_or_none=lambda: approval)),
+        Mock(mappings=lambda: Mock(one_or_none=lambda: None)),
     ]
     return db, tenant, issuer, company, secure, approval
 
@@ -60,7 +62,7 @@ def test_protected_database_record_is_accepted_without_mutation():
     result = _query(db, tenant, issuer, company)
     assert result.tenant_id == tenant
     assert result.configuration_version == 2
-    assert db.execute.call_count == 2
+    assert db.execute.call_count == 3
     db.commit.assert_not_called()
     db.add.assert_not_called()
 
@@ -70,7 +72,8 @@ def test_protected_database_record_is_accepted_without_mutation():
     {"superuser": True}, {"bypass_rls": True},
     {"can_select": False}, {"can_insert": True},
     {"can_update": True}, {"can_delete": True},
-    {"tenant_policy": False}, {"actor_scope": "platform"},
+    {"tenant_policy": False}, {"revocation_registry_ready": False},
+    {"actor_scope": "platform"},
     {"context_company_id": "other"}, {"context_user_id": "other"},
 ])
 def test_insecure_db_role_policy_or_context_fails_before_approval_query(change):
@@ -121,3 +124,16 @@ def test_non_postgres_connection_denied():
     with pytest.raises(PermissionError, match="PostgreSQL"):
         _query(db, tenant, issuer, company)
     db.execute.assert_not_called()
+
+
+def test_revoked_approval_is_rejected_even_when_original_was_approved():
+    db, tenant, issuer, company, secure, approval = _fixture()
+    db.execute.side_effect = [
+        Mock(mappings=lambda: Mock(one_or_none=lambda: secure)),
+        Mock(mappings=lambda: Mock(one_or_none=lambda: approval)),
+        Mock(mappings=lambda: Mock(one_or_none=lambda: {"id": uuid4()})),
+    ]
+    with pytest.raises(PermissionError, match="revoked"):
+        _query(db, tenant, issuer, company)
+    assert db.execute.call_count == 3
+    db.commit.assert_not_called()
