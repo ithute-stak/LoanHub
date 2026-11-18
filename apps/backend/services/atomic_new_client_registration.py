@@ -216,12 +216,22 @@ def create_new_client_atomically(
         # Never treat a new Person row as safe when that ID occurs in a
         # different company's unlinked historical captures. Query only an
         # aggregate count; expose no cross-tenant client details.
-        if minimal.national_id:
-            normalized_id = minimal.national_id.strip().casefold()
+        # Legacy captures can be passport-only. A cross-company capture
+        # with the same passport is just as unsafe to auto-register as a
+        # matching national ID: count both identifiers globally, with no
+        # company filter and without returning anyone's identity values.
+        for field_name, source_column in (
+            ("national_id", LegacyLoanCapture.national_id),
+            ("passport_number", LegacyLoanCapture.passport_number),
+        ):
+            supplied = getattr(minimal, field_name)
+            if not supplied or not supplied.strip():
+                continue
+            normalized_value = supplied.strip().casefold()
             historic = db.query(func.count(LegacyLoanCapture.id)).filter(
-                func.lower(func.trim(LegacyLoanCapture.national_id)) == normalized_id,
+                func.lower(func.trim(source_column)) == normalized_value,
             ).scalar()
-            if type(historic) is not int or historic > 0 or historic < 0:
+            if type(historic) is not int or historic < 0 or historic > 0:
                 raise AtomicRegistrationUnavailable(
                     "Existing historical identity requires controlled review")
 
