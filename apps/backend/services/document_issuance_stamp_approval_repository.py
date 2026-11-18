@@ -7,7 +7,6 @@ session can all be verified. The approval row MUST NOT come from request JSON.
 """
 from __future__ import annotations
 
-from datetime import timezone
 from uuid import UUID
 
 from sqlalchemy import text
@@ -41,6 +40,9 @@ def lookup_approved_stamp_from_database(
                has_table_privilege(current_user,c.oid,'INSERT') AS can_insert,
                has_table_privilege(current_user,c.oid,'UPDATE') AS can_update,
                has_table_privilege(current_user,c.oid,'DELETE') AS can_delete,
+               current_setting('loanhub.actor_scope', true) AS actor_scope,
+               current_setting('loanhub.company_id', true) AS context_company_id,
+               current_setting('loanhub.user_id', true) AS context_user_id,
                EXISTS(
                    SELECT 1 FROM pg_policies p
                    WHERE p.schemaname='public'
@@ -58,7 +60,10 @@ def lookup_approved_stamp_from_database(
             or security["runtime_owns_table"] or security["superuser"]
             or security["bypass_rls"] or not security["can_select"]
             or security["can_insert"] or security["can_update"]
-            or security["can_delete"] or not security["tenant_policy"]):
+            or security["can_delete"] or not security["tenant_policy"]
+            or security["actor_scope"] != "tenant"
+            or security["context_company_id"] != str(authenticated_tenant_id)
+            or security["context_user_id"] != str(issuer_user_id)):
         raise PermissionError("Stamp approval registry SQL security is not ready")
 
     row = db.execute(text("""
