@@ -13,6 +13,7 @@ class CdasAffordabilityBatch(Base):
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     idempotency_key = Column(String(120), nullable=False)
     request_fingerprint = Column(String(64), nullable=False)
+    consent_evidence_reference = Column(String(160), nullable=False)
     status = Column(String(24), nullable=False, default="draft", index=True)
     total_count = Column(Integer, nullable=False)
     finished_count = Column(Integer, nullable=False, default=0)
