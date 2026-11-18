@@ -70,6 +70,7 @@ def mocks(db, reason="candidate_requires_transactional_reservation",
 def test_success_stages_once_and_finishes_in_one_transaction():
     db = MagicMock()
     db.in_transaction.return_value = False
+    db.query.return_value.filter.return_value.scalar.return_value = 0
     with mocks(db)[0] as authorize, mocks(db)[1] as indexes, \
          mocks(db)[2] as lock, mocks(db)[3] as reserve, \
          mocks(db)[4] as fee, mocks(db)[5] as stage, \
