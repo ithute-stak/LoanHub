@@ -63,3 +63,39 @@ def test_name_and_dob_mismatch_fails_closed():
 def test_termination_is_not_marked_as_eligible():
     errors = compare_employee_identity(person=identity(), employee=provider(TerminationDate="2026-10-01"), expected_number="EMP-100")
     assert "employment_terminated" in errors
+
+
+from decimal import Decimal
+import pytest
+import routers.cdas_government_employees as government
+
+
+def test_affordability_rejects_negative_provider_capacity():
+    with pytest.raises(ValueError):
+        government.assess_verified_cdas_capacity(
+            borrower=object(), policy=object(),
+            installment=Decimal("100.00"), capacity=Decimal("-0.01"),
+        )
+
+
+def test_affordability_rejects_nonfinite_provider_capacity():
+    with pytest.raises(ValueError):
+        government.assess_verified_cdas_capacity(
+            borrower=object(), policy=object(),
+            installment=Decimal("100.00"), capacity=Decimal("NaN"),
+        )
+
+
+def test_affordability_uses_existing_underwriting_engine(monkeypatch):
+    captured = {}
+    def fake_engine(**kw):
+        captured.update(kw)
+        return {"passed": True, "decision": "pass"}
+    monkeypatch.setattr(government, "quick_loan_affordability", fake_engine)
+    result = government.assess_verified_cdas_capacity(
+        borrower="borrower", policy="company-policy",
+        installment=Decimal("150.00"), capacity=Decimal("200.00"),
+    )
+    assert result["decision"] == "pass"
+    assert captured["proposed_installment"] == Decimal("150.00")
+    assert captured["live_cdas_affordability"] == Decimal("200.00")
