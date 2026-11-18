@@ -20,6 +20,9 @@ from sqlalchemy import text, select, func
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.branch import CompanyBranch
+from database.models.company_staff import CompanyStaff
+from database.models.user import User
+from core.access_control import LENDING_ROLES, COMPANY_MANAGEMENT_ROLES
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
@@ -168,6 +171,33 @@ def create_new_client_atomically(
         raise AtomicRegistrationUnavailable("Dedicated transaction required")
 
     with db.begin():
+        # The signed-in context may be stale: staff access can be revoked
+        # between authentication and registration. Re-check the persisted
+        # employee membership and user activation in this SAME transaction.
+        # Lock both rows in shared mode to serialize revocation with writes.
+        active_membership = db.execute(
+            select(CompanyStaff.id, CompanyStaff.role, CompanyStaff.branch_id)
+            .join(User, User.id == CompanyStaff.user_id)
+            .where(
+                CompanyStaff.user_id == intent.employee_id,
+                CompanyStaff.company_id == intent.company_id,
+                CompanyStaff.is_active.is_(True),
+                CompanyStaff.role.in_(tuple(LENDING_ROLES)),
+                User.is_active.is_(True),
+            )
+            .with_for_update(read=True, of=(CompanyStaff, User))
+        ).all()
+        if len(active_membership) != 1:
+            raise AtomicRegistrationUnavailable(
+                "Current active lending staff membership required")
+        _membership_id, current_role, current_branch = active_membership[0]
+        if (
+            current_role not in COMPANY_MANAGEMENT_ROLES
+            and (current_branch is None or current_branch != intent.branch_id)
+        ):
+            raise AtomicRegistrationUnavailable(
+                "Current employee branch assignment required")
+
         # Branch authorization must be checked against a real, active
         # branch belonging to the authenticated staff's company, not merely
         # a UUID supplied by the mobile application.

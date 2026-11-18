@@ -29,7 +29,7 @@ from services.atomic_new_client_registration import (
 DB_ENV = "LOANHUB_REGISTRATION_E2E_POSTGRES_URL"
 ACK_ENV = "LOANHUB_REGISTRATION_E2E_ACK"
 TABLES = (
-    "users", "people", "borrowers", "company_borrower_accounts",
+    "users", "company_staff", "people", "borrowers", "company_borrower_accounts",
     "audit_logs", "legacy_loan_captures",
     "new_client_registration_attempts",
     "company_account_opening_fee_configurations",
@@ -139,7 +139,8 @@ def applicant(branch_id, *, national_id="SYN-E2E-0001", phone="59000001"):
 def totals(engine, schema):
     with engine.connect() as conn:
         return tuple(conn.execute(text(
-            f"SELECT count(*) FROM {schema}.{table}"
+            f"SELECT count(*) FROM {schema}.{table}" +
+            (" WHERE role = 'BORROWER'" if table == "users" else "")
         )).scalar_one() for table in (
             "users", "people", "borrowers", "company_borrower_accounts",
             "audit_logs", "new_client_registration_attempts",
@@ -155,6 +156,27 @@ def invoke(engine, schema, context, payload, key):
             VALUES (:branch, :company, TRUE)
             ON CONFLICT (id) DO NOTHING
         """), {"branch": context.branch_id, "company": context.company_id})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (
+                id, phone, password_hash, role, is_active, is_verified,
+                must_change_password
+            ) VALUES (
+                :actor, :phone, 'synthetic-staff-hash-not-credential',
+                'LOAN_OFFICER', TRUE, TRUE, FALSE
+            ) ON CONFLICT (id) DO NOTHING
+        """), {"actor": context.user.id,
+                "phone": "6" + str(context.user.id.int % 10000000).zfill(7)})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active
+            ) VALUES (
+                :id, :actor, :company, :branch,
+                'LOAN_OFFICER', TRUE, TRUE
+            ) ON CONFLICT DO NOTHING
+        """), {
+            "id": context.user.id, "actor": context.user.id,
+            "company": context.company_id, "branch": context.branch_id,
+        })
     with sandbox_session(engine, schema) as conn:
         with Session(bind=conn, expire_on_commit=False) as session:
             return create_new_client_atomically(
@@ -326,3 +348,22 @@ def test_configured_company_opening_fee_is_preserved(real_models_sandbox):
     assert fee[1] == "LSL"
     assert fee[2] == "accrued"
     assert fee[3] == "active"
+
+
+def test_revoked_database_membership_denies_new_registration(real_models_sandbox):
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    ctx = staff(company, branch, employee)
+    invoke(engine, schema, ctx, applicant(branch),
+           "synthetic-initial-registration-00001")
+    before = totals(engine, schema)
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            UPDATE {schema}.company_staff SET is_active = FALSE
+            WHERE user_id = :actor
+        """), {"actor": employee})
+    with pytest.raises(AtomicRegistrationUnavailable, match="membership"):
+        invoke(engine, schema, ctx, applicant(
+            branch, national_id="SYN-E2E-SECOND", phone="59000031"
+        ), "synthetic-revoked-registration-00001")
+    assert totals(engine, schema) == before

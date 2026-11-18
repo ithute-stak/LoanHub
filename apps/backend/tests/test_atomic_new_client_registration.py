@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from database.models.enums import Gender, EmploymentStatus
+from database.models.enums import Gender, EmploymentStatus, UserRole
 from database.schemas.company_clients import AssistedCompanyClientCreate
 from services.new_client_identity_guard import NewClientGuardDecision
 from services.new_client_registration_idempotency import RegistrationReservation
@@ -69,6 +69,7 @@ def mocks(db, reason="candidate_requires_transactional_reservation",
 
 def test_success_stages_once_and_finishes_in_one_transaction():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     db.query.return_value.filter.return_value.scalar.return_value = 0
     with mocks(db)[0] as authorize, mocks(db)[1] as indexes, \
@@ -94,6 +95,7 @@ def test_success_stages_once_and_finishes_in_one_transaction():
 @pytest.mark.parametrize("reason", ["existing_identity", "historical_collision", "invalid_identity"])
 def test_collision_never_stages_client(reason):
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     p = mocks(db, reason=reason)
     with p[0], p[1], p[2], p[3], p[4], p[5] as stage, p[6] as finalize:
@@ -115,6 +117,7 @@ def test_unsupported_financial_inputs_are_not_silently_lost(changes):
     if "external_debts" in changes:
         pytest.skip("Requires complete supported external debt model")
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     with pytest.raises(AtomicRegistrationUnavailable):
         create_new_client_atomically(
             db, context=staff(), payload=candidate(**changes),
@@ -125,6 +128,7 @@ def test_unsupported_financial_inputs_are_not_silently_lost(changes):
 
 def test_existing_incomplete_request_does_not_create_second_client():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     p = mocks(db, attempt=reservation(existing=True))
     with p[0], p[1], p[2], p[3], p[4], p[5] as stage, p[6] as finalize:
@@ -139,6 +143,7 @@ def test_existing_incomplete_request_does_not_create_second_client():
 
 def test_completed_replay_checks_account_scope_and_returns_existing_id():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     client_id = uuid4()
     db.execute.return_value.scalar_one_or_none.return_value = client_id
@@ -156,6 +161,7 @@ def test_completed_replay_checks_account_scope_and_returns_existing_id():
 
 def test_replay_mismatched_account_scope_fails_closed():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     db.execute.return_value.scalar_one_or_none.return_value = None
     p = mocks(db, attempt=reservation(existing=True, status="completed", account=uuid4()))
@@ -169,8 +175,32 @@ def test_replay_mismatched_account_scope_fails_closed():
     finalize.assert_not_called()
 
 
+@pytest.mark.parametrize("membership_rows", [
+    [], [(uuid4(), UserRole.COMPANY_ADMIN, None),
+         (uuid4(), UserRole.COMPANY_ADMIN, None)],
+    [(uuid4(), UserRole.LOAN_OFFICER, None)],
+])
+def test_revoked_ambiguous_or_branchless_staff_fails_before_write(membership_rows):
+    db = MagicMock()
+    db.in_transaction.return_value = False
+    db.execute.return_value.all.return_value = membership_rows
+    p = mocks(db)
+    with p[0], p[1] as indexes, p[2] as locks, p[3] as reserve, \
+         p[4], p[5] as staging, p[6]:
+        with pytest.raises(AtomicRegistrationUnavailable, match="membership|branch"):
+            create_new_client_atomically(
+                db, context=staff(), payload=candidate(),
+                idempotency_key="synthetic-unique-key-0001",
+                fingerprint_secret=b"x" * 32)
+    indexes.assert_not_called()
+    locks.assert_not_called()
+    reserve.assert_not_called()
+    staging.assert_not_called()
+
+
 def test_unrecognized_or_inactive_branch_blocks_registration_before_indexes():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     db.execute.return_value.scalar_one_or_none.return_value = None
     p = mocks(db)
@@ -189,6 +219,7 @@ def test_unrecognized_or_inactive_branch_blocks_registration_before_indexes():
 
 def test_missing_indexes_never_leads_to_any_registration():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = False
     p = mocks(db)
     with p[0], p[1] as indexes, p[2], p[3] as reserve, \
@@ -205,6 +236,7 @@ def test_missing_indexes_never_leads_to_any_registration():
 
 def test_database_index_check_requires_valid_ready_unique_indexes():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.get_bind.return_value = SimpleNamespace(
         dialect=SimpleNamespace(name="postgresql"))
     db.execute.return_value.one_or_none.return_value = None
@@ -215,6 +247,7 @@ def test_database_index_check_requires_valid_ready_unique_indexes():
 
 def test_caller_owned_transaction_not_allowed():
     db = MagicMock()
+    db.execute.return_value.all.return_value = [(uuid4(), UserRole.COMPANY_ADMIN, None)]
     db.in_transaction.return_value = True
     p = mocks(db)
     with p[0], p[1] as indexes, p[2], p[3], p[4], p[5], p[6]:
