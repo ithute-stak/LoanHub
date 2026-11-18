@@ -30,7 +30,10 @@ def _fixtures():
         sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),
     )
     locked = SimpleNamespace(version_id="v-locked-1")
-    staged = SimpleNamespace(\n        candidate=candidate, locked=locked,\n        source_sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),\n    )
+    staged = SimpleNamespace(
+        candidate=candidate, locked=locked,
+        source_sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),
+    )
     db = Mock()
     db.query.return_value.filter.return_value.one_or_none.return_value = None
     return db, context, store, staged
