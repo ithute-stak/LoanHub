@@ -55,6 +55,12 @@ def stage_locked_document_candidate(
     if not isinstance(store, S3ObjectLockPdfStore):
         raise PermissionError("Official issuance staging requires the S3 Object Lock adapter")
 
+    # Resolve company fields BEFORE any non-reversible S3 Object Lock write.
+    # Compare again after rendering to prevent a company-record mutation while
+    # the certificate is assembled (a live approval check is still required).
+    stamp_digest = stamp_snapshot_sha256(
+        company=context.company, authenticated_tenant_id=context.company_id,
+    )
     # Check the source itself, then the altered/stamped final PDF before
     # uploading; no 'validated' or scan-disabled result is acceptable.
     if scan_upload(source_pdf) != "clean":
@@ -67,6 +73,10 @@ def stage_locked_document_candidate(
     )
     if candidate.tenant_id != context.company_id:
         raise PermissionError("Rendered PDF company binding changed")
+    if stamp_snapshot_sha256(
+        company=context.company, authenticated_tenant_id=context.company_id,
+    ) != stamp_digest:
+        raise PermissionError("Company stamp changed while rendering the official PDF")
     if (not isinstance(candidate.public_id, str)
             or not (12 <= len(candidate.public_id) <= 96)
             or not all(c.isascii() and (c.isalnum() or c in "-_")
@@ -106,7 +116,5 @@ def stage_locked_document_candidate(
     return StagedLockedCandidate(
         candidate=candidate, locked=locked,
         source_sha256_hex=pdf_fingerprint(source_pdf),
-        stamp_snapshot_sha256_hex=stamp_snapshot_sha256(
-            company=context.company, authenticated_tenant_id=context.company_id,
-        ),
+        stamp_snapshot_sha256_hex=stamp_digest,
     )
