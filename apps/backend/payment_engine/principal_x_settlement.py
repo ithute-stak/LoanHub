@@ -58,8 +58,6 @@ def quote_principal_x(
         raise ValueError("Invalid principal, rate or contractual total")
     if not due_dates or list(due_dates) != sorted(set(due_dates)):
         raise ValueError("Due dates must be nonempty, unique and ascending")
-    if settlement_date < due_dates[0] and settlement_date < min(due_dates):
-        pass  # First-period settlement is allowed before the first due date.
     credits = sorted(successful_credits, key=lambda x: x.effective_date)
     if any(money(c.amount) <= 0 or c.effective_date > settlement_date for c in credits):
         raise ValueError("Credits must be positive and no later than settlement date")
