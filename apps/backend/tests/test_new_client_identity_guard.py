@@ -49,11 +49,22 @@ def test_missing_identity_is_rejected_before_query():
     db.query.assert_not_called()
 
 
-def test_passport_only_can_be_screened_without_legacy_check():
-    db = MagicMock()
-    db.query.return_value.filter.return_value.scalar.side_effect = [0, 0]
-    result = inspect(db, national_id=None, passport_number="SYNTHETIC")
+def test_passport_only_is_checked_against_legacy_captures():
+    result = inspect(
+        db_with_counts(0, 0, 1),
+        national_id=None, passport_number="SYNTHETIC",
+    )
     assert not result.candidate
+    assert result.reason == "historical_collision"
+    assert result.legacy_conflicts == 1
+
+
+def test_passport_only_without_legacy_match_remains_fail_closed():
+    result = inspect(
+        db_with_counts(0, 0, 0),
+        national_id=None, passport_number="SYNTHETIC",
+    )
+    assert result.candidate is False
     assert result.reason == "candidate_requires_transactional_reservation"
 
 
