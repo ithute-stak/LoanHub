@@ -98,3 +98,50 @@ def test_other_bucket_cannot_read_immutable_reference():
     with pytest.raises(ValueError, match="bucket"):
         store.read_exact_version(record)
     client.get_object.assert_not_called()
+
+
+def test_exact_version_retention_is_checked_against_s3_provider():
+    store, client = _store()
+    record = store.put_locked_pdf(
+        tenant_id="tenant-a", public_id="verified-public-id-123", pdf=PDF,
+    )
+    store.assert_version_retention(record)
+    assert client.get_object_retention.call_args.kwargs["VersionId"] == record.version_id
+
+
+def test_missing_or_expired_provider_retention_fails_closed():
+    store, client = _store()
+    record = store.put_locked_pdf(
+        tenant_id="tenant-a", public_id="verified-public-id-123", pdf=PDF,
+    )
+    for bad in (
+        {"Mode": "GOVERNANCE", "RetainUntilDate": record.retain_until},
+        {"Mode": "COMPLIANCE", "RetainUntilDate": datetime.now(timezone.utc) - timedelta(days=1)},
+        {"Mode": "COMPLIANCE", "RetainUntilDate": record.retain_until - timedelta(days=1)},
+        {},
+    ):
+        client.get_object_retention.return_value = {"Retention": bad}
+        with pytest.raises(StorageUnavailableError, match="COMPLIANCE retention"):
+            store.assert_version_retention(record)
+
+
+def test_retention_provider_inspection_failure_denies_verification():
+    store, client = _store()
+    record = store.put_locked_pdf(
+        tenant_id="tenant-a", public_id="verified-public-id-123", pdf=PDF,
+    )
+    client.get_object_retention.side_effect = PermissionError("AccessDenied")
+    with pytest.raises(StorageUnavailableError, match="inspect"):
+        store.assert_version_retention(record)
+
+
+def test_untrusted_object_reference_does_not_trigger_provider_read():
+    store, client = _store()
+    record = LockedPdfObject(
+        bucket="other-bucket", key="x.pdf", version_id="v1",
+        sha256_hex="a" * 64,
+        retain_until=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    with pytest.raises(ValueError):
+        store.assert_version_retention(record)
+    client.get_object_retention.assert_not_called()
