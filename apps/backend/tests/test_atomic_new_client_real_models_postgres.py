@@ -68,6 +68,14 @@ def real_models_sandbox():
                         f"CREATE TABLE {schema}.{table} "
                         f"(LIKE public.{table} INCLUDING ALL)"
                     ))
+                # LIKE copies uniqueness but can rename constraint names.
+                # The real reservation uses ON CONFLICT ON CONSTRAINT,
+                # so reproduce its canonical production constraint name.
+                conn.execute(text(f"""
+                    ALTER TABLE {schema}.new_client_registration_attempts
+                    ADD CONSTRAINT uq_new_client_registration_company_idempotency
+                    UNIQUE (company_id, idempotency_key)
+                """))
                 for table, column, index_name in INDEXES:
                     conn.execute(text(f"""
                         CREATE UNIQUE INDEX {index_name}
