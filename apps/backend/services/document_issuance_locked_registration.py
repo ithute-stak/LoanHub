@@ -59,6 +59,8 @@ def register_locked_staged_document(
     if not isinstance(source_pdf, bytes):
         raise ValueError("Original source PDF bytes are required")
     source_digest = pdf_fingerprint(source_pdf)
+    if staged.source_sha256_hex != source_digest:
+        raise ValueError("Source PDF differs from the originally scanned staged source")
     final_bytes = staged.candidate.pdf_bytes
     final_digest = pdf_fingerprint(final_bytes)
     if final_digest != staged.candidate.sha256_hex:
