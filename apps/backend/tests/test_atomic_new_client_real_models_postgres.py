@@ -228,6 +228,37 @@ def test_legacy_capture_rejected_without_modifying_history(real_models_sandbox):
         assert row == ("posted", Decimal("500"), Decimal("650"), Decimal("300"))
 
 
+def test_cross_company_legacy_passport_blocks_new_only_registration(
+    real_models_sandbox,
+):
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.legacy_loan_captures
+                (id, company_id, folio_number, passport_number, status,
+                 borrowed_amount, total_repayable, amount_paid,
+                 banking_info, paper_snapshot, conversion_data)
+            VALUES (:id, :other_company, 'SYNTH-PASSPORT-FOLIO',
+                    ' pass-syn-001 ', 'posted', 750, 950, 450,
+                    '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb)
+        """), {"id": uuid4(), "other_company": uuid4()})
+    request = applicant(
+        branch, national_id=None, phone="59000009")
+    request.passport_number = "PASS-SYN-001"
+    with pytest.raises(AtomicRegistrationUnavailable):
+        invoke(
+            engine, schema, staff(company, branch, employee),
+            request, "synthetic-passport-collision-000001")
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        old = conn.execute(text(f"""
+            SELECT status, borrowed_amount, total_repayable, amount_paid
+            FROM {schema}.legacy_loan_captures
+        """)).one()
+    assert old == ("posted", Decimal("750"), Decimal("950"), Decimal("450"))
+
+
 def test_failed_finalization_rolls_back_all_real_rows(
     real_models_sandbox, monkeypatch,
 ):
