@@ -49,6 +49,7 @@ def bind_locked_pdf_to_issuance(
     )):
         raise ValueError("Issuance immutable reference is already bound")
 
+    store.assert_version_retention(locked)
     exact = store.read_exact_version(locked)
     if exact != candidate_pdf:
         raise StorageUnavailableError("Locked object version differs from issued PDF")
@@ -82,6 +83,7 @@ def verify_locked_pdf_for_issuance(
         sha256_hex=issuance.final_pdf_sha256,
         retain_until=issuance.immutable_retain_until,
     )
+    store.assert_version_retention(locked)
     pdf = store.read_exact_version(locked)
     if pdf_fingerprint(pdf) != issuance.final_pdf_sha256:
         raise StorageUnavailableError("Official PDF immutable version is altered")
