@@ -22,8 +22,10 @@ from core.access_control import TenantContext
 from database.models.enums import EmploymentStatus, Gender, UserRole
 from database.models.user import User
 from database.schemas.company_clients import AssistedCompanyClientCreate
+from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
 from services.atomic_new_client_registration import (
     AtomicRegistrationUnavailable, create_new_client_atomically,
+    create_full_new_client_atomically,
 )
 
 DB_ENV = "LOANHUB_REGISTRATION_E2E_POSTGRES_URL"
@@ -32,6 +34,8 @@ TABLES = (
     "users", "company_staff", "people", "borrowers", "company_borrower_accounts",
     "audit_logs", "legacy_loan_captures",
     "new_client_registration_attempts",
+    "borrower_debt_obligations", "borrower_debt_obligation_events",
+    "borrower_bank_accounts",
     "company_account_opening_fee_configurations",
 )
 INDEXES = (
@@ -367,3 +371,141 @@ def test_revoked_database_membership_denies_new_registration(real_models_sandbox
             branch, national_id="SYN-E2E-SECOND", phone="59000031"
         ), "synthetic-revoked-registration-00001")
     assert totals(engine, schema) == before
+
+
+def full_capture(branch_id, *, national_id="SYN-FULL-REG-001", phone="59000070"):
+    return FullNewOnlyClientCapture.model_validate({
+        "branch_id": branch_id,
+        "first_name": "Palesa",
+        "middle_name": "K",
+        "last_name": "Mokoena",
+        "phone": phone,
+        "gender": Gender.FEMALE,
+        "date_of_birth": date(1993, 5, 11),
+        "national_id": national_id,
+        "district": "Maseru",
+        "town_or_village": "Roma",
+        "physical_address": "Synthetic residence",
+        "employment_status": EmploymentStatus.EMPLOYED,
+        "employment_type": "permanent",
+        "employer_name": "Synthetic Employer",
+        "job_title": "Clerk",
+        "monthly_income": "6000.00",
+        "income_day": 25,
+        "salary_date": "25",
+        "has_existing_loans": True,
+        "existing_loan_total": "550.00",
+        "external_debts": [{
+            "creditor": "Synthetic historical external creditor",
+            "original_amount": "700.00",
+            "current_balance": "550.00",
+            "installment_amount": "55.00",
+            "total_installments": 12,
+            "installments_paid": 2,
+            "remaining_installments": 10,
+            "status": "active",
+        }],
+        "consent_to_share_profile": False,
+        "consent_to_credit_checks": True,
+    })
+
+
+def invoke_full(engine, schema, context, payload, key):
+    # Seed synthetic staff and company branch through the same fixture
+    # helper used by actual minimal registration, without creating clients.
+    from database.models.user import User
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+            ON CONFLICT (id) DO NOTHING
+        """), {"branch": context.branch_id, "company": context.company_id})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (id, phone, password_hash, role,
+                                        is_active, is_verified, must_change_password)
+            VALUES (:actor, :phone, 'synthetic-staff-hash-not-credential',
+                    'LOAN_OFFICER', TRUE, TRUE, FALSE)
+            ON CONFLICT (id) DO NOTHING
+        """), {"actor": context.user.id,
+                "phone": "6" + str(context.user.id.int % 10000000).zfill(7)})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active)
+            VALUES (:id, :actor, :company, :branch, 'LOAN_OFFICER', TRUE, TRUE)
+            ON CONFLICT DO NOTHING
+        """), {"id": context.user.id, "actor": context.user.id,
+                "company": context.company_id, "branch": context.branch_id})
+    with sandbox_session(engine, schema) as conn:
+        with Session(bind=conn, expire_on_commit=False) as session:
+            return create_full_new_client_atomically(
+                session, context=context, payload=payload,
+                idempotency_key=key,
+                fingerprint_secret=b"ci-only-registration-hmac-key-64-characters-long",
+            )
+
+
+def test_full_registration_stages_employment_and_external_debt_atomically(
+    real_models_sandbox,
+):
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    ctx = staff(company, branch, employee)
+    request = full_capture(branch)
+    result = invoke_full(
+        engine, schema, ctx, request, "synthetic-full-registration-00001")
+    assert result.existing is False
+    with engine.connect() as conn:
+        profile = conn.execute(text(f"""
+            SELECT p.middle_name, p.town_or_village, p.physical_address,
+                   b.employer_name, b.monthly_income,
+                   b.has_existing_loans, b.existing_loan_total
+            FROM {schema}.people p
+            JOIN {schema}.borrowers b ON b.user_id = p.user_id
+        """)).one()
+        assert profile[0:4] == (
+            "K", "Roma", "Synthetic residence", "Synthetic Employer")
+        assert profile[4] == Decimal("6000.00")
+        assert profile[5] is True
+        assert profile[6] == Decimal("550.00")
+        debt = conn.execute(text(f"""
+            SELECT creditor, current_balance, installment_amount,
+                   is_verified, status
+            FROM {schema}.borrower_debt_obligations
+        """)).one()
+        assert debt == (
+            "Synthetic historical external creditor", Decimal("550.00"),
+            Decimal("55.00"), False, "active")
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligation_events
+        """)).scalar_one() == 1
+    replay = invoke_full(
+        engine, schema, ctx, request, "synthetic-full-registration-00001")
+    assert replay.existing is True
+    assert replay.client_account_id == result.client_account_id
+
+
+def test_failed_full_staging_rolls_back_all_new_client_and_debt_rows(
+    real_models_sandbox, monkeypatch,
+):
+    engine, schema = real_models_sandbox
+    import services.atomic_new_client_registration as atomic
+
+    def reject_details(*args, **kwargs):
+        raise RuntimeError("synthetic post-borrower full-detail failure")
+
+    monkeypatch.setattr(atomic, "stage_full_new_only_client_details",
+                        reject_details)
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    with pytest.raises(RuntimeError, match="post-borrower"):
+        invoke_full(
+            engine, schema, staff(company, branch, employee),
+            full_capture(branch), "synthetic-full-registration-rollback")
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_debt_obligations", "borrower_debt_obligation_events",
+            "borrower_bank_accounts",
+        ):
+            assert conn.execute(text(
+                f"SELECT count(*) FROM {schema}.{table_name}"
+            )).scalar_one() == 0
