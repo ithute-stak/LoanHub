@@ -327,3 +327,105 @@ async def preview_government_employee_affordability(
         "loan_approved": False,
         "deduction_changed": False,
     }
+
+
+# Phase 4: capture the actual server-calculated result in LoanHub's append-only
+# audit ledger, then regenerate a report from that exact archived record.
+# A dedicated assessment table can supersede this interim audit-backed store.
+from uuid import uuid4
+from fastapi.responses import Response
+from database.models.audit_log import AuditLog
+from services.cdas_affordability_pdf import build_government_affordability_pdf
+
+
+@router.post("/affordability-records")
+async def create_government_affordability_record(
+    payload: GovernmentEmployeeAffordabilityRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Perform fresh checks once and persist only the verified server response."""
+    _require_company_manager(context)
+    result = await preview_government_employee_affordability(payload, context, db)
+    if result.get("status") != "assessment_preview":
+        return result  # No record for an identity mismatch.
+
+    assessment = result["assessment"]
+    reference = "CDAS-AFF-" + uuid4().hex[:16].upper()
+    snapshot = {
+        "reference": reference,
+        "employee_number": payload.employee_number.strip(),
+        "borrower_id": str(payload.borrower_id),
+        "assessed_at": result["assessed_at"],
+        "identity_status": "Matched against CDAS for this assessment",
+        "cdas_environment": result["cdas_environment"],
+        "cdas_capacity": result["cdas_monthly_capacity"],
+        "proposed_installment": assessment["proposed_installment"],
+        "maximum_affordable_installment": assessment["maximum_affordable_installment"],
+        "decision": assessment["decision"],
+        "policy_version": assessment["policy_version"],
+        "assessment": assessment,
+    }
+    log = AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=context.branch_id,
+        action="government_employee_affordability_assessed",
+        table_name="cdas_government_affordability",
+        entity_type="affordability_assessment",
+        record_id=payload.borrower_id,
+        description="Read-only CDAS affordability assessment captured for PDF reproduction",
+        actor_role=getattr(context.role, "value", str(context.role)),
+        severity="info",
+        status="success",
+        event_data={"snapshot": snapshot},
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {
+        "ok": True,
+        "status": "assessment_recorded",
+        "reference": reference,
+        "record_id": str(log.id),
+        "borrower_id": str(payload.borrower_id),
+        "assessed_at": snapshot["assessed_at"],
+        "decision": snapshot["decision"],
+        "pdf_path": "/api/v1/cdas/government-employees/affordability-records/" + str(log.id) + "/pdf",
+        "loan_approved": False, "deduction_changed": False,
+    }
+
+
+@router.get("/affordability-records/{record_id}/pdf")
+def download_government_affordability_report(
+    record_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Render only an assessment belonging to the authenticated company."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    log = db.query(AuditLog).filter(
+        AuditLog.id == record_id,
+        AuditLog.company_id == context.company_id,
+        AuditLog.action == "government_employee_affordability_assessed",
+        AuditLog.entity_type == "affordability_assessment",
+    ).first()
+    if log is None:
+        raise HTTPException(status_code=404, detail="Assessment record not found")
+    snapshot = (log.event_data or {}).get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise HTTPException(status_code=409, detail="Stored assessment snapshot is unavailable")
+    if snapshot.get("borrower_id") != str(log.record_id):
+        raise HTTPException(status_code=409, detail="Stored assessment identity failed validation")
+    report = build_government_affordability_pdf(
+        db=db, company=context.company, snapshot=snapshot,
+    )
+    return Response(
+        content=report, media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": 'attachment; filename="cdas-affordability-' + str(log.id) + '.pdf"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
