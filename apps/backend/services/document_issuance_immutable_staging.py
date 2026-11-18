@@ -64,6 +64,15 @@ def stage_locked_document_candidate(
     )
     if candidate.tenant_id != context.company_id:
         raise PermissionError("Rendered PDF company binding changed")
+    if (not isinstance(candidate.public_id, str)
+            or not (12 <= len(candidate.public_id) <= 96)
+            or not all(c.isascii() and (c.isalnum() or c in "-_")
+                       for c in candidate.public_id)):
+        raise ValueError("Invalid official document public identity")
+    if not isinstance(candidate.pdf_bytes, bytes) or not candidate.pdf_bytes.startswith(b"%PDF-"):
+        raise ValueError("Rendered official document is not a PDF")
+    if pdf_fingerprint(candidate.pdf_bytes) != candidate.sha256_hex:
+        raise ValueError("Rendered official PDF fingerprint does not match candidate")
     if scan_upload(candidate.pdf_bytes) != "clean":
         raise PermissionError("Final PDF malware scan did not complete as clean")
 
