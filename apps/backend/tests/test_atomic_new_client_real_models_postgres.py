@@ -571,3 +571,97 @@ def test_actual_full_registration_failure_rolls_back_all_new_rows(
         assert conn.execute(text(f"""
             SELECT count(*) FROM {schema}.borrower_debt_obligation_events
         """)).scalar_one() == 1
+
+
+def full_capture_with_bank(branch_id):
+    """Synthetic account whose prefix and length satisfy FNB validation."""
+    request = full_capture(branch_id)
+    payload = request.model_dump(mode="python")
+    payload["bank_account"] = {
+        "account_holder": "Palesa Mokoena",
+        "bank_name": "FNB",
+        "account_number": "61234567890",
+        "salary_account": True,
+        "tokenized_card_provider": "synthetic-ci",
+        "tokenized_card_reference": "CI-ONLY-TOKEN-REF",
+        "verification_status": "unverified",
+    }
+    return FullNewOnlyClientCapture.model_validate(payload)
+
+
+def test_bank_account_number_and_provider_token_are_encrypted_in_real_postgres(
+    real_models_sandbox,
+):
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    ctx = staff(company, branch, employee)
+    request = full_capture_with_bank(branch)
+    result = invoke_full(
+        engine, schema, ctx, request, "synthetic-full-bank-registration-0001")
+    assert result.existing is False
+    with engine.connect() as conn:
+        row = conn.execute(text(f"""
+            SELECT bank_name, account_number_encrypted, account_number_last4,
+                   tokenized_card_reference_encrypted, salary_account,
+                   verification_status, verification_reference
+            FROM {schema}.borrower_bank_accounts
+        """)).one()
+    assert row.bank_name == "FNB"
+    assert row.account_number_last4 == "7890"
+    assert row.account_number_encrypted
+    assert "61234567890" not in row.account_number_encrypted
+    assert row.tokenized_card_reference_encrypted
+    assert "CI-ONLY-TOKEN-REF" not in row.tokenized_card_reference_encrypted
+    assert row.salary_account is True
+    assert row.verification_status == "unverified"
+    assert row.verification_reference is None
+    replay = invoke_full(
+        engine, schema, ctx, request, "synthetic-full-bank-registration-0001")
+    assert replay.existing is True
+    with engine.connect() as conn:
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_bank_accounts
+        """)).scalar_one() == 1
+
+
+def test_debt_failure_after_encrypted_bank_insert_rolls_back_bank_and_identity(
+    real_models_sandbox, monkeypatch,
+):
+    engine, schema = real_models_sandbox
+    import services.full_new_only_client_staging as details
+    original = details.save_assisted_external_debts
+
+    def fail_after_debt(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("synthetic failure after bank and debt insert")
+
+    monkeypatch.setattr(details, "save_assisted_external_debts",
+                        fail_after_debt)
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    ctx = staff(company, branch, employee)
+    request = full_capture_with_bank(branch)
+    with pytest.raises(RuntimeError, match="after bank and debt"):
+        invoke_full(
+            engine, schema, ctx, request,
+            "synthetic-full-bank-and-debt-rollback-0001")
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_bank_accounts", "borrower_debt_obligations",
+            "borrower_debt_obligation_events",
+        ):
+            assert conn.execute(text(f"""
+                SELECT count(*) FROM {schema}.{table_name}
+            """)).scalar_one() == 0
+    monkeypatch.undo()
+    result = invoke_full(
+        engine, schema, ctx, request,
+        "synthetic-full-bank-and-debt-rollback-0001")
+    assert result.existing is False
+    with engine.connect() as conn:
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_bank_accounts
+        """)).scalar_one() == 1
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 1
