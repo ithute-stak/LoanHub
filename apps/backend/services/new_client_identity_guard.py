@@ -71,12 +71,19 @@ def inspect_new_client_candidate(
     user_count = db.query(func.count(User.id)).filter(
         or_(*user_filters)).scalar() or 0
 
-    legacy_count = 0
+    # Legacy captures are global collision evidence: neither a different
+    # company nor a passport-only legacy record may be auto-linked to a
+    # newly created borrower. Keep checks aggregate-only, never disclose IDs.
+    legacy_filters = []
     if nid:
-        legacy_count = db.query(func.count(LegacyLoanCapture.id)).filter(
-            LegacyLoanCapture.company_id == company_id,
-            func.lower(func.trim(LegacyLoanCapture.national_id)) == nid,
-        ).scalar() or 0
+        legacy_filters.append(
+            func.lower(func.trim(LegacyLoanCapture.national_id)) == nid)
+    if passport:
+        legacy_filters.append(
+            func.lower(func.trim(LegacyLoanCapture.passport_number)) == passport)
+    legacy_count = db.query(func.count(LegacyLoanCapture.id)).filter(
+        or_(*legacy_filters)
+    ).scalar()
 
     for value in (person_count, user_count, legacy_count):
         if type(value) is not int or value < 0:
