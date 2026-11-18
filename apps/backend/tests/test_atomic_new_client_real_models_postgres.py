@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 import os
-from pathlib import Path
 from threading import Barrier
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -208,8 +207,9 @@ def test_failed_finalization_rolls_back_all_real_rows(
     monkeypatch.setattr(atomic, "finalize_new_client_registration",
                         abort_after_staging)
     with pytest.raises(RuntimeError, match="synthetic failure"):
-        invoke(engine, schema, staff(uuid4(), uuid4(), uuid4()),
-               applicant(uuid4()), "synthetic-registration-key-000005")
+        company, branch, employee = uuid4(), uuid4(), uuid4()
+        invoke(engine, schema, staff(company, branch, employee),
+               applicant(branch), "synthetic-registration-key-000005")
     assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
 
 
