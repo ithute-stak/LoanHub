@@ -19,7 +19,12 @@ def _context():
     company_id = uuid4()
     return SimpleNamespace(
         company_id=company_id,
-        company=SimpleNamespace(\n            id=company_id, name="Example Tenant (Pty) Ltd",\n            address="Maseru", phone="+266 50000000",\n            email="tenant@example.test", registration_number="REG-1",\n            license_number="LIC-1",\n        ),
+        company=SimpleNamespace(
+            id=company_id, name="Example Tenant (Pty) Ltd",
+            address="Maseru", phone="+266 50000000",
+            email="tenant@example.test", registration_number="REG-1",
+            license_number="LIC-1",
+        ),
         user=SimpleNamespace(id=uuid4()),
         staff=SimpleNamespace(role=UserRole.COMPANY_ADMIN),
         is_platform_admin=False,
