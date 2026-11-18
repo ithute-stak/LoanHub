@@ -32,6 +32,16 @@ The tests cover:
 - A failed unique-index build against synthetic existing duplicates leaving
   historical rows unchanged.
 
+## GitHub Actions certification
+
+The LoanHub CI workflow now creates a separate ephemeral database named
+`loanhub_registration_sandbox` inside its disposable PostgreSQL service,
+sets the explicit safety acknowledgement, and runs all Phase 74 tests with
+`--maxfail=1`. A cleanup trap drops that test database when the job ends.
+The test suite still skips in environments without the dedicated staging
+variables. A green CI run must be inspected to confirm this specific test
+step actually executed and did not skip.
+
 ## Real migration approval gates
 
 1. Obtain a backup and a privacy-restricted, representative reporting clone.
