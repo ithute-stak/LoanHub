@@ -21,6 +21,7 @@ from database.models.company_operating_system import CompanyOperatingRecord, Com
 from database.models.company_website import CompanyWebsiteProfile
 from database.models.company_staff import CompanyStaff
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.new_client_registration_attempt import NewClientRegistrationAttempt
 from database.models.company_client_case import CompanyClientCaseEntry
 from database.models.company_client_identity_change import CompanyClientIdentityChangeRequest
 from database.models.documents import BorrowerDocument, LoanRequestDocument
@@ -136,6 +137,7 @@ __all__ = [
     "CompanyWebsiteProfile",
     "CompanyStaff",
     "CompanyBorrowerAccount",
+    "NewClientRegistrationAttempt",
     "CompanyClientCaseEntry",
     "CompanyClientIdentityChangeRequest",
     "BorrowerDocument",
