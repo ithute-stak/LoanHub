@@ -429,3 +429,105 @@ def download_government_affordability_report(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+# Phase 5a: management history and consolidated reporting.
+# These endpoints are deliberately read-only; bulk CDAS calls remain disabled.
+from services.cdas_affordability_summary_pdf import build_government_affordability_summary_pdf
+
+MAX_REPORT_RECORDS = 500
+
+
+def stored_assessment_summary(record: AuditLog) -> dict:
+    """Allowlist non-sensitive fields from the company-scoped archived snapshot."""
+    data = (record.event_data or {}).get("snapshot")
+    if not isinstance(data, dict) or data.get("borrower_id") != str(record.record_id):
+        raise ValueError("Assessment record integrity check failed")
+    return {
+        "record_id": str(record.id),
+        "reference": data.get("reference"),
+        "assessed_at": data.get("assessed_at"),
+        "employee_number": data.get("employee_number"),
+        "borrower_id": data.get("borrower_id"),
+        "cdas_capacity": data.get("cdas_capacity"),
+        "maximum_affordable_installment": data.get("maximum_affordable_installment"),
+        "proposed_installment": data.get("proposed_installment"),
+        "decision": data.get("decision"),
+        "policy_version": data.get("policy_version"),
+        "pdf_path": "/api/v1/cdas/government-employees/affordability-records/"
+                    + str(record.id) + "/pdf",
+    }
+
+
+def _company_assessment_query(db: Session, company_id: UUID):
+    return db.query(AuditLog).filter(
+        AuditLog.company_id == company_id,
+        AuditLog.action == "government_employee_affordability_assessed",
+        AuditLog.entity_type == "affordability_assessment",
+        AuditLog.status == "success",
+    )
+
+
+@router.get("/affordability-records")
+def list_government_affordability_records(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=50, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Display saved company assessments, not a fresh CDAS balance."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    query = _company_assessment_query(db, context.company_id)
+    count = query.count()
+    records = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+    entries = []
+    for record in records:
+        try:
+            entries.append(stored_assessment_summary(record))
+        except ValueError:
+            # Do not allow a malformed saved record to masquerade as valid.
+            entries.append({"record_id": str(record.id), "status": "integrity_review_required"})
+    return {
+        "total": count, "page": page, "page_size": page_size, "items": entries,
+        "note": "Historical assessments only; CDAS capacity is not refreshed.",
+    }
+
+
+@router.get("/affordability-summary.pdf")
+def download_government_affordability_summary(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Full-company summary (maximum 500 records); never silently truncate."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    query = _company_assessment_query(db, context.company_id)
+    records = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(
+        MAX_REPORT_RECORDS + 1
+    ).all()
+    if len(records) > MAX_REPORT_RECORDS:
+        raise HTTPException(
+            status_code=409,
+            detail="Too many assessments for one PDF; use paginated history until batch export is available",
+        )
+    try:
+        items = [stored_assessment_summary(record) for record in records]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409, detail="A saved assessment failed integrity validation"
+        ) from exc
+    pdf = build_government_affordability_summary_pdf(
+        db=db, company=context.company, rows=items,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": 'attachment; filename="cdas-affordability-summary.pdf"',
+        },
+    )
