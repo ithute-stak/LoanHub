@@ -81,3 +81,29 @@ def test_invalid_identity_never_acquires_a_lock(change):
     with pytest.raises(ValueError):
         check_with_transaction_identity_locks(db, **params(**change))
     db.execute.assert_not_called()
+
+
+def test_document_type_is_in_fifth_colon_component():
+    keys = _identity_lock_keys(
+        national_id="NID-001", passport_number=None,
+        phone="59000000", email=None,
+    )
+    assert "loanhub:new-client:identity:v1:national_id:nid-001" in keys
+    assert all(k.split(":")[4] in ("national_id", "passport_number", "phone", "email")
+               for k in keys)
+
+
+def test_passport_only_identity_is_supported():
+    keys = _identity_lock_keys(
+        national_id=None, passport_number="PASSPORT-001",
+        phone="59000000", email=None,
+    )
+    assert any(":passport_number:" in key for key in keys)
+
+
+def test_identity_value_cannot_substitute_for_document_kind():
+    with pytest.raises(ValueError):
+        _identity_lock_keys(
+            national_id=None, passport_number=None,
+            phone="national_id", email="test@example.ls",
+        )

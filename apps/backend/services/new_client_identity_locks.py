@@ -46,7 +46,7 @@ def _identity_lock_keys(
         if len(normalized) > 150 or any(ord(c) < 32 for c in normalized):
             raise ValueError("Invalid identity field")
         keys.append("loanhub:new-client:identity:v1:" + kind + ":" + normalized)
-    if not any(k.split(":")[5] in ("national_id", "passport_number")
+    if not any(k.split(":")[4] in ("national_id", "passport_number")
                for k in keys) or not any(":phone:" in k for k in keys):
         raise ValueError("National ID/passport and phone are required")
     return tuple(sorted(set(keys)))
