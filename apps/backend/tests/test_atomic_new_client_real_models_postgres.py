@@ -509,3 +509,65 @@ def test_failed_full_staging_rolls_back_all_new_client_and_debt_rows(
             assert conn.execute(text(
                 f"SELECT count(*) FROM {schema}.{table_name}"
             )).scalar_one() == 0
+
+
+
+@pytest.mark.parametrize("failure_point", [
+    "bank_capture", "debt_after_insert", "finalize_after_details",
+])
+def test_actual_full_registration_failure_rolls_back_all_new_rows(
+    real_models_sandbox, monkeypatch, failure_point,
+):
+    """Inject faults at distinct points inside the SAME real PG transaction."""
+    engine, schema = real_models_sandbox
+    import services.full_new_only_client_staging as details
+    import services.atomic_new_client_registration as atomic
+
+    if failure_point == "bank_capture":
+        def fail_bank(*args, **kwargs):
+            raise RuntimeError("injected bank capture failure")
+        monkeypatch.setattr(details, "_save_assisted_banking_profile", fail_bank)
+    elif failure_point == "debt_after_insert":
+        original = details.save_assisted_external_debts
+
+        def fail_after_debt(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected after debt insert")
+        monkeypatch.setattr(details, "save_assisted_external_debts", fail_after_debt)
+    else:
+        def fail_finalize(*args, **kwargs):
+            raise RuntimeError("injected finalization failure")
+        monkeypatch.setattr(atomic, "finalize_new_client_registration",
+                            fail_finalize)
+
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    ctx = staff(company, branch, employee)
+    request = full_capture(branch)
+    with pytest.raises(RuntimeError, match="injected"):
+        invoke_full(engine, schema, ctx, request,
+                    "synthetic-full-rollback-" + failure_point)
+
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_debt_obligations", "borrower_debt_obligation_events",
+            "borrower_bank_accounts",
+        ):
+            assert conn.execute(text(
+                f"SELECT count(*) FROM {schema}.{table_name}"
+            )).scalar_one() == 0
+
+    # The failed idempotency reservation must not poison a subsequent
+    # valid registration with the SAME logical request key.
+    monkeypatch.undo()
+    success = invoke_full(engine, schema, ctx, request,
+                          "synthetic-full-rollback-" + failure_point)
+    assert success.existing is False
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+    with engine.connect() as conn:
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 1
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligation_events
+        """)).scalar_one() == 1
