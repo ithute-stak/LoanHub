@@ -531,3 +531,122 @@ def download_government_affordability_summary(
             "Content-Disposition": 'attachment; filename="cdas-affordability-summary.pdf"',
         },
     )
+
+
+# Phase 5B preflight: bounded selection with budget and identity checks only.
+# This endpoint deliberately does not queue, run, or charge CDAS operations.
+from services.cdas_request_budget import get_cdas_request_budget_status
+from routers.cdas_api import _company_cdas_environment
+
+
+class BulkAffordabilitySelection(BaseModel):
+    borrower_id: UUID
+    employee_number: str = Field(min_length=1, max_length=100)
+    proposed_monthly_installment: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+
+
+class BulkAffordabilityPreflightRequest(BaseModel):
+    employees: list[BulkAffordabilitySelection] = Field(min_length=1, max_length=20)
+
+
+def validate_bulk_selection(employees: list[BulkAffordabilitySelection]) -> list[str]:
+    """Require unique borrower IDs and employee numbers; never guess duplicates."""
+    errors = []
+    seen_borrowers = set()
+    seen_numbers = set()
+    for item in employees:
+        number = item.employee_number.strip().casefold()
+        if not number:
+            errors.append("blank_employee_number")
+        if item.borrower_id in seen_borrowers:
+            errors.append("duplicate_borrower_selection")
+        if number in seen_numbers:
+            errors.append("duplicate_employee_number_selection")
+        seen_borrowers.add(item.borrower_id)
+        seen_numbers.add(number)
+    return sorted(set(errors))
+
+
+def _bulk_candidate_status(
+    db: Session, *, company_id: UUID, selection: BulkAffordabilitySelection
+) -> str:
+    """Read both company-controlled sources and flag borrower collisions."""
+    number = selection.employee_number.strip().casefold()
+    payroll = db.query(CDASPayrollProfile).filter(
+        CDASPayrollProfile.company_id == company_id,
+        func.lower(func.trim(CDASPayrollProfile.employee_number)) == number,
+    ).all()
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == company_id,
+        func.lower(func.trim(BorrowerEmploymentProfile.employee_number)) == number,
+    ).all()
+    ids = {row.borrower_id for row in payroll + employment}
+    if not ids:
+        return "employee_not_registered"
+    if ids != {selection.borrower_id}:
+        return "identity_conflict"
+    borrower = db.query(Borrower).filter(Borrower.id == selection.borrower_id).first()
+    if borrower is None:
+        return "borrower_not_found"
+    person = db.query(Person).filter(Person.user_id == borrower.user_id).first()
+    if person is None or not person.first_name or not person.last_name or not person.date_of_birth:
+        return "identity_incomplete"
+    return "ready_for_live_verification"
+
+
+@router.post("/bulk/preflight")
+def preflight_bulk_government_affordability(
+    payload: BulkAffordabilityPreflightRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Safely preview a bounded group of candidates, never call CDAS."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    errors = validate_bulk_selection(payload.employees)
+    if errors:
+        raise HTTPException(status_code=422, detail={"selection_errors": errors})
+    policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == context.company_id,
+        OriginationPolicy.is_active.is_(True),
+    ).first()
+    if policy is None:
+        raise HTTPException(status_code=409, detail="Active company affordability policy required")
+    environment = _company_cdas_environment(db, context.company_id)
+    budget = get_cdas_request_budget_status(
+        db, company_id=context.company_id, environment=environment,
+    )
+    candidates = []
+    for selection in payload.employees:
+        status = _bulk_candidate_status(
+            db, company_id=context.company_id, selection=selection,
+        )
+        candidates.append({
+            "borrower_id": str(selection.borrower_id),
+            "employee_number": selection.employee_number.strip(),
+            "status": status,
+            "proposed_monthly_installment": str(selection.proposed_monthly_installment),
+        })
+    ready_count = sum(row["status"] == "ready_for_live_verification" for row in candidates)
+    # Lower-bound estimate: employee detail + capacity check. Authentication,
+    # retries and overhead may consume additional daily request credits.
+    estimated_min_requests = 2 * ready_count
+    remaining = int(budget["remaining"])
+    return {
+        "ok": True,
+        "mode": "preflight_only",
+        "execution_enabled": False,
+        "batch_created": False,
+        "provider_contacted": False,
+        "candidate_count": len(candidates),
+        "ready_count": ready_count,
+        "review_count": len(candidates) - ready_count,
+        "minimum_estimated_provider_requests": estimated_min_requests,
+        "budget_remaining_at_preflight": remaining,
+        "budget_preflight_sufficient": estimated_min_requests < remaining,
+        "request_budget_warning": (
+            "Estimate excludes authentication, retries and other concurrent CDAS activity; "
+            "the provider budget must be rechecked when execution starts."
+        ),
+        "candidates": candidates,
+    }
