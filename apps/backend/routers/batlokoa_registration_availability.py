@@ -62,3 +62,84 @@ def get_registration_availability(
     context: TenantContext = Depends(get_tenant_context),
 ) -> RegistrationAvailabilityRead:
     return registration_availability_for_staff(context)
+
+
+class RegistrationFormSectionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    title: str
+    fields: tuple[str, ...]
+    deferred_fields: tuple[str, ...] = ()
+
+
+class RegistrationFormRequirementsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: int = 1
+    registration_available: bool = False
+    submit_allowed: bool = False
+    client_data_requested: bool = False
+    sections: tuple[RegistrationFormSectionRead, ...]
+
+
+# These are keys only, never borrower values. All full-capture fields must
+# appear in exactly one section. A deferred field must not be rendered as
+# a data-entry control or submitted to the protected new-only writer.
+_FORM_SECTIONS = (
+    RegistrationFormSectionRead(
+        id="identity", title="Identity and contact",
+        fields=(
+            "branch_id", "first_name", "middle_name", "last_name", "gender",
+            "date_of_birth", "national_id", "passport_number", "nationality",
+            "marital_status", "phone", "email", "temporary_password",
+        ),
+        deferred_fields=("email", "temporary_password"),
+    ),
+    RegistrationFormSectionRead(
+        id="residence", title="Residence",
+        fields=("district", "town_or_village", "physical_address"),
+    ),
+    RegistrationFormSectionRead(
+        id="employment", title="Employment and income",
+        fields=(
+            "employment_status", "employment_type", "employer_name",
+            "employer_group_id", "new_employer_group",
+            "cdas_employee_number", "income_day", "job_title",
+            "monthly_income", "salary_date",
+        ),
+        deferred_fields=(
+            "employer_group_id", "new_employer_group", "cdas_employee_number",
+        ),
+    ),
+    RegistrationFormSectionRead(
+        id="obligations", title="Banking and other obligations",
+        fields=(
+            "has_existing_loans", "existing_loan_total",
+            "external_debts", "bank_account",
+        ),
+    ),
+    RegistrationFormSectionRead(
+        id="consent", title="Client consent",
+        fields=("consent_to_share_profile", "consent_to_credit_checks"),
+    ),
+)
+
+
+def registration_form_requirements_for_staff(
+    context: TenantContext,
+) -> RegistrationFormRequirementsRead:
+    """Return static field metadata after the same staff access check.
+
+    The form is informational and submit-disabled. No source accepts customer
+    values; this cannot be used to register a borrower.
+    """
+    registration_availability_for_staff(context)
+    return RegistrationFormRequirementsRead(sections=_FORM_SECTIONS)
+
+
+@router.get("/form-requirements", response_model=RegistrationFormRequirementsRead)
+def get_registration_form_requirements(
+    context: TenantContext = Depends(get_tenant_context),
+) -> RegistrationFormRequirementsRead:
+    return registration_form_requirements_for_staff(context)
