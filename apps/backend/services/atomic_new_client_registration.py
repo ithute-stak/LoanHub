@@ -16,7 +16,8 @@ import re
 import secrets
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import text, select
+from database.models.company_client import CompanyBorrowerAccount
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
@@ -182,7 +183,17 @@ def create_new_client_atomically(
         reservation = reserve_new_client_registration(db, intent=intent)
         if reservation.existing:
             if reservation.status == "completed" and reservation.client_account_id:
-                return AtomicRegistrationResult(reservation.client_account_id, True)
+                # Replay must resolve to an existing account in the same
+                # company, branch and actor scope, never trust an ID alone.
+                prior = db.execute(select(CompanyBorrowerAccount.id).where(
+                    CompanyBorrowerAccount.id == reservation.client_account_id,
+                    CompanyBorrowerAccount.company_id == intent.company_id,
+                    CompanyBorrowerAccount.branch_id == intent.branch_id,
+                    CompanyBorrowerAccount.opened_by_user_id == intent.employee_id,
+                )).scalar_one_or_none()
+                if prior is None:
+                    raise AtomicRegistrationUnavailable("Completed request account scope mismatch")
+                return AtomicRegistrationResult(prior, True)
             raise AtomicRegistrationUnavailable("Registration request not independently finalized")
 
         if (
