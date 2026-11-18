@@ -91,3 +91,112 @@ def list_government_employee_candidates(
     return {"complete": True, "total": len(entries), "page": page,
             "page_size": page_size, "items": entries[start:start + page_size],
             "note": "Employee-number candidates only; no live CDAS verification performed."}
+
+
+# Phase 2: preview an authorised, borrower-bound CDAS identity check.
+# Do not mark profiles verified until a separate reviewed action is implemented.
+from datetime import date
+from uuid import UUID
+from fastapi import HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+from database.models.borrower import Borrower
+from database.models.person import Person
+from integrations.cdas import CdasError
+from services.cdas_config_service import get_company_cdas_client
+from routers.cdas_api import (
+    _prepare_cdas_business_operation,
+    _record_cdas_business_operation,
+    _cdas_http_error,
+)
+
+
+class EmployeeVerificationPreviewRequest(BaseModel):
+    borrower_id: UUID
+    employee_number: str = Field(min_length=1, max_length=100)
+    authorisation_confirmed: bool = False
+
+
+def _normalise_identity(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def compare_employee_identity(*, person: Person, employee: dict, expected_number: str) -> list[str]:
+    """Fail closed on missing or mismatched authoritative name/DOB fields."""
+    mismatches = []
+    if _normalise_identity(employee.get("EmployeeNo")) != _normalise_identity(expected_number):
+        mismatches.append("employee_number_mismatch")
+    if not person.first_name or _normalise_identity(employee.get("Name")) != _normalise_identity(person.first_name):
+        mismatches.append("given_name_mismatch_or_missing")
+    if not person.last_name or _normalise_identity(employee.get("Surname")) != _normalise_identity(person.last_name):
+        mismatches.append("surname_mismatch_or_missing")
+    dob = str(employee.get("DOB") or "")[:10]
+    if not person.date_of_birth or dob != person.date_of_birth.isoformat():
+        mismatches.append("date_of_birth_mismatch_or_missing")
+    if employee.get("TerminationDate"):
+        mismatches.append("employment_terminated")
+    return mismatches
+
+
+@router.post("/verification-preview")
+async def preview_government_employee_verification(
+    payload: EmployeeVerificationPreviewRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Check CDAS identity for an unambiguous company borrower without writing profile data."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    if not payload.authorisation_confirmed:
+        raise HTTPException(status_code=409, detail="Confirm the lawful authority for this employee verification")
+    number = payload.employee_number.strip()
+    if not number:
+        raise HTTPException(status_code=422, detail="Employee number is required")
+
+    number_expr = func.lower(func.trim(CDASPayrollProfile.employee_number))
+    employment_expr = func.lower(func.trim(BorrowerEmploymentProfile.employee_number))
+    payroll = db.query(CDASPayrollProfile).filter(
+        CDASPayrollProfile.company_id == context.company_id,
+        number_expr == number.casefold(),
+    ).all()
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == context.company_id,
+        employment_expr == number.casefold(),
+    ).all()
+    linked_ids = {row.borrower_id for row in payroll + employment}
+    if linked_ids != {payload.borrower_id}:
+        raise HTTPException(status_code=409, detail="Missing or conflicting employee-to-borrower mapping; manual review required")
+
+    borrower = db.query(Borrower).filter(Borrower.id == payload.borrower_id).first()
+    if borrower is None:
+        raise HTTPException(status_code=404, detail="Borrower not found")
+    person = db.query(Person).filter(Person.user_id == borrower.user_id).first()
+    if person is None:
+        raise HTTPException(status_code=409, detail="Borrower identity details are incomplete")
+
+    # Only a non-mutating provider lookup is permitted here.
+    environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="employee_verification"
+    )
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        employee = await client.get_employee_details(number)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+
+    errors = compare_employee_identity(person=person, employee=employee, expected_number=number)
+    _record_cdas_business_operation(
+        db, context=context, environment=environment,
+        operation_type="employee_verification", source_reference=str(payload.borrower_id),
+    )
+    return {
+        "ok": True,
+        "borrower_id": str(payload.borrower_id),
+        "identity_match": not errors,
+        "review_required": bool(errors),
+        "review_reason_codes": errors,
+        "source": "CDAS employee details",
+        "payroll_profile_updated": False,
+        "affordability_checked": False,
+        "deduction_changed": False,
+    }
