@@ -55,6 +55,29 @@ def prepare_new_only_registration_intent(
     A keyed HMAC is used to avoid exposing a raw identity/PII hash. This
     fingerprint is not itself a unique constraint or an idempotency store.
     """
+    # Generic tenant role checks exempt platform administrators and may accept
+    # a branchless membership. New-client registration must never rely on
+    # either exemption: this operation requires actual active company staff.
+    if (
+        not isinstance(context, TenantContext)
+        or context.is_platform_admin
+        or context.staff is None
+        or context.staff.is_active is not True
+        or context.user.is_active is not True
+        or context.staff.company_id != context.company_id
+        or context.staff.user_id != context.user.id
+        or context.staff.role not in LENDING_ROLES
+    ):
+        raise ValueError("Active verified lending staff membership required")
+    # Owners/admins can serve multiple branches, but their target branch
+    # must separately be verified as active and company-owned in the DB.
+    # Other lending staff must have a concrete assigned branch.
+    from core.access_control import COMPANY_MANAGEMENT_ROLES
+    if (
+        context.staff.role not in COMPANY_MANAGEMENT_ROLES
+        and (context.branch_id is None or context.staff.branch_id != context.branch_id)
+    ):
+        raise ValueError("Explicit assigned staff branch required")
     require_tenant_roles(context, LENDING_ROLES)
     if not isinstance(context.company_id, UUID) or not isinstance(context.user.id, UUID):
         raise ValueError("Authoritative LoanHub employee/company required")
