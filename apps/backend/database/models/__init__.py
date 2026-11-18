@@ -329,3 +329,5 @@ from database.models.wacom_execution_authorization import WacomExecutionAuthoriz
 from database.models.wacom_execution_receipt import WacomExecutionReceipt
 
 from database.models.wacom_execution_ceremony_challenge import WacomExecutionCeremonyChallenge
+
+from database.models.cdas_affordability_batch import CdasAffordabilityBatch, CdasAffordabilityBatchItem
