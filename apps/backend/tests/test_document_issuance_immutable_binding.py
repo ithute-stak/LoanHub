@@ -23,7 +23,7 @@ def _fixture():
     store = Mock()
     store.bucket = "approved-official-bucket"
     store._key.return_value = f"official/{tenant}/{PUBLIC_ID}.pdf"
-    store.read_exact_version.return_value = PDF
+    # Mock blocks names starting with assert_ unless explicitly assigned.\n    store.assert_version_retention = Mock()\n    store.read_exact_version.return_value = PDF
     locked = LockedPdfObject(
         bucket=store.bucket,
         key=store._key.return_value,
