@@ -49,7 +49,7 @@ def test_secure_bucket_passes_using_only_read_only_api_calls():
     assert result.issues == ()
     assert not any(
         name.startswith(("put_", "delete_", "create_", "upload_"))
-        for name in client.method_calls
+        for name, _, _ in client.method_calls
     )
     assert len(client.method_calls) == 5
 
