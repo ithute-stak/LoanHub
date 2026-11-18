@@ -20,6 +20,7 @@ from services.document_issuance_immutable_binding import bind_locked_pdf_to_issu
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_immutable_staging import StagedLockedCandidate
 from services.document_issuance_integrity import pdf_fingerprint
+from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,10 @@ def register_locked_staged_document(
     source_digest = pdf_fingerprint(source_pdf)
     if staged.source_sha256_hex != source_digest:
         raise ValueError("Source PDF differs from the originally scanned staged source")
+    if staged.stamp_snapshot_sha256_hex != stamp_snapshot_sha256(
+        company=context.company, authenticated_tenant_id=context.company_id,
+    ):
+        raise ValueError("Company stamp fields changed after locked PDF staging")
     final_bytes = staged.candidate.pdf_bytes
     final_digest = pdf_fingerprint(final_bytes)
     if final_digest != staged.candidate.sha256_hex:
