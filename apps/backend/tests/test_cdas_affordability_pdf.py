@@ -42,3 +42,66 @@ def test_unsafe_report_content_is_escaped(monkeypatch):
     }
     pdf = build_government_affordability_pdf(db=None, company=None, snapshot=data)
     assert pdf.startswith(b"%PDF-")
+
+
+@pytest.mark.asyncio
+async def test_identity_mismatch_never_creates_assessment_record(monkeypatch):
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from routers import cdas_government_employees as module
+    async def mismatch(*args, **kwargs):
+        return {"ok": False, "status": "identity_review_required", "affordability_checked": False}
+    monkeypatch.setattr(module, "preview_government_employee_affordability", mismatch)
+    monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    class NoWriteDB:
+        def add(self, *args):
+            raise AssertionError("Identity mismatch cannot save assessment")
+        def commit(self):
+            raise AssertionError("Identity mismatch cannot commit")
+    payload = module.GovernmentEmployeeAffordabilityRequest(
+        borrower_id=uuid4(), employee_number="EMP-100", authorisation_confirmed=True,
+        proposed_monthly_installment="100.00",
+    )
+    context = SimpleNamespace(company_id=uuid4(), user=SimpleNamespace(id=uuid4()),
+                              branch_id=None, role=SimpleNamespace(value="company_admin"))
+    result = await module.create_government_affordability_record(
+        payload=payload, context=context, db=NoWriteDB(),
+    )
+    assert result["status"] == "identity_review_required"
+
+
+def test_pdf_download_never_calls_cdas(monkeypatch):
+    from uuid import uuid4
+    from types import SimpleNamespace
+    from routers import cdas_government_employees as module
+    monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    data = {
+        "reference": "CDAS-AFF-TEST-001", "employee_number": "EMP-100",
+        "borrower_id": str(uuid4()), "assessed_at": "2026-11-18T14:00:00+00:00",
+        "cdas_capacity": "200.00", "proposed_installment": "100.00",
+        "maximum_affordable_installment": "150.00", "decision": "pass",
+        "policy_version": 1,
+    }
+    stored_id = uuid4()
+    record = SimpleNamespace(id=stored_id, record_id=data["borrower_id"], event_data={"snapshot": data})
+    # The production model stores UUID, as must this simulated record.
+    from uuid import UUID
+    record.record_id = UUID(data["borrower_id"])
+    class Query:
+        def filter(self, *args):
+            return self
+        def first(self):
+            return record
+    class DB:
+        def query(self, model):
+            return Query()
+    monkeypatch.setattr(module, "build_government_affordability_pdf",
+                        lambda **kwargs: b"%PDF-1.4\\nSNAPSHOT")
+    ctx = SimpleNamespace(company_id=uuid4(), company=object(), staff=object(),
+                          is_platform_admin=False)
+    response = module.download_government_affordability_report(
+        record_id=stored_id, context=ctx, db=DB(),
+    )
+    assert response.media_type == "application/pdf"
+    assert response.body.startswith(b"%PDF-")
+    assert response.headers["cache-control"] == "private, no-store"
