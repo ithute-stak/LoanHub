@@ -169,6 +169,24 @@ def test_replay_mismatched_account_scope_fails_closed():
     finalize.assert_not_called()
 
 
+def test_unrecognized_or_inactive_branch_blocks_registration_before_indexes():
+    db = MagicMock()
+    db.in_transaction.return_value = False
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    p = mocks(db)
+    with p[0], p[1] as indexes, p[2] as guard, p[3] as reserve, \\
+         p[4], p[5] as stage, p[6]:
+        with pytest.raises(AtomicRegistrationUnavailable, match="branch"):
+            create_new_client_atomically(
+                db, context=staff(), payload=candidate(),
+                idempotency_key="synthetic-unique-key-0001",
+                fingerprint_secret=b"x" * 32)
+    indexes.assert_not_called()
+    guard.assert_not_called()
+    reserve.assert_not_called()
+    stage.assert_not_called()
+
+
 def test_missing_indexes_never_leads_to_any_registration():
     db = MagicMock()
     db.in_transaction.return_value = False
