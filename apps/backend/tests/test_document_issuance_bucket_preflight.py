@@ -93,8 +93,7 @@ def test_unreadable_bucket_security_configuration_fails_closed(method):
     getattr(client, method).side_effect = PermissionError("AccessDenied")
     result = _check(client)
     assert not result.ready
-    assert f"{method.removeprefix('get_').replace('bucket_', '')}:inspection_failed" not in result.issues or result.issues
-    assert "inspection_failed" in " ".join(result.issues)
+    assert any(issue.endswith(":inspection_failed") for issue in result.issues)
 
 
 def test_invalid_bucket_identity_rejected_before_any_provider_access():
