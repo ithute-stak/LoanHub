@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
+from urllib.parse import urlsplit
 
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
 from database.config.config import settings
@@ -69,6 +70,20 @@ def stage_locked_document_candidate(
             or not all(c.isascii() and (c.isalnum() or c in "-_")
                        for c in candidate.public_id)):
         raise ValueError("Invalid official document public identity")
+    # Never retain a document with a QR locator redirected to an attacker
+    # or bound to a different public ID than the stored object key.
+    origin = urlsplit(trusted_verification_origin) if isinstance(
+        trusted_verification_origin, str
+    ) else None
+    if (origin is None or origin.scheme != "https" or not origin.hostname
+            or origin.username or origin.password or origin.query or origin.fragment
+            or origin.path not in ("", "/")):
+        raise ValueError("Trusted HTTPS verification origin required")
+    expected_url = (
+        f"{trusted_verification_origin.rstrip('/')}/verify/{candidate.public_id}"
+    )
+    if candidate.verification_url != expected_url:
+        raise ValueError("Rendered QR locator differs from approved verification identity")
     if not isinstance(candidate.pdf_bytes, bytes) or not candidate.pdf_bytes.startswith(b"%PDF-"):
         raise ValueError("Rendered official document is not a PDF")
     if pdf_fingerprint(candidate.pdf_bytes) != candidate.sha256_hex:
