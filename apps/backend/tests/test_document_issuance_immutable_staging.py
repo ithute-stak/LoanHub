@@ -194,3 +194,42 @@ def test_untrusted_qr_locator_rejected_before_any_immutable_upload(locator):
         with pytest.raises(ValueError, match="QR locator"):
             _stage(context, store)
     store.put_locked_pdf.assert_not_called()
+
+
+def test_incomplete_stamp_is_rejected_before_rendering_or_locking():
+    context, store = _context(), _store()
+    context.company.email = ""
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.prepare_stamped_document_candidate") as render, \
+         patch("services.document_issuance_immutable_staging.scan_upload") as scan:
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(ValueError, match="company email"):
+            _stage(context, store)
+    render.assert_not_called()
+    scan.assert_not_called()
+    store.put_locked_pdf.assert_not_called()
+
+
+def test_stamp_mutation_during_pdf_rendering_prevents_locked_upload():
+    context, store = _context(), _store()
+
+    def render(**kwargs):
+        context.company.name = "Unexpected Updated Company"
+        return SimpleNamespace(
+            tenant_id=context.company_id, pdf_bytes=PDF,
+            public_id="valid-public-id-12345",
+            sha256_hex=sha256(PDF).hexdigest(),
+            verification_url="https://verify.example.test/verify/valid-public-id-12345",
+        )
+
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.scan_upload", return_value="clean") as scan, \
+         patch("services.document_issuance_immutable_staging.prepare_stamped_document_candidate",
+               side_effect=render):
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(PermissionError, match="changed while rendering"):
+            _stage(context, store)
+    assert scan.call_count == 1
+    store.put_locked_pdf.assert_not_called()
