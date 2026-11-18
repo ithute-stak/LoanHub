@@ -245,3 +245,30 @@ def test_concurrent_same_identity_no_second_account(real_models_sandbox):
     }
     assert sorted(r.existing for r in results) == [False, True]
     assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+
+def test_configured_company_opening_fee_is_preserved(real_models_sandbox):
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_account_opening_fee_configurations
+                (id, company_id, name, fee_type, flat_amount, percentage,
+                 currency, required_before_activation, allowed_providers, is_active)
+            VALUES (:id, :company, 'Synthetic account fee', 'flat', 35.00, 0,
+                    'LSL', true, '[]'::jsonb, true)
+        """), {"id": uuid4(), "company": company})
+    result = invoke(
+        engine, schema, staff(company, branch, employee),
+        applicant(branch), "synthetic-registration-fee-000001")
+    assert result.existing is False
+    with engine.connect() as conn:
+        fee = conn.execute(text(f"""
+            SELECT opening_fee_amount, opening_fee_currency,
+                   opening_fee_status, status
+            FROM {schema}.company_borrower_accounts
+        """)).one()
+    assert fee[0] == Decimal("35.00")
+    assert fee[1] == "LSL"
+    assert fee[2] == "accrued"
+    assert fee[3] == "active"
