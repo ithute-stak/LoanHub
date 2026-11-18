@@ -17,7 +17,7 @@ PUBLIC_ID = "secure-public-id-1234567"
 def _fixtures():
     tenant = uuid4()
     context = SimpleNamespace(
-        company_id=tenant, company=SimpleNamespace(id=tenant),
+        company_id=tenant, company=SimpleNamespace(\n            id=tenant, name="Example Tenant (Pty) Ltd",\n            address="Maseru", phone="+266 50000000",\n            email="tenant@example.test", registration_number="REG-1",\n            license_number="LIC-1",\n        ),
         user=SimpleNamespace(id=uuid4()),
         staff=SimpleNamespace(role=UserRole.COMPANY_ADMIN),
         is_platform_admin=False,
@@ -140,6 +140,16 @@ def test_source_pdf_changed_after_scanning_is_rejected_before_db_access():
     db, context, store, staged = _fixtures()
     staged.source_sha256_hex = "0" * 64
     with pytest.raises(ValueError, match="originally scanned"):
+        _register(db, context, store, staged)
+    db.query.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_company_stamp_changes_between_staging_and_registration_rejected():
+    db, context, store, staged = _fixtures()
+    context.company.name = "Unexpected Replacement Company"
+    with pytest.raises(ValueError, match="Company stamp fields changed"):
         _register(db, context, store, staged)
     db.query.assert_not_called()
     db.add.assert_not_called()
