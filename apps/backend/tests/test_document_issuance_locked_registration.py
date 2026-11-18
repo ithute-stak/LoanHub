@@ -30,7 +30,7 @@ def _fixtures():
         sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),
     )
     locked = SimpleNamespace(version_id="v-locked-1")
-    staged = SimpleNamespace(candidate=candidate, locked=locked)
+    staged = SimpleNamespace(\n        candidate=candidate, locked=locked,\n        source_sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),\n    )
     db = Mock()
     db.query.return_value.filter.return_value.one_or_none.return_value = None
     return db, context, store, staged
@@ -130,4 +130,14 @@ def test_mutable_adapter_denied():
     db, context, _, staged = _fixtures()
     with pytest.raises(PermissionError, match="Object Lock"):
         _register(db, context, SimpleNamespace(provider="s3"), staged)
+    db.commit.assert_not_called()
+
+
+def test_source_pdf_changed_after_scanning_is_rejected_before_db_access():
+    db, context, store, staged = _fixtures()
+    staged.source_sha256_hex = "0" * 64
+    with pytest.raises(ValueError, match="originally scanned"):
+        _register(db, context, store, staged)
+    db.query.assert_not_called()
+    db.add.assert_not_called()
     db.commit.assert_not_called()
