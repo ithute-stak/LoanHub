@@ -20,6 +20,7 @@ from services.document_issuance_immutable_s3 import (
     LockedPdfObject, S3ObjectLockPdfStore,
 )
 from services.document_issuance_integrity import pdf_fingerprint
+from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 from services.malware_scan_service import scan_upload
 from services.object_storage_service import StorageUnavailableError
 
@@ -29,6 +30,7 @@ class StagedLockedCandidate:
     candidate: PreparedDocumentCandidate
     locked: LockedPdfObject
     source_sha256_hex: str
+    stamp_snapshot_sha256_hex: str
 
 
 def stage_locked_document_candidate(
@@ -104,4 +106,7 @@ def stage_locked_document_candidate(
     return StagedLockedCandidate(
         candidate=candidate, locked=locked,
         source_sha256_hex=pdf_fingerprint(source_pdf),
+        stamp_snapshot_sha256_hex=stamp_snapshot_sha256(
+            company=context.company, authenticated_tenant_id=context.company_id,
+        ),
     )
