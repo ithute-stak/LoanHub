@@ -31,9 +31,15 @@ def quote_from_approved_schedule(
     rows = list(schedule_rows)
     if not rows:
         raise ValueError("An approved repayment schedule is required")
+    if any(getattr(row, 'is_superseded', False) for row in rows):
+        raise ValueError('Superseded repayment schedules cannot be used for settlement')
     dates = [row.due_date for row in rows]
     if any(not isinstance(d, date) for d in dates):
         raise ValueError("Schedule due dates must be dates")
+    if dates != sorted(set(dates)):
+        raise ValueError("Repayment due dates must be unique and ascending")
+    if any(Decimal(str(row.total_due)) < 0 for row in rows):
+        raise ValueError("Repayment amounts cannot be negative")
     total = sum((Decimal(str(row.total_due)) for row in rows), Decimal("0"))
     return quote_principal_x(
         principal=Decimal(str(principal)),
