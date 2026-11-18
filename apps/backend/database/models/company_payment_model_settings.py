@@ -1,5 +1,5 @@
 """Dedicated company payment-model settings; independent of loan calculator."""
-from sqlalchemy import Boolean, Column, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
 from database.base import Base
@@ -9,6 +9,9 @@ class CompanyPaymentModelSettings(Base):
     __tablename__ = "company_payment_model_settings"
     __table_args__ = (
         UniqueConstraint("company_id", name="uq_company_payment_model_settings_company"),
+        CheckConstraint("default_model IN ('existing', 'principal_x')", name="ck_company_payment_model_allowed"),
+        CheckConstraint("NOT enable_live_collections OR allow_new_loans", name="ck_company_payment_model_live_requires_opt_in"),
+        CheckConstraint("NOT enable_live_collections OR default_model = 'principal_x'", name="ck_company_payment_model_live_requires_default"),
     )
 
     company_id = Column(
