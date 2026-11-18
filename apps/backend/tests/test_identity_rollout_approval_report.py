@@ -30,7 +30,10 @@ def scan(*, collisions=(0, 0, 0, 0), blanks=(0, 0, 0, 0)):
 def test_clean_report_is_never_permission_to_migrate_or_register():
     report = render_approval_report(
         scan(), database_role="identity_audit_reader",
-        database_name="loanhub_sandbox")
+        database_name="loanhub_sandbox",
+        legacy_audit=SimpleNamespace(national_id_overlap_groups=0,
+                                     passport_overlap_groups=0,
+                                     repeated_legacy_passport_groups=0))
     assert report["operator_review_candidate"]
     assert not report["safe_to_execute"]
     assert not report["production_approved"]
@@ -99,3 +102,26 @@ def test_report_output_refuses_overwrite_without_db_writes(tmp_path, monkeypatch
                    database_name="loanhub_sandbox")):
         assert main(["--output", str(destination)]) == 2
     assert destination.read_text() == "existing"
+
+
+def test_legacy_intersections_block_operator_review_even_with_clean_main_indexes():
+    legacy = SimpleNamespace(
+        national_id_overlap_groups=0,
+        passport_overlap_groups=2,
+        repeated_legacy_passport_groups=1,
+    )
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox", legacy_audit=legacy)
+    assert report["legacy_cross_source_audit_complete"] is True
+    assert report["legacy_cross_source_counts"]["passport_overlap_groups"] == 2
+    assert report["operator_review_candidate"] is False
+    assert report["production_approved"] is False
+
+
+def test_legacy_audit_missing_blocks_candidate_review():
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox")
+    assert report["legacy_cross_source_audit_complete"] is False
+    assert report["operator_review_candidate"] is False
