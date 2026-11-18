@@ -49,7 +49,25 @@ def lookup_approved_stamp_from_database(
                      AND p.tablename='document_stamp_approvals'
                      AND p.policyname='document_stamp_approvals_tenant_select'
                      AND p.cmd='SELECT'
-               ) AS tenant_policy
+               ) AS tenant_policy,
+               EXISTS (
+                   SELECT 1 FROM pg_class rc JOIN pg_namespace rn ON rn.oid=rc.relnamespace
+                   WHERE rn.nspname='public' AND rc.relkind IN ('r','p')
+                     AND rc.relname='document_stamp_approval_revocations'
+                     AND rc.relrowsecurity
+                     AND pg_get_userbyid(rc.relowner) <> current_user
+                     AND has_table_privilege(current_user,rc.oid,'SELECT')
+                     AND NOT has_table_privilege(current_user,rc.oid,'INSERT')
+                     AND NOT has_table_privilege(current_user,rc.oid,'UPDATE')
+                     AND NOT has_table_privilege(current_user,rc.oid,'DELETE')
+                     AND EXISTS (
+                         SELECT 1 FROM pg_policies p
+                         WHERE p.schemaname='public'
+                           AND p.tablename='document_stamp_approval_revocations'
+                           AND p.policyname='document_stamp_approval_revocations_tenant_select'
+                           AND p.cmd='SELECT'
+                     )
+               ) AS revocation_registry_ready
         FROM pg_class c
         JOIN pg_namespace n ON n.oid=c.relnamespace
         JOIN pg_roles r ON r.rolname=current_user
@@ -61,13 +79,14 @@ def lookup_approved_stamp_from_database(
             or security["bypass_rls"] or not security["can_select"]
             or security["can_insert"] or security["can_update"]
             or security["can_delete"] or not security["tenant_policy"]
+            or not security["revocation_registry_ready"]
             or security["actor_scope"] != "tenant"
             or security["context_company_id"] != str(authenticated_tenant_id)
             or security["context_user_id"] != str(issuer_user_id)):
         raise PermissionError("Stamp approval registry SQL security is not ready")
 
     row = db.execute(text("""
-        SELECT company_id, configuration_version, snapshot_sha256_hex,
+        SELECT id, company_id, configuration_version, snapshot_sha256_hex,
                approved_by_user_id, approved_at, expires_at, status
         FROM document_stamp_approvals
         WHERE company_id=:company_id
@@ -78,6 +97,16 @@ def lookup_approved_stamp_from_database(
     }).mappings().one_or_none()
     if not row:
         raise PermissionError("No authoritative stamp approval for this version")
+    if not isinstance(row["id"], UUID):
+        raise PermissionError("Authoritative approval record ID required")
+    revoked = db.execute(text("""
+        SELECT id FROM document_stamp_approval_revocations
+        WHERE company_id=:company_id AND approval_id=:approval_id
+        LIMIT 1
+    """), {"company_id": str(authenticated_tenant_id),
+           "approval_id": str(row["id"])}).mappings().one_or_none()
+    if revoked:
+        raise PermissionError("Company stamp approval has been revoked")
     approval = ApprovedCompanyStamp(
         tenant_id=row["company_id"],
         configuration_version=row["configuration_version"],
