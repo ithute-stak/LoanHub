@@ -76,6 +76,16 @@ def real_models_sandbox():
                     ADD CONSTRAINT uq_new_client_registration_company_idempotency
                     UNIQUE (company_id, idempotency_key)
                 """))
+                # Branch table is intentionally structural only. Insert
+                # synthetic active branches before invoking the actual
+                # company/branch authorization lookup.
+                conn.execute(text(f"""
+                    CREATE TABLE {schema}.company_branches (
+                        id uuid PRIMARY KEY,
+                        company_id uuid NOT NULL,
+                        is_active boolean NOT NULL
+                    )
+                """))
                 for table, column, index_name in INDEXES:
                     conn.execute(text(f"""
                         CREATE UNIQUE INDEX {index_name}
@@ -102,9 +112,14 @@ def sandbox_session(engine, schema):
 def staff(company_id, branch_id, employee_id):
     user = User(id=employee_id, role=UserRole.LOAN_OFFICER,
                 phone="59998888", password_hash="x" * 60)
+    user.is_active = True
     return TenantContext(
         user=user,
-        staff=SimpleNamespace(role=UserRole.LOAN_OFFICER),
+        staff=SimpleNamespace(
+            user_id=employee_id, company_id=company_id,
+            branch_id=branch_id, role=UserRole.LOAN_OFFICER,
+            is_active=True,
+        ),
         company=None, company_id=company_id,
         branch_id=branch_id, is_platform_admin=False,
     )
@@ -132,6 +147,14 @@ def totals(engine, schema):
 
 
 def invoke(engine, schema, context, payload, key):
+    # The caller's selected branch must exist as an active row in this
+    # synthetic schema before the registered user can create an account.
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+            ON CONFLICT (id) DO NOTHING
+        """), {"branch": context.branch_id, "company": context.company_id})
     with sandbox_session(engine, schema) as conn:
         with Session(bind=conn, expire_on_commit=False) as session:
             return create_new_client_atomically(
