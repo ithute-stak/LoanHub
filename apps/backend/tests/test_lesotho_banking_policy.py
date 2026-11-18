@@ -139,3 +139,25 @@ def test_nedbank_fallback_accepts_unreserved_prefix_and_rejects_other_banks():
 def test_registration_rejects_short_account_instead_of_changing_identifier():
     with pytest.raises(ValueError, match="exactly 13 digits"):
         validate_account_number_for_bank("STD", "9012345678")
+
+
+@pytest.mark.parametrize("first_two", ["20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "40", "50", "70", "80", "99"])
+def test_nedbank_registration_accepts_unreserved_two_digit_prefixes(first_two):
+    number = first_two + "123456789"
+    assert validate_account_number_for_bank("NB", number) == number
+    account = BankAccountInput(account_holder="Test Borrower", bank_name="NB", account_number=number)
+    assert account.account_number == number
+    assert account.bank_name == "NB"
+    assert account.branch_code == "390161"
+
+
+def test_nedbank_registration_preserves_leading_zeroes():
+    number = "00123456789"
+    account = BankAccountInput(account_holder="Test Borrower", bank_name="NB", account_number=number)
+    assert account.account_number == number
+
+
+@pytest.mark.parametrize("number", ["61234567890", "90123456789", "10123456789"])
+def test_nedbank_registration_rejects_reserved_bank_prefixes(number):
+    with pytest.raises(ValueError, match="Account prefix belongs to"):
+        validate_account_number_for_bank("NB", number)
