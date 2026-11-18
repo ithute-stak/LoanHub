@@ -123,5 +123,10 @@ def test_wrong_version_bytes_never_count_as_staged():
 def test_mutable_storage_adapter_is_rejected():
     context = _context()
     store = SimpleNamespace(provider="s3")
-    with pytest.raises(PermissionError, match="S3 Object Lock"):
-        _stage(context, store)
+    # Satisfy the independent scanning preflight, so this test specifically
+    # verifies the immutable-adapter boundary instead of the scanner guard.
+    with patch("services.document_issuance_immutable_staging.settings") as settings:
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(PermissionError, match="S3 Object Lock"):
+            _stage(context, store)
