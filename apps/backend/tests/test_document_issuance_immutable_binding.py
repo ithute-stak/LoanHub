@@ -119,3 +119,32 @@ def test_future_retention_required():
     )
     with pytest.raises(ValueError, match="retention"):
         _bind(tenant, store, locked, issuance)
+
+
+def test_retention_rechecked_on_binding_and_on_verification():
+    tenant, store, locked, issuance = _fixture()
+    _bind(tenant, store, locked, issuance)
+    store.assert_version_retention.assert_called_once_with(locked)
+    verify_locked_pdf_for_issuance(
+        issuance=issuance, tenant_id=tenant, store=store,
+    )
+    assert store.assert_version_retention.call_count == 2
+    assert store.assert_version_retention.call_args.args[0].version_id == locked.version_id
+
+
+def test_provider_retention_failure_denies_new_binding_without_mutation():
+    tenant, store, locked, issuance = _fixture()
+    store.assert_version_retention.side_effect = StorageUnavailableError("retention not verified")
+    with pytest.raises(StorageUnavailableError, match="retention"):
+        _bind(tenant, store, locked, issuance)
+    assert issuance.immutable_version_id is None
+    store.read_exact_version.assert_not_called()
+
+
+def test_provider_retention_failure_denies_verification_without_fallback():
+    tenant, store, locked, issuance = _fixture()
+    _bind(tenant, store, locked, issuance)
+    store.assert_version_retention.side_effect = StorageUnavailableError("retention expired")
+    with pytest.raises(StorageUnavailableError, match="retention"):
+        verify_locked_pdf_for_issuance(issuance=issuance, tenant_id=tenant, store=store)
+    store.read_exact_version.assert_called_once()
