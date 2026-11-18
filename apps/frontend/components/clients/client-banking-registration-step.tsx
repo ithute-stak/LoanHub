@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { BankAccountInput } from "@/types/origination";
+import { bankAccountPrefixHint, bankAccountValidationMessage } from "@/lib/banking";
 
 
 type ClientBankingRegistrationStepProps = {
@@ -21,7 +22,7 @@ const BANK_OPTIONS = [
   { value: "FNB", label: "FNB — First National Bank Lesotho", branchCode: "280061", prefixes: "6" },
   { value: "PB", label: "PB — Lesotho PostBank", branchCode: "500100", prefixes: "10" },
   { value: "STD", label: "STD — Standard Lesotho Bank", branchCode: "060667", prefixes: "90" },
-  { value: "NB", label: "NB — Nedbank Lesotho", branchCode: "390161", prefixes: "11 or 12" },
+  { value: "NB", label: "NB — Nedbank Lesotho", branchCode: "390161", prefixes: "Any except 6, 90 or 10" },
 ] as const;
 
 function accountDigits(value: string | null | undefined): string {
@@ -86,6 +87,7 @@ export function ClientBankingRegistrationStep({
 }: ClientBankingRegistrationStepProps) {
   const enabled = Boolean(value);
   const selectedBank = BANK_OPTIONS.find((bank) => bank.value === value?.bank_name) ?? null;
+  const accountError = bankAccountValidationMessage(value?.bank_name, value?.account_number);
 
   function update<K extends keyof BankAccountInput>(key: K, nextValue: BankAccountInput[K]) {
     if (!value) return;
@@ -161,7 +163,7 @@ export function ClientBankingRegistrationStep({
               <BankField
                 label="Account number"
                 required
-                hint={selectedBank ? `Expected prefix: ${selectedBank.prefixes}` : "Select the bank to see the expected prefix."}
+                hint={bankAccountPrefixHint(value?.bank_name)}
                 className="md:col-span-1 xl:col-span-2"
               >
                 <Input
@@ -173,7 +175,8 @@ export function ClientBankingRegistrationStep({
                   spellCheck={false}
                   aria-describedby="bank-account-number-help"
                   value={formatAccountNumber(value.account_number)}
-                  placeholder={selectedBank ? `e.g. ${selectedBank.prefixes === "6" ? "6000 1234 5678" : `${selectedBank.prefixes.split(" ")[0]}00 1234 5678`}` : "0000 0000 0000"}
+                  placeholder={value.bank_name === "NB" ? "e.g. 2212 3456 789" : "Enter bank account number"}
+                  aria-invalid={Boolean(accountError)}
                   onChange={(event) => {
                     const digits = accountDigits(event.target.value);
                     update("account_number", digits || null);
@@ -182,6 +185,7 @@ export function ClientBankingRegistrationStep({
                 <p id="bank-account-number-help" className="mt-2 text-[11px] leading-4 text-muted-foreground">
                   Spaces are added automatically while typing. Only normalized digits are submitted to LoanHub.
                 </p>
+                {accountError ? <p role="alert" className="mt-2 text-xs font-semibold text-destructive">{accountError}</p> : null}
               </BankField>
 
               <BankField label="Account holder" required hint="Name registered against this account.">
