@@ -1,7 +1,7 @@
 """Durable new-only client registration idempotency attempts.
 
 Revision ID: a1r2i3d4e690
-Revises: z9n3p5q7r800
+Revises: b4c5d6e7f801
 Create Date: 2026-11-18
 
 No production application code activates registration in this revision.
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "a1r2i3d4e690"
-down_revision: Union[str, Sequence[str], None] = "z9n3p5q7r800"
+down_revision: Union[str, Sequence[str], None] = "b4c5d6e7f801"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
