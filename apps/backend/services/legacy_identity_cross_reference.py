@@ -33,7 +33,7 @@ _SQL = {
           JOIN people p ON lower(btrim(p.national_id)) = lower(btrim(lc.national_id))
           WHERE lc.national_id IS NOT NULL AND btrim(lc.national_id) <> ''
             AND p.national_id IS NOT NULL AND btrim(p.national_id) <> ''
-        ) overlaps
+        ) identity_matches
     """,
     "passport_overlap_groups": """
         SELECT count(*) FROM (
@@ -42,7 +42,7 @@ _SQL = {
           JOIN people p ON lower(btrim(p.passport_number)) = lower(btrim(lc.passport_number))
           WHERE lc.passport_number IS NOT NULL AND btrim(lc.passport_number) <> ''
             AND p.passport_number IS NOT NULL AND btrim(p.passport_number) <> ''
-        ) overlaps
+        ) identity_matches
     """,
     "repeated_legacy_passport_groups": """
         SELECT count(*) FROM (
