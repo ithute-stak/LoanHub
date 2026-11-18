@@ -48,6 +48,7 @@ def test_successful_staging_scans_twice_and_reads_exact_version():
     candidate = SimpleNamespace(
         tenant_id=context.company_id, pdf_bytes=PDF,
         public_id="valid-public-id-12345", sha256_hex=sha256(PDF).hexdigest(),
+        verification_url="https://verify.example.test/verify/valid-public-id-12345",
     )
     locked = SimpleNamespace(sha256_hex=candidate.sha256_hex)
     store.put_locked_pdf.return_value = locked
@@ -84,6 +85,7 @@ def test_failed_source_or_final_scan_prevents_storage(scan_results):
     candidate = SimpleNamespace(
         tenant_id=context.company_id, pdf_bytes=PDF,
         public_id="valid-public-id-12345", sha256_hex=sha256(PDF).hexdigest(),
+        verification_url="https://verify.example.test/verify/valid-public-id-12345",
     )
     with patch("services.document_issuance_immutable_staging.settings") as settings, \
          patch("services.document_issuance_immutable_staging.scan_upload", side_effect=scan_results), \
@@ -109,6 +111,7 @@ def test_wrong_version_bytes_never_count_as_staged():
     candidate = SimpleNamespace(
         tenant_id=context.company_id, pdf_bytes=PDF,
         public_id="valid-public-id-12345", sha256_hex=sha256(PDF).hexdigest(),
+        verification_url="https://verify.example.test/verify/valid-public-id-12345",
     )
     store.put_locked_pdf.return_value = SimpleNamespace(sha256_hex=candidate.sha256_hex)
     store.read_exact_version.return_value = PDF + b"altered"
@@ -146,6 +149,7 @@ def test_malformed_rendered_candidates_never_reach_immutable_storage(overrides, 
         tenant_id=context.company_id, pdf_bytes=PDF,
         public_id="valid-public-id-12345",
         sha256_hex=sha256(PDF).hexdigest(),
+        verification_url="https://verify.example.test/verify/valid-public-id-12345",
     )
     for field, value in overrides.items():
         setattr(candidate, field, value)
@@ -156,5 +160,31 @@ def test_malformed_rendered_candidates_never_reach_immutable_storage(overrides, 
         settings.MALWARE_SCAN_ENABLED = True
         settings.MALWARE_SCAN_FAIL_CLOSED = True
         with pytest.raises(ValueError, match=expected):
+            _stage(context, store)
+    store.put_locked_pdf.assert_not_called()
+
+
+@pytest.mark.parametrize("locator", [
+    "https://malicious.example.test/verify/valid-public-id-12345",
+    "http://verify.example.test/verify/valid-public-id-12345",
+    "https://verify.example.test/verify/another-public-id",
+    "https://verify.example.test/verify/valid-public-id-12345?redirect=1",
+])
+def test_untrusted_qr_locator_rejected_before_any_immutable_upload(locator):
+    context, store = _context(), _store()
+    candidate = SimpleNamespace(
+        tenant_id=context.company_id,
+        pdf_bytes=PDF,
+        public_id="valid-public-id-12345",
+        sha256_hex=sha256(PDF).hexdigest(),
+        verification_url=locator,
+    )
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.scan_upload", return_value="clean"), \
+         patch("services.document_issuance_immutable_staging.prepare_stamped_document_candidate",
+               return_value=candidate):
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(ValueError, match="QR locator"):
             _stage(context, store)
     store.put_locked_pdf.assert_not_called()
