@@ -19,7 +19,7 @@ def _context():
     company_id = uuid4()
     return SimpleNamespace(
         company_id=company_id,
-        company=SimpleNamespace(id=company_id),
+        company=SimpleNamespace(\n            id=company_id, name="Example Tenant (Pty) Ltd",\n            address="Maseru", phone="+266 50000000",\n            email="tenant@example.test", registration_number="REG-1",\n            license_number="LIC-1",\n        ),
         user=SimpleNamespace(id=uuid4()),
         staff=SimpleNamespace(role=UserRole.COMPANY_ADMIN),
         is_platform_admin=False,
@@ -60,7 +60,7 @@ def test_successful_staging_scans_twice_and_reads_exact_version():
         settings.MALWARE_SCAN_FAIL_CLOSED = True
         result = _stage(context, store)
     assert result.locked is locked
-    assert result.source_sha256_hex == __import__("hashlib").sha256(PDF).hexdigest()
+    assert result.source_sha256_hex == sha256(PDF).hexdigest()\n    assert len(result.stamp_snapshot_sha256_hex) == 64
     assert scan.call_count == 2
     store.put_locked_pdf.assert_called_once()
     store.read_exact_version.assert_called_once_with(locked)
