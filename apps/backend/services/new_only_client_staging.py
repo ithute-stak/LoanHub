@@ -132,7 +132,7 @@ def stage_new_only_client_rows(
         company_id=intent.company_id, branch_id=intent.branch_id,
         borrower_id=borrower.id, opened_by_user_id=intent.employee_id,
         account_reference=account_reference(),
-        source="assisted_registration", status="active",
+        source="new_only_registration", status="active",
         opening_fee_amount=Decimal("0"),
         opening_fee_currency="LSL", opening_fee_status="not_required",
     )
