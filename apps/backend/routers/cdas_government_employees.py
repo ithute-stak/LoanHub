@@ -200,3 +200,130 @@ async def preview_government_employee_verification(
         "affordability_checked": False,
         "deduction_changed": False,
     }
+
+
+# Phase 3: a fresh, read-only CDAS affordability decision for one borrower.
+# A previous preview must never be trusted as proof of an unchanged identity.
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from pydantic import field_validator
+from database.models.origination import OriginationPolicy
+from services.quick_loan_affordability_service import quick_loan_affordability
+
+
+class GovernmentEmployeeAffordabilityRequest(EmployeeVerificationPreviewRequest):
+    proposed_monthly_installment: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+
+
+def assess_verified_cdas_capacity(*, borrower, policy, installment: Decimal, capacity: Decimal) -> dict:
+    """Reuse LoanHub's existing lending-policy engine; no approval side effect."""
+    if not capacity.is_finite() or capacity < 0:
+        raise ValueError("Invalid CDAS affordability response")
+    return quick_loan_affordability(
+        borrower=borrower,
+        policy=policy,
+        proposed_installment=installment,
+        live_cdas_affordability=capacity,
+    )
+
+
+@router.post("/affordability-preview")
+async def preview_government_employee_affordability(
+    payload: GovernmentEmployeeAffordabilityRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Obtain fresh CDAS identity + capacity, then apply the existing tenant policy.
+
+    This endpoint intentionally does not persist an assessment or approve a loan.
+    """
+    _require_company_manager(context)
+    assert context.company_id is not None
+    if not payload.authorisation_confirmed:
+        raise HTTPException(status_code=409, detail="Confirm lawful authority before contacting CDAS")
+    number = payload.employee_number.strip()
+    if not number:
+        raise HTTPException(status_code=422, detail="Employee number is required")
+
+    payroll = db.query(CDASPayrollProfile).filter(
+        CDASPayrollProfile.company_id == context.company_id,
+        func.lower(func.trim(CDASPayrollProfile.employee_number)) == number.casefold(),
+    ).all()
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == context.company_id,
+        func.lower(func.trim(BorrowerEmploymentProfile.employee_number)) == number.casefold(),
+    ).all()
+    if {row.borrower_id for row in payroll + employment} != {payload.borrower_id}:
+        raise HTTPException(status_code=409, detail="Employee number has missing or conflicting borrower links")
+
+    borrower = db.query(Borrower).filter(Borrower.id == payload.borrower_id).first()
+    if borrower is None:
+        raise HTTPException(status_code=404, detail="Borrower not found")
+    person = db.query(Person).filter(Person.user_id == borrower.user_id).first()
+    if person is None:
+        raise HTTPException(status_code=409, detail="Borrower identity is incomplete")
+    policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == context.company_id,
+        OriginationPolicy.is_active.is_(True),
+    ).first()
+    if policy is None:
+        raise HTTPException(status_code=409, detail="An active company affordability policy is required")
+
+    environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="employee_verification"
+    )
+    try:
+        client = get_company_cdas_client(db, context.company_id)
+        employee = await client.get_employee_details(number)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db, context=context, environment=environment, operation_type="employee_verification",
+        source_reference=str(payload.borrower_id),
+    )
+    mismatches = compare_employee_identity(
+        person=person, employee=employee, expected_number=number,
+    )
+    if mismatches:
+        # Do not spend another provider request on an identity that does not match.
+        return {
+            "ok": False, "status": "identity_review_required",
+            "borrower_id": str(payload.borrower_id),
+            "review_reason_codes": mismatches,
+            "affordability_checked": False,
+            "loan_approved": False, "deduction_changed": False,
+        }
+
+    environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="affordability"
+    )
+    try:
+        capacity = await client.check_affordability(number)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db, context=context, environment=environment, operation_type="affordability",
+        source_reference=str(payload.borrower_id),
+    )
+    try:
+        amount = Decimal(str(capacity))
+        assessment = assess_verified_cdas_capacity(
+            borrower=borrower, policy=policy,
+            installment=payload.proposed_monthly_installment, capacity=amount,
+        )
+    except (ValueError, InvalidOperation) as exc:
+        raise HTTPException(status_code=502, detail="CDAS returned an unusable affordability value") from exc
+    return {
+        "ok": True, "status": "assessment_preview",
+        "assessed_at": datetime.now(timezone.utc).isoformat(),
+        "borrower_id": str(payload.borrower_id),
+        "employee_identity_verified_for_request": True,
+        "cdas_environment": environment,
+        "cdas_monthly_capacity": str(amount),
+        "currency": "LSL",
+        "assessment": assessment,
+        "assessment_persisted": False,
+        "pdf_generated": False,
+        "loan_approved": False,
+        "deduction_changed": False,
+    }
