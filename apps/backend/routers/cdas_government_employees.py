@@ -650,3 +650,170 @@ def preflight_bulk_government_affordability(
         ),
         "candidates": candidates,
     }
+
+
+# Phase 5D: durable draft batches only; execution is still hard-disabled.
+from sqlalchemy.exc import IntegrityError
+from database.models.cdas_affordability_batch import CdasAffordabilityBatch, CdasAffordabilityBatchItem
+from services.cdas_affordability_bulk_jobs import batch_fingerprint, safe_batch_summary, transition_batch
+
+
+class CreateBulkAffordabilityDraft(BulkAffordabilityPreflightRequest):
+    idempotency_key: str = Field(min_length=12, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    consent_evidence_reference: str = Field(min_length=6, max_length=160)
+
+
+@router.post("/bulk/batches", status_code=201)
+def create_government_affordability_draft_batch(
+    payload: CreateBulkAffordabilityDraft,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Store a resumable draft. No worker, CDAS calls, deductions or scheduled execution."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    errors = validate_bulk_selection(payload.employees)
+    if errors:
+        raise HTTPException(status_code=422, detail={"selection_errors": errors})
+    fingerprint = batch_fingerprint(payload.employees)
+    existing = db.query(CdasAffordabilityBatch).filter(
+        CdasAffordabilityBatch.company_id == context.company_id,
+        CdasAffordabilityBatch.idempotency_key == payload.idempotency_key,
+    ).first()
+    if existing is not None:
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency key already used for a different batch")
+        return {"batch_id": str(existing.id), "status": existing.status,
+                "execution_enabled": False, "idempotent_replay": True}
+
+    policy = db.query(OriginationPolicy).filter(
+        OriginationPolicy.company_id == context.company_id,
+        OriginationPolicy.is_active.is_(True),
+    ).first()
+    if policy is None:
+        raise HTTPException(status_code=409, detail="Active company affordability policy required")
+
+    statuses = [
+        _bulk_candidate_status(db, company_id=context.company_id, selection=item)
+        for item in payload.employees
+    ]
+    if any(status != "ready_for_live_verification" for status in statuses):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Resolve identity conflicts and missing records before drafting a batch",
+                    "candidate_statuses": statuses},
+        )
+    # Confirming that a reference exists does not prove valid consent.
+    # Staff must separately verify the underlying evidence before any future execution.
+    batch = CdasAffordabilityBatch(
+        company_id=context.company_id,
+        created_by_user_id=context.user.id,
+        idempotency_key=payload.idempotency_key,
+        request_fingerprint=fingerprint,
+        status="draft",
+        total_count=len(payload.employees),
+        finished_count=0,
+        execution_enabled=False,
+    )
+    db.add(batch)
+    db.flush()
+    for item in payload.employees:
+        db.add(CdasAffordabilityBatchItem(
+            batch_id=batch.id,
+            company_id=context.company_id,
+            borrower_id=item.borrower_id,
+            employee_number=item.employee_number.strip().upper(),
+            proposed_monthly_installment=item.proposed_monthly_installment,
+            status="pending",
+            attempt_count=0,
+        ))
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        existing = db.query(CdasAffordabilityBatch).filter(
+            CdasAffordabilityBatch.company_id == context.company_id,
+            CdasAffordabilityBatch.idempotency_key == payload.idempotency_key,
+        ).first()
+        if existing is not None and existing.request_fingerprint == fingerprint:
+            return {"batch_id": str(existing.id), "status": existing.status,
+                    "execution_enabled": False, "idempotent_replay": True}
+        raise HTTPException(status_code=409, detail="Batch creation conflict") from exc
+    return {"batch_id": str(batch.id), "status": "draft",
+            "execution_enabled": False, "idempotent_replay": False,
+            "note": "Consent evidence reference supplied but not validated; no CDAS execution enabled."}
+
+
+def _load_company_batch(db: Session, company_id: UUID, batch_id: UUID):
+    batch = db.query(CdasAffordabilityBatch).filter(
+        CdasAffordabilityBatch.id == batch_id,
+        CdasAffordabilityBatch.company_id == company_id,
+    ).first()
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Bulk batch not found")
+    return batch
+
+
+@router.get("/bulk/batches")
+def list_government_affordability_batches(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    query = db.query(CdasAffordabilityBatch).filter(
+        CdasAffordabilityBatch.company_id == context.company_id,
+    )
+    total = query.count()
+    rows = query.order_by(
+        CdasAffordabilityBatch.created_at.desc(), CdasAffordabilityBatch.id.desc(),
+    ).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "total": total, "page": page, "page_size": page_size,
+        "items": [{"batch_id": str(b.id), "status": b.status,
+                   "execution_enabled": False, "total_count": b.total_count,
+                   "finished_count": b.finished_count} for b in rows],
+    }
+
+
+@router.get("/bulk/batches/{batch_id}")
+def get_government_affordability_batch(
+    batch_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    batch = _load_company_batch(db, context.company_id, batch_id)
+    items = db.query(CdasAffordabilityBatchItem).filter(
+        CdasAffordabilityBatchItem.company_id == context.company_id,
+        CdasAffordabilityBatchItem.batch_id == batch.id,
+    ).order_by(CdasAffordabilityBatchItem.id).all()
+    return safe_batch_summary(batch, items)
+
+
+@router.post("/bulk/batches/{batch_id}/cancel")
+def cancel_government_affordability_batch(
+    batch_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    _require_company_manager(context)
+    assert context.company_id is not None
+    # Compare-and-swap prevents two requests from silently changing the same job.
+    updated = db.query(CdasAffordabilityBatch).filter(
+        CdasAffordabilityBatch.id == batch_id,
+        CdasAffordabilityBatch.company_id == context.company_id,
+        CdasAffordabilityBatch.status == "draft",
+        CdasAffordabilityBatch.execution_enabled.is_(False),
+    ).update({"status": transition_batch("draft", "cancelled")}, synchronize_session=False)
+    if not updated:
+        db.rollback()
+        batch = _load_company_batch(db, context.company_id, batch_id)
+        if batch.status == "cancelled":
+            return {"batch_id": str(batch.id), "status": "cancelled", "idempotent_replay": True}
+        raise HTTPException(status_code=409, detail="Batch cannot be cancelled from its current state")
+    db.commit()
+    return {"batch_id": str(batch_id), "status": "cancelled", "idempotent_replay": False}
