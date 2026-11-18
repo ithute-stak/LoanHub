@@ -85,19 +85,17 @@ def prepare_new_only_registration_intent(
     dob = values["date_of_birth"]
     if dob is None or not hasattr(dob, "isoformat"):
         raise ValueError("Date of birth required")
+    # An idempotency replay must compare the *entire* submitted command,
+    # not just identity fields (which would miss changes to salary, consent,
+    # employer, address, debts or bank information).
+    if not callable(getattr(payload, "model_dump", None)):
+        raise ValueError("Validated registration schema required")
     canonical = json.dumps({
         "company": str(context.company_id),
         "branch": str(branch_id),
         "actor": str(context.user.id),
-        "fields": {
-            "first_name": _normalized(values["first_name"]),
-            "last_name": _normalized(values["last_name"]),
-            "phone": _normalized(values["phone"]),
-            "date_of_birth": dob.isoformat(),
-            "national_id": _normalized(values["national_id"]),
-            "passport_number": _normalized(values["passport_number"]),
-        },
-    }, sort_keys=True, separators=(",", ":")).encode()
+        "payload": payload.model_dump(mode="json", exclude_none=False),
+    }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     digest = hmac.new(secret, canonical, sha256).hexdigest()
     return NewOnlyRegistrationIntent(
         company_id=context.company_id,
