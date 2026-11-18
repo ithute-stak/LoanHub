@@ -65,7 +65,8 @@ def test_successful_staging_scans_twice_and_reads_exact_version():
         settings.MALWARE_SCAN_FAIL_CLOSED = True
         result = _stage(context, store)
     assert result.locked is locked
-    assert result.source_sha256_hex == sha256(PDF).hexdigest()\n    assert len(result.stamp_snapshot_sha256_hex) == 64
+    assert result.source_sha256_hex == sha256(PDF).hexdigest()
+    assert len(result.stamp_snapshot_sha256_hex) == 64
     assert scan.call_count == 2
     store.put_locked_pdf.assert_called_once()
     store.read_exact_version.assert_called_once_with(locked)
