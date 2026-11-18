@@ -201,6 +201,18 @@ jobs:
           python -m alembic upgrade head
           python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py
 
+      - name: Rehearse concurrent identity index migration and failure cleanup in PostgreSQL
+        working-directory: apps/backend
+        env:
+          PGPASSWORD: ci-only-postgres-password
+          LOANHUB_REGISTRATION_ROLLOUT_SANDBOX_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loanhub_identity_rollout_sandbox
+          LOANHUB_REGISTRATION_ROLLOUT_SANDBOX_ACK: isolated_disposable_database
+        run: |
+          set -euo pipefail
+          createdb -h 127.0.0.1 -p 5432 -U loanhub loanhub_identity_rollout_sandbox
+          trap 'dropdb -h 127.0.0.1 -p 5432 -U loanhub --if-exists loanhub_identity_rollout_sandbox || true' EXIT
+          python -m pytest -q -ra --maxfail=1 tests/test_identity_index_concurrent_rollout_postgres.py
+
       - name: Verify real Wacom review isolation queries on disposable PostgreSQL
         working-directory: apps/backend
         env:
