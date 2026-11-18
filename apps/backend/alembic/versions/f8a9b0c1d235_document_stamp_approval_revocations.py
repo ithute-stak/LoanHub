@@ -47,7 +47,7 @@ def upgrade():
         "AND company_id = NULLIF(current_setting('loanhub.company_id', true), '')::uuid "
         "AND EXISTS ("
         "SELECT 1 FROM document_stamp_approvals a "
-        "WHERE a.id = approval_id AND a.company_id = company_id"
+        "WHERE a.id = document_stamp_approval_revocations.approval_id AND a.company_id = document_stamp_approval_revocations.company_id"
         ")"
         ")"
     ))
