@@ -16,7 +16,8 @@ import re
 import secrets
 from uuid import UUID
 
-from sqlalchemy import text, select
+from sqlalchemy import text, select, func
+from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.company_client import CompanyBorrowerAccount
 from sqlalchemy.orm import Session
 
@@ -195,6 +196,19 @@ def create_new_client_atomically(
                     raise AtomicRegistrationUnavailable("Completed request account scope mismatch")
                 return AtomicRegistrationResult(prior, True)
             raise AtomicRegistrationUnavailable("Registration request not independently finalized")
+
+        # Global legacy captures can predate LoanHub borrower profiles.
+        # Never treat a new Person row as safe when that ID occurs in a
+        # different company's unlinked historical captures. Query only an
+        # aggregate count; expose no cross-tenant client details.
+        if minimal.national_id:
+            normalized_id = minimal.national_id.strip().casefold()
+            historic = db.query(func.count(LegacyLoanCapture.id)).filter(
+                func.lower(func.trim(LegacyLoanCapture.national_id)) == normalized_id,
+            ).scalar()
+            if type(historic) is not int or historic > 0 or historic < 0:
+                raise AtomicRegistrationUnavailable(
+                    "Existing historical identity requires controlled review")
 
         if (
             guard.reason != "candidate_requires_transactional_reservation"
