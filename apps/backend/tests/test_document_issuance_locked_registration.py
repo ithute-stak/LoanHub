@@ -17,7 +17,12 @@ PUBLIC_ID = "secure-public-id-1234567"
 def _fixtures():
     tenant = uuid4()
     context = SimpleNamespace(
-        company_id=tenant, company=SimpleNamespace(\n            id=tenant, name="Example Tenant (Pty) Ltd",\n            address="Maseru", phone="+266 50000000",\n            email="tenant@example.test", registration_number="REG-1",\n            license_number="LIC-1",\n        ),
+        company_id=tenant, company=SimpleNamespace(
+            id=tenant, name="Example Tenant (Pty) Ltd",
+            address="Maseru", phone="+266 50000000",
+            email="tenant@example.test", registration_number="REG-1",
+            license_number="LIC-1",
+        ),
         user=SimpleNamespace(id=uuid4()),
         staff=SimpleNamespace(role=UserRole.COMPANY_ADMIN),
         is_platform_admin=False,
@@ -33,6 +38,12 @@ def _fixtures():
     staged = SimpleNamespace(
         candidate=candidate, locked=locked,
         source_sha256_hex=__import__("hashlib").sha256(PDF).hexdigest(),
+        stamp_snapshot_sha256_hex=__import__(
+            "services.document_issuance_stamp_snapshot",
+            fromlist=["stamp_snapshot_sha256"],
+        ).stamp_snapshot_sha256(
+            company=context.company, authenticated_tenant_id=tenant,
+        ),
     )
     db = Mock()
     db.query.return_value.filter.return_value.one_or_none.return_value = None
