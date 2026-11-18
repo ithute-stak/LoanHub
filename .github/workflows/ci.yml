@@ -185,6 +185,22 @@ jobs:
           trap 'dropdb -h 127.0.0.1 -p 5432 -U loanhub --if-exists loanhub_registration_sandbox || true' EXIT
           python -m pytest -q -ra --maxfail=1 tests/test_new_client_normalized_indexes_postgres.py
 
+      - name: Certify actual new-client transaction on disposable PostgreSQL
+        working-directory: apps/backend
+        env:
+          PGPASSWORD: ci-only-postgres-password
+          DB_NAME: loanhub_registration_e2e_sandbox
+          LOANHUB_REGISTRATION_E2E_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loanhub_registration_e2e_sandbox
+          LOANHUB_REGISTRATION_E2E_ACK: isolated_disposable_database
+        run: |
+          set -euo pipefail
+          createdb -h 127.0.0.1 -p 5432 -U loanhub loanhub_registration_e2e_sandbox
+          trap 'dropdb -h 127.0.0.1 -p 5432 -U loanhub --if-exists loanhub_registration_e2e_sandbox || true' EXIT
+          # This ephemeral database is separate from the CI migration target.
+          # Apply all production DDL here with ZERO real customer records.
+          python -m alembic upgrade head
+          python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py
+
       - name: Verify real Wacom review isolation queries on disposable PostgreSQL
         working-directory: apps/backend
         env:
