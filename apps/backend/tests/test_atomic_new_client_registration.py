@@ -174,7 +174,7 @@ def test_unrecognized_or_inactive_branch_blocks_registration_before_indexes():
     db.in_transaction.return_value = False
     db.execute.return_value.scalar_one_or_none.return_value = None
     p = mocks(db)
-    with p[0], p[1] as indexes, p[2] as guard, p[3] as reserve, \\
+    with p[0], p[1] as indexes, p[2] as guard, p[3] as reserve, \
          p[4], p[5] as stage, p[6]:
         with pytest.raises(AtomicRegistrationUnavailable, match="branch"):
             create_new_client_atomically(
