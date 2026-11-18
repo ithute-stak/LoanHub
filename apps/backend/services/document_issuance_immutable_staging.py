@@ -18,6 +18,7 @@ from services.document_issuance_candidate import (
 from services.document_issuance_immutable_s3 import (
     LockedPdfObject, S3ObjectLockPdfStore,
 )
+from services.document_issuance_integrity import pdf_fingerprint
 from services.malware_scan_service import scan_upload
 from services.object_storage_service import StorageUnavailableError
 
@@ -26,6 +27,7 @@ from services.object_storage_service import StorageUnavailableError
 class StagedLockedCandidate:
     candidate: PreparedDocumentCandidate
     locked: LockedPdfObject
+    source_sha256_hex: str
 
 
 def stage_locked_document_candidate(
@@ -75,4 +77,7 @@ def stage_locked_document_candidate(
         raise StorageUnavailableError("Exact locked PDF version differs from candidate")
     if locked.sha256_hex != candidate.sha256_hex:
         raise StorageUnavailableError("Locked PDF hash differs from candidate")
-    return StagedLockedCandidate(candidate=candidate, locked=locked)
+    return StagedLockedCandidate(
+        candidate=candidate, locked=locked,
+        source_sha256_hex=pdf_fingerprint(source_pdf),
+    )
