@@ -9,6 +9,7 @@ from database.models.branch import CompanyBranch
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company import LoanCompany
 from database.models.company_payment_model_settings import CompanyPaymentModelSettings
+from database.models.loan_payment_model_assignment import LoanPaymentModelAssignmentRecord
 from database.models.call_management import (
     CallManagementPolicy,
     EmployeeCallDevice,
@@ -126,6 +127,7 @@ __all__ = [
     "ClientCompanyLoan",
     "LoanCompany",
     "CompanyPaymentModelSettings",
+    "LoanPaymentModelAssignmentRecord",
     "CallManagementPolicy",
     "EmployeeCallDevice",
     "ClientCall",
