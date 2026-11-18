@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
+from core.access_control import TenantContext
+from database.models.enums import UserRole
 
 from services.new_only_client_registration import (
     NewOnlyRegistrationNotReady, execute_new_only_registration,
@@ -25,12 +27,18 @@ class SyntheticRequest(BaseModel):
 
 
 def context():
-    return SimpleNamespace(
-        company_id=uuid4(), user=SimpleNamespace(id=uuid4()),
-        role=SimpleNamespace(value="loan_officer"),
-        branch_id=uuid4(), staff=SimpleNamespace(),
+    company, branch, actor = uuid4(), uuid4(), uuid4()
+    return TenantContext(
+        company_id=company,
+        user=SimpleNamespace(id=actor, is_active=True),
+        branch_id=branch,
+        staff=SimpleNamespace(
+            user_id=actor, company_id=company, branch_id=branch,
+            role=UserRole.LOAN_OFFICER, is_active=True,
+        ),
+        company=None,
+        is_platform_admin=False,
     )
-
 
 def prepare(ctx, payload=None, **kwargs):
     with patch("services.new_only_client_registration.require_tenant_roles"), patch(
@@ -101,3 +109,47 @@ def test_unverified_intent_does_not_reach_database():
             db, intent=None, national_id="SYNTH-ID",
             passport_number=None, phone="59000000")
     db.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("change", [
+    {"is_platform_admin": True},
+    {"staff_active": False},
+    {"user_active": False},
+    {"branch_id": None},
+    {"wrong_company": True},
+    {"wrong_actor": True},
+])
+def test_untrusted_or_inactive_staff_cannot_prepare_intent(change):
+    from dataclasses import replace
+    ctx = context()
+    if "is_platform_admin" in change:
+        ctx = replace(ctx, is_platform_admin=True)
+    if "staff_active" in change:
+        ctx.staff.is_active = False
+    if "user_active" in change:
+        ctx.user.is_active = False
+    if "branch_id" in change:
+        ctx = replace(ctx, branch_id=None)
+    if "wrong_company" in change:
+        ctx.staff.company_id = uuid4()
+    if "wrong_actor" in change:
+        ctx.staff.user_id = uuid4()
+    with pytest.raises(ValueError):
+        prepare(ctx)
+
+
+def test_manager_may_prepare_for_different_branch_if_membership_valid():
+    from dataclasses import replace
+    ctx = context()
+    ctx.staff.role = UserRole.COMPANY_ADMIN
+    selected_branch = uuid4()
+    with patch("services.new_only_client_registration.require_tenant_roles"), patch(
+        "services.new_only_client_registration.assert_branch_scope"
+    ):
+        result = prepare_new_only_registration_intent(
+            context=ctx, branch_id=selected_branch,
+            idempotency_key="employee-client-request-0001",
+            payload=SyntheticRequest(),
+            secret=b"synthetic-test-secret-with-at-least-32-bytes",
+        )
+    assert result.branch_id == selected_branch

@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import text, select, func
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.company_client import CompanyBorrowerAccount
+from database.models.branch import CompanyBranch
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
@@ -167,6 +168,20 @@ def create_new_client_atomically(
         raise AtomicRegistrationUnavailable("Dedicated transaction required")
 
     with db.begin():
+        # Branch authorization must be checked against a real, active
+        # branch belonging to the authenticated staff's company, not merely
+        # a UUID supplied by the mobile application.
+        branch = db.execute(
+            select(CompanyBranch.id).where(
+                CompanyBranch.id == intent.branch_id,
+                CompanyBranch.company_id == intent.company_id,
+                CompanyBranch.is_active.is_(True),
+            ).with_for_update(read=True)
+        ).scalar_one_or_none()
+        if branch is None:
+            raise AtomicRegistrationUnavailable(
+                "Active company-owned registration branch required")
+
         # DB unique indexes are mandatory: advisory locks alone do not stop
         # old or third-party writers using other code paths.
         require_normalized_identity_constraints(db)
