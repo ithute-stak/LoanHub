@@ -145,12 +145,12 @@ def stage_new_only_client_rows(
         entity_type="company_client",
         record_id=account.id,
         description="New-only borrower and company account staged.",
-        actor_role="loan_officer",
+        actor_role="verified_lending_staff",
         severity="info", status="success",
         before_data={},
         after_data={"client_account_id": str(account.id)},
         changed_fields=[],
-        event_data={"registration_attempt_idempotency_key": intent.idempotency_key},
+        event_data={"registration_fingerprint": intent.registration_fingerprint},
     ))
     db.flush()
     return StagedNewClient(
