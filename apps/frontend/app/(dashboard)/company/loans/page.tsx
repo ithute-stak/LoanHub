@@ -930,12 +930,9 @@ export default function CompanyLoansPage() {
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as WorkspaceTab)} className="space-y-5">
                 <TabsList aria-label="Loan workspace sections" className="flex h-auto w-full max-w-3xl justify-start gap-1 overflow-x-auto rounded-2xl border bg-muted/40 p-1.5 shadow-sm">
-                    <TabsTrigger value="portfolio" className="min-w-40 flex-1 rounded-xl px-4 py-3 font-semibold">Loan
-                        portfolio</TabsTrigger>
-                    {canManageContracts ? <TabsTrigger value="contracts"
-                                                       className="min-w-40 flex-1 rounded-xl px-4 py-3 font-semibold">Contracts</TabsTrigger> : null}
-                    <TabsTrigger value="calculator" className="min-w-40 flex-1 rounded-xl px-4 py-3 font-semibold">Interest
-                        calculator</TabsTrigger>
+                    <TabsTrigger value="portfolio" className="min-w-40 flex-1 gap-2 rounded-xl px-4 py-3 font-semibold"><HandCoins className="h-4 w-4 shrink-0" aria-hidden="true"/>Loan portfolio</TabsTrigger>
+                    {canManageContracts ? <TabsTrigger value="contracts" className="min-w-40 flex-1 gap-2 rounded-xl px-4 py-3 font-semibold"><FileSignature className="h-4 w-4 shrink-0" aria-hidden="true"/>Contracts</TabsTrigger> : null}
+                    <TabsTrigger value="calculator" className="min-w-40 flex-1 gap-2 rounded-xl px-4 py-3 font-semibold"><Calculator className="h-4 w-4 shrink-0" aria-hidden="true"/>Interest calculator</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="portfolio" className="space-y-5">
