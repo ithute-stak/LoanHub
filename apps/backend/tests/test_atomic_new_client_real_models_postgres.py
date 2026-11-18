@@ -190,8 +190,8 @@ def test_legacy_capture_rejected_without_modifying_history(real_models_sandbox):
                  borrowed_amount, total_repayable, amount_paid,
                  banking_info, paper_snapshot, conversion_data)
             VALUES (:id, :company, 'SYNTH-FOLIO-1', 'syn-e2e-0001',
-                    'posted', 500, 650, 300, '{}'::jsonb, '{}'::jsonb,
-                    '{}'::jsonb)
+                    'posted', 500, 650, 300, '{{}}'::jsonb, '{{}}'::jsonb,
+                    '{{}}'::jsonb)
         """), {"id": uuid4(), "company": uuid4()})
     with pytest.raises(AtomicRegistrationUnavailable):
         invoke(engine, schema, staff(company, branch, employee),
