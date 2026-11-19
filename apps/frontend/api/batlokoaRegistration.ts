@@ -20,8 +20,19 @@ export type RegistrationFormSection = {
   deferred_fields: string[];
 };
 
+export type RegistrationFieldRequirement = {
+  key: string;
+  kind: "text" | "select" | "date" | "boolean" | "currency" | "integer" |
+    "email" | "password" | "uuid" | "debt_list" | "bank_account" | "employer_group";
+  required: boolean;
+  deferred: boolean;
+  sensitive: boolean;
+};
+
 export type RegistrationFormRequirements = {
   schema_version: number;
+  identity_alternatives: string[];
+  field_details: RegistrationFieldRequirement[];
   registration_available: false;
   submit_allowed: false;
   client_data_requested: false;
