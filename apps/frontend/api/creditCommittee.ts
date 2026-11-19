@@ -71,7 +71,7 @@ export type CreditCommitteeCase = {
   maker_checker_required: boolean;
   analyst_user_id: string | null;
   analyst_submitted_at: string | null;
-  evidence_snapshot: Record<string, any>;
+  evidence_snapshot: Record<string, unknown>;
   latest_assessment: UnderwritingAssessment | null;
   votes: CommitteeVote[];
   vote_summary: {
