@@ -196,3 +196,35 @@ These tests are not yet CI-certified, and this is NOT a concurrency-safe
 unique application reservation. Eventual writes require fresh database
 locking and real PostgreSQL repeat/parallel request tests. The offline
 branch has not been merged or deployed.
+
+## Offline iteration 8 — Cooperative PostgreSQL concurrency lock
+
+A separate **internal, no-write** review wrapper now requires an active,
+approved lending staff context plus a caller-owned PostgreSQL transaction.
+It validates a request key (without storing it), attempts a transaction
+advisory lock scoped globally to the account UUID, then re-runs the
+new-only loan provenance and product/duplicate checks while the lock is
+held. If the lock is busy, the transaction is absent, the DB is not
+PostgreSQL, or authorization fails, it refuses to proceed.
+
+This is **NOT durable application idempotency**. The request key does not
+create a persisted reservation or request fingerprint. Also, existing
+LoanHub origination writers do not use the new advisory lock: therefore
+this is **NOT production concurrency certification** or a guarantee
+against duplicates from another writer. A separately reviewed
+unique/transactional application reservation, all-writer lock adoption,
+and real concurrent PostgreSQL tests are required before any launch.
+
+Even when the review succeeds, it returns
+`can_create_loan_application=False`,
+`can_disburse_loan=False` and `wrote_financial_records=False`.
+No public router uses this wrapper, and it neither inserts applications
+nor modifies existing client, loan, repayment or calculator records.
+
+Synthetic unit tests check lock contention, missing transactions,
+unsupported databases, invalid request keys, global account lock
+identity independent of key/product, revoked lending permissions, and
+denial if a future preflight accidentally signals write permission.
+
+No CI has yet executed the new batch tests. The batch remains unmerged,
+with no VPS or production change.
