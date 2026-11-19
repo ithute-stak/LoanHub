@@ -68,3 +68,28 @@ Automated tests cover type mapping, sensitive fields, mandatory consent
 decisions, identity alternatives and rejected metadata drift. This
 iteration is committed only to the offline branch; final project CI,
 integration tests and merge are deferred pending further development.
+
+## Offline iteration 3 — Strict read-only preview contract gate
+
+The frontend now validates every field and section **before** rendering the
+registration preparation screen. An unreviewed schema version, missing field,
+reordered section, unsupported field type, demoted sensitive field, changed
+required consent, or any enabled new-only write flag causes a fail-closed
+error screen. The application deliberately does not send a registration POST
+or fall back to the legacy assisted-client creation route.
+
+Automated tests use Node's built-in test runner to execute the **actual
+transpiled TypeScript guard**; they cover valid metadata plus altered field
+inventory, identity alternatives, privacy labels, deferred fields and
+forged enabling status.
+
+To run this focused test locally, from `apps/frontend` after dependencies
+are installed:
+
+```bash
+pnpm test:batlokoa-registration-preview
+```
+
+These branch changes have not been run through the full frontend typecheck,
+backend tests or GitHub CI. The batch is intentionally not merged or
+deployed yet.
