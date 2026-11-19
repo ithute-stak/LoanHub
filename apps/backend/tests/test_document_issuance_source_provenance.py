@@ -14,6 +14,8 @@ from services.document_issuance_source_provenance import (
 
 
 PDF = b"%PDF-1.4\nowned source\n"
+SOURCE_TYPE = "loan_agreement"
+SOURCE_ID = "agreement-001"
 
 
 def _fixture():
@@ -29,6 +31,7 @@ def _fixture():
         is_deleted=False, is_confidential=True,
         visibility="private", scan_status="clean",
         mime_type="application/pdf", checksum_sha256=sha256(PDF).hexdigest(),
+        linked_entity_type=SOURCE_TYPE, linked_entity_id=SOURCE_ID,
     )
     db = Mock()
     db.query.return_value.filter.return_value.one_or_none.return_value = source
@@ -38,6 +41,7 @@ def _fixture():
 def _load(db, context, file_id):
     return load_authorized_managed_pdf_source(
         db=db, context=context, source_file_id=file_id,
+        source_type=SOURCE_TYPE, source_id=SOURCE_ID,
     )
 
 
@@ -50,6 +54,8 @@ def test_exact_private_clean_owned_pdf_can_be_resolved():
     assert result.source_file_id == file_id
     assert result.tenant_id == context.company_id
     assert result.sha256_hex == sha256(PDF).hexdigest()
+    assert result.source_type == SOURCE_TYPE
+    assert result.source_id == SOURCE_ID
     reader.assert_called_once()
     db.add.assert_not_called()
     db.commit.assert_not_called()
@@ -60,6 +66,9 @@ def test_exact_private_clean_owned_pdf_can_be_resolved():
     {"is_deleted": True}, {"is_confidential": False},
     {"visibility": "public"}, {"scan_status": "validated"},
     {"mime_type": "image/png"}, {"id": uuid4()},
+    {"linked_entity_type": "another_kind"},
+    {"linked_entity_id": "other-agreement"},
+    {"linked_entity_type": None}, {"linked_entity_id": None},
 ])
 def test_invalid_file_identity_or_security_does_not_read_bytes(change):
     db, context, file_id, source = _fixture()
@@ -131,7 +140,32 @@ def test_staging_entry_point_denies_cross_tenant_source_before_staging():
         with pytest.raises(PermissionError):
             stage_authorized_managed_pdf_source(
                 db=db, context=context, source_file_id=file_id,
+                source_type=SOURCE_TYPE, source_id=SOURCE_ID,
                 trusted_verification_origin="https://verify.example.test",
                 store=object(), stamp_configuration_version=2,
             )
     stage.assert_not_called()
+
+
+@pytest.mark.parametrize("source_type,source_id", [
+    ("", SOURCE_ID), (SOURCE_TYPE, ""), (" " + SOURCE_TYPE, SOURCE_ID),
+    (SOURCE_TYPE, " " + SOURCE_ID), ("x" * 101, SOURCE_ID),
+    (SOURCE_TYPE, "x" * 121),
+])
+def test_invalid_business_reference_rejected_before_database_access(source_type, source_id):
+    db, context, file_id, _ = _fixture()
+    with pytest.raises(ValueError):
+        load_authorized_managed_pdf_source(
+            db=db, context=context, source_file_id=file_id,
+            source_type=source_type, source_id=source_id,
+        )
+    db.query.assert_not_called()
+
+
+def test_record_binding_does_not_match_requested_business_record():
+    db, context, file_id, source = _fixture()
+    source.linked_entity_id = "agreement-002"
+    with patch("services.document_issuance_source_provenance.read_file_bytes") as reader:
+        with pytest.raises(PermissionError, match="tenant-owned source"):
+            _load(db, context, file_id)
+    reader.assert_not_called()
