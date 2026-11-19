@@ -53,6 +53,7 @@ async def test_identity_mismatch_never_creates_assessment_record(monkeypatch):
         return {"ok": False, "status": "identity_review_required", "affordability_checked": False}
     monkeypatch.setattr(module, "preview_government_employee_affordability", mismatch)
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
     reservation = SimpleNamespace(state="reserved", assessment_record_id=None)
     monkeypatch.setattr(module, "reserve_affordability_attempt",
                         lambda *args, **kwargs: (reservation, True))
