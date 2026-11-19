@@ -18,6 +18,11 @@ def test_billable_assessment_requires_idempotency_key():
         consent_evidence_reference="CONSENT-EXAMPLE-001",
     )
     with pytest.raises(ValidationError):
+        mod.RecordedGovernmentEmployeeAffordabilityRequest(**{
+            key: value for key, value in request.items()
+            if key != "consent_evidence_reference"
+        }, idempotency_key="test-valid-key-001")
+    with pytest.raises(ValidationError):
         mod.RecordedGovernmentEmployeeAffordabilityRequest(**request)
     with pytest.raises(ValidationError):
         mod.RecordedGovernmentEmployeeAffordabilityRequest(
@@ -89,3 +94,19 @@ async def test_unauthorised_request_does_not_reserve_attempt(monkeypatch):
             db=object(),
         )
     assert raised.value.status_code == 409
+
+
+def test_consent_reference_is_bound_into_durable_request_fingerprint():
+    from services.cdas_affordability_attempts import affordability_request_fingerprint
+    company_id, borrower_id = uuid4(), uuid4()
+    fixed = dict(
+        company_id=company_id, borrower_id=borrower_id,
+        employee_number="EMP-100", installment="100.00",
+    )
+    first = affordability_request_fingerprint(
+        **fixed, consent_evidence_reference="CONSENT-ONE",
+    )
+    second = affordability_request_fingerprint(
+        **fixed, consent_evidence_reference="CONSENT-TWO",
+    )
+    assert first != second
