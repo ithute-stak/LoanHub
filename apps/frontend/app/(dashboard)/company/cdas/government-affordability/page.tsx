@@ -24,7 +24,7 @@ type Assessment = { record_id: string; reference: string; employee_number: strin
 type Batch = { batch_id: string; status: string; total_count: number; finished_count: number };
 type Preflight = { ready_count: number; review_count: number; minimum_estimated_provider_requests: number; budget_remaining_at_preflight: number; budget_preflight_sufficient: boolean; candidates: { borrower_id: string; employee_number: string; status: string }[] };
 type Selection = { borrower_id: string; employee_number: string; proposed_monthly_installment: string };
-type UncertainAssessment = Selection & { startedAt: number };
+type UncertainAssessment = Selection & { startedAt: number; idempotency_key: string };
 
 function matchesUncertainAssessment(row: Assessment, pending: UncertainAssessment): boolean {
     const timestamp = Date.parse(row.assessed_at || "");
@@ -64,6 +64,7 @@ export default function GovernmentAffordabilityPage() {
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
     const [individual, setIndividual] = useState<Selection | null>(null);
+    const [individualIdempotencyKey, setIndividualIdempotencyKey] = useState<string | null>(null);
     const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
     const [individualResult, setIndividualResult] = useState<RecordedAssessment | null>(null);
     const [uncertainAssessment, setUncertainAssessment] = useState<UncertainAssessment | null>(null);
@@ -132,6 +133,7 @@ export default function GovernmentAffordabilityPage() {
         setAuthorityConfirmed(false);
         setIndividualResult(null);
         setUncertainAssessment(null);
+        setIndividualIdempotencyKey(crypto.randomUUID());
         setError(null);
     }
 
@@ -142,6 +144,14 @@ export default function GovernmentAffordabilityPage() {
         try {
             // Historical reads are free of provider side effects. A missing result
             // is NOT proof that the provider was never contacted or charged.
+            const status = await api.get<{ status: string; record_id: string | null }>(
+                ROOT + "/affordability-attempts/" + uncertainAssessment.idempotency_key,
+            );
+            if (status.data.status !== "completed" || !status.data.record_id) {
+                setNotice("The durable attempt is " + status.data.status +
+                    ". Its outcome is not confirmed. Do not submit a second CDAS request.");
+                return;
+            }
             const limit = 100;
             let matched: Assessment | undefined;
             let allRows: Assessment[] = [];
@@ -150,7 +160,7 @@ export default function GovernmentAffordabilityPage() {
                     ROOT + "/affordability-records", { params: { page: pageNumber, page_size: limit } },
                 );
                 allRows = allRows.concat(result.data.items);
-                matched = result.data.items.find(row => matchesUncertainAssessment(row, uncertainAssessment));
+                matched = result.data.items.find(row => row.record_id === status.data.record_id && matchesUncertainAssessment(row, uncertainAssessment));
                 if (matched || allRows.length >= result.data.total || result.data.items.length < limit) break;
             }
             if (!matched) {
@@ -173,7 +183,7 @@ export default function GovernmentAffordabilityPage() {
     }
 
     async function assessIndividual() {
-        if (!individual || !authorityConfirmed || busy !== null || uncertainAssessment) return;
+        if (!individual || !individualIdempotencyKey || !authorityConfirmed || busy !== null || uncertainAssessment) return;
         const amount = individual.proposed_monthly_installment;
         if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 9999999999999) {
             setError("Enter a valid positive instalment in maloti, with no more than two decimal places.");
@@ -192,9 +202,11 @@ export default function GovernmentAffordabilityPage() {
                 employee_number: individual.employee_number,
                 proposed_monthly_installment: amount,
                 authorisation_confirmed: true,
+                idempotency_key: individualIdempotencyKey,
             });
             setIndividualResult(response.data);
             setUncertainAssessment(null);
+            setIndividualIdempotencyKey(null);
             setAuthorityConfirmed(false);
             if (response.data.status === "assessment_recorded") {
                 setNotice("Assessment saved. Review its decision and download the PDF from the result below.");
@@ -213,7 +225,7 @@ export default function GovernmentAffordabilityPage() {
             }
         } catch (cause) {
             // A network failure does not prove that the provider request failed.
-            setUncertainAssessment({ ...individual, startedAt });
+            setUncertainAssessment({ ...individual, startedAt, idempotency_key: individualIdempotencyKey });
             setAuthorityConfirmed(false);
             setError(getErrorMessage(cause, "Assessment outcome unknown. Search saved records before any new CDAS request."));
         } finally {
@@ -357,6 +369,7 @@ export default function GovernmentAffordabilityPage() {
                                     setIndividual({ ...individual, proposed_monthly_installment: event.target.value });
                                     setIndividualResult(null);
                                     setAuthorityConfirmed(false);
+                                    setIndividualIdempotencyKey(crypto.randomUUID());
                                 }} />
                         </div>
                         <label className="flex items-start gap-3 text-sm">
