@@ -70,7 +70,8 @@ def inspect_principal_x_collection_sources(
             1 for row in allocations if row.payment_id not in payment_ids
         ),
         unlinked_treasury_count=sum(
-            1 for row in treasury if row.payment_transaction_id is None
+            1 for row in treasury
+            if row.payment_transaction_id not in payment_ids
         ),
         complete=False,
     )

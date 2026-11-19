@@ -84,3 +84,18 @@ def test_invalid_tenant_is_rejected():
             SessionDouble([], [], [], []),
             company_id="wrong", loan_id=uuid4(),
         )
+
+
+def test_treasury_link_to_another_payment_is_not_treated_as_verified():
+    selected_payment_id = uuid4()
+    unrelated_payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=selected_payment_id)],
+        [], [],
+        [SimpleNamespace(payment_transaction_id=unrelated_payment_id)],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.unlinked_treasury_count == 1
+    assert result.complete is False
