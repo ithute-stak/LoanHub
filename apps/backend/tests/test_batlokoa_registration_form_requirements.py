@@ -126,3 +126,40 @@ def test_metadata_inventory_fails_closed_if_schema_gains_unreviewed_field(monkey
     monkeypatch.setattr(module, "_FORM_SECTIONS", original[:-1])
     with pytest.raises(RuntimeError, match="inventory"):
         registration_form_requirements_for_staff(staff())
+
+
+@pytest.mark.parametrize("condition", [
+    "company_pending", "company_inactive", "different_tenant",
+    "revoked_membership", "different_branch", "inactive_user",
+])
+def test_form_metadata_requires_exact_active_tenant_and_staff(condition):
+    ctx = staff()
+    if condition == "company_pending":
+        ctx.company.status = CompanyStatus.PENDING
+    elif condition == "company_inactive":
+        ctx.company.is_active = False
+    elif condition == "different_tenant":
+        ctx.company.id = uuid4()
+    elif condition == "revoked_membership":
+        ctx.staff.is_active = False
+    elif condition == "different_branch":
+        ctx.staff.branch_id = uuid4()
+    elif condition == "inactive_user":
+        ctx.user.is_active = False
+    with pytest.raises(HTTPException) as error:
+        registration_form_requirements_for_staff(ctx)
+    assert error.value.status_code == 403
+
+
+def test_both_registration_preview_routes_are_get_only_and_never_accept_pii():
+    actual = [
+        route for route in router.routes
+        if getattr(route, "path", "").startswith("/batlokoa/registration/")
+    ]
+    assert {route.path for route in actual} == {
+        "/batlokoa/registration/availability",
+        "/batlokoa/registration/form-requirements",
+    }
+    for route in actual:
+        assert route.methods == {"GET"}
+        assert route.body_field is None
