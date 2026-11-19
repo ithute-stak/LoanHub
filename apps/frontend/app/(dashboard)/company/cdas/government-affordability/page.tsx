@@ -152,22 +152,16 @@ export default function GovernmentAffordabilityPage() {
                     ". Its outcome is not confirmed. Do not submit a second CDAS request.");
                 return;
             }
-            const limit = 100;
-            let matched: Assessment | undefined;
-            let allRows: Assessment[] = [];
-            for (let pageNumber = 1; pageNumber <= 5; pageNumber++) {
-                const result = await api.get<{ items: Assessment[]; total: number }>(
-                    ROOT + "/affordability-records", { params: { page: pageNumber, page_size: limit } },
-                );
-                allRows = allRows.concat(result.data.items);
-                matched = result.data.items.find(row => row.record_id === status.data.record_id && matchesUncertainAssessment(row, uncertainAssessment));
-                if (matched || allRows.length >= result.data.total || result.data.items.length < limit) break;
-            }
-            if (!matched) {
-                setNotice("No matching saved record was found in the recent history searched. The CDAS request outcome is still unknown; do not automatically retry.");
+            // The attempt points to exactly one saved record; avoid scanning
+            // unrelated borrowers or silently losing results beyond page limits.
+            const detail = await api.get<Assessment>(
+                ROOT + "/affordability-records/" + status.data.record_id,
+            );
+            const matched = detail.data;
+            if (!matchesUncertainAssessment(matched, uncertainAssessment)) {
+                setError("Saved assessment identity or instalment did not match the original request. Manual review required.");
                 return;
             }
-            setAssessments(allRows.slice(0, 25));
             setIndividualResult({
                 ok: true, status: "assessment_recorded", borrower_id: matched.borrower_id,
                 record_id: matched.record_id, reference: matched.reference,
