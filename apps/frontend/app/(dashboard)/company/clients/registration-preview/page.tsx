@@ -10,7 +10,6 @@ import {
 import {
   getBatlokoaRegistrationAvailability,
   getBatlokoaRegistrationFormRequirements,
-  isBatlokoaRegistrationPreviewOnly,
   type RegistrationAvailability,
   type RegistrationFormRequirements,
 } from "@/api/batlokoaRegistration";
@@ -19,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getErrorMessage } from "@/utils/apiError";
+import { validateBatlokoaPreviewContract } from "@/lib/batlokoa-registration-preview-contract";
 
 function fieldLabel(key: string): string {
   return key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -45,11 +45,7 @@ export default function BatlokoaRegistrationPreviewPage() {
         getBatlokoaRegistrationAvailability(),
         getBatlokoaRegistrationFormRequirements(),
       ]);
-      if (!isBatlokoaRegistrationPreviewOnly(status, form)) {
-        throw new Error(
-          "Registration approval state has changed. This preview cannot submit client data.",
-        );
-      }
+      validateBatlokoaPreviewContract(status, form);
       setAvailability(status);
       setRequirements(form);
       setStepIndex(0);
