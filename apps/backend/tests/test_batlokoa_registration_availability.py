@@ -96,3 +96,43 @@ def test_route_has_no_body_parameter_or_registration_writer():
     assert route.methods == {"GET"}
     assert list(signature(get_registration_availability).parameters) == ["context"]
     assert list(signature(registration_availability_for_staff).parameters) == ["context"]
+
+
+@pytest.mark.parametrize("change", [
+    "missing_company",
+    "cross_company",
+    "pending_company",
+    "inactive_company",
+    "unverified_user",
+    "wrong_branch",
+    "missing_actor_uuid",
+    "missing_company_uuid",
+])
+def test_tenant_scope_is_verified_before_exposing_preview(change):
+    selected = context()
+    if change == "missing_company":
+        object.__setattr__(selected, "company", None)
+    elif change == "cross_company":
+        selected.company.id = uuid4()
+    elif change == "pending_company":
+        selected.company.status = CompanyStatus.PENDING
+    elif change == "inactive_company":
+        selected.company.is_active = False
+    elif change == "unverified_user":
+        selected.user.is_active = False
+    elif change == "wrong_branch":
+        selected.staff.branch_id = uuid4()
+    elif change == "missing_actor_uuid":
+        selected.user.id = "untrusted-actor"
+    elif change == "missing_company_uuid":
+        object.__setattr__(selected, "company_id", "untrusted-company")
+    with pytest.raises(HTTPException) as error:
+        registration_availability_for_staff(selected)
+    assert error.value.status_code == 403
+
+
+def test_company_management_can_preview_without_assigned_branch_but_cannot_submit():
+    selected = context(role=UserRole.COMPANY_ADMIN, branch_assigned=False)
+    result = registration_availability_for_staff(selected)
+    assert result.can_submit_new_only_registration is False
+    assert result.new_only_registration_available is False
