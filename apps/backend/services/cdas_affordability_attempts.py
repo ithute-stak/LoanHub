@@ -13,12 +13,13 @@ from sqlalchemy.exc import IntegrityError
 from database.models.cdas_affordability_attempt import CdasAffordabilityAttempt
 
 
-def affordability_request_fingerprint(*, company_id, borrower_id, employee_number, installment):
+def affordability_request_fingerprint(*, company_id, borrower_id, employee_number, installment, consent_evidence_reference=""):
     canonical = {
         "company_id": str(company_id),
         "borrower_id": str(borrower_id),
         "employee_number": employee_number.strip().casefold(),
         "installment": str(Decimal(str(installment)).quantize(Decimal("0.01"))),
+        "consent_evidence_reference": consent_evidence_reference.strip(),
     }
     return hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -33,10 +34,11 @@ def find_attempt(db, *, company_id, idempotency_key):
 
 
 def reserve_affordability_attempt(db, *, company_id, actor_user_id, borrower_id,
-                                  employee_number, installment, idempotency_key):
+                                  employee_number, installment, idempotency_key, consent_evidence_reference=""):
     fingerprint = affordability_request_fingerprint(
         company_id=company_id, borrower_id=borrower_id,
         employee_number=employee_number, installment=installment,
+        consent_evidence_reference=consent_evidence_reference,
     )
     prior = find_attempt(db, company_id=company_id, idempotency_key=idempotency_key)
     if prior:
