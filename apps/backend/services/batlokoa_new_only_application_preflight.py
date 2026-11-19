@@ -125,11 +125,11 @@ def assess_new_only_application_preflight(
     ):
         raise NewOnlyLoanHandoffDenied("Requested term outside approved product bounds")
 
-    # Check ALL statuses, including rejected and closed. This conservative
-    # offline preflight is not a concurrent uniqueness/serialization guarantee.
+    # Check ALL companies and statuses: a supposedly brand-new borrower
+    # cannot inherit any historical origination application anywhere.
+    # This read is NOT a concurrent uniqueness/serialization guarantee.
     existing = db.execute(
         select(DirectLoanApplication.id).where(
-            DirectLoanApplication.company_id == context.company_id,
             DirectLoanApplication.borrower_id == account.borrower_id,
         ).limit(1)
     ).scalar_one_or_none()
