@@ -52,6 +52,7 @@ def test_final_registration_reloads_contract_and_binds_version_identity():
     load.assert_called_once_with(
         db=db, context=context, loan_id=source.loan_id,
         contract_id=source.contract_id, contract_version=4,
+        lock_for_registration=True,
     )
     kwargs = register.call_args.kwargs
     assert kwargs["source_pdf"] == PDF
