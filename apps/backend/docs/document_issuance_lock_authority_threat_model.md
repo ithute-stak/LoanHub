@@ -50,3 +50,24 @@ the failure mode; they do not certify production tenant authentication.
 
 The current implementation is intentionally non-routed and must remain in a
 draft PR until the security design and separate runtime-role tests pass.
+
+## 2026-11-19: database-login-anchored authorization experiment
+
+`test_document_issuance_authenticated_lock_login_postgres.py` opens a
+**separate authenticated PostgreSQL TCP connection** using a disposable login
+role with no direct protected-table privileges. A SECURITY DEFINER test
+function resolves its allowed tenant from an owner-controlled mapping keyed
+by PostgreSQL `session_user`, not `current_setting('loanhub.company_id')`.
+The test attempts cross-tenant GUC impersonation and demonstrates that the
+function only allows the tenant mapped to the login. It also tests direct
+SELECT/UPDATE denial.
+
+This is **not** a final production approach. A single shared application
+database login would represent *all* tenants, so mapping that login to a
+tenant would not establish a user-specific membership or staff permission.
+Provisioning per-tenant database credentials may be operationally complex
+and requires lifecycle, rotation, revocation, connection-pool isolation,
+and role-inheritance auditing. Do not reuse a server-side privileged login
+from untrusted tenant request handling. A trusted issuer-authentication
+service or appropriately isolated capability is still required, followed by
+real integration tests against production-equivalent role grants and RLS.
