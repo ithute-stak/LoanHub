@@ -5,7 +5,7 @@ BEGIN READ ONLY;
 WITH target(loan_id) AS (VALUES
  ('281b2206-536f-483c-8dab-5125a532d2b2'::uuid),
  ('35394f4d-0411-4551-8655-e0c4b73a6aa5'::uuid),
- ('42f90f36-95c4-41b4-803e-f33db18e'::uuid),
+ ('42f90f36-95c4-41b4-803e-5fe3f33db18e'::uuid),
  ('56de3a68-7e80-4638-aadd-e8be46b2624c'::uuid),
  ('7b5060ae-7f6a-4c98-bb39-8c1f19633bcb'::uuid),
  ('9ea5fbde-561c-45c0-9072-55eb9c6dc2b2'::uuid),
