@@ -161,3 +161,22 @@ def test_nedbank_registration_preserves_leading_zeroes():
 def test_nedbank_registration_rejects_reserved_bank_prefixes(number):
     with pytest.raises(ValueError, match="Account prefix belongs to"):
         validate_account_number_for_bank("NB", number)
+
+
+def test_assisted_client_registration_wizard_uses_shared_banking_policy():
+    """Prevent the stale Nedbank 11/12-only wizard rule from returning."""
+    from pathlib import Path
+
+    wizard = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "app"
+        / "(dashboard)"
+        / "company"
+        / "clients"
+        / "page.tsx"
+    )
+    source = wizard.read_text(encoding="utf-8")
+    assert 'bankAccountValidationMessage(bank.bank_name, accountNumber)' in source
+    assert 'NB: ["11", "12"]' not in source
+    assert 'bankPrefixes' not in source
