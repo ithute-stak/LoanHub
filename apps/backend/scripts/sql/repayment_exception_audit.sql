@@ -46,4 +46,34 @@ WHERE s.status = 'settled'
   ) > 0
 ORDER BY s.company_id, s.loan_id;
 
+-- Reconciliation control totals. These are separate categories and MUST NOT be added
+-- together as cash received: historical openings may predate the live ledger.
+WITH unallocated AS (
+    SELECT pt.id, pt.amount
+    FROM payment_transactions pt
+    WHERE pt.status = 'SUCCEEDED'
+      AND pt.purpose = 'LOAN_REPAYMENT'
+      AND pt.direction = 'INBOUND'
+      AND NOT EXISTS (
+          SELECT 1 FROM payment_allocations pa WHERE pa.payment_id = pt.id
+      )
+), historical AS (
+    SELECT s.loan_id, s.company_id,
+           (s.calculation_snapshot->>'historical_opening_amount')::numeric AS amount
+    FROM loan_early_settlements s
+    JOIN client_company_loan l ON l.id = s.loan_id AND l.company_id = s.company_id
+    WHERE s.status = 'settled'
+      AND s.reversed_at IS NULL
+      AND COALESCE((s.calculation_snapshot->>'historical_opening_amount')::numeric, 0) > 0
+)
+SELECT 'unallocated_repayments' AS exception_category,
+       COUNT(*) AS record_count,
+       COALESCE(SUM(amount), 0)::numeric(18,2) AS amount_maloti
+FROM unallocated
+UNION ALL
+SELECT 'settled_historical_openings' AS exception_category,
+       COUNT(*) AS record_count,
+       COALESCE(SUM(amount), 0)::numeric(18,2) AS amount_maloti
+FROM historical;
+
 COMMIT;
