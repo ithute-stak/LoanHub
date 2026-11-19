@@ -22,6 +22,7 @@ type Candidate = { employee_number: string; borrower_id: string | null; status: 
 type Discovery = { complete: boolean; total: number | null; page: number; items: Candidate[]; message?: string };
 type Assessment = { record_id: string; reference: string; employee_number: string; borrower_id: string; assessed_at: string; decision: string; maximum_affordable_installment: string; proposed_installment: string; status?: string };
 type Batch = { batch_id: string; status: string; total_count: number; finished_count: number };
+type AttemptRow = { attempt_id: string; borrower_id: string; status: string; created_at: string | null; record_id: string | null; requires_manual_review: boolean; may_retry_provider_request: false };
 type Preflight = { ready_count: number; review_count: number; minimum_estimated_provider_requests: number; budget_remaining_at_preflight: number; budget_preflight_sufficient: boolean; candidates: { borrower_id: string; employee_number: string; status: string }[] };
 type Selection = { borrower_id: string; employee_number: string; proposed_monthly_installment: string };
 type UncertainAssessment = Selection & { startedAt: number; idempotency_key: string };
@@ -56,6 +57,7 @@ export default function GovernmentAffordabilityPage() {
     const [discovery, setDiscovery] = useState<Discovery | null>(null);
     const [assessments, setAssessments] = useState<Assessment[]>([]);
     const [batches, setBatches] = useState<Batch[]>([]);
+    const [attempts, setAttempts] = useState<AttemptRow[]>([]);
     const [selected, setSelected] = useState<Record<string, Selection>>({});
     const [consentReference, setConsentReference] = useState("");
     const [preflight, setPreflight] = useState<Preflight | null>(null);
@@ -74,14 +76,16 @@ export default function GovernmentAffordabilityPage() {
         setBusy("refresh");
         setError(null);
         try {
-            const [candidates, records, drafts] = await Promise.all([
+            const [candidates, records, drafts, tracked] = await Promise.all([
                 api.get<Discovery>(ROOT, { params: { page, page_size: 50 } }),
                 api.get<{ items: Assessment[] }>(ROOT + "/affordability-records", { params: { page: 1, page_size: 25 } }),
                 api.get<{ items: Batch[] }>(ROOT + "/bulk/batches", { params: { page: 1, page_size: 25 } }),
+                api.get<{ items: AttemptRow[] }>(ROOT + "/affordability-attempts", { params: { page: 1, page_size: 50 } }),
             ]);
             setDiscovery(candidates.data);
             setAssessments(records.data.items);
             setBatches(drafts.data.items);
+            setAttempts(tracked.data.items);
         } catch (cause) {
             setError(getErrorMessage(cause, "Unable to load CDAS affordability workspace."));
         } finally {
@@ -222,6 +226,32 @@ export default function GovernmentAffordabilityPage() {
             setUncertainAssessment({ ...individual, startedAt, idempotency_key: individualIdempotencyKey });
             setAuthorityConfirmed(false);
             setError(getErrorMessage(cause, "Assessment outcome unknown. Search saved records before any new CDAS request."));
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    async function openSavedAttempt(recordId: string) {
+        if (busy !== null) return;
+        setBusy("recover");
+        setError(null);
+        try {
+            // Recover using the exact ID returned by the company-owned attempt ledger.
+            // Neither endpoint initiates a CDAS lookup.
+            const result = await api.get<Assessment>(ROOT + "/affordability-records/" + recordId);
+            if (result.data.status || result.data.record_id !== recordId) {
+                setError("The stored report needs integrity review.");
+                return;
+            }
+            setIndividualResult({
+                ok: true, status: "assessment_recorded",
+                borrower_id: result.data.borrower_id, record_id: result.data.record_id,
+                reference: result.data.reference, decision: result.data.decision,
+                assessed_at: result.data.assessed_at,
+            });
+            setNotice("Saved assessment retrieved without contacting CDAS. Its PDF is available in the individual assessment section.");
+        } catch (cause) {
+            setError(getErrorMessage(cause, "Unable to recover the saved assessment."));
         } finally {
             setBusy(null);
         }
@@ -431,7 +461,26 @@ export default function GovernmentAffordabilityPage() {
                 </CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>5. Affordability assessment history</CardTitle><CardDescription>Saved assessments only. Downloading reports does not send new CDAS requests.</CardDescription></CardHeader>
+                <CardHeader><CardTitle>5. Assessment attempt recovery</CardTitle>
+                    <CardDescription>Company-owned durable attempt history survives browser restarts. Viewing these records never contacts CDAS. Unresolved attempts require investigation, not retry.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {attempts.map(item => <div key={item.attempt_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
+                        <div className="min-w-0 space-y-1">
+                            <p className="break-all text-sm font-medium">{item.attempt_id}</p>
+                            <p className="text-xs text-muted-foreground">Borrower {item.borrower_id} · {item.created_at || "Time unavailable"}</p>
+                            <Badge variant="outline">{item.status.replaceAll("_", " ")}</Badge>
+                            {item.requires_manual_review && <p className="text-xs text-destructive">Manual investigation required. Do not repeat the CDAS request.</p>}
+                        </div>
+                        {item.status === "completed" && item.record_id && <Button variant="outline" size="sm" disabled={busy !== null}
+                            onClick={() => void openSavedAttempt(item.record_id!)}>Retrieve saved report</Button>}
+                    </div>)}
+                    {!attempts.length && <p className="text-sm text-muted-foreground">No recent individual assessment attempts.</p>}
+                    <Button variant="outline" disabled={busy !== null} onClick={() => void refresh()}>Refresh attempt status</Button>
+                </CardContent>
+            </Card>
+            <Card>
+                <CardHeader><CardTitle>6. Affordability assessment history</CardTitle><CardDescription>Saved assessments only. Downloading reports does not send new CDAS requests.</CardDescription></CardHeader>
                 <CardContent className="space-y-3">
                     <Button variant="outline" disabled={busy !== null} onClick={() => void requestPdf(ROOT + "/affordability-summary.pdf", "government-affordability-summary.pdf")}><Download className="mr-2 h-4 w-4" />Consolidated management PDF</Button>
                     {assessments.map(item => <div key={item.record_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
