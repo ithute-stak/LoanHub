@@ -54,3 +54,12 @@ test("preview page and registration client do not contain write-capable calls", 
   assert.ok(api.includes('"/batlokoa/registration/form-requirements"'));
   assert.ok(page.includes("validateBatlokoaPreviewContract(status, form)"));
 });
+
+test("loan application handoff remains visibly disabled and has no origination API", () => {
+  const page = source(pagePath);
+  const api = source(apiPath);
+  assert.ok(page.includes("Start loan application — unavailable"));
+  assert.ok(page.includes('disabled aria-disabled="true"'));
+  assert.ok(!/\/origination\/applications|\/loan_requests|createInternalClientLoanRequest/.test(page + api));
+  assert.ok(!/calculateLoan\s*\(|createLoan\s*\(/.test(page + api));
+});
