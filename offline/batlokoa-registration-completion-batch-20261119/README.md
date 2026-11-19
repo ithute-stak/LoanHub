@@ -118,3 +118,24 @@ pnpm test:batlokoa-registration-preview
 
 Full CI and deployed-browser testing remain pending; the branch is not
 merged or deployed.
+
+## Offline iteration 5 — Tenant and branch authorization hardening
+
+The authenticated Batlokoa **informational** registration endpoints now
+require a complete active, approved company context, authoritative UUID
+company and employee identities, matching staff/company/user links, active
+lending staff and a matching assigned branch for non-management roles.
+Management roles may inspect the static form metadata without an assigned
+branch; neither role can submit a new-only registration.
+
+Regression tests reject revoked/inactive staff, inactive or pending
+companies, cross-company mismatches, wrong branches and malformed
+authoritative identifiers, and ensure neither preview API accepts a body.
+
+The checks complement (and do NOT replace) the database-locked staff,
+branch, index, global identity and idempotency checks that must be
+performed inside any eventual new-only write transaction. These metadata
+endpoints still return a constant disabled registration state.
+
+The offline branch is still unmerged; isolated full backend and frontend
+CI certification is pending.
