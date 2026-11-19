@@ -17,6 +17,7 @@ from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require
 from database.models.file_management import ManagedFile
 from database.models.origination import LoanContract
 from services.document_issuance_integrity import pdf_fingerprint
+from services.document_issuance_immutable_staging import StagedLockedCandidate
 from services.document_issuance_loan_source import require_authorized_loan_document_record
 from services.file_service import read_file_bytes
 
@@ -31,6 +32,13 @@ class VerifiedSignedContractPdf:
     pdf_bytes: bytes
     sha256_hex: str
     terms_sha256_hex: str
+
+
+@dataclass(frozen=True)
+class StagedSignedContractPdf:
+    """Source attestation carried with the quarantined locked PDF candidate."""
+    source: VerifiedSignedContractPdf
+    staged: StagedLockedCandidate
 
 
 def load_signed_loan_contract_pdf(
@@ -120,15 +128,16 @@ def stage_signed_loan_contract_pdf(
     contract_id: UUID, contract_version: int,
     trusted_verification_origin: str, store, stamp_configuration_version: int,
 ):
-    """Non-routed; stage verified current signed contract through approved pipeline."""
+    """Non-routed; carry frozen source identity alongside the locked candidate."""
     from services.document_issuance_immutable_staging import stage_locked_document_candidate
 
     source = load_signed_loan_contract_pdf(
         db=db, context=context, loan_id=loan_id,
         contract_id=contract_id, contract_version=contract_version,
     )
-    return stage_locked_document_candidate(
+    staged = stage_locked_document_candidate(
         context=context, source_pdf=source.pdf_bytes,
         trusted_verification_origin=trusted_verification_origin, store=store,
         db=db, stamp_configuration_version=stamp_configuration_version,
     )
+    return StagedSignedContractPdf(source=source, staged=staged)
