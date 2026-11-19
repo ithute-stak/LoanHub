@@ -110,3 +110,25 @@ def test_consent_reference_is_bound_into_durable_request_fingerprint():
         **fixed, consent_evidence_reference="CONSENT-TWO",
     )
     assert first != second
+
+
+@pytest.mark.asyncio
+async def test_whitespace_consent_reference_cannot_reserve_provider_attempt(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(mod, "_require_company_manager", lambda context: None)
+    def forbidden_reserve(*args, **kwargs):
+        raise AssertionError("Whitespace evidence must be blocked before reservation")
+    monkeypatch.setattr(mod, "reserve_affordability_attempt", forbidden_reserve)
+    payload = mod.RecordedGovernmentEmployeeAffordabilityRequest(
+        borrower_id=uuid4(), employee_number="EMP-100",
+        proposed_monthly_installment="100.00", authorisation_confirmed=True,
+        idempotency_key="test-whitespace-key-001",
+        consent_evidence_reference="            ",
+    )
+    with pytest.raises(HTTPException) as raised:
+        await mod.create_government_affordability_record(
+            payload=payload,
+            context=SimpleNamespace(company_id=uuid4()),
+            db=object(),
+        )
+    assert raised.value.status_code == 422
