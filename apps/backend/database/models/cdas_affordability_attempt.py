@@ -2,7 +2,7 @@
 
 Not a payroll deduction operation and never a bulk worker queue.
 """
-from sqlalchemy import Column, ForeignKey, String, UniqueConstraint, CheckConstraint
+from sqlalchemy import Column, ForeignKey, String, UniqueConstraint, CheckConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from database.base import Base
 
@@ -11,6 +11,7 @@ class CdasAffordabilityAttempt(Base):
     __tablename__ = "cdas_affordability_attempts"
     __table_args__ = (
         UniqueConstraint("company_id", "idempotency_key", name="uq_cdas_aff_attempt_company_key"),
+        Index("uq_cdas_aff_attempt_unresolved_fingerprint", "company_id", "request_fingerprint", unique=True, postgresql_where=text("state IN ('reserved','unknown')")),
         CheckConstraint(
             "state IN ('reserved','unknown','identity_review','completed')",
             name="ck_cdas_aff_attempt_state",
