@@ -68,6 +68,7 @@ export default function GovernmentAffordabilityPage() {
     const [individual, setIndividual] = useState<Selection | null>(null);
     const [individualIdempotencyKey, setIndividualIdempotencyKey] = useState<string | null>(null);
     const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
+    const [individualConsentReference, setIndividualConsentReference] = useState("");
     const [individualResult, setIndividualResult] = useState<RecordedAssessment | null>(null);
     const [uncertainAssessment, setUncertainAssessment] = useState<UncertainAssessment | null>(null);
 
@@ -135,6 +136,7 @@ export default function GovernmentAffordabilityPage() {
         if (!item.borrower_id || item.requires_manual_review || uncertainAssessment) return;
         setIndividual({ borrower_id: item.borrower_id, employee_number: item.employee_number, proposed_monthly_installment: "" });
         setAuthorityConfirmed(false);
+        setIndividualConsentReference("");
         setIndividualResult(null);
         setUncertainAssessment(null);
         setIndividualIdempotencyKey(crypto.randomUUID());
@@ -182,6 +184,10 @@ export default function GovernmentAffordabilityPage() {
 
     async function assessIndividual() {
         if (!individual || !individualIdempotencyKey || !authorityConfirmed || busy !== null || uncertainAssessment) return;
+        if (individualConsentReference.trim().length < 6 || individualConsentReference.trim().length > 200) {
+            setError("Provide a consent document reference (6–200 characters). A reference alone is not evidence verification.");
+            return;
+        }
         const amount = individual.proposed_monthly_installment;
         if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 9999999999999) {
             setError("Enter a valid positive instalment in maloti, with no more than two decimal places.");
@@ -201,6 +207,7 @@ export default function GovernmentAffordabilityPage() {
                 proposed_monthly_installment: amount,
                 authorisation_confirmed: true,
                 idempotency_key: individualIdempotencyKey,
+                consent_evidence_reference: individualConsentReference.trim(),
             });
             setIndividualResult(response.data);
             setUncertainAssessment(null);
@@ -396,12 +403,24 @@ export default function GovernmentAffordabilityPage() {
                                     setIndividualIdempotencyKey(crypto.randomUUID());
                                 }} />
                         </div>
+                        <div className="max-w-lg space-y-2">
+                            <Label htmlFor="individual-consent-reference">Consent evidence reference</Label>
+                            <Input id="individual-consent-reference" value={individualConsentReference}
+                                placeholder="Reference to an existing consent document"
+                                onChange={event => {
+                                    setIndividualConsentReference(event.target.value);
+                                    setAuthorityConfirmed(false);
+                                    setIndividualResult(null);
+                                    setIndividualIdempotencyKey(crypto.randomUUID());
+                                }} />
+                            <p className="text-xs text-muted-foreground">This reference is recorded for audit. It does not verify that consent exists or is valid.</p>
+                        </div>
                         <label className="flex items-start gap-3 text-sm">
                             <input type="checkbox" className="mt-1" checked={authorityConfirmed}
                                 onChange={event => setAuthorityConfirmed(event.target.checked)} />
                             <span>I confirm I have lawful authority to request this employee&apos;s CDAS identity and affordability data. I understand this is a billable live provider lookup, not a loan approval.</span>
                         </label>
-                        <Button disabled={busy !== null || Boolean(uncertainAssessment) || !authorityConfirmed || !individual.proposed_monthly_installment}
+                        <Button disabled={busy !== null || Boolean(uncertainAssessment) || !authorityConfirmed || individualConsentReference.trim().length < 6 || !individual.proposed_monthly_installment}
                             onClick={() => void assessIndividual()}>Verify, assess and save report</Button>
                     </>}
                     {uncertainAssessment && <Alert variant="destructive">
