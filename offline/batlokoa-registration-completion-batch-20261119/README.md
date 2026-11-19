@@ -228,3 +228,22 @@ denial if a future preflight accidentally signals write permission.
 
 No CI has yet executed the new batch tests. The batch remains unmerged,
 with no VPS or production change.
+
+## Offline iteration 9 — Proposed durable idempotency contract
+
+Added a standalone, no-write HMAC-SHA256 canonical request identity
+covering exact company, branch, employee, account, product, two-decimal
+principal and term. This allows future durable reservation replays to
+be rejected if the same request key carries changed inputs, without
+putting client national ID, phone or bank information into the digest.
+
+Matching reserved/completed/rejected requests return no-new-write
+outcomes. Tampered intents claiming registration or application
+write permission are rejected. Synthetic unit tests cover formatting,
+HMAC key rotation difference, scope collisions and repeated requests.
+
+See `APPLICATION_IDEMPOTENCY_DESIGN.md` for the **proposed**, not
+installed, PostgreSQL unique reservation constraints and transaction
+sequence. A DB-backed idempotency table, participation by all existing
+loan origination writers, concurrency tests and independently approved
+migration are STILL MISSING. No production activation or main merge.
