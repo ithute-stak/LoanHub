@@ -153,7 +153,11 @@ def test_signed_contract_staging_uses_generator_file_bytes():
             contract_version=3, trusted_verification_origin="https://verify.example.test",
             store=store, stamp_configuration_version=2,
         )
-    assert result == "locked-candidate"
+    assert result.staged == "locked-candidate"
+    assert result.source.contract_id == contract.id
+    assert result.source.contract_version == 3
+    assert result.source.file_id == contract.pdf_file_id
+    assert result.source.terms_sha256_hex == contract.contract_hash
     stage.assert_called_once_with(
         context=context, source_pdf=PDF,
         trusted_verification_origin="https://verify.example.test",
