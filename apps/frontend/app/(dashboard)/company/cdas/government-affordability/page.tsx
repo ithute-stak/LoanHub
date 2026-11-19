@@ -144,10 +144,14 @@ export default function GovernmentAffordabilityPage() {
             setAuthorityConfirmed(false);
             if (response.data.status === "assessment_recorded") {
                 setNotice("Assessment saved. Review its decision and download the PDF from the result below.");
-                const history = await api.get<{ items: Assessment[] }>(
-                    ROOT + "/affordability-records", { params: { page: 1, page_size: 25 } },
-                );
-                setAssessments(history.data.items);
+                try {
+                    const history = await api.get<{ items: Assessment[] }>(
+                        ROOT + "/affordability-records", { params: { page: 1, page_size: 25 } },
+                    );
+                    setAssessments(history.data.items);
+                } catch {
+                    setNotice("Assessment saved successfully, but history could not refresh. The PDF is available below.");
+                }
             } else if (response.data.status === "identity_review_required") {
                 setNotice("CDAS identity requires manual review. No affordability assessment was saved.");
             } else {
