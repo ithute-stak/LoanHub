@@ -73,12 +73,22 @@ class RegistrationFormSectionRead(BaseModel):
     deferred_fields: tuple[str, ...] = ()
 
 
+class RegistrationFieldRequirementRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str
+    kind: str
+    required: bool
+    deferred: bool
+    sensitive: bool
+
+
 class RegistrationFormRequirementsRead(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: int = 2
     identity_alternatives: tuple[str, ...] = ("national_id", "passport_number")
-    field_details: tuple["RegistrationFieldRequirementRead", ...] = ()
+    field_details: tuple[RegistrationFieldRequirementRead, ...] = ()
     registration_available: bool = False
     submit_allowed: bool = False
     client_data_requested: bool = False
@@ -164,16 +174,6 @@ _SENSITIVE_FIELDS = frozenset({
     "monthly_income", "existing_loan_total", "external_debts",
     "bank_account", "cdas_employee_number",
 })
-
-
-class RegistrationFieldRequirementRead(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    key: str
-    kind: str
-    required: bool
-    deferred: bool
-    sensitive: bool
 
 
 def _form_field_details() -> tuple[RegistrationFieldRequirementRead, ...]:
