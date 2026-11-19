@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ContactRound, UsersRound } from "lucide-react";
+import { ContactRound, ClipboardList, UsersRound } from "lucide-react";
 
 export default function CompanyClientsLayout({ children }: { children: ReactNode }) {
   return (
@@ -14,6 +14,9 @@ export default function CompanyClientsLayout({ children }: { children: ReactNode
           <div className="flex flex-wrap gap-2">
             <Link href="/company/clients" className="inline-flex items-center gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-xs font-black transition hover:border-primary/30 hover:bg-primary/5">
               <ContactRound className="h-4 w-4 text-primary" />Client register
+            </Link>
+            <Link href="/company/clients/registration-preview" className="inline-flex items-center gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-xs font-black transition hover:border-primary/30 hover:bg-primary/5">
+              <ClipboardList className="h-4 w-4 text-primary" />Registration plan
             </Link>
             <Link href="/company/borrowers" className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-black text-primary-foreground shadow-sm transition hover:bg-primary/90">
               <UsersRound className="h-4 w-4" />Borrower command centre
