@@ -43,9 +43,12 @@ def register_signed_contract_locked_issuance(
             or attested.loan_id != loan_id or attested.contract_id != contract_id
             or attested.contract_version != contract_version):
         raise PermissionError("Staged contract identity or version mismatch")
+    # Load loan, contract and current PDF under transaction-held FOR SHARE NOWAIT
+    # locks. A competing update fails closed, rather than racing the final commit.
     source = load_signed_loan_contract_pdf(
         db=db, context=context, loan_id=loan_id,
         contract_id=contract_id, contract_version=contract_version,
+        lock_for_registration=True,
     )
     if (source.tenant_id != context.company_id or source.loan_id != loan_id
             or source.contract_id != contract_id or source.contract_version != contract_version):
