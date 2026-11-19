@@ -99,3 +99,20 @@ def test_treasury_link_to_another_payment_is_not_treated_as_verified():
     )
     assert result.unlinked_treasury_count == 1
     assert result.complete is False
+
+
+def test_allocation_linked_to_another_loan_payment_is_flagged():
+    selected_payment_id = uuid4()
+    other_loan_payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=selected_payment_id)],
+        [],
+        [SimpleNamespace(payment_id=other_loan_payment_id)],
+        [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.payment_count == 1
+    assert result.orphan_allocation_count == 1
+    assert result.complete is False
