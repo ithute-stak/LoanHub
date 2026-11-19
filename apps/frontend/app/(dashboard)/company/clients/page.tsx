@@ -101,6 +101,7 @@ import type { MicroLoanCalculation } from "@/types/loan";
 import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
+import { bankAccountValidationMessage } from "@/lib/banking";
 import {
   GLOBAL_BORROWER_LOOKUP_EVENT,
   type GlobalBorrowerLookupDetail,
@@ -708,23 +709,16 @@ export default function CompanyClientsPage() {
       const bank = clientForm.bank_account;
       if (bank) {
         const accountNumber = String(bank.account_number ?? "").replace(/[\s/-]+/g, "");
-        const bankPrefixes: Record<string, string[]> = {
-          FNB: ["6"],
-          PB: ["10"],
-          STD: ["90"],
-          NB: ["11", "12"],
-        };
+        const supportedBanks = ["FNB", "PB", "STD", "NB"];
+        const accountError = bankAccountValidationMessage(bank.bank_name, accountNumber);
         if (bank.account_holder.trim().length < 2) errors.push("Enter the bank account holder.");
-        if (!bank.bank_name.trim() || !bankPrefixes[bank.bank_name]) errors.push("Select a supported borrower bank.");
+        if (!bank.bank_name.trim() || !supportedBanks.includes(bank.bank_name)) errors.push("Select a supported borrower bank.");
         if (accountNumber.length < 4) {
           errors.push("Enter a valid bank account number.");
         } else if (!/^\d+$/.test(accountNumber)) {
           errors.push("The bank account number must contain digits only.");
-        } else {
-          const prefixes = bankPrefixes[bank.bank_name] ?? [];
-          if (prefixes.length > 0 && !prefixes.some((prefix) => accountNumber.startsWith(prefix))) {
-            errors.push(`${bank.bank_name} account number must start with ${prefixes.join(" or ")}.`);
-          }
+        } else if (accountError) {
+          errors.push(accountError);
         }
       }
     }
