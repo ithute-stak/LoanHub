@@ -21,6 +21,7 @@ from routers import (
     call_management,
     call_media,
     cdas_api,
+    cdas_government_employees,
     chat,
     collection_automation,
     collections_recovery,
@@ -142,7 +143,7 @@ _legacy_workspace_documents_router = _without_workspace_document_overrides(works
 _ROUTE_REGISTRY = (
     public_portal.router, auth.router, ithute_auth.router, sandbox.router, account.router, analytics.router,
     portfolio_risk.router, ai_intelligence.router, predictive_intelligence.router, credit_loss_provisioning.router,
-    reconciliation.router, lending_operations.router, credit_committee.router, cdas_api.router,
+    reconciliation.router, lending_operations.router, credit_committee.router, cdas_api.router, cdas_government_employees.router,
     collections_recovery.router, collection_automation.router, lelefa_managed_collections.router,
     call_management.router, call_media.router, maturity_recovery.router, notifications.router, realtime.router,
     audit.router, governance_controls.router, local_signatures.router, local_signature_review.router, company_registration.router, borrower_registration.router,
