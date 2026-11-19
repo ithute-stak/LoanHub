@@ -344,6 +344,90 @@ from database.models.audit_log import AuditLog
 from services.cdas_affordability_pdf import build_government_affordability_pdf
 
 
+from database.models.documents import BorrowerDocument
+from database.models.cdas_affordability_consent_evidence import CdasAffordabilityConsentEvidence
+from services.cdas_affordability_consent_policy import PURPOSE
+
+
+class PendingCdasConsentEvidenceRequest(BaseModel):
+    borrower_id: UUID
+    document_id: UUID
+    employee_number: str = Field(min_length=1, max_length=100)
+    reference: str = Field(min_length=6, max_length=200)
+    borrower_authorization_confirmed: bool = False
+
+
+@router.post("/consent-evidence", status_code=201)
+def submit_pending_cdas_consent_evidence(
+    payload: PendingCdasConsentEvidenceRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Save a borrower-linked consent DOCUMENT for separate human review.
+
+    No CDAS provider call, document verification, or consent approval occurs.
+    The later live gate must verify the document digest and reviewer decision.
+    """
+    _require_company_manager(context)
+    assert context.company_id is not None
+    number = payload.employee_number.strip()
+    reference = payload.reference.strip()
+    if not payload.borrower_authorization_confirmed:
+        raise HTTPException(status_code=409, detail="Borrower consent confirmation is required")
+    if len(reference) < 6 or not number:
+        raise HTTPException(status_code=422, detail="Valid employee number and evidence reference are required")
+    payroll = db.query(CDASPayrollProfile).filter(
+        CDASPayrollProfile.company_id == context.company_id,
+        CDASPayrollProfile.borrower_id == payload.borrower_id,
+        func.lower(func.trim(CDASPayrollProfile.employee_number)) == number.casefold(),
+    ).first()
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == context.company_id,
+        BorrowerEmploymentProfile.borrower_id == payload.borrower_id,
+        func.lower(func.trim(BorrowerEmploymentProfile.employee_number)) == number.casefold(),
+    ).first()
+    if payroll is None and employment is None:
+        raise HTTPException(status_code=409, detail="Employee does not belong to this company borrower")
+    document = db.query(BorrowerDocument).filter(
+        BorrowerDocument.id == payload.document_id,
+        BorrowerDocument.borrower_id == payload.borrower_id,
+    ).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Borrower-linked evidence document not found")
+    existing = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.company_id == context.company_id,
+        CdasAffordabilityConsentEvidence.reference == reference,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Consent evidence reference already exists")
+    record = CdasAffordabilityConsentEvidence(
+        company_id=context.company_id,
+        borrower_id=payload.borrower_id,
+        document_id=document.id,
+        employee_number=number,
+        reference=reference,
+        purpose=PURPOSE,
+        status="pending",
+        borrower_authorization_confirmed=True,
+        submitted_by_user_id=context.user.id,
+    )
+    db.add(record)
+    try:
+        db.commit()
+        db.refresh(record)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Duplicate consent evidence reference") from exc
+    return {
+        "evidence_id": str(record.id),
+        "reference": record.reference,
+        "status": "pending",
+        "verified": False,
+        "cdas_request_authorized": False,
+        "note": "Awaiting independent document and consent review; no CDAS request sent",
+    }
+
+
 from services.cdas_affordability_attempts import (
     reserve_affordability_attempt,
     find_attempt,
