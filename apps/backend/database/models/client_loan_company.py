@@ -13,6 +13,7 @@ class ClientCompanyLoan(Base):
     __tablename__ = "client_company_loan"
     __table_args__ = (
         UniqueConstraint("loan_request_id", name="uq_client_loan_request"),
+        UniqueConstraint("id", "company_id", name="uq_client_loan_id_company"),
         UniqueConstraint("loan_offer_id", name="uq_client_loan_offer"),
         UniqueConstraint(
             "company_id",

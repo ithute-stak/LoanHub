@@ -55,6 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Audit Principal x Alembic revision graph (required)
+        run: python3 apps/backend/scripts/audit_principal_x_alembic_graph.py
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
