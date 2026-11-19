@@ -584,6 +584,26 @@ def list_government_affordability_records(
     }
 
 
+@router.get("/affordability-records/{record_id}")
+def get_government_affordability_saved_record(
+    record_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read exactly one company-owned saved assessment; never request CDAS."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    record = _company_assessment_query(db, context.company_id).filter(
+        AuditLog.id == record_id,
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Saved assessment not found")
+    try:
+        return stored_assessment_summary(record)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Saved assessment requires integrity review") from exc
+
+
 @router.get("/affordability-summary.pdf")
 def download_government_affordability_summary(
     context: TenantContext = Depends(get_tenant_context),
