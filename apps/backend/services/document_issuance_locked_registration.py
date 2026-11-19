@@ -2,7 +2,7 @@
 
 This helper intentionally does NOT enable public issuance or replace existing
 LoanHub document flows. Its caller must validate source provenance, company
-stamp approval and production Object Lock retention independently. A failed or
+authorized source provenance and production Object Lock retention independently. A failed or
 uncertain commit may leave a retained S3 object, to reconcile by public ID and
 object VersionId; NEVER delete or return it as an issued PDF.
 """
@@ -21,6 +21,7 @@ from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_immutable_staging import StagedLockedCandidate
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
+from services.document_issuance_stamp_approval_repository import lookup_approved_stamp_from_database
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,15 @@ def register_locked_staged_document(
     # The connected session must have real tenant RLS, non-owner privileges,
     # and no unrestricted update/delete access.
     require_document_issuance_database_ready(db)
+    # Never accept approval data from callers: look up the exact approved
+    # version and any revocation with the connected restricted SQL session.
+    # This fails closed until the approval tables and runtime grants exist.
+    lookup_approved_stamp_from_database(
+        db=db, company=context.company,
+        authenticated_tenant_id=context.company_id,
+        issuer_user_id=context.user.id,
+        configuration_version=stamp_configuration_version,
+    )
     previous = db.query(DocumentIssuance).filter(
         DocumentIssuance.company_id == context.company_id,
         DocumentIssuance.idempotency_key == idempotency_key,
