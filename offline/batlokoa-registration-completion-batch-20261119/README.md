@@ -167,3 +167,32 @@ revoked/invalid staff and no write calls. These new tests are committed
 but NOT certified by CI. Future end-to-end work must check real
 PostgreSQL transaction behavior and loan product, policy and application
 idempotency before any live handoff.
+
+## Offline iteration 7 — Loan product and duplicate application preflight
+
+The internal loan-handoff path now has a separate, **read-only** origination
+preflight that first requires protected new-only registration provenance.
+
+It enforces active tenant-owned loan product identity, finite two-decimal
+positive principal, the loan product's minimum/maximum amount and term, and
+a conservative search for **any existing direct origination application**
+for this borrower across all companies/statuses. A previous application
+blocks new-only progression even if rejected or completed, pending a
+separately reviewed repeat-lending policy.
+
+This preflight is not the LoanHub calculator, is not a credit decision, and
+does not issue a loan, create a draft, reserve an idempotency key, or
+disburse funds. Successful checks still return
+`can_create_loan_application=False` and `can_disburse_loan=False`.
+KYC, affordability, human underwriting and independent release
+authorization remain separate prerequisites.
+
+Added targeted mocked-DB unit tests cover good provenance with disabled
+write outcome, mismatched product/company/borrower/branch, invalid values,
+amount/term boundaries, pre-existing application and missing records,
+including explicit assertions that no database mutation methods are called.
+
+These tests are not yet CI-certified, and this is NOT a concurrency-safe
+unique application reservation. Eventual writes require fresh database
+locking and real PostgreSQL repeat/parallel request tests. The offline
+branch has not been merged or deployed.
