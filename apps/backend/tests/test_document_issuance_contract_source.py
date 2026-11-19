@@ -163,3 +163,40 @@ def test_signed_contract_staging_uses_generator_file_bytes():
         trusted_verification_origin="https://verify.example.test",
         store=store, db=db, stamp_configuration_version=2,
     )
+
+
+def test_registration_read_locks_contract_and_file_rows_nowait():
+    db, context, loan, contract, file = _case()
+    _allow(loan)
+    query = db.query.return_value.filter.return_value
+    query.with_for_update.return_value.one_or_none.side_effect = [contract, file]
+    with patch("services.document_issuance_contract_source.read_file_bytes",
+               return_value=PDF):
+        result = load_signed_loan_contract_pdf(
+            db=db, context=context, loan_id=loan.id,
+            contract_id=contract.id, contract_version=3,
+            lock_for_registration=True,
+        )
+    assert result.file_id == file.id
+    assert query.with_for_update.call_count == 2
+    assert all(
+        call.kwargs == {"read": True, "nowait": True}
+        for call in query.with_for_update.call_args_list
+    )
+    db.commit.assert_not_called()
+
+
+def test_registration_lock_conflict_fails_before_pdf_read():
+    db, context, loan, contract, _ = _case()
+    _allow(loan)
+    db.query.return_value.filter.return_value.with_for_update.side_effect = RuntimeError(
+        "could not obtain lock on row"
+    )
+    with patch("services.document_issuance_contract_source.read_file_bytes") as reader:
+        with pytest.raises(RuntimeError, match="could not obtain lock"):
+            load_signed_loan_contract_pdf(
+                db=db, context=context, loan_id=loan.id,
+                contract_id=contract.id, contract_version=3,
+                lock_for_registration=True,
+            )
+    reader.assert_not_called()
