@@ -49,6 +49,7 @@ export default function GovernmentAffordabilityPage() {
     const [selected, setSelected] = useState<Record<string, Selection>>({});
     const [consentReference, setConsentReference] = useState("");
     const [preflight, setPreflight] = useState<Preflight | null>(null);
+    const [draftIdempotencyKey, setDraftIdempotencyKey] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
@@ -81,6 +82,7 @@ export default function GovernmentAffordabilityPage() {
     function toggle(item: Candidate) {
         if (!item.borrower_id || item.requires_manual_review) return;
         setPreflight(null);
+        setDraftIdempotencyKey(null);
         setSelected(previous => {
             if (previous[item.borrower_id!]) {
                 const next = { ...previous };
@@ -97,6 +99,7 @@ export default function GovernmentAffordabilityPage() {
 
     function changeInstallment(borrowerId: string, amount: string) {
         setPreflight(null);
+        setDraftIdempotencyKey(null);
         setSelected(previous => ({
             ...previous,
             [borrowerId]: { ...previous[borrowerId], proposed_monthly_installment: amount },
@@ -172,6 +175,7 @@ export default function GovernmentAffordabilityPage() {
         try {
             const response = await api.post<Preflight>(ROOT + "/bulk/preflight", { employees: selectionPayload() });
             setPreflight(response.data);
+            setDraftIdempotencyKey(crypto.randomUUID());
             setNotice("Preflight completed without contacting CDAS. Review all candidates before saving a draft.");
         } catch (cause) {
             setError(getErrorMessage(cause, "Preflight was not completed."));
@@ -183,7 +187,7 @@ export default function GovernmentAffordabilityPage() {
     async function saveDraft() {
         setError(null);
         setNotice(null);
-        if (!preflight || preflight.review_count || preflight.ready_count !== Object.keys(selected).length) {
+        if (!preflight || !draftIdempotencyKey || preflight.review_count || preflight.ready_count !== Object.keys(selected).length) {
             setError("Run a successful preflight for all selected employees first.");
             return;
         }
@@ -194,10 +198,11 @@ export default function GovernmentAffordabilityPage() {
         setBusy("draft");
         try {
             const request = { employees: selectionPayload(), consent_evidence_reference: consentReference.trim(),
-                idempotency_key: crypto.randomUUID() };
+                idempotency_key: draftIdempotencyKey };
             const response = await api.post<{ batch_id: string }>(ROOT + "/bulk/batches", request);
             setSelected({});
             setPreflight(null);
+            setDraftIdempotencyKey(null);
             setNotice("Draft batch " + response.data.batch_id + " saved. Execution is disabled; no CDAS request was sent.");
             await refresh();
         } catch (cause) {
@@ -337,7 +342,11 @@ export default function GovernmentAffordabilityPage() {
                         {!preflight.budget_preflight_sufficient && <p className="text-destructive">Provider budget may be insufficient for later execution.</p>}
                         {preflight.candidates.filter(item => item.status !== "ready_for_live_verification").map(item => <p key={item.borrower_id}>{item.employee_number}: {item.status.replaceAll("_", " ")}</p>)}
                     </div>}
-                    <div className="max-w-lg space-y-2"><Label htmlFor="consent-reference">Consent evidence reference</Label><Input id="consent-reference" value={consentReference} onChange={event => setConsentReference(event.target.value)} placeholder="Reference to consent documentation" /></div>
+                    <div className="max-w-lg space-y-2"><Label htmlFor="consent-reference">Consent evidence reference</Label><Input id="consent-reference" value={consentReference} onChange={event => {
+                        setConsentReference(event.target.value);
+                        setDraftIdempotencyKey(null);
+                        setPreflight(null);
+                    }} placeholder="Reference to consent documentation" /></div>
                     <Button disabled={busy !== null || !preflight || preflight.review_count > 0 || !preflight.ready_count} onClick={() => void saveDraft()}>Save draft batch (no CDAS calls)</Button>
                 </CardContent>
             </Card>
