@@ -8,7 +8,9 @@ import pytest
 from fastapi import HTTPException
 
 from database.models.enums import UserRole
-from services.document_issuance_source_provenance import load_authorized_managed_pdf_source
+from services.document_issuance_source_provenance import (
+    load_authorized_managed_pdf_source, stage_authorized_managed_pdf_source,
+)
 
 
 PDF = b"%PDF-1.4\nowned source\n"
@@ -99,3 +101,37 @@ def test_unverified_tenant_context_rejected_before_query():
     with pytest.raises(PermissionError):
         _load(db, context, file_id)
     db.query.assert_not_called()
+
+
+def test_staging_entry_point_uses_only_verified_managed_file_bytes():
+    db, context, file_id, source = _fixture()
+    store = object()
+    with patch("services.document_issuance_source_provenance.read_file_bytes",
+               return_value=PDF), patch(
+        "services.document_issuance_immutable_staging.stage_locked_document_candidate",
+        return_value="staged-result",
+    ) as stage:
+        result = stage_authorized_managed_pdf_source(
+            db=db, context=context, source_file_id=file_id,
+            trusted_verification_origin="https://verify.example.test",
+            store=store, stamp_configuration_version=2,
+        )
+    assert result == "staged-result"
+    stage.assert_called_once_with(
+        context=context, source_pdf=PDF,
+        trusted_verification_origin="https://verify.example.test",
+        store=store, db=db, stamp_configuration_version=2,
+    )
+
+
+def test_staging_entry_point_denies_cross_tenant_source_before_staging():
+    db, context, file_id, source = _fixture()
+    source.company_id = uuid4()
+    with patch("services.document_issuance_immutable_staging.stage_locked_document_candidate") as stage:
+        with pytest.raises(PermissionError):
+            stage_authorized_managed_pdf_source(
+                db=db, context=context, source_file_id=file_id,
+                trusted_verification_origin="https://verify.example.test",
+                store=object(), stamp_configuration_version=2,
+            )
+    stage.assert_not_called()
