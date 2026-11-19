@@ -19,6 +19,7 @@ from services.batlokoa_new_only_application_preflight import (
     assess_new_only_application_preflight,
 )
 from services.batlokoa_new_only_loan_handoff import NewOnlyLoanHandoffDenied
+from routers.batlokoa_registration_availability import registration_availability_for_staff
 
 _KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 
@@ -53,6 +54,9 @@ def assess_locked_new_only_application_preflight(
         or not _KEY_PATTERN.fullmatch(request_key)
     ):
         raise NewOnlyLoanHandoffDenied("Validated company, branch and request key required")
+    # Reject inactive, unapproved, unrelated or branchless employee contexts
+    # before attempting to acquire any shared database lock.
+    registration_availability_for_staff(context)
     bind = db.get_bind()
     if (
         bind is None
