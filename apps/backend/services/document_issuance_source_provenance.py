@@ -67,3 +67,27 @@ def load_authorized_managed_pdf_source(
         tenant_id=context.company_id, source_file_id=source_file_id,
         owner_user_id=context.user.id, pdf_bytes=contents, sha256_hex=digest,
     )
+
+
+def stage_authorized_managed_pdf_source(
+    *, db: Session, context: TenantContext, source_file_id: UUID,
+    trusted_verification_origin: str, store,
+    stamp_configuration_version: int,
+):
+    """Non-routed entry point; never accept arbitrary caller-supplied PDF bytes.
+
+    The staging helper independently enforces company approval, malware scan,
+    and exact S3 retention; this entry point provides its trusted source bytes.
+    No official issuance/return of bytes occurs until later registration.
+    """
+    from services.document_issuance_immutable_staging import stage_locked_document_candidate
+
+    source = load_authorized_managed_pdf_source(
+        db=db, context=context, source_file_id=source_file_id,
+    )
+    return stage_locked_document_candidate(
+        context=context, source_pdf=source.pdf_bytes,
+        trusted_verification_origin=trusted_verification_origin,
+        store=store, db=db,
+        stamp_configuration_version=stamp_configuration_version,
+    )
