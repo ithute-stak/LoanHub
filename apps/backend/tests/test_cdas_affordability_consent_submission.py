@@ -9,7 +9,7 @@ from routers import cdas_government_employees as module
 
 def request(*, borrower, document, authorized=True):
     return module.PendingCdasConsentEvidenceRequest(
-        borrower_id=borrow, document_id=document, employee_number="EMP-100",
+        borrower_id=borrower, document_id=document, employee_number="EMP-100",
         reference="CONSENT-TEST-001", borrower_authorization_confirmed=authorized,
     )
 
