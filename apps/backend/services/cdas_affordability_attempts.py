@@ -44,6 +44,20 @@ def reserve_affordability_attempt(db, *, company_id, actor_user_id, borrower_id,
             raise HTTPException(status_code=409, detail="Idempotency key belongs to another assessment")
         return prior, False
 
+    unresolved = db.query(CdasAffordabilityAttempt).filter(
+        CdasAffordabilityAttempt.company_id == company_id,
+        CdasAffordabilityAttempt.request_fingerprint == fingerprint,
+        CdasAffordabilityAttempt.state.in_(("reserved", "unknown")),
+    ).first()
+    if unresolved is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Unresolved matching CDAS assessment already exists; do not issue another provider request",
+                **safe_attempt_status(unresolved),
+            },
+        )
+
     attempt = CdasAffordabilityAttempt(
         company_id=company_id, actor_user_id=actor_user_id,
         borrower_id=borrower_id, idempotency_key=idempotency_key,
@@ -61,6 +75,19 @@ def reserve_affordability_attempt(db, *, company_id, actor_user_id, borrower_id,
             if prior.request_fingerprint != fingerprint:
                 raise HTTPException(status_code=409, detail="Idempotency key belongs to another assessment") from exc
             return prior, False
+        unresolved = db.query(CdasAffordabilityAttempt).filter(
+            CdasAffordabilityAttempt.company_id == company_id,
+            CdasAffordabilityAttempt.request_fingerprint == fingerprint,
+            CdasAffordabilityAttempt.state.in_(("reserved", "unknown")),
+        ).first()
+        if unresolved is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Concurrent unresolved assessment prevents another CDAS call",
+                    **safe_attempt_status(unresolved),
+                },
+            ) from exc
         raise
 
 
