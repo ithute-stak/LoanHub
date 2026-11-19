@@ -180,3 +180,25 @@ def test_assisted_client_registration_wizard_uses_shared_banking_policy():
     assert 'bankAccountValidationMessage(bank.bank_name, accountNumber)' in source
     assert 'NB: ["11", "12"]' not in source
     assert 'bankPrefixes' not in source
+
+
+def test_nedbank_22_account_acceptance_across_client_and_employee_schemas():
+    number = "22123456789"
+
+    client = CompanyClientBankAccountUpdate(bank_name="NB", account_number=number)
+    assert client.account_number == number
+    assert client.branch_code == "390161"
+
+    employee = EmployeeProfileUpdate(
+        employee_number="EMP-NB-22",
+        bank_name="NB",
+        bank_account_number=number,
+    )
+    assert employee.bank_account_number == number
+
+    origination = BankAccountInput(
+        account_holder="Test Borrower",
+        bank_name="NB",
+        account_number=number,
+    )
+    assert origination.account_number == number
