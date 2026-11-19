@@ -95,7 +95,7 @@ def test_mutated_signed_contract_identity_rejected():
     ), patch(
         "services.document_issuance_contract_registration.register_locked_staged_document",
     ) as register:
-        with pytest.raises(PermissionError, match="identity mismatch"):
+        with pytest.raises(PermissionError, match="identity or version mismatch"):
             register_signed_contract_locked_issuance(
                 db=db, context=context, loan_id=source.loan_id,
                 contract_id=uuid4(), contract_version=4,
