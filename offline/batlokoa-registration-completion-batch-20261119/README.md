@@ -139,3 +139,31 @@ endpoints still return a constant disabled registration state.
 
 The offline branch is still unmerged; isolated full backend and frontend
 CI certification is pending.
+
+## Offline iteration 6 — New-client to loan-application handoff
+
+A standalone internal, read-only verifier now checks that a prospective
+loan handoff references a **completed** new-only registration from the
+same company, assigned branch and originating employee. Both the company
+account and final registration attempt must match. Legacy assisted
+registrations, absent or incomplete idempotency records, old/historical
+borrower accounts, wrong branch or employee IDs, unapproved tenants and
+non-PostgreSQL database connections are denied.
+
+The service returns a fixed assessment with
+`can_create_loan_application=False` and `can_disburse_loan=False`;
+it does not invoke LoanHub origination, payments, loan calculator,
+credit decisioning or client mutation. It has **no public router** and
+is not a substitute for future read-time DB role locks or underwriting.
+
+The last registration preview screen now shows a disabled loan handoff
+button and a checklist for KYC, affordability and credit approval.
+The focused frontend tests verify no loan origination or calculator
+call is wired to the preview.
+
+Backend unit tests cover completed registration provenance, replay
+mismatches, stale status, historic source, cross-company, cross-branch,
+revoked/invalid staff and no write calls. These new tests are committed
+but NOT certified by CI. Future end-to-end work must check real
+PostgreSQL transaction behavior and loan product, policy and application
+idempotency before any live handoff.
