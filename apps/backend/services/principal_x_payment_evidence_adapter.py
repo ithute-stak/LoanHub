@@ -4,7 +4,6 @@ A payment row alone cannot prove an authoritative refund link or lifetime
 completeness. Never use this adapter to authorize collection posting.
 """
 from dataclasses import dataclass
-from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -65,7 +64,7 @@ def inspect_loanhub_payment_evidence(
             unresolved.append(identifier)
         evidence.append(PaymentEvidence(
             payment_id=identifier,
-            amount=Decimal(str(row.amount)),
+            amount=row.amount,
             status=status,
             direction=direction,
             currency=row.currency,
