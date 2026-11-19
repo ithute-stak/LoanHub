@@ -69,9 +69,9 @@ export default function BatlokoaRegistrationPreviewPage() {
 
   const sections = requirements?.sections ?? [];
   const active = sections[stepIndex];
-  const deferred = useMemo(
-    () => new Set(active?.deferred_fields ?? []),
-    [active],
+  const fieldDetails = useMemo(
+    () => new Map(requirements?.field_details.map((detail) => [detail.key, detail]) ?? []),
+    [requirements],
   );
 
   return (
@@ -162,21 +162,35 @@ export default function BatlokoaRegistrationPreviewPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
+              {active.id === "identity" ? (
+                <p className="rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  A national ID <strong>or</strong> passport is required. Both are
+                  sensitive and must be checked against existing LoanHub and legacy records.
+                </p>
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 {active.fields.map((field) => (
                   <div key={field} className="rounded-xl border bg-muted/20 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-sm font-medium">{fieldLabel(field)}</span>
-                      {deferred.has(field) ? (
+                      {fieldDetails.get(field)?.deferred ? (
                         <Badge variant="outline">Future phase</Badge>
+                      ) : fieldDetails.get(field)?.required ? (
+                        <Badge variant="secondary">Required</Badge>
                       ) : (
-                        <Badge variant="secondary">Planned</Badge>
+                        <Badge variant="secondary">Optional</Badge>
                       )}
                     </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>Type: {fieldDetails.get(field)?.kind ?? "Unspecified"}</span>
+                      {fieldDetails.get(field)?.sensitive ? (
+                        <span>· Sensitive information</span>
+                      ) : null}
+                    </div>
                     <p className="mt-2 text-xs text-muted-foreground">
-                      {deferred.has(field)
+                      {fieldDetails.get(field)?.deferred
                         ? "Requires an independently verified capture workflow."
-                        : "Will be captured after release approval."}
+                        : "Planned; customer information cannot be entered here."}
                     </p>
                   </div>
                 ))}
