@@ -76,3 +76,24 @@ def test_empty_history_is_not_certified():
     )
     assert result.payment_count == 0
     assert result.complete is False
+
+
+def test_corrupt_amount_fails_closed_without_raising():
+    broken = payment(PaymentPurpose.LOAN_REPAYMENT,
+                     PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    broken.amount = "not-a-number"
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([broken]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.preview.net_collected is None
+    assert any("invalid_amount" in reason for reason in result.preview.unresolved)
+
+
+def test_duplicate_payment_ids_are_unresolved():
+    original = payment(PaymentPurpose.LOAN_REPAYMENT,
+                       PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([original, original]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.preview.net_collected is None
+    assert "missing_or_duplicate_payment_id" in result.preview.unresolved
