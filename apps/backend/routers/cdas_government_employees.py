@@ -429,6 +429,8 @@ async def create_government_affordability_record(
         raise HTTPException(status_code=409, detail="Confirm lawful authority before contacting CDAS")
     if not payload.employee_number.strip():
         raise HTTPException(status_code=422, detail="Employee number is required")
+    if len(payload.consent_evidence_reference.strip()) < 6:
+        raise HTTPException(status_code=422, detail="A nonblank consent evidence reference is required")
     # The request schema requires a durable idempotency key before provider contact.
     attempt, created = reserve_affordability_attempt(
         db,
