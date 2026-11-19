@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from core.access_control import TenantContext
-from database.models.enums import UserRole
+from database.models.enums import CompanyStatus, UserRole
 from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
 from routers.batlokoa_registration_availability import (
     get_registration_form_requirements,
@@ -25,7 +25,7 @@ def staff(*, role=UserRole.LOAN_OFFICER, active=True, branch=True):
             user_id=actor, company_id=company, is_active=active,
             role=role, branch_id=branch_id if branch else None,
         ),
-        company=None, company_id=company,
+        company=SimpleNamespace(id=company_id, status=CompanyStatus.APPROVED, is_active=True), company_id=company,
         branch_id=branch_id if branch else None, is_platform_admin=False,
     )
 
