@@ -24,6 +24,7 @@ type Assessment = { record_id: string; reference: string; employee_number: strin
 type Batch = { batch_id: string; status: string; total_count: number; finished_count: number };
 type Preflight = { ready_count: number; review_count: number; minimum_estimated_provider_requests: number; budget_remaining_at_preflight: number; budget_preflight_sufficient: boolean; candidates: { borrower_id: string; employee_number: string; status: string }[] };
 type Selection = { borrower_id: string; employee_number: string; proposed_monthly_installment: string };
+type RecordedAssessment = { ok: boolean; status: string; borrower_id?: string; record_id?: string; reference?: string; decision?: string; assessed_at?: string; review_reason_codes?: string[] };
 
 async function downloadPdf(path: string, filename: string) {
     // Use the same authenticated client and company scope headers as other LoanHub requests.
@@ -51,6 +52,9 @@ export default function GovernmentAffordabilityPage() {
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+    const [individual, setIndividual] = useState<Selection | null>(null);
+    const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
+    const [individualResult, setIndividualResult] = useState<RecordedAssessment | null>(null);
 
     const refresh = useCallback(async () => {
         if (!canManage) return;
@@ -106,6 +110,55 @@ export default function GovernmentAffordabilityPage() {
             throw new Error("Enter a positive proposed monthly instalment for each selected employee.");
         }
         return items;
+    }
+
+    function selectIndividual(item: Candidate) {
+        if (!item.borrower_id || item.requires_manual_review) return;
+        setIndividual({ borrower_id: item.borrower_id, employee_number: item.employee_number, proposed_monthly_installment: "" });
+        setAuthorityConfirmed(false);
+        setIndividualResult(null);
+        setError(null);
+    }
+
+    async function assessIndividual() {
+        if (!individual || !authorityConfirmed || busy !== null) return;
+        const amount = individual.proposed_monthly_installment;
+        if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 9999999999999) {
+            setError("Enter a valid positive instalment in maloti, with no more than two decimal places.");
+            return;
+        }
+        setBusy("individual");
+        setError(null);
+        setNotice(null);
+        setIndividualResult(null);
+        try {
+            // Each click may cause billable CDAS requests. Never run this on mount,
+            // automatically retry it, or call preview followed by record.
+            const response = await api.post<RecordedAssessment>(ROOT + "/affordability-records", {
+                borrower_id: individual.borrower_id,
+                employee_number: individual.employee_number,
+                proposed_monthly_installment: amount,
+                authorisation_confirmed: true,
+            });
+            setIndividualResult(response.data);
+            setAuthorityConfirmed(false);
+            if (response.data.status === "assessment_recorded") {
+                setNotice("Assessment saved. Review its decision and download the PDF from the result below.");
+                const history = await api.get<{ items: Assessment[] }>(
+                    ROOT + "/affordability-records", { params: { page: 1, page_size: 25 } },
+                );
+                setAssessments(history.data.items);
+            } else if (response.data.status === "identity_review_required") {
+                setNotice("CDAS identity requires manual review. No affordability assessment was saved.");
+            } else {
+                setNotice("The assessment did not produce a saved result. Review the status before trying again.");
+            }
+        } catch (cause) {
+            // A network failure does not prove that the provider request failed.
+            setError(getErrorMessage(cause, "The assessment result is uncertain. Check saved history before submitting another CDAS request."));
+        } finally {
+            setBusy(null);
+        }
     }
 
     async function runPreflight() {
@@ -209,6 +262,8 @@ export default function GovernmentAffordabilityPage() {
                                 onChange={() => toggle(item)} />
                             <div className="min-w-36 flex-1"><p className="font-semibold">{item.employee_number}</p><p className="text-xs text-muted-foreground">{item.borrower_id || "Multiple borrowers / review required"}</p></div>
                             <Badge variant="outline">{item.status.replaceAll("_", " ")}</Badge>
+                            {item.borrower_id && !item.requires_manual_review && <Button size="sm" variant="outline" disabled={busy !== null}
+                                onClick={() => selectIndividual(item)}>Assess individually</Button>}
                             {chosen && <div className="w-44"><Label htmlFor={"payment-" + item.borrower_id}>Proposed instalment (M)</Label><Input id={"payment-" + item.borrower_id} type="number" min="0.01" step="0.01" value={chosen.proposed_monthly_installment}
                                 onChange={event => changeInstallment(item.borrower_id!, event.target.value)} /></div>}
                         </div>;
@@ -222,7 +277,54 @@ export default function GovernmentAffordabilityPage() {
                 </CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>2. Validate and save a draft</CardTitle><CardDescription>Preflight checks selected records and estimates CDAS usage without contacting the provider.</CardDescription></CardHeader>
+                <CardHeader><CardTitle>2. Individual CDAS assessment</CardTitle>
+                    <CardDescription>Verify one employee against live CDAS, apply LoanHub's configured affordability policy, and save a report. This may consume provider credits. It never approves a loan.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    {!individual && <p className="text-sm text-muted-foreground">Choose “Assess individually” beside an employee above to begin.</p>}
+                    {individual && <>
+                        <div className="rounded-xl border p-3 text-sm">
+                            <p className="font-semibold">Employee: {individual.employee_number}</p>
+                            <p className="break-all text-xs text-muted-foreground">Borrower: {individual.borrower_id}</p>
+                        </div>
+                        <div className="max-w-xs space-y-2">
+                            <Label htmlFor="single-installment">Proposed monthly instalment (M)</Label>
+                            <Input id="single-installment" type="number" min="0.01" step="0.01"
+                                value={individual.proposed_monthly_installment}
+                                onChange={event => {
+                                    setIndividual({ ...individual, proposed_monthly_installment: event.target.value });
+                                    setIndividualResult(null);
+                                    setAuthorityConfirmed(false);
+                                }} />
+                        </div>
+                        <label className="flex items-start gap-3 text-sm">
+                            <input type="checkbox" className="mt-1" checked={authorityConfirmed}
+                                onChange={event => setAuthorityConfirmed(event.target.checked)} />
+                            <span>I confirm I have lawful authority to request this employee's CDAS identity and affordability data. I understand this is a billable live provider lookup, not a loan approval.</span>
+                        </label>
+                        <Button disabled={busy !== null || !authorityConfirmed || !individual.proposed_monthly_installment}
+                            onClick={() => void assessIndividual()}>Verify, assess and save report</Button>
+                    </>}
+                    {individualResult?.status === "identity_review_required" && <Alert variant="destructive">
+                        <AlertTitle>Identity mismatch — manual review</AlertTitle>
+                        <AlertDescription>{(individualResult.review_reason_codes || []).join(", ") || "Identity details do not match."} No assessment was saved.</AlertDescription>
+                    </Alert>}
+                    {individualResult?.status === "assessment_recorded" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+                        <div className="space-y-1">
+                            <p className="font-semibold">{individualResult.reference}</p>
+                            <p className="text-sm">Policy decision: <strong>{individualResult.decision || "Review"}</strong></p>
+                            <p className="text-xs text-muted-foreground">Saved {individualResult.assessed_at || "now"} · Not a lending approval</p>
+                        </div>
+                        <Button variant="outline" disabled={busy !== null || !individualResult.record_id}
+                            onClick={() => void requestPdf(ROOT + "/affordability-records/" + individualResult.record_id + "/pdf",
+                                "affordability-" + individualResult.record_id + ".pdf")}>
+                            <FileText className="mr-2 h-4 w-4" />Download assessment PDF
+                        </Button>
+                    </div>}
+                </CardContent>
+            </Card>
+            <Card>
+                <CardHeader><CardTitle>3. Validate and save a draft</CardTitle><CardDescription>Preflight checks selected records and estimates CDAS usage without contacting the provider.</CardDescription></CardHeader>
                 <CardContent className="space-y-4">
                     <Button onClick={() => void runPreflight()} disabled={busy !== null || !Object.keys(selected).length}>Run safe preflight</Button>
                     {preflight && <div className="rounded-xl border p-4 text-sm space-y-2">
@@ -236,7 +338,7 @@ export default function GovernmentAffordabilityPage() {
                 </CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>3. Draft batches</CardTitle><CardDescription>Saved company batches. Execution is disabled.</CardDescription></CardHeader>
+                <CardHeader><CardTitle>4. Draft batches</CardTitle><CardDescription>Saved company batches. Execution is disabled.</CardDescription></CardHeader>
                 <CardContent className="space-y-3">
                     {batches.map(batch => <div key={batch.batch_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
                         <div><p className="text-sm font-medium">{batch.batch_id}</p><p className="text-xs text-muted-foreground">{batch.total_count} employees · {batch.finished_count} processed · {batch.status}</p></div>
@@ -246,7 +348,7 @@ export default function GovernmentAffordabilityPage() {
                 </CardContent>
             </Card>
             <Card>
-                <CardHeader><CardTitle>4. Affordability assessment history</CardTitle><CardDescription>Saved assessments only. Downloading reports does not send new CDAS requests.</CardDescription></CardHeader>
+                <CardHeader><CardTitle>5. Affordability assessment history</CardTitle><CardDescription>Saved assessments only. Downloading reports does not send new CDAS requests.</CardDescription></CardHeader>
                 <CardContent className="space-y-3">
                     <Button variant="outline" disabled={busy !== null} onClick={() => void requestPdf(ROOT + "/affordability-summary.pdf", "government-affordability-summary.pdf")}><Download className="mr-2 h-4 w-4" />Consolidated management PDF</Button>
                     {assessments.map(item => <div key={item.record_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
