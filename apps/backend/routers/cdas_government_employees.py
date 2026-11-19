@@ -346,6 +346,49 @@ from services.cdas_affordability_attempts import (
 )
 
 
+from database.models.cdas_affordability_attempt import CdasAffordabilityAttempt
+
+
+@router.get("/affordability-attempts")
+def list_government_affordability_attempts(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=25, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read-only company attempt register for recovery after a browser restart.
+
+    Never expose the idempotency key or other companies' attempts.
+    An unresolved reservation is not proof of a provider failure.
+    """
+    _require_company_manager(context)
+    assert context.company_id is not None
+    query = db.query(CdasAffordabilityAttempt).filter(
+        CdasAffordabilityAttempt.company_id == context.company_id,
+    )
+    total = query.count()
+    attempts = query.order_by(
+        CdasAffordabilityAttempt.created_at.desc(),
+        CdasAffordabilityAttempt.id.desc(),
+    ).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "total": total, "page": page, "page_size": page_size,
+        "items": [
+            {
+                "attempt_id": str(attempt.id),
+                "borrower_id": str(attempt.borrower_id),
+                "status": attempt.state,
+                "created_at": attempt.created_at.isoformat() if attempt.created_at else None,
+                "record_id": str(attempt.assessment_record_id) if attempt.assessment_record_id else None,
+                "requires_manual_review": attempt.state in ("reserved", "unknown", "identity_review"),
+                "may_retry_provider_request": False,
+            }
+            for attempt in attempts
+        ],
+        "note": "Stored request status only. Listing attempts does not contact CDAS.",
+    }
+
+
 @router.get("/affordability-attempts/{idempotency_key}")
 def get_government_affordability_attempt(
     idempotency_key: str,
