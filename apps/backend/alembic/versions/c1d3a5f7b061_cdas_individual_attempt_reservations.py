@@ -36,9 +36,17 @@ def upgrade():
     )
     op.create_index("ix_cdas_affordability_attempts_company_id", "cdas_affordability_attempts", ["company_id"])
     op.create_index("ix_cdas_aff_attempt_company_borrower", "cdas_affordability_attempts", ["company_id", "borrower_id"])
+    op.create_index(
+        "uq_cdas_aff_attempt_unresolved_fingerprint",
+        "cdas_affordability_attempts",
+        ["company_id", "request_fingerprint"],
+        unique=True,
+        postgresql_where=sa.text("state IN ('reserved','unknown')"),
+    )
 
 
 def downgrade():
+    op.drop_index("uq_cdas_aff_attempt_unresolved_fingerprint", table_name="cdas_affordability_attempts")
     op.drop_index("ix_cdas_aff_attempt_company_borrower", table_name="cdas_affordability_attempts")
     op.drop_index("ix_cdas_affordability_attempts_company_id", table_name="cdas_affordability_attempts")
     op.drop_table("cdas_affordability_attempts")
