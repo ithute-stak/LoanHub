@@ -11,6 +11,14 @@ from services.document_issuance_contract_registration import (
 )
 from services.document_issuance_contract_source import StagedSignedContractPdf
 
+@pytest.fixture(autouse=True)
+def _mock_current_issuer_gate():
+    with patch(
+        "services.document_issuance_contract_registration.require_current_document_issuer"
+    ):
+        yield
+
+
 
 PDF = b"%PDF-1.4\ncanonical signed contract\n"
 
@@ -163,3 +171,21 @@ def test_bare_locked_candidate_is_not_a_signed_contract_attestation():
         with pytest.raises(PermissionError, match="attestation required"):
             _run(db, context, source, prepared.staged)
     load.assert_not_called()
+
+
+def test_revoked_staff_blocks_contract_registration_before_source_reload():
+    db, context, source, prepared = _fixtures()
+    with patch(
+        "services.document_issuance_contract_registration.require_current_document_issuer",
+        side_effect=PermissionError("Company issuer membership was revoked"),
+    ) as issuer, patch(
+        "services.document_issuance_contract_registration.load_signed_loan_contract_pdf",
+    ) as load, patch(
+        "services.document_issuance_contract_registration.register_locked_staged_document",
+    ) as register:
+        with pytest.raises(PermissionError, match="membership was revoked"):
+            _run(db, context, source, prepared)
+    issuer.assert_called_once_with(db=db, context=context)
+    load.assert_not_called()
+    register.assert_not_called()
+    db.commit.assert_not_called()
