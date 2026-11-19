@@ -48,6 +48,25 @@ def test_real_migrated_cdas_attempt_schema_has_fail_closed_guards():
         try:
             with engine.connect() as connection:
                 inspector = inspect(connection)
+                assert inspector.has_table("cdas_affordability_consent_evidence")
+                consent_columns = {col["name"]: col for col in inspector.get_columns("cdas_affordability_consent_evidence")}
+                for required in (
+                    "company_id", "borrower_id", "document_id", "employee_number",
+                    "reference", "purpose", "status", "document_sha256",
+                    "verified_by_user_id", "verified_at", "expires_at",
+                    "borrower_authorization_confirmed",
+                ):
+                    assert required in consent_columns
+                consent_indexes = {idx["name"]: idx for idx in inspector.get_indexes("cdas_affordability_consent_evidence")}
+                assert consent_indexes["ix_cdas_aff_consent_company_reference"]["unique"]
+                consent_checks = {item["name"] for item in inspector.get_check_constraints("cdas_affordability_consent_evidence")}
+                assert "ck_cdas_aff_consent_status" in consent_checks
+                consent_foreign_keys = {
+                    tuple(key["constrained_columns"]): key["referred_table"]
+                    for key in inspector.get_foreign_keys("cdas_affordability_consent_evidence")
+                }
+                assert consent_foreign_keys[("document_id",)] == "borrower_documents"
+                assert consent_foreign_keys[("company_id",)] == "loan_companies"
                 assert inspector.has_table("cdas_affordability_attempts")
                 columns = {col["name"]: col for col in inspector.get_columns("cdas_affordability_attempts")}
                 for required in (
