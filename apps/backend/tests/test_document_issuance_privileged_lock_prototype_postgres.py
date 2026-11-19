@@ -24,6 +24,7 @@ def test_narrow_definer_lock_cannot_be_used_for_another_tenant():
     schema = "pdf_lock_guard_" + suffix
     role = "pdf_lock_caller_" + suffix
     tenant_a, tenant_b, loan_id, contract_id, file_id = [uuid4() for _ in range(5)]
+    loan_b, contract_b, file_b = uuid4(), uuid4(), uuid4()
     try:
         with engine.begin() as setup:
             setup.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -53,6 +54,18 @@ def test_narrow_definer_lock_cannot_be_used_for_another_tenant():
             setup.execute(text(
                 f'INSERT INTO "{schema}".files VALUES (:id,:tenant,:contract)'
             ), {"id": file_id, "tenant": tenant_a, "contract": contract_id})
+            # A second, otherwise valid tenant proves that spoofed custom
+            # settings would unlock a real different-company source.
+            setup.execute(text(
+                f'INSERT INTO "{schema}".loans VALUES (:id,:tenant)'
+            ), {"id": loan_b, "tenant": tenant_b})
+            setup.execute(text(
+                f"""INSERT INTO "{schema}".contracts
+                    VALUES (:id,:loan,:tenant,:file,1,'signed')"""
+            ), {"id": contract_b, "loan": loan_b, "tenant": tenant_b, "file": file_b})
+            setup.execute(text(
+                f'INSERT INTO "{schema}".files VALUES (:id,:tenant,:contract)'
+            ), {"id": file_b, "tenant": tenant_b, "contract": contract_b})
             # SECURITY DEFINER's search_path is fixed; no dynamic SQL and
             # every row is explicitly scoped to the caller's claimed tenant.
             # This is a proof of privilege mechanics, NOT full authentication.
@@ -138,6 +151,18 @@ def test_narrow_definer_lock_cannot_be_used_for_another_tenant():
                                 "file": file_id})
                 finally:
                     savepoint.rollback()
+                # SECURITY FINDING: the restricted SQL caller controls custom
+                # GUCs, so it can switch the claimed identity to company B.
+                # This exact privileged lock prototype therefore cannot be
+                # deployed as a tenant authentication or authorization gate.
+                reader.execute(text(
+                    "SELECT set_config('loanhub.company_id',:tenant,true)"
+                ), {"tenant": str(tenant_b)})
+                assert reader.execute(text(f"""
+                    SELECT "{schema}".lock_signed_source(
+                        :tenant,:loan,:contract,:file)
+                """), {"tenant": tenant_b, "loan": loan_b, "contract": contract_b,
+                        "file": file_b}).scalar_one() is True
                 reader.execute(text("RESET ROLE"))
             finally:
                 wt.rollback()
