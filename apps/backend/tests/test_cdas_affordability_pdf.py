@@ -64,6 +64,7 @@ async def test_identity_mismatch_never_creates_assessment_record(monkeypatch):
     payload = module.RecordedGovernmentEmployeeAffordabilityRequest(
         borrower_id=uuid4(), employee_number="EMP-100", authorisation_confirmed=True,
         proposed_monthly_installment="100.00", idempotency_key="test-assessment-key-001",
+        consent_evidence_reference="CONSENT-EXAMPLE-001",
     )
     context = SimpleNamespace(company_id=uuid4(), user=SimpleNamespace(id=uuid4()),
                               branch_id=None, role=SimpleNamespace(value="company_admin"))
