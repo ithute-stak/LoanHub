@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from core.access_control import TenantContext
+from database.models.enums import CompanyStatus, UserRole
 from services.batlokoa_new_only_application_lock_review import (
     NewOnlyLoanHandoffDenied,
     assess_locked_new_only_application_preflight,
@@ -15,12 +16,18 @@ from services.batlokoa_new_only_application_preflight import NewOnlyApplicationP
 
 
 def context():
+    actor, company, branch = uuid4(), uuid4(), uuid4()
     return TenantContext(
-        user=SimpleNamespace(id=uuid4()),
-        staff=SimpleNamespace(),
-        company=None,
-        company_id=uuid4(),
-        branch_id=uuid4(),
+        user=SimpleNamespace(id=actor, is_active=True, role=UserRole.LOAN_OFFICER),
+        staff=SimpleNamespace(
+            user_id=actor, company_id=company, branch_id=branch,
+            role=UserRole.LOAN_OFFICER, is_active=True,
+        ),
+        company=SimpleNamespace(
+            id=company, status=CompanyStatus.APPROVED, is_active=True,
+        ),
+        company_id=company,
+        branch_id=branch,
         is_platform_admin=False,
     )
 
@@ -164,6 +171,28 @@ def test_invalid_tenant_and_non_uuid_scope_rejected_prior_to_lock(monkeypatch):
     object.__setattr__(ctx, "branch_id", None)
     db = database()
     with pytest.raises(NewOnlyLoanHandoffDenied):
+        run(db, ctx)
+    db.execute.assert_not_called()
+    review.assert_not_called()
+    no_writes(db)
+
+
+@pytest.mark.parametrize("change", ["revoked", "wrong_branch", "pending_company", "borrower_role"])
+def test_staff_authorization_denied_before_locks(monkeypatch, change):
+    from services import batlokoa_new_only_application_lock_review as module
+    review = MagicMock()
+    monkeypatch.setattr(module, "assess_new_only_application_preflight", review)
+    ctx = context()
+    if change == "revoked":
+        ctx.staff.is_active = False
+    elif change == "wrong_branch":
+        ctx.staff.branch_id = uuid4()
+    elif change == "pending_company":
+        ctx.company.status = CompanyStatus.PENDING
+    elif change == "borrower_role":
+        ctx.staff.role = UserRole.BORROWER
+    db = database()
+    with pytest.raises(Exception):
         run(db, ctx)
     db.execute.assert_not_called()
     review.assert_not_called()
