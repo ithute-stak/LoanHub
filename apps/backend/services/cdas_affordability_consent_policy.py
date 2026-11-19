@@ -8,6 +8,7 @@ live-operation gate can accept it.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from uuid import UUID
 
 PURPOSE = "cdas_government_employee_affordability"
@@ -51,7 +52,7 @@ def consent_evidence_blockers(
         reasons.append("consent_not_approved")
     if not getattr(evidence, "document_id", None):
         reasons.append("consent_document_missing")
-    if not getattr(evidence, "document_sha256", None) or len(str(evidence.document_sha256)) != 64:
+    if re.fullmatch(r"[a-fA-F0-9]{64}", str(getattr(evidence, "document_sha256", ""))) is None:
         reasons.append("document_integrity_unavailable")
     verified_at = _utc(getattr(evidence, "verified_at", None))
     expires_at = _utc(getattr(evidence, "expires_at", None))
