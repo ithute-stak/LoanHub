@@ -282,7 +282,7 @@ export default function GovernmentAffordabilityPage() {
             </Card>
             <Card>
                 <CardHeader><CardTitle>2. Individual CDAS assessment</CardTitle>
-                    <CardDescription>Verify one employee against live CDAS, apply LoanHub's configured affordability policy, and save a report. This may consume provider credits. It never approves a loan.</CardDescription>
+                    <CardDescription>Verify one employee against live CDAS, apply LoanHub&apos;s configured affordability policy, and save a report. This may consume provider credits. It never approves a loan.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {!individual && <p className="text-sm text-muted-foreground">Choose “Assess individually” beside an employee above to begin.</p>}
@@ -304,7 +304,7 @@ export default function GovernmentAffordabilityPage() {
                         <label className="flex items-start gap-3 text-sm">
                             <input type="checkbox" className="mt-1" checked={authorityConfirmed}
                                 onChange={event => setAuthorityConfirmed(event.target.checked)} />
-                            <span>I confirm I have lawful authority to request this employee's CDAS identity and affordability data. I understand this is a billable live provider lookup, not a loan approval.</span>
+                            <span>I confirm I have lawful authority to request this employee&apos;s CDAS identity and affordability data. I understand this is a billable live provider lookup, not a loan approval.</span>
                         </label>
                         <Button disabled={busy !== null || !authorityConfirmed || !individual.proposed_monthly_installment}
                             onClick={() => void assessIndividual()}>Verify, assess and save report</Button>
