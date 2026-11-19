@@ -49,3 +49,22 @@ production security, DBA, privacy and business approval gates.
 No production deployment, migration, loan calculator, borrower identity
 migration, or live Batlokoa new-client registration activation is included.
 The new frontend calls GET endpoints only, and captures no customer values.
+
+## Offline iteration 2 — Typed field contract
+
+The authenticated read-only `form-requirements` API now publishes schema
+version 2 with descriptive field kinds, required/deferred/sensitive flags,
+and the cross-field rule requiring a national ID OR a passport. All keys
+are cross-checked against `FullNewOnlyClientCapture`; unexpected schema
+drift fails the availability metadata request rather than presenting an
+incomplete form.
+
+The frontend preview shows the type and privacy classification of each
+field across the five screens. No field values are requested or held in
+React state; it still has no form submission code or legacy-registration
+fallback.
+
+Automated tests cover type mapping, sensitive fields, mandatory consent
+decisions, identity alternatives and rejected metadata drift. This
+iteration is committed only to the offline branch; final project CI,
+integration tests and merge are deferred pending further development.
