@@ -55,10 +55,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Audit Principal x Alembic revision graph (informational)
-        # Existing migration history may have multiple heads; do not block unrelated CI
-        # until the graph is reviewed and a migration parent is explicitly selected.
-        continue-on-error: true
+      - name: Audit Principal x Alembic revision graph (required)
         run: python3 apps/backend/scripts/audit_principal_x_alembic_graph.py
 
       - name: Set up Python
