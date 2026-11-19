@@ -76,7 +76,9 @@ class RegistrationFormSectionRead(BaseModel):
 class RegistrationFormRequirementsRead(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 1
+    schema_version: int = 2
+    identity_alternatives: tuple[str, ...] = ("national_id", "passport_number")
+    field_details: tuple["RegistrationFieldRequirementRead", ...] = ()
     registration_available: bool = False
     submit_allowed: bool = False
     client_data_requested: bool = False
@@ -126,6 +128,78 @@ _FORM_SECTIONS = (
 )
 
 
+# Presentation metadata is descriptive only and cannot authorize saving data.
+# Keep these keys synchronized with FullNewOnlyClientCapture through tests.
+_FIELD_KIND_GROUPS: dict[str, tuple[str, ...]] = {
+    "select": (
+        "gender", "marital_status", "employment_status",
+    ),
+    "date": ("date_of_birth",),
+    "boolean": (
+        "has_existing_loans", "consent_to_share_profile",
+        "consent_to_credit_checks",
+    ),
+    "currency": ("monthly_income", "existing_loan_total"),
+    "integer": ("income_day",),
+    "email": ("email",),
+    "password": ("temporary_password",),
+    "uuid": ("branch_id", "employer_group_id"),
+    "debt_list": ("external_debts",),
+    "bank_account": ("bank_account",),
+    "employer_group": ("new_employer_group",),
+}
+_FIELD_KINDS = {
+    key: kind for kind, keys in _FIELD_KIND_GROUPS.items() for key in keys
+}
+_EXPLICIT_REQUIRED = frozenset({
+    "branch_id", "first_name", "last_name", "phone",
+    "gender", "date_of_birth", "district", "employment_status",
+    "consent_to_share_profile", "consent_to_credit_checks",
+})
+# Required identity is a CROSS-FIELD rule: national_id OR passport_number.
+_IDENTITY_ALTERNATIVES = ("national_id", "passport_number")
+_SENSITIVE_FIELDS = frozenset({
+    "national_id", "passport_number", "date_of_birth", "phone",
+    "email", "temporary_password", "physical_address",
+    "monthly_income", "existing_loan_total", "external_debts",
+    "bank_account", "cdas_employee_number",
+})
+
+
+class RegistrationFieldRequirementRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str
+    kind: str
+    required: bool
+    deferred: bool
+    sensitive: bool
+
+
+def _form_field_details() -> tuple[RegistrationFieldRequirementRead, ...]:
+    from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
+
+    keys = tuple(key for section in _FORM_SECTIONS for key in section.fields)
+    if len(keys) != len(set(keys)) or set(keys) != set(FullNewOnlyClientCapture.model_fields):
+        # Fail closed if the backend model changes without a reviewed form plan.
+        raise RuntimeError("Registration form field inventory requires review")
+    deferred = {
+        key for section in _FORM_SECTIONS for key in section.deferred_fields
+    }
+    if not deferred.issubset(set(keys)):
+        raise RuntimeError("Invalid deferred registration field inventory")
+    return tuple(
+        RegistrationFieldRequirementRead(
+            key=key,
+            kind=_FIELD_KINDS.get(key, "text"),
+            required=key in _EXPLICIT_REQUIRED,
+            deferred=key in deferred,
+            sensitive=key in _SENSITIVE_FIELDS,
+        )
+        for key in keys
+    )
+
+
 def registration_form_requirements_for_staff(
     context: TenantContext,
 ) -> RegistrationFormRequirementsRead:
@@ -135,7 +209,11 @@ def registration_form_requirements_for_staff(
     values; this cannot be used to register a borrower.
     """
     registration_availability_for_staff(context)
-    return RegistrationFormRequirementsRead(sections=_FORM_SECTIONS)
+    return RegistrationFormRequirementsRead(
+        sections=_FORM_SECTIONS,
+        field_details=_form_field_details(),
+        identity_alternatives=_IDENTITY_ALTERNATIVES,
+    )
 
 
 @router.get("/form-requirements", response_model=RegistrationFormRequirementsRead)
