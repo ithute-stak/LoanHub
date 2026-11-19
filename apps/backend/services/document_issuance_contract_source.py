@@ -44,6 +44,7 @@ class StagedSignedContractPdf:
 def load_signed_loan_contract_pdf(
     *, db: Session, context: TenantContext, loan_id: UUID,
     contract_id: UUID, contract_version: int,
+    lock_for_registration: bool = False,
 ) -> VerifiedSignedContractPdf:
     """Load an actual signed LoanContract's current, scanner-clean PDF only."""
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
@@ -56,8 +57,9 @@ def load_signed_loan_contract_pdf(
         raise ValueError("Positive contract version required")
     loan = require_authorized_loan_document_record(
         db=db, context=context, loan_id=loan_id,
+        lock_for_registration=lock_for_registration,
     )
-    contract = db.query(LoanContract).filter(
+    contract_query = db.query(LoanContract).filter(
         LoanContract.id == contract_id,
         LoanContract.company_id == context.company_id,
         LoanContract.loan_id == loan_id,
@@ -66,7 +68,10 @@ def load_signed_loan_contract_pdf(
         LoanContract.status == "signed",
         LoanContract.locked_at.isnot(None),
         LoanContract.pdf_file_id.isnot(None),
-    ).one_or_none()
+    )
+    if lock_for_registration:
+        contract_query = contract_query.with_for_update(read=True, nowait=True)
+    contract = contract_query.one_or_none()
     if (contract is None or contract.id != contract_id
             or contract.loan_id != loan_id
             or contract.company_id != context.company_id
@@ -86,7 +91,7 @@ def load_signed_loan_contract_pdf(
     if contract.contract_hash != terms_digest:
         raise PermissionError("Loan contract terms hash mismatch")
 
-    source = db.query(ManagedFile).filter(
+    file_query = db.query(ManagedFile).filter(
         ManagedFile.id == contract.pdf_file_id,
         ManagedFile.company_id == context.company_id,
         ManagedFile.linked_entity_type == "loan_contract",
@@ -97,7 +102,10 @@ def load_signed_loan_contract_pdf(
         ManagedFile.visibility == "company",
         ManagedFile.scan_status == "clean",
         ManagedFile.mime_type == "application/pdf",
-    ).one_or_none()
+    )
+    if lock_for_registration:
+        file_query = file_query.with_for_update(read=True, nowait=True)
+    source = file_query.one_or_none()
     if (source is None or source.id != contract.pdf_file_id
             or source.company_id != context.company_id
             or source.linked_entity_type != "loan_contract"
