@@ -122,6 +122,7 @@ def test_staging_entry_point_uses_only_verified_managed_file_bytes():
     ) as stage:
         result = stage_authorized_managed_pdf_source(
             db=db, context=context, source_file_id=file_id,
+            source_type=SOURCE_TYPE, source_id=SOURCE_ID,
             trusted_verification_origin="https://verify.example.test",
             store=store, stamp_configuration_version=2,
         )
