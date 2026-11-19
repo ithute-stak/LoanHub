@@ -173,7 +173,7 @@ jobs:
           LOANHUB_MIGRATION_CERTIFICATION_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
         run: |
           set -euo pipefail
-          python -m pytest -q -ra --maxfail=1             tests/test_cdas_affordability_attempt_reservation.py             tests/test_cdas_affordability_attempt_register.py             tests/test_cdas_affordability_replay_recovery.py             tests/test_cdas_affordability_attempt_postgres_constraints.py
+          python -m pytest -q -ra --maxfail=1             tests/test_cdas_affordability_attempt_reservation.py             tests/test_cdas_affordability_attempt_register.py             tests/test_cdas_affordability_replay_recovery.py             tests/test_cdas_affordability_attempt_postgres_constraints.py tests/test_cdas_affordability_migrated_schema_postgres.py
 
       - name: Verify PostgreSQL tenant isolation
         working-directory: apps/backend
