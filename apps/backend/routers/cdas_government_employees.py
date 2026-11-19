@@ -423,6 +423,11 @@ async def create_government_affordability_record(
     """Perform fresh checks once and persist only the verified server response."""
     _require_company_manager(context)
     assert context.company_id is not None
+    # Fail fast on missing authority before writing an attempt reservation.
+    if not payload.authorisation_confirmed:
+        raise HTTPException(status_code=409, detail="Confirm lawful authority before contacting CDAS")
+    if not payload.employee_number.strip():
+        raise HTTPException(status_code=422, detail="Employee number is required")
     # The request schema requires a durable idempotency key before provider contact.
     attempt, created = reserve_affordability_attempt(
         db,
