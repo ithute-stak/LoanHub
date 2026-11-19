@@ -53,7 +53,7 @@ export default function BatlokoaRegistrationPreviewPage() {
     } catch (err) {
       setAvailability(null);
       setRequirements(null);
-      setError(getErrorMessage(err));
+      setError(getErrorMessage(err, "Registration preview could not be loaded."));
     } finally {
       setLoading(false);
     }
