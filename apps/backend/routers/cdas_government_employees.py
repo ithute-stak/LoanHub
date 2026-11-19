@@ -213,6 +213,7 @@ from services.quick_loan_affordability_service import quick_loan_affordability
 
 class GovernmentEmployeeAffordabilityRequest(EmployeeVerificationPreviewRequest):
     proposed_monthly_installment: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
+    consent_evidence_reference: str | None = Field(default=None, max_length=200)
 
 
 class RecordedGovernmentEmployeeAffordabilityRequest(GovernmentEmployeeAffordabilityRequest):
@@ -250,6 +251,11 @@ async def preview_government_employee_affordability(
     number = payload.employee_number.strip()
     if not number:
         raise HTTPException(status_code=422, detail="Employee number is required")
+    _require_approved_affordability_consent(
+        db, company_id=context.company_id, borrower_id=payload.borrower_id,
+        employee_number=number, reference=payload.consent_evidence_reference,
+        operator_user_id=context.user.id,
+    )
 
     payroll = db.query(CDASPayrollProfile).filter(
         CDASPayrollProfile.company_id == context.company_id,
@@ -346,7 +352,7 @@ from services.cdas_affordability_pdf import build_government_affordability_pdf
 
 from database.models.documents import BorrowerDocument
 from database.models.cdas_affordability_consent_evidence import CdasAffordabilityConsentEvidence
-from services.cdas_affordability_consent_policy import PURPOSE
+from services.cdas_affordability_consent_policy import PURPOSE, consent_evidence_blockers
 
 
 class PendingCdasConsentEvidenceRequest(BaseModel):
@@ -355,6 +361,49 @@ class PendingCdasConsentEvidenceRequest(BaseModel):
     employee_number: str = Field(min_length=1, max_length=100)
     reference: str = Field(min_length=6, max_length=200)
     borrower_authorization_confirmed: bool = False
+
+
+def _require_approved_affordability_consent(
+    db: Session, *, company_id: UUID, borrower_id: UUID,
+    employee_number: str, reference: str | None, operator_user_id: UUID,
+):
+    """Fail closed before contacting CDAS, including read-only live previews.
+
+    A typed reference or a generic verified borrower file is not sufficient.
+    Existing approvals must be independently checked for their exact scope.
+    """
+    ref = (reference or "").strip()
+    if len(ref) < 6:
+        raise HTTPException(status_code=409, detail="Reviewed CDAS consent evidence is required before a live lookup")
+    evidence = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.company_id == company_id,
+        CdasAffordabilityConsentEvidence.borrower_id == borrower_id,
+        CdasAffordabilityConsentEvidence.reference == ref,
+    ).first()
+    reasons = consent_evidence_blockers(
+        evidence=evidence, company_id=company_id, borrower_id=borrower_id,
+        employee_number=employee_number, reference=ref,
+        operator_user_id=operator_user_id,
+    )
+    if reasons:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Independent CDAS consent review is required",
+                    "reason_codes": reasons},
+        )
+    # A verified approval must still point to the same borrower document.
+    # The evidence-content digest is reviewed separately; never compute it
+    # from an untrusted document URL inside a CDAS request.
+    document = db.query(BorrowerDocument).filter(
+        BorrowerDocument.id == evidence.document_id,
+        BorrowerDocument.borrower_id == borrower_id,
+    ).first()
+    if document is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Approved CDAS evidence document is no longer linked to this borrower",
+        )
+    return evidence
 
 
 @router.post("/consent-evidence", status_code=201)
@@ -513,6 +562,12 @@ async def create_government_affordability_record(
         raise HTTPException(status_code=422, detail="Employee number is required")
     if len(payload.consent_evidence_reference.strip()) < 6:
         raise HTTPException(status_code=422, detail="A nonblank consent evidence reference is required")
+    _require_approved_affordability_consent(
+        db, company_id=context.company_id, borrower_id=payload.borrower_id,
+        employee_number=payload.employee_number.strip(),
+        reference=payload.consent_evidence_reference,
+        operator_user_id=context.user.id,
+    )
     # The request schema requires a durable idempotency key before provider contact.
     attempt, created = reserve_affordability_attempt(
         db,
