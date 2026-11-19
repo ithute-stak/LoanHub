@@ -215,6 +215,31 @@ export default function BatlokoaRegistrationPreviewPage() {
                   Next screen <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
+              {active.id === "consent" ? (
+                <section aria-label="Loan application handoff readiness" className="space-y-3 rounded-xl border bg-muted/20 p-4">
+                  <h3 className="font-semibold">After registration: loan application</h3>
+                  <p className="text-sm text-muted-foreground">
+                    A completed, tenant-scoped new-only registration must be
+                    verified before any future loan application is considered.
+                    LoanHub will separately require borrower identity review,
+                    affordability and credit approval.
+                  </p>
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <span>Registration provenance — pending release</span>
+                    <span>Identity and KYC — required</span>
+                    <span>Affordability assessment — required</span>
+                    <span>Credit approval — required</span>
+                  </div>
+                  <Button type="button" disabled aria-disabled="true" className="w-full">
+                    <LockKeyhole className="mr-2 h-4 w-4" />
+                    Start loan application — unavailable
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    No client lookup, loan calculator call, loan draft or
+                    financial record is created by this preview.
+                  </p>
+                </section>
+              ) : null}
               <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
                 <LockKeyhole className="mr-2 inline h-4 w-4" />
                 Submission disabled. No client details are collected by this page.
