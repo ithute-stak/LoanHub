@@ -15,6 +15,7 @@ from core.access_control import TenantContext
 from services.document_issuance_contract_source import (
     StagedSignedContractPdf, load_signed_loan_contract_pdf,
 )
+from services.document_issuance_issuer_authorization import require_current_document_issuer
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_locked_registration import (
     CommittedLockedIssuance, register_locked_staged_document,
@@ -43,6 +44,9 @@ def register_signed_contract_locked_issuance(
             or attested.loan_id != loan_id or attested.contract_id != contract_id
             or attested.contract_version != contract_version):
         raise PermissionError("Staged contract identity or version mismatch")
+    # Tenant context and staff membership may have changed since staging.
+    # Reload the currently active issuer from the same SQL session.
+    require_current_document_issuer(db=db, context=context)
     # Load loan, contract and current PDF under transaction-held FOR SHARE NOWAIT
     # locks. A competing update fails closed, rather than racing the final commit.
     source = load_signed_loan_contract_pdf(
