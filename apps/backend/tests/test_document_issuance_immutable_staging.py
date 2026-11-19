@@ -15,6 +15,16 @@ from services.object_storage_service import StorageUnavailableError
 PDF = b"%PDF-1.4\nfinal\n"
 
 
+@pytest.fixture(autouse=True)
+def _approved_stamp_database_gate():
+    # Existing staging tests focus on rendering, malware, QR and storage.
+    # Dedicated cases below exercise approval failures explicitly.
+    with patch(
+        "services.document_issuance_immutable_staging.lookup_approved_stamp_from_database"
+    ):
+        yield
+
+
 def _context():
     company_id = uuid4()
     return SimpleNamespace(
@@ -44,7 +54,7 @@ def _stage(context, store):
     return stage_locked_document_candidate(
         context=context, source_pdf=PDF,
         trusted_verification_origin="https://verify.example.test",
-        store=store,
+        store=store, db=Mock(), stamp_configuration_version=1,
     )
 
 
@@ -232,4 +242,60 @@ def test_stamp_mutation_during_pdf_rendering_prevents_locked_upload():
         with pytest.raises(PermissionError, match="changed while rendering"):
             _stage(context, store)
     assert scan.call_count == 1
+    store.put_locked_pdf.assert_not_called()
+
+
+def test_unapproved_stamp_is_denied_before_any_scan_render_or_upload():
+    context, store = _context(), _store()
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.lookup_approved_stamp_from_database",
+               side_effect=PermissionError("No authoritative stamp approval")) as approval, \
+         patch("services.document_issuance_immutable_staging.scan_upload") as scan, \
+         patch("services.document_issuance_immutable_staging.prepare_stamped_document_candidate") as render:
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(PermissionError, match="No authoritative"):
+            _stage(context, store)
+    approval.assert_called_once()
+    render.assert_not_called()
+    scan.assert_not_called()
+    store.put_locked_pdf.assert_not_called()
+
+
+def test_stamp_revoked_while_scanning_final_pdf_prevents_locked_upload():
+    context, store = _context(), _store()
+    candidate = SimpleNamespace(
+        tenant_id=context.company_id, pdf_bytes=PDF,
+        public_id="valid-public-id-12345", sha256_hex=sha256(PDF).hexdigest(),
+        verification_url="https://verify.example.test/verify/valid-public-id-12345",
+    )
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.lookup_approved_stamp_from_database",
+               side_effect=[None, PermissionError("stamp approval revoked")]) as approval, \
+         patch("services.document_issuance_immutable_staging.scan_upload",
+               return_value="clean") as scan, \
+         patch("services.document_issuance_immutable_staging.prepare_stamped_document_candidate",
+               return_value=candidate):
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(PermissionError, match="revoked"):
+            _stage(context, store)
+    assert approval.call_count == 2
+    assert scan.call_count == 2
+    store.put_locked_pdf.assert_not_called()
+
+
+def test_stamp_version_is_required_before_database_or_storage_access():
+    context, store = _context(), _store()
+    with patch("services.document_issuance_immutable_staging.settings") as settings, \
+         patch("services.document_issuance_immutable_staging.lookup_approved_stamp_from_database") as approval:
+        settings.MALWARE_SCAN_ENABLED = True
+        settings.MALWARE_SCAN_FAIL_CLOSED = True
+        with pytest.raises(ValueError, match="configuration version"):
+            stage_locked_document_candidate(
+                context=context, source_pdf=PDF,
+                trusted_verification_origin="https://verify.example.test",
+                store=store, db=Mock(), stamp_configuration_version=0,
+            )
+    approval.assert_not_called()
     store.put_locked_pdf.assert_not_called()
