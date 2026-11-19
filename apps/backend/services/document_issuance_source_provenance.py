@@ -3,8 +3,8 @@
 An untrusted PDF supplied by a caller is never evidence of ownership.
 Resolve an existing private, scanned company-owned ManagedFile from the
 authenticated tenant's database session, then verify the exact stored bytes.
-This does not yet authorize a particular document *business purpose*; the
-generator/source lifecycle must be reviewed before an issuance route exists.
+Matching linked_entity_type/id is an integrity association, not proof that\nthe linkage was set by an authoritative generator. The
+generator/source lifecycle and actual business-record authorization must be\nreviewed before an issuance route exists.
 """
 from __future__ import annotations
 
@@ -26,12 +26,22 @@ class AuthorizedManagedPdfSource:
     owner_user_id: UUID
     pdf_bytes: bytes
     sha256_hex: str
+    source_type: str
+    source_id: str
 
 
 def load_authorized_managed_pdf_source(
     *, db: Session, context: TenantContext, source_file_id: UUID,
+    source_type: str, source_id: str,
 ) -> AuthorizedManagedPdfSource:
     """Reject cross-tenant/unowned/unscanned source before reading its bytes."""
+    for label, value, max_length in (
+        ("source_type", source_type, 100),
+        ("source_id", source_id, 120),
+    ):
+        if (not isinstance(value, str) or not value.strip()
+                or value != value.strip() or len(value) > max_length):
+            raise ValueError(f"Valid {label} required")
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
     if (context.is_platform_admin or not isinstance(context.company_id, UUID)
             or context.company is None or context.company.id != context.company_id
@@ -47,6 +57,8 @@ def load_authorized_managed_pdf_source(
         ManagedFile.visibility == "private",
         ManagedFile.scan_status == "clean",
         ManagedFile.mime_type == "application/pdf",
+        ManagedFile.linked_entity_type == source_type,
+        ManagedFile.linked_entity_id == source_id,
     ).one_or_none()
     if (source is None or source.id != source_file_id
             or source.company_id != context.company_id
@@ -55,7 +67,9 @@ def load_authorized_managed_pdf_source(
             or source.is_confidential is not True
             or source.visibility != "private"
             or source.scan_status != "clean"
-            or source.mime_type != "application/pdf"):
+            or source.mime_type != "application/pdf"
+            or source.linked_entity_type != source_type
+            or source.linked_entity_id != source_id):
         raise PermissionError("Private, clean, tenant-owned source PDF required")
     contents = read_file_bytes(source)
     if not isinstance(contents, bytes) or not contents.startswith(b"%PDF-"):
@@ -66,11 +80,13 @@ def load_authorized_managed_pdf_source(
     return AuthorizedManagedPdfSource(
         tenant_id=context.company_id, source_file_id=source_file_id,
         owner_user_id=context.user.id, pdf_bytes=contents, sha256_hex=digest,
+        source_type=source_type, source_id=source_id,
     )
 
 
 def stage_authorized_managed_pdf_source(
     *, db: Session, context: TenantContext, source_file_id: UUID,
+    source_type: str, source_id: str,
     trusted_verification_origin: str, store,
     stamp_configuration_version: int,
 ):
@@ -84,6 +100,7 @@ def stage_authorized_managed_pdf_source(
 
     source = load_authorized_managed_pdf_source(
         db=db, context=context, source_file_id=source_file_id,
+        source_type=source_type, source_id=source_id,
     )
     return stage_locked_document_candidate(
         context=context, source_pdf=source.pdf_bytes,
