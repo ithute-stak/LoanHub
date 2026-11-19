@@ -32,6 +32,7 @@ def _context(company_id=None):
 async def test_reserved_replay_never_contacts_cdas(monkeypatch):
     attempt = SimpleNamespace(id=uuid4(), state="reserved", assessment_record_id=None)
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "reserve_affordability_attempt",
                         lambda db, **kwargs: (attempt, False))
     async def forbidden(*args, **kwargs):
@@ -64,6 +65,7 @@ async def test_completed_replay_returns_same_saved_report_without_cdas(monkeypat
         }},
     )
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "reserve_affordability_attempt",
                         lambda db, **kwargs: (attempt, False))
     class Query:
@@ -92,6 +94,7 @@ async def test_completed_replay_returns_same_saved_report_without_cdas(monkeypat
 async def test_provider_timeout_is_recorded_unknown_without_retry(monkeypatch):
     attempt = SimpleNamespace(id=uuid4(), state="reserved", assessment_record_id=None)
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "reserve_affordability_attempt",
                         lambda db, **kwargs: (attempt, True))
     calls = 0
@@ -120,6 +123,7 @@ async def test_provider_timeout_is_recorded_unknown_without_retry(monkeypatch):
 
 def test_exact_saved_record_fails_closed_if_missing_or_corrupt(monkeypatch):
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
     company = uuid4()
     class Query:
         def __init__(self, found):
