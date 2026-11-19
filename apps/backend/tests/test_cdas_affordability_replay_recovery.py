@@ -17,6 +17,7 @@ def _payload(borrower_id=None, key="assessment-replay-0001"):
         borrower_id=borrower_id or uuid4(),
         employee_number="EMP-001", proposed_monthly_installment="250.00",
         authorisation_confirmed=True, idempotency_key=key,
+        consent_evidence_reference="CONSENT-EXAMPLE-001",
     )
 
 
