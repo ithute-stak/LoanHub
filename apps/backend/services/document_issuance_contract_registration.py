@@ -12,9 +12,10 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
-from services.document_issuance_contract_source import load_signed_loan_contract_pdf
+from services.document_issuance_contract_source import (
+    StagedSignedContractPdf, load_signed_loan_contract_pdf,
+)
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
-from services.document_issuance_immutable_staging import StagedLockedCandidate
 from services.document_issuance_locked_registration import (
     CommittedLockedIssuance, register_locked_staged_document,
 )
@@ -23,7 +24,7 @@ from services.document_issuance_locked_registration import (
 def register_signed_contract_locked_issuance(
     *, db: Session, context: TenantContext,
     loan_id: UUID, contract_id: UUID, contract_version: int,
-    staged: StagedLockedCandidate, store: S3ObjectLockPdfStore,
+    prepared: StagedSignedContractPdf, store: S3ObjectLockPdfStore,
     stamp_configuration_version: int, idempotency_key: str,
 ) -> CommittedLockedIssuance:
     """Verify signed-contract provenance again at the commit boundary.
@@ -32,12 +33,27 @@ def register_signed_contract_locked_issuance(
     PDF version. The generic registration layer still checks stamp approval,
     exact locked S3 version and audit transaction before returning any bytes.
     """
+    # Only the full source + PDF bundle emitted by the signed-contract
+    # staging adapter is admissible. An unrelated staged PDF is insufficient.
+    if not isinstance(prepared, StagedSignedContractPdf):
+        raise PermissionError("Signed contract staging attestation required")
+    attested = prepared.source
+    staged = prepared.staged
+    if (attested.tenant_id != context.company_id
+            or attested.loan_id != loan_id or attested.contract_id != contract_id
+            or attested.contract_version != contract_version):
+        raise PermissionError("Staged contract identity or version mismatch")
     source = load_signed_loan_contract_pdf(
         db=db, context=context, loan_id=loan_id,
         contract_id=contract_id, contract_version=contract_version,
     )
-    if source.tenant_id != context.company_id or source.contract_id != contract_id:
+    if (source.tenant_id != context.company_id or source.loan_id != loan_id
+            or source.contract_id != contract_id or source.contract_version != contract_version):
         raise PermissionError("Signed contract tenant and source identity mismatch")
+    if (source.file_id != attested.file_id
+            or source.terms_sha256_hex != attested.terms_sha256_hex
+            or source.sha256_hex != attested.sha256_hex):
+        raise PermissionError("Signed contract file or frozen terms changed since staging")
     if (staged.candidate.tenant_id != source.tenant_id
             or staged.source_sha256_hex != source.sha256_hex):
         raise PermissionError("Signed contract PDF changed after locked staging")
