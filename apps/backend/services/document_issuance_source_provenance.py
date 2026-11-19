@@ -3,8 +3,10 @@
 An untrusted PDF supplied by a caller is never evidence of ownership.
 Resolve an existing private, scanned company-owned ManagedFile from the
 authenticated tenant's database session, then verify the exact stored bytes.
-Matching linked_entity_type/id is an integrity association, not proof that\nthe linkage was set by an authoritative generator. The
-generator/source lifecycle and actual business-record authorization must be\nreviewed before an issuance route exists.
+Matching linked_entity_type/id is an integrity association, not proof that
+the linkage was set by an authoritative generator. The
+generator/source lifecycle and actual business-record authorization must be
+reviewed before an issuance route exists.
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ def load_authorized_managed_pdf_source(
 ) -> AuthorizedManagedPdfSource:
     """Reject cross-tenant/unowned/unscanned source before reading its bytes."""
     for label, value, max_length in (
-        ("source_type", source_type, 100),
+        ("source_type", source_type, 80),
         ("source_id", source_id, 120),
     ):
         if (not isinstance(value, str) or not value.strip()
