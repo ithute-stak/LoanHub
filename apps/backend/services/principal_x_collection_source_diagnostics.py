@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
+from database.models.enums import PaymentMethod
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.treasury import TreasuryEntry
@@ -26,6 +27,7 @@ class CollectionSourceDiagnostics:
     orphan_allocation_count: int
     unlinked_treasury_count: int
     complete: bool = False
+    missing_cash_evidence_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -47,6 +49,7 @@ def inspect_principal_x_collection_sources(
                 PaymentTransaction.loan_id == loan_id)
         .all()
     )
+    cash_payment_ids = {row.payment_id for row in cash}
     allocations = (
         db.query(PaymentAllocation)
         .join(RepaymentInstallment,
@@ -74,4 +77,9 @@ def inspect_principal_x_collection_sources(
             if row.payment_transaction_id not in payment_ids
         ),
         complete=False,
+        missing_cash_evidence_count=sum(
+            1 for row in payments
+            if getattr(row, "payment_method", None) == PaymentMethod.CASH
+            and row.id not in cash_payment_ids
+        ),
     )
