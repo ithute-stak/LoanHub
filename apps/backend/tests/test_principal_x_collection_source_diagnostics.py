@@ -116,3 +116,45 @@ def test_allocation_linked_to_another_loan_payment_is_flagged():
     assert result.payment_count == 1
     assert result.orphan_allocation_count == 1
     assert result.complete is False
+
+
+def test_cash_payment_without_cash_evidence_is_flagged():
+    from database.models.enums import PaymentMethod
+
+    payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=payment_id, payment_method=PaymentMethod.CASH)],
+        [], [], [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_cash_evidence_count == 1
+    assert result.complete is False
+
+
+def test_linked_cash_payment_does_not_raise_missing_evidence_flag():
+    from database.models.enums import PaymentMethod
+
+    payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=payment_id, payment_method=PaymentMethod.CASH)],
+        [SimpleNamespace(payment_id=payment_id)], [], [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_cash_evidence_count == 0
+
+
+def test_non_cash_payment_does_not_require_cash_transaction():
+    from database.models.enums import PaymentMethod
+
+    db = SessionDouble(
+        [SimpleNamespace(id=uuid4(), payment_method=PaymentMethod.BANK)],
+        [], [], [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_cash_evidence_count == 0
