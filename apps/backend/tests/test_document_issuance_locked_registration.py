@@ -61,7 +61,8 @@ def _register(db, context, store, staged):
 
 @pytest.fixture(autouse=True)
 def _mock_db_gate():
-    with patch("services.document_issuance_locked_registration.require_document_issuance_database_ready"):
+    with patch("services.document_issuance_locked_registration.require_document_issuance_database_ready"), \
+         patch("services.document_issuance_locked_registration.lookup_approved_stamp_from_database"):
         yield
 
 
@@ -162,6 +163,41 @@ def test_company_stamp_changes_between_staging_and_registration_rejected():
     context.company.name = "Unexpected Replacement Company"
     with pytest.raises(ValueError, match="Company stamp fields changed"):
         _register(db, context, store, staged)
+    db.query.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_missing_or_revoked_approval_denies_registration_before_audit_write():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.lookup_approved_stamp_from_database",
+        side_effect=PermissionError("Company stamp approval has been revoked"),
+    ) as approval, patch(
+        "services.document_issuance_locked_registration.bind_locked_pdf_to_issuance",
+    ) as binder:
+        with pytest.raises(PermissionError, match="revoked"):
+            _register(db, context, store, staged)
+    approval.assert_called_once_with(
+        db=db, company=context.company,
+        authenticated_tenant_id=context.company_id,
+        issuer_user_id=context.user.id, configuration_version=1,
+    )
+    db.query.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+    binder.assert_not_called()
+
+
+def test_approval_lookup_uses_connected_database_and_not_supplied_evidence():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.lookup_approved_stamp_from_database",
+        side_effect=PermissionError("Stamp approval registry SQL security is not ready"),
+    ) as approval:
+        with pytest.raises(PermissionError, match="SQL security"):
+            _register(db, context, store, staged)
+    assert approval.call_args.kwargs["db"] is db
     db.query.assert_not_called()
     db.add.assert_not_called()
     db.commit.assert_not_called()
