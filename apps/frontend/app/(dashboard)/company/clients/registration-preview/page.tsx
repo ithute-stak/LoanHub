@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getErrorMessage } from "@/utils/apiError";
+import { DisabledRegistrationField } from "@/components/clients/disabled-registration-field";
 import { validateBatlokoaPreviewContract } from "@/lib/batlokoa-registration-preview-contract";
 
 function fieldLabel(key: string): string {
@@ -188,6 +189,11 @@ export default function BatlokoaRegistrationPreviewPage() {
                         ? "Requires an independently verified capture workflow."
                         : "Planned; customer information cannot be entered here."}
                     </p>
+                    {fieldDetails.get(field) ? (
+                      <div className="mt-3">
+                        <DisabledRegistrationField field={fieldDetails.get(field)!} />
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
