@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from database.models.enums import UserRole
 from services.document_issuance_source_provenance import load_authorized_managed_pdf_source
@@ -86,8 +87,9 @@ def test_wrong_stored_hash_rejected():
 def test_borrower_cannot_load_official_tenant_source():
     db, context, file_id, _ = _fixture()
     context.staff.role = UserRole.LOAN_OFFICER
-    with pytest.raises((PermissionError, Exception)):
+    with pytest.raises(HTTPException) as denied:
         _load(db, context, file_id)
+    assert denied.value.status_code == 403
     db.query.assert_not_called()
 
 
