@@ -20,10 +20,20 @@ const MAX_SELECTION = 20;
 
 type Candidate = { employee_number: string; borrower_id: string | null; status: string; sources: string[]; requires_manual_review: boolean };
 type Discovery = { complete: boolean; total: number | null; page: number; items: Candidate[]; message?: string };
-type Assessment = { record_id: string; reference: string; employee_number: string; assessed_at: string; decision: string; maximum_affordable_installment: string; proposed_installment: string; status?: string };
+type Assessment = { record_id: string; reference: string; employee_number: string; borrower_id: string; assessed_at: string; decision: string; maximum_affordable_installment: string; proposed_installment: string; status?: string };
 type Batch = { batch_id: string; status: string; total_count: number; finished_count: number };
 type Preflight = { ready_count: number; review_count: number; minimum_estimated_provider_requests: number; budget_remaining_at_preflight: number; budget_preflight_sufficient: boolean; candidates: { borrower_id: string; employee_number: string; status: string }[] };
 type Selection = { borrower_id: string; employee_number: string; proposed_monthly_installment: string };
+type UncertainAssessment = Selection & { startedAt: number };
+
+function matchesUncertainAssessment(row: Assessment, pending: UncertainAssessment): boolean {
+    const timestamp = Date.parse(row.assessed_at || "");
+    return !row.status &&
+        row.borrower_id === pending.borrower_id &&
+        row.employee_number?.trim().toLowerCase() === pending.employee_number.trim().toLowerCase() &&
+        Number(row.proposed_installment) === Number(pending.proposed_monthly_installment) &&
+        Number.isFinite(timestamp) && timestamp >= pending.startedAt - 60000;
+}
 type RecordedAssessment = { ok: boolean; status: string; borrower_id?: string; record_id?: string; reference?: string; decision?: string; assessed_at?: string; review_reason_codes?: string[] };
 
 async function downloadPdf(path: string, filename: string) {
@@ -56,6 +66,7 @@ export default function GovernmentAffordabilityPage() {
     const [individual, setIndividual] = useState<Selection | null>(null);
     const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
     const [individualResult, setIndividualResult] = useState<RecordedAssessment | null>(null);
+    const [uncertainAssessment, setUncertainAssessment] = useState<UncertainAssessment | null>(null);
 
     const refresh = useCallback(async () => {
         if (!canManage) return;
@@ -120,16 +131,55 @@ export default function GovernmentAffordabilityPage() {
         setIndividual({ borrower_id: item.borrower_id, employee_number: item.employee_number, proposed_monthly_installment: "" });
         setAuthorityConfirmed(false);
         setIndividualResult(null);
+        setUncertainAssessment(null);
         setError(null);
     }
 
+    async function checkUncertainAssessment() {
+        if (!uncertainAssessment || busy !== null) return;
+        setBusy("reconcile");
+        setError(null);
+        try {
+            // Historical reads are free of provider side effects. A missing result
+            // is NOT proof that the provider was never contacted or charged.
+            const limit = 100;
+            let matched: Assessment | undefined;
+            let allRows: Assessment[] = [];
+            for (let pageNumber = 1; pageNumber <= 5; pageNumber++) {
+                const result = await api.get<{ items: Assessment[]; total: number }>(
+                    ROOT + "/affordability-records", { params: { page: pageNumber, page_size: limit } },
+                );
+                allRows = allRows.concat(result.data.items);
+                matched = result.data.items.find(row => matchesUncertainAssessment(row, uncertainAssessment));
+                if (matched || allRows.length >= result.data.total || result.data.items.length < limit) break;
+            }
+            if (!matched) {
+                setNotice("No matching saved record was found in the recent history searched. The CDAS request outcome is still unknown; do not automatically retry.");
+                return;
+            }
+            setAssessments(allRows.slice(0, 25));
+            setIndividualResult({
+                ok: true, status: "assessment_recorded", borrower_id: matched.borrower_id,
+                record_id: matched.record_id, reference: matched.reference,
+                decision: matched.decision, assessed_at: matched.assessed_at,
+            });
+            setUncertainAssessment(null);
+            setNotice("Matching saved assessment found. Review its reference and PDF; no new CDAS request was sent.");
+        } catch (cause) {
+            setError(getErrorMessage(cause, "Could not check saved assessments. Do not retry the live CDAS call automatically."));
+        } finally {
+            setBusy(null);
+        }
+    }
+
     async function assessIndividual() {
-        if (!individual || !authorityConfirmed || busy !== null) return;
+        if (!individual || !authorityConfirmed || busy !== null || uncertainAssessment) return;
         const amount = individual.proposed_monthly_installment;
         if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 9999999999999) {
             setError("Enter a valid positive instalment in maloti, with no more than two decimal places.");
             return;
         }
+        const startedAt = Date.now();
         setBusy("individual");
         setError(null);
         setNotice(null);
@@ -144,6 +194,7 @@ export default function GovernmentAffordabilityPage() {
                 authorisation_confirmed: true,
             });
             setIndividualResult(response.data);
+            setUncertainAssessment(null);
             setAuthorityConfirmed(false);
             if (response.data.status === "assessment_recorded") {
                 setNotice("Assessment saved. Review its decision and download the PDF from the result below.");
@@ -162,7 +213,9 @@ export default function GovernmentAffordabilityPage() {
             }
         } catch (cause) {
             // A network failure does not prove that the provider request failed.
-            setError(getErrorMessage(cause, "The assessment result is uncertain. Check saved history before submitting another CDAS request."));
+            setUncertainAssessment({ ...individual, startedAt });
+            setAuthorityConfirmed(false);
+            setError(getErrorMessage(cause, "Assessment outcome unknown. Search saved records before any new CDAS request."));
         } finally {
             setBusy(null);
         }
@@ -311,9 +364,19 @@ export default function GovernmentAffordabilityPage() {
                                 onChange={event => setAuthorityConfirmed(event.target.checked)} />
                             <span>I confirm I have lawful authority to request this employee&apos;s CDAS identity and affordability data. I understand this is a billable live provider lookup, not a loan approval.</span>
                         </label>
-                        <Button disabled={busy !== null || !authorityConfirmed || !individual.proposed_monthly_installment}
+                        <Button disabled={busy !== null || Boolean(uncertainAssessment) || !authorityConfirmed || !individual.proposed_monthly_installment}
                             onClick={() => void assessIndividual()}>Verify, assess and save report</Button>
                     </>}
+                    {uncertainAssessment && <Alert variant="destructive">
+                        <AlertTitle>Provider response uncertain — live submission locked</AlertTitle>
+                        <AlertDescription>
+                            A previous request may have reached CDAS. Search saved assessments without contacting the provider.
+                            If no record is found, ask an authorised manager to investigate the request and billing ledger before starting a new assessment.
+                        </AlertDescription>
+                        <Button variant="outline" className="mt-3" disabled={busy !== null} onClick={() => void checkUncertainAssessment()}>
+                            Search saved assessments — no CDAS call
+                        </Button>
+                    </Alert>}
                     {individualResult?.status === "identity_review_required" && <Alert variant="destructive">
                         <AlertTitle>Identity mismatch — manual review</AlertTitle>
                         <AlertDescription>{(individualResult.review_reason_codes || []).join(", ") || "Identity details do not match."} No assessment was saved.</AlertDescription>
