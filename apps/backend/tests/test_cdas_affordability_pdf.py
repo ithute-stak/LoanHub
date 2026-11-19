@@ -53,14 +53,17 @@ async def test_identity_mismatch_never_creates_assessment_record(monkeypatch):
         return {"ok": False, "status": "identity_review_required", "affordability_checked": False}
     monkeypatch.setattr(module, "preview_government_employee_affordability", mismatch)
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    reservation = SimpleNamespace(state="reserved", assessment_record_id=None)
+    monkeypatch.setattr(module, "reserve_affordability_attempt",
+                        lambda *args, **kwargs: (reservation, True))
     class NoWriteDB:
         def add(self, *args):
             raise AssertionError("Identity mismatch cannot save assessment")
         def commit(self):
-            raise AssertionError("Identity mismatch cannot commit")
-    payload = module.GovernmentEmployeeAffordabilityRequest(
+            pass  # Commit only the attempted-verification review status, not an assessment.
+    payload = module.RecordedGovernmentEmployeeAffordabilityRequest(
         borrower_id=uuid4(), employee_number="EMP-100", authorisation_confirmed=True,
-        proposed_monthly_installment="100.00",
+        proposed_monthly_installment="100.00", idempotency_key="test-assessment-key-001",
     )
     context = SimpleNamespace(company_id=uuid4(), user=SimpleNamespace(id=uuid4()),
                               branch_id=None, role=SimpleNamespace(value="company_admin"))
@@ -68,6 +71,7 @@ async def test_identity_mismatch_never_creates_assessment_record(monkeypatch):
         payload=payload, context=context, db=NoWriteDB(),
     )
     assert result["status"] == "identity_review_required"
+    assert reservation.state == "identity_review"
 
 
 def test_pdf_download_never_calls_cdas(monkeypatch):
