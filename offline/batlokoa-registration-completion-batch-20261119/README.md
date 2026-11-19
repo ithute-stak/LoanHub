@@ -93,3 +93,28 @@ pnpm test:batlokoa-registration-preview
 These branch changes have not been run through the full frontend typecheck,
 backend tests or GitHub CI. The batch is intentionally not merged or
 deployed yet.
+
+## Offline iteration 4 — Realistic, disabled screen controls
+
+All five planned registration screens now show actual accessible UI elements
+for reviewed field kinds. Text, dates and numeric placeholders use disabled
+inputs; consent uses disabled unchecked checkboxes; banking, debts and
+employer-group fields show explanatory read-only panels.
+
+The user cannot type a real name, national ID, passport, salary, bank
+account or consent into this preview. There is no draft persistence, POST
+request, login credential capture or legacy assisted-registration fallback.
+
+`apps/frontend/tests/batlokoa-registration-readonly-components.test.mjs`
+parses the actual TSX components and asserts every input/checkbox is
+disabled and has no change handler or implicit captured value. It also
+checks the preview page and typed API client have no mutation calls.
+These checks run together with the schema-drift tests:
+
+```bash
+cd apps/frontend
+pnpm test:batlokoa-registration-preview
+```
+
+Full CI and deployed-browser testing remain pending; the branch is not
+merged or deployed.
