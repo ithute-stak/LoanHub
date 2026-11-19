@@ -99,7 +99,7 @@ def test_mutated_signed_contract_identity_rejected():
             register_signed_contract_locked_issuance(
                 db=db, context=context, loan_id=source.loan_id,
                 contract_id=uuid4(), contract_version=4,
-                staged=staged, store=Mock(),
+                prepared=staged, store=Mock(),
                 stamp_configuration_version=2, idempotency_key="signed-contract-v4",
             )
     register.assert_not_called()
