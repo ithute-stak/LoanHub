@@ -1,0 +1,51 @@
+# Batlokoa registration — offline completion batch
+
+Branch: `offline/batlokoa-registration-completion-batch-20261119`
+
+This is an **unmerged development branch** based on Phase 91's
+`feat/phase91-batlokoa-registration-form-requirements-20261118` branch.
+Its purpose is to develop related registration screens and integration
+safeguards together, then run comprehensive validation before review.
+
+## Added so far
+
+- `apps/frontend/api/batlokoaRegistration.ts`: typed clients for the
+  authenticated read-only registration availability and form requirements
+  API. It must never fall back to the legacy `POST /company-clients` route.
+- `apps/frontend/app/(dashboard)/company/clients/registration-preview/page.tsx`:
+  five-screen navigable registration blueprint, showing planned and deferred
+  fields with no client inputs, local PII persistence or submit action.
+- Navigation to the preparation screen from company client operations.
+
+## Why client capture is disabled
+
+The existing assisted-client creation endpoint has separate historical
+borrower linking behavior. It is not interchangeable with the protected
+new-only atomic writer. Creating new accounts against the legacy endpoint
+would defeat the protections being built. The protected writer still
+requires DBA-reviewed normalized identity indexes, active employee
+membership, identity collision screening and an approved release process.
+
+## Remaining batch work before requesting merge
+
+1. Verify Phase 91 metadata and release contract reflect all full-form fields.
+2. Implement approved, accessible form UI controls and validation behind a
+   separate **non-submitting** integration boundary. No real client details
+   should be entered while release approval is pending.
+3. Establish and test canonical backend validation contracts, bank encryption
+   and current-transaction identity/branch protections for eventual writes.
+4. Add complete test coverage for all field mapping, debt and bank rollback,
+   idempotency, cross-company access, denied release and legacy history safety.
+5. Reconcile any changes to `main`, run frontend typecheck/lint and backend
+   isolated PostgreSQL CI tests, and submit one or more reviewable PRs.
+6. Independently approve index migration and the deployed release process;
+   **do not automatically switch registration on when CI is green**.
+
+The coding maturity goal of 10/10 does not override the independent
+production security, DBA, privacy and business approval gates.
+
+## Safety scope
+
+No production deployment, migration, loan calculator, borrower identity
+migration, or live Batlokoa new-client registration activation is included.
+The new frontend calls GET endpoints only, and captures no customer values.
