@@ -378,16 +378,14 @@ def submit_pending_cdas_consent_evidence(
         raise HTTPException(status_code=422, detail="Valid employee number and evidence reference are required")
     payroll = db.query(CDASPayrollProfile).filter(
         CDASPayrollProfile.company_id == context.company_id,
-        CDASPayrollProfile.borrower_id == payload.borrower_id,
         func.lower(func.trim(CDASPayrollProfile.employee_number)) == number.casefold(),
-    ).first()
+    ).all()
     employment = db.query(BorrowerEmploymentProfile).filter(
         BorrowerEmploymentProfile.company_id == context.company_id,
-        BorrowerEmploymentProfile.borrower_id == payload.borrower_id,
         func.lower(func.trim(BorrowerEmploymentProfile.employee_number)) == number.casefold(),
-    ).first()
-    if payroll is None and employment is None:
-        raise HTTPException(status_code=409, detail="Employee does not belong to this company borrower")
+    ).all()
+    if {row.borrower_id for row in payroll + employment} != {payload.borrower_id}:
+        raise HTTPException(status_code=409, detail="Employee number is missing or linked to conflicting borrowers")
     document = db.query(BorrowerDocument).filter(
         BorrowerDocument.id == payload.document_id,
         BorrowerDocument.borrower_id == payload.borrower_id,
