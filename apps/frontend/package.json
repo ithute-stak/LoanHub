@@ -10,7 +10,7 @@
     "lint": "eslint",
     "lint:strict": "eslint --max-warnings=0",
     "typecheck": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next typegen && tsc --noEmit",
-    "test:batlokoa-registration-preview": "node --test tests/batlokoa-registration-preview-contract.test.mjs"
+    "test:batlokoa-registration-preview": "node --test tests/batlokoa-registration-*.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
