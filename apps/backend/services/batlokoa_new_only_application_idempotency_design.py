@@ -108,8 +108,12 @@ def check_proposed_application_replay(
     Never returns authorization to create a loan. Replays of the same request
     cannot be treated as newly admitted work. No status automatically retries.
     """
-    if not isinstance(intent, NewOnlyApplicationIntent):
-        raise NewOnlyLoanHandoffDenied("Validated application intent required")
+    if (
+        not isinstance(intent, NewOnlyApplicationIntent)
+        or intent.can_reserve is not False
+        or intent.can_create_application is not False
+    ):
+        raise NewOnlyLoanHandoffDenied("Unactivated application intent required")
     if (
         stored_company_id != intent.company_id
         or stored_request_key != intent.request_key
