@@ -27,7 +27,6 @@ WITH allocations AS (
  LEFT JOIN allocations a ON a.installment_id=ri.id
  LEFT JOIN live_payments p ON p.company_id=l.company_id AND p.loan_id=l.id
  WHERE ri.is_superseded=FALSE
-)
 ), classified AS (
 SELECT *, CASE
  WHEN origination_channel='legacy_cashout' OR origination_source='legacy_cashout_book'
@@ -72,7 +71,6 @@ WITH allocations AS (
  LEFT JOIN allocations a ON a.installment_id=ri.id
  LEFT JOIN live_payments p ON p.company_id=l.company_id AND p.loan_id=l.id
  WHERE ri.is_superseded=FALSE
-)
 ), classified AS (
 SELECT *, CASE
  WHEN origination_channel='legacy_cashout' OR origination_source='legacy_cashout_book'
@@ -118,7 +116,6 @@ WITH allocations AS (
  LEFT JOIN allocations a ON a.installment_id=ri.id
  LEFT JOIN live_payments p ON p.company_id=l.company_id AND p.loan_id=l.id
  WHERE ri.is_superseded=FALSE
-)
 ), classified AS (
 SELECT *, CASE
  WHEN origination_channel='legacy_cashout' OR origination_source='legacy_cashout_book'
