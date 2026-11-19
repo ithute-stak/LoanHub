@@ -333,3 +333,5 @@ from database.models.wacom_execution_ceremony_challenge import WacomExecutionCer
 from database.models.cdas_affordability_batch import CdasAffordabilityBatch, CdasAffordabilityBatchItem
 
 from database.models.cdas_affordability_attempt import CdasAffordabilityAttempt
+
+from database.models.cdas_affordability_consent_evidence import CdasAffordabilityConsentEvidence
