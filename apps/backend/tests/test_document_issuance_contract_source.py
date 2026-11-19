@@ -59,7 +59,7 @@ def loan_gate():
     with patch("services.document_issuance_contract_source.require_tenant_roles"), patch(
         "services.document_issuance_contract_source.require_authorized_loan_document_record"
     ) as guard:
-        guard.side_effect = lambda *, db, context, loan_id: _loans[loan_id]
+        guard.side_effect = lambda *, db, context, loan_id, lock_for_registration=False: _loans[loan_id]
         yield
 
 
