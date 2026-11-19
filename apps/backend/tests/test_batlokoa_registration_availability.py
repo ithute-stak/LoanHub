@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from core.access_control import TenantContext
-from database.models.enums import UserRole
+from database.models.enums import CompanyStatus, UserRole
 from routers.batlokoa_registration_availability import (
     RegistrationAvailabilityRead,
     get_registration_availability,
@@ -27,7 +27,7 @@ def context(*, role=UserRole.LOAN_OFFICER, active=True,
     return TenantContext(
         user=SimpleNamespace(id=user_id, is_active=True, role=role),
         staff=staff,
-        company=None,
+        company=SimpleNamespace(id=company_id, status=CompanyStatus.APPROVED, is_active=True),
         company_id=company_id,
         branch_id=branch_id if branch_assigned else None,
         is_platform_admin=platform,
