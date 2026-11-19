@@ -127,7 +127,7 @@ export default function GovernmentAffordabilityPage() {
     }
 
     function selectIndividual(item: Candidate) {
-        if (!item.borrower_id || item.requires_manual_review) return;
+        if (!item.borrower_id || item.requires_manual_review || uncertainAssessment) return;
         setIndividual({ borrower_id: item.borrower_id, employee_number: item.employee_number, proposed_monthly_installment: "" });
         setAuthorityConfirmed(false);
         setIndividualResult(null);
@@ -325,7 +325,7 @@ export default function GovernmentAffordabilityPage() {
                             <div className="min-w-36 flex-1"><p className="font-semibold">{item.employee_number}</p><p className="text-xs text-muted-foreground">{item.borrower_id || "Multiple borrowers / review required"}</p></div>
                             <Badge variant="outline">{item.status.replaceAll("_", " ")}</Badge>
                             {item.borrower_id && !item.requires_manual_review && <Button size="sm" variant="outline" disabled={busy !== null}
-                                onClick={() => selectIndividual(item)}>Assess individually</Button>}
+                                onClick={() => selectIndividual(item)} disabled={busy !== null || Boolean(uncertainAssessment)}>Assess individually</Button>}
                             {chosen && <div className="w-44"><Label htmlFor={"payment-" + item.borrower_id}>Proposed instalment (M)</Label><Input id={"payment-" + item.borrower_id} type="number" min="0.01" step="0.01" value={chosen.proposed_monthly_installment}
                                 onChange={event => changeInstallment(item.borrower_id!, event.target.value)} /></div>}
                         </div>;
