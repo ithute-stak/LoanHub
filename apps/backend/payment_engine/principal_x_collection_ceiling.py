@@ -5,17 +5,20 @@ The caller must reconcile historical payments, reversals, refunds, and fees
 before enabling the policy for a real loan.
 """
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 CENT = Decimal("0.01")
 
 
 def money(value: Decimal) -> Decimal:
-    result = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
-    if not result.is_finite():
-        raise ValueError("Amounts must be finite")
-    return result
+    try:
+        raw = Decimal(str(value))
+        if not raw.is_finite():
+            raise ValueError("Amounts must be finite")
+        return raw.quantize(CENT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid monetary amount") from exc
 
 
 @dataclass(frozen=True)
