@@ -213,7 +213,11 @@ from services.quick_loan_affordability_service import quick_loan_affordability
 
 class GovernmentEmployeeAffordabilityRequest(EmployeeVerificationPreviewRequest):
     proposed_monthly_installment: Decimal = Field(gt=Decimal("0"), max_digits=15, decimal_places=2)
-    idempotency_key: str | None = Field(default=None, min_length=12, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class RecordedGovernmentEmployeeAffordabilityRequest(GovernmentEmployeeAffordabilityRequest):
+    """Every billable stored assessment requires a durable replay key."""
+    idempotency_key: str = Field(min_length=12, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 def assess_verified_cdas_capacity(*, borrower, policy, installment: Decimal, capacity: Decimal) -> dict:
@@ -412,54 +416,53 @@ def get_government_affordability_attempt(
 
 @router.post("/affordability-records")
 async def create_government_affordability_record(
-    payload: GovernmentEmployeeAffordabilityRequest,
+    payload: RecordedGovernmentEmployeeAffordabilityRequest,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
 ):
     """Perform fresh checks once and persist only the verified server response."""
     _require_company_manager(context)
     assert context.company_id is not None
-    attempt = None
-    if payload.idempotency_key:
-        attempt, created = reserve_affordability_attempt(
-            db,
-            company_id=context.company_id,
-            actor_user_id=context.user.id,
-            borrower_id=payload.borrower_id,
-            employee_number=payload.employee_number,
-            installment=payload.proposed_monthly_installment,
-            idempotency_key=payload.idempotency_key,
+    # The request schema requires a durable idempotency key before provider contact.
+    attempt, created = reserve_affordability_attempt(
+        db,
+        company_id=context.company_id,
+        actor_user_id=context.user.id,
+        borrower_id=payload.borrower_id,
+        employee_number=payload.employee_number,
+        installment=payload.proposed_monthly_installment,
+        idempotency_key=payload.idempotency_key,
+    )
+    if not created:
+        if attempt.state == "completed" and attempt.assessment_record_id:
+            saved = _company_assessment_query(db, context.company_id).filter(
+                AuditLog.id == attempt.assessment_record_id,
+                AuditLog.record_id == payload.borrower_id,
+            ).first()
+            if saved is not None:
+                try:
+                    record = stored_assessment_summary(saved)
+                except ValueError:
+                    record = None
+                if record:
+                    return {
+                        "ok": True, "status": "assessment_recorded",
+                        "reference": record["reference"],
+                        "record_id": record["record_id"],
+                        "borrower_id": record["borrower_id"],
+                        "assessed_at": record["assessed_at"],
+                        "decision": record["decision"],
+                        "pdf_path": record["pdf_path"],
+                        "idempotent_replay": True,
+                        "loan_approved": False, "deduction_changed": False,
+                    }
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Prior CDAS attempt exists; investigate its status before any new provider request",
+                **safe_attempt_status(attempt),
+            },
         )
-        if not created:
-            if attempt.state == "completed" and attempt.assessment_record_id:
-                saved = _company_assessment_query(db, context.company_id).filter(
-                    AuditLog.id == attempt.assessment_record_id,
-                    AuditLog.record_id == payload.borrower_id,
-                ).first()
-                if saved is not None:
-                    try:
-                        record = stored_assessment_summary(saved)
-                    except ValueError:
-                        record = None
-                    if record:
-                        return {
-                            "ok": True, "status": "assessment_recorded",
-                            "reference": record["reference"],
-                            "record_id": record["record_id"],
-                            "borrower_id": record["borrower_id"],
-                            "assessed_at": record["assessed_at"],
-                            "decision": record["decision"],
-                            "pdf_path": record["pdf_path"],
-                            "idempotent_replay": True,
-                            "loan_approved": False, "deduction_changed": False,
-                        }
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Prior CDAS attempt exists; investigate its status before any new provider request",
-                    **safe_attempt_status(attempt),
-                },
-            )
 
     try:
         result = await preview_government_employee_affordability(payload, context, db)
