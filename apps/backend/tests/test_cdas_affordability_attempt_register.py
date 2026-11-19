@@ -65,3 +65,25 @@ def test_read_only_attempt_register_scopes_company_and_redacts_key(monkeypatch):
     assert result["items"][0]["may_retry_provider_request"] is False
     assert "idempotency_key" not in result["items"][0]
     assert "never-return-this-key" not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_unauthorised_request_does_not_reserve_attempt(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(mod, "_require_company_manager", lambda context: None)
+    def forbidden_reserve(*args, **kwargs):
+        raise AssertionError("No reservation before lawful authorisation")
+    monkeypatch.setattr(mod, "reserve_affordability_attempt", forbidden_reserve)
+    payload = mod.RecordedGovernmentEmployeeAffordabilityRequest(
+        borrower_id=uuid4(), employee_number="EMP-100",
+        proposed_monthly_installment="100.00",
+        authorisation_confirmed=False,
+        idempotency_key="test-unconfirmed-key-001",
+    )
+    with pytest.raises(HTTPException) as raised:
+        await mod.create_government_affordability_record(
+            payload=payload,
+            context=SimpleNamespace(company_id=uuid4()),
+            db=object(),
+        )
+    assert raised.value.status_code == 409
