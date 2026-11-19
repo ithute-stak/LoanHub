@@ -218,6 +218,7 @@ class GovernmentEmployeeAffordabilityRequest(EmployeeVerificationPreviewRequest)
 class RecordedGovernmentEmployeeAffordabilityRequest(GovernmentEmployeeAffordabilityRequest):
     """Every billable stored assessment requires a durable replay key."""
     idempotency_key: str = Field(min_length=12, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    consent_evidence_reference: str = Field(min_length=6, max_length=200)
 
 
 def assess_verified_cdas_capacity(*, borrower, policy, installment: Decimal, capacity: Decimal) -> dict:
@@ -436,6 +437,7 @@ async def create_government_affordability_record(
         borrower_id=payload.borrower_id,
         employee_number=payload.employee_number,
         installment=payload.proposed_monthly_installment,
+        consent_evidence_reference=payload.consent_evidence_reference,
         idempotency_key=payload.idempotency_key,
     )
     if not created:
@@ -493,6 +495,8 @@ async def create_government_affordability_record(
         "borrower_id": str(payload.borrower_id),
         "assessed_at": result["assessed_at"],
         "identity_status": "Matched against CDAS for this assessment",
+        "consent_evidence_reference": payload.consent_evidence_reference.strip(),
+        "consent_evidence_verified": False,
         "cdas_environment": result["cdas_environment"],
         "cdas_capacity": result["cdas_monthly_capacity"],
         "proposed_installment": assessment["proposed_installment"],
