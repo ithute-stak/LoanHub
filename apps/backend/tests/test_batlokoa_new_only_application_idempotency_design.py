@@ -123,5 +123,5 @@ def test_hmac_secret_is_part_of_fingerprint_and_key_is_not():
 def test_forged_intent_cannot_turn_off_persistent_safety_controls():
     intent = prepare_new_only_application_intent(**arguments())
     forged = replace(intent, can_reserve=True, can_create_application=True)
-    # No service ever accepts either flag as authorization.
-    assert replay(forged) == "previously_completed_no_new_write"
+    with pytest.raises(NewOnlyLoanHandoffDenied, match="Unactivated"):
+        replay(forged)
