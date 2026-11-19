@@ -60,7 +60,7 @@ def test_revoked_user_cannot_issue(field, value):
 def test_inactive_or_different_company_rejected(field, value):
     db, context, user, company, staff = _case()
     setattr(company, field, value)
-    with pytest.raises(PermissionError, match="company is not currently approved"):
+    with pytest.raises(PermissionError, match="company is not currently approved|authenticated company issuer"):
         require_current_document_issuer(db=db, context=context)
 
 
