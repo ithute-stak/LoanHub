@@ -15,6 +15,7 @@ def test_billable_assessment_requires_idempotency_key():
     request = dict(
         borrower_id=uuid4(), employee_number="EMP-100",
         proposed_monthly_installment="100.00", authorisation_confirmed=True,
+        consent_evidence_reference="CONSENT-EXAMPLE-001",
     )
     with pytest.raises(ValidationError):
         mod.RecordedGovernmentEmployeeAffordabilityRequest(**request)
@@ -79,6 +80,7 @@ async def test_unauthorised_request_does_not_reserve_attempt(monkeypatch):
         proposed_monthly_installment="100.00",
         authorisation_confirmed=False,
         idempotency_key="test-unconfirmed-key-001",
+        consent_evidence_reference="CONSENT-EXAMPLE-001",
     )
     with pytest.raises(HTTPException) as raised:
         await mod.create_government_affordability_record(
