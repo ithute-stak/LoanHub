@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from core.access_control import TenantContext
 from database.models.enums import CompanyStatus, UserRole
@@ -192,7 +193,7 @@ def test_staff_authorization_denied_before_locks(monkeypatch, change):
     elif change == "borrower_role":
         ctx.staff.role = UserRole.BORROWER
     db = database()
-    with pytest.raises(Exception):
+    with pytest.raises((NewOnlyLoanHandoffDenied, HTTPException)):
         run(db, ctx)
     db.execute.assert_not_called()
     review.assert_not_called()
