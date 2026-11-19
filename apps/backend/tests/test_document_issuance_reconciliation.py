@@ -22,6 +22,7 @@ def _fixtures():
     store.bucket = "official-bucket"
     store.prefix = "official-issuances"
     store.read_exact_version = Mock(return_value=PDF)
+    store.assert_version_retention = Mock()
     locked = LockedPdfObject(
         bucket=store.bucket,
         key=store._key(str(company), PUBLIC_ID),
@@ -58,6 +59,7 @@ def test_committed_locked_version_can_be_verified_without_mutation():
     result = _assess(company, store, locked, db)
     assert result.status == "registered_version_verified"
     assert not result.manual_review_required
+    store.assert_version_retention.assert_called_once_with(locked)
     db.commit.assert_not_called()
     db.add.assert_not_called()
 
@@ -69,6 +71,7 @@ def test_unregistered_locked_object_is_retained_for_review():
     assert result.status == "unregistered_locked_object_review"
     assert result.manual_review_required
     store.read_exact_version.assert_not_called()
+    store.assert_version_retention.assert_not_called()
     db.commit.assert_not_called()
 
 
@@ -119,3 +122,37 @@ def test_unsafe_database_role_prevents_recovery_assessment():
         with pytest.raises(PermissionError, match="RLS not ready"):
             _assess(company, store, locked, db)
     db.query.assert_not_called()
+
+
+def test_provider_retention_expired_requires_review_without_reading_pdf():
+    company, store, locked, db, _ = _fixtures()
+    store.assert_version_retention.side_effect = StorageUnavailableError(
+        "Exact PDF version lacks valid COMPLIANCE retention"
+    )
+    result = _assess(company, store, locked, db)
+    assert result.status == "locked_version_unavailable"
+    assert result.manual_review_required
+    store.assert_version_retention.assert_called_once_with(locked)
+    store.read_exact_version.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_provider_retention_inspection_failure_requires_manual_review():
+    company, store, locked, db, _ = _fixtures()
+    store.assert_version_retention.side_effect = StorageUnavailableError(
+        "Cannot inspect exact PDF version retention"
+    )
+    result = _assess(company, store, locked, db)
+    assert result.status == "locked_version_unavailable"
+    assert result.manual_review_required
+    store.read_exact_version.assert_not_called()
+
+
+def test_inactive_issuance_never_probes_provider_retention():
+    company, store, locked, db, record = _fixtures()
+    record.status = "revoked"
+    result = _assess(company, store, locked, db)
+    assert result.status == "registered_inactive"
+    store.assert_version_retention.assert_not_called()
+    store.read_exact_version.assert_not_called()
