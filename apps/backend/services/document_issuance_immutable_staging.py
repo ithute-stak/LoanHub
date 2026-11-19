@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 from urllib.parse import urlsplit
 
+from sqlalchemy.orm import Session
+
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
 from database.config.config import settings
 from services.document_issuance_candidate import (
@@ -21,6 +23,7 @@ from services.document_issuance_immutable_s3 import (
 )
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
+from services.document_issuance_stamp_approval_repository import lookup_approved_stamp_from_database
 from services.malware_scan_service import scan_upload
 from services.object_storage_service import StorageUnavailableError
 
@@ -36,6 +39,7 @@ class StagedLockedCandidate:
 def stage_locked_document_candidate(
     *, context: TenantContext, source_pdf: bytes,
     trusted_verification_origin: str, store: S3ObjectLockPdfStore,
+    db: Session, stamp_configuration_version: int,
 ) -> StagedLockedCandidate:
     """Write a locked exact PDF version after company and malware preflight.
 
@@ -55,6 +59,16 @@ def stage_locked_document_candidate(
     if not isinstance(store, S3ObjectLockPdfStore):
         raise PermissionError("Official issuance staging requires the S3 Object Lock adapter")
 
+    if type(stamp_configuration_version) is not int or stamp_configuration_version < 1:
+        raise ValueError("Valid approved stamp configuration version required")
+    # Use the same connected restricted PostgreSQL session as registration.
+    # This forbids rendering and permanent retention of unapproved stamps.
+    lookup_approved_stamp_from_database(
+        db=db, company=context.company,
+        authenticated_tenant_id=context.company_id,
+        issuer_user_id=context.user.id,
+        configuration_version=stamp_configuration_version,
+    )
     # Resolve company fields BEFORE any non-reversible S3 Object Lock write.
     # Compare again after rendering to prevent a company-record mutation while
     # the certificate is assembled (a live approval check is still required).
@@ -103,6 +117,15 @@ def stage_locked_document_candidate(
     if scan_upload(candidate.pdf_bytes) != "clean":
         raise PermissionError("Final PDF malware scan did not complete as clean")
 
+    # Approval may be revoked while generating or scanning the PDF.
+    # Recheck immediately before irreversible Object Lock retention; final
+    # registration performs a further authoritative lookup before commit.
+    lookup_approved_stamp_from_database(
+        db=db, company=context.company,
+        authenticated_tenant_id=context.company_id,
+        issuer_user_id=context.user.id,
+        configuration_version=stamp_configuration_version,
+    )
     locked = store.put_locked_pdf(
         tenant_id=str(context.company_id), public_id=candidate.public_id,
         pdf=candidate.pdf_bytes,
