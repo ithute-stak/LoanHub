@@ -73,6 +73,10 @@ def assess_locked_issuance_recovery(
             public_id=public_id, status="registered_inactive",
         )
     try:
+        # A historical retention timestamp or matching PDF hash is insufficient.
+        # Recheck live provider COMPLIANCE retention for the precise VersionId
+        # before accepting the registered artifact as verified.
+        store.assert_version_retention(locked)
         exact_pdf = store.read_exact_version(locked)
         if pdf_fingerprint(exact_pdf) != record.final_pdf_sha256:
             return LockedIssuanceRecoveryAssessment(
