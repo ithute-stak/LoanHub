@@ -20,6 +20,7 @@ from services.document_issuance_source_provenance import stage_authorized_manage
 
 def require_authorized_loan_document_record(
     *, db: Session, context: TenantContext, loan_id: UUID,
+    lock_for_registration: bool = False,
 ) -> ClientCompanyLoan:
     """Require an approved, same-tenant loan with a real borrower reference."""
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
@@ -28,7 +29,7 @@ def require_authorized_loan_document_record(
             or context.user is None or context.staff is None
             or not isinstance(loan_id, UUID)):
         raise PermissionError("Verified tenant and loan identity required")
-    loan = db.query(ClientCompanyLoan).filter(
+    loan_query = db.query(ClientCompanyLoan).filter(
         ClientCompanyLoan.id == loan_id,
         ClientCompanyLoan.company_id == context.company_id,
         ClientCompanyLoan.status.in_([
@@ -36,7 +37,12 @@ def require_authorized_loan_document_record(
             LoanStatus.COMPLETED, LoanStatus.DEFAULTED,
         ]),
         ClientCompanyLoan.approved_at.isnot(None),
-    ).one_or_none()
+    )
+    # FOR SHARE blocks concurrent loan mutation until the issuance commit.
+    # NOWAIT fails closed rather than racing with contract updates.
+    if lock_for_registration:
+        loan_query = loan_query.with_for_update(read=True, nowait=True)
+    loan = loan_query.one_or_none()
     if (loan is None or loan.id != loan_id
             or loan.company_id != context.company_id
             or not isinstance(loan.borrower_id, UUID)
