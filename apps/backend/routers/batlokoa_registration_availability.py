@@ -6,8 +6,11 @@ assisted-client endpoints are separate and unchanged.
 """
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
+from database.models.enums import CompanyStatus
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -43,7 +46,12 @@ def registration_availability_for_staff(context: TenantContext) -> RegistrationA
         or context.staff is None
         or context.user.is_active is not True
         or context.staff.is_active is not True
-        or context.company_id is None
+        or not isinstance(context.company_id, UUID)
+        or not isinstance(context.user.id, UUID)
+        or context.company is None
+        or context.company.id != context.company_id
+        or context.company.status != CompanyStatus.APPROVED
+        or context.company.is_active is not True
         or context.staff.company_id != context.company_id
         or context.staff.user_id != context.user.id
         or context.staff.role not in LENDING_ROLES
@@ -51,7 +59,10 @@ def registration_availability_for_staff(context: TenantContext) -> RegistrationA
         raise HTTPException(status_code=403, detail="Active lending staff membership required")
     if (
         context.staff.role not in COMPANY_MANAGEMENT_ROLES
-        and (context.branch_id is None or context.staff.branch_id != context.branch_id)
+        and (
+            not isinstance(context.branch_id, UUID)
+            or context.staff.branch_id != context.branch_id
+        )
     ):
         raise HTTPException(status_code=403, detail="Assigned lending branch required")
     return RegistrationAvailabilityRead()
