@@ -135,6 +135,12 @@ def register_locked_staged_document(
             detail="Immutable S3 Object Lock version bound and exact bytes checked",
         ))
         db.flush()
+        # Revalidate again at the final SQL commit boundary: approval and
+        # immutable-object checks may take time after the initial issuer gate.
+        # This is defense in depth, NOT a transaction-wide revocation guard.
+        # A trusted issuer transaction holding compatible authorization locks
+        # throughout commit remains mandatory before routing this flow.
+        require_current_document_issuer(db=db, context=context)
         db.commit()
     except Exception:
         db.rollback()
