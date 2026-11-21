@@ -64,7 +64,9 @@ def _mock_db_gate():
     with patch("services.document_issuance_locked_registration.require_document_issuance_database_ready"), \
          patch("services.document_issuance_locked_registration.lookup_approved_stamp_from_database"), \
          patch("services.document_issuance_locked_registration.require_current_document_issuer"), \
-         patch("services.document_issuance_locked_registration.require_trusted_issuer_database_login"):
+         patch("services.document_issuance_locked_registration.require_trusted_issuer_database_login"), \
+         patch("services.document_issuance_locked_registration.read_issuer_transaction_identity"), \
+         patch("services.document_issuance_locked_registration.require_same_issuer_transaction"):
 
         yield
 
@@ -273,4 +275,19 @@ def test_untrusted_sql_login_denies_registration_before_authorization():
     gate.assert_called_once_with(db=db)
     issuer.assert_not_called()
     db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_changed_postgres_transaction_identity_rolls_back_issuance():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.require_same_issuer_transaction",
+        side_effect=PermissionError("PostgreSQL issuer transaction changed before commit"),
+    ) as verify, patch(
+        "services.document_issuance_locked_registration.bind_locked_pdf_to_issuance",
+    ):
+        with pytest.raises(PermissionError, match="transaction changed"):
+            _register(db, context, store, staged)
+    verify.assert_called_once()
+    db.rollback.assert_called_once()
     db.commit.assert_not_called()
