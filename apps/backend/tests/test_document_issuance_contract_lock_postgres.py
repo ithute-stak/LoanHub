@@ -147,3 +147,66 @@ def test_issuer_guard_row_lock_serializes_concurrent_revocation(table):
                 teardown.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize("table", ["issuer_users", "issuer_companies", "issuer_staff"])
+def test_pending_revocation_prevents_new_issuer_lock(table):
+    """If revocation has the row first, issuance must fail closed.
+
+    PostgreSQL tests the inverse lock ordering: UPDATE starts before the
+    issuer's FOR SHARE NOWAIT. No mock or application GUC establishes identity.
+    """
+    url = os.getenv("LOANHUB_ISSUANCE_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL test URL required")
+    engine = create_engine(url, pool_size=2, max_overflow=0)
+    schema = "issuer_revoke_" + uuid4().hex[:12]
+    issuer_id = uuid4()
+    try:
+        with engine.begin() as setup:
+            setup.execute(text(f'CREATE SCHEMA "{schema}"'))
+            setup.execute(text(
+                f'CREATE TABLE "{schema}"."{table}" '
+                '(id uuid PRIMARY KEY, is_active boolean NOT NULL)'
+            ))
+            setup.execute(text(
+                f'INSERT INTO "{schema}"."{table}" VALUES (:id, TRUE)'
+            ), {"id": issuer_id})
+
+        with engine.connect() as revoker, engine.connect() as issuer:
+            revoke_tx = revoker.begin()
+            issuer_tx = issuer.begin()
+            try:
+                # Do not commit yet: the uncommitted UPDATE owns a row lock.
+                revoker.execute(text(
+                    f'UPDATE "{schema}"."{table}" SET is_active=FALSE '
+                    'WHERE id=:id'
+                ), {"id": issuer_id})
+                savepoint = issuer.begin_nested()
+                try:
+                    with pytest.raises(DBAPIError) as blocked:
+                        issuer.execute(text(
+                            f'SELECT is_active FROM "{schema}"."{table}" '
+                            'WHERE id=:id AND is_active=TRUE FOR SHARE NOWAIT'
+                        ), {"id": issuer_id})
+                    assert (getattr(blocked.value.orig, "pgcode", None)
+                            or getattr(blocked.value.orig, "sqlstate", None)) == "55P03"
+                finally:
+                    savepoint.rollback()
+                revoke_tx.commit()
+                # With revocation committed, even a fresh lock request cannot
+                # return an active authorization row.
+                assert issuer.execute(text(
+                    f'SELECT is_active FROM "{schema}"."{table}" '
+                    'WHERE id=:id AND is_active=TRUE FOR SHARE NOWAIT'
+                ), {"id": issuer_id}).first() is None
+            finally:
+                if revoke_tx.is_active:
+                    revoke_tx.rollback()
+                issuer_tx.rollback()
+    finally:
+        try:
+            with engine.begin() as teardown:
+                teardown.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            engine.dispose()
