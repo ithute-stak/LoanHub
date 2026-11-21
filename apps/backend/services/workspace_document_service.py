@@ -1174,6 +1174,8 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
     # Preview only: never imply official approval or stamp signed documents.
     # The feature is disabled by default, including in production.
     if os.getenv("LOANHUB_LETTER_STAMP_PREVIEW_ENABLED") == "1":
+        if os.getenv("ENVIRONMENT", "").strip().lower() not in {"test", "testing", "development", "dev", "local"}:
+            raise PermissionError("Company stamp preview is unavailable outside development or test")
         if signatures:
             raise PermissionError("Cannot stamp a letter after document signatures")
         story.extend(letter_stamp_preview_story(document=document, company=company))
