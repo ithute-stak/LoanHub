@@ -92,6 +92,8 @@ export function RealtimeProvider({
     const dispatch = useAppDispatch();
     const router = useRouter();
     const pathname = usePathname();
+    const pathnameRef = useRef(pathname);
+    useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
     const userId = useAppSelector(
         (state) => state.auth.user?.id ?? null,
     );
@@ -305,9 +307,8 @@ export function RealtimeProvider({
                         },
                     }),
                 );
-                if (document.visibilityState === "visible") {
-                    router.refresh();
-                }
+                // Existing data providers handle socket catch-up. Avoid a
+                // second full route refresh on every connection/reconnection.
             };
 
             socket.onmessage = (event) => {
@@ -417,7 +418,7 @@ export function RealtimeProvider({
                         if (
                             hasRemoteChanges &&
                             document.visibilityState === "visible" &&
-                            shouldRefreshRouteForCommit(pathname, detailForDispatch)
+                            shouldRefreshRouteForCommit(pathnameRef.current, detailForDispatch)
                         ) {
                             router.refresh();
                         }
@@ -489,7 +490,6 @@ export function RealtimeProvider({
         closeCurrentSocket,
         dispatch,
         userId,
-        pathname,
         router,
     ]);
 
