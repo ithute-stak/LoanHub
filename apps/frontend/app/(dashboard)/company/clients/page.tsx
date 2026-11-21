@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -333,31 +334,56 @@ export default function CompanyClientsPage() {
     return () => window.removeEventListener(GLOBAL_BORROWER_LOOKUP_EVENT, handleGlobalLookup);
   }, [applyGlobalBorrowerLookup]);
 
+  const loadedClientsRef = useRef(false);
+  const loadSequenceRef = useRef(0);
   const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [clientRows, branchResponse, productRows, methodRows, insightRows] = await Promise.all([
-        listCompanyClients({ limit: 1000 }),
-        branchApi.getAll(),
-        listLoanProducts(),
-        expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-        getCompanyClientPortfolioInsights(14).catch(() => null),
-      ]);
-      setClients(clientRows);
-      setPortfolioInsights(insightRows);
-      setBranches(branchResponse.data.filter((item) => item.is_active));
-      setProducts(productRows.filter((item) => item.is_active));
-      setPaymentMethods(methodRows);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Company clients could not be loaded."));
-    } finally {
-      setLoading(false);
-    }
+    const sequence = ++loadSequenceRef.current;
+    if (!loadedClientsRef.current) setLoading(true);
+
+    const directoryTask = (async () => {
+      try {
+        const rows = await listCompanyClients({ limit: 1000 });
+        if (sequence !== loadSequenceRef.current) return;
+        setClients(rows);
+        loadedClientsRef.current = true;
+      } catch (error: unknown) {
+        if (sequence === loadSequenceRef.current) {
+          toast.error(getErrorMessage(error, "Company clients could not be loaded."));
+        }
+      } finally {
+        if (sequence === loadSequenceRef.current) setLoading(false);
+      }
+    })();
+
+    // Loading additional configuration and insights must not delay the directory.
+    const enrichmentTask = (async () => {
+      const [branchesResult, productsResult, methodsResult, insightsResult] =
+        await Promise.allSettled([
+          branchApi.getAll(),
+          listLoanProducts(),
+          expenseManagementApi.paymentMethods(),
+          getCompanyClientPortfolioInsights(14),
+        ]);
+      if (sequence !== loadSequenceRef.current) return;
+      if (branchesResult.status === "fulfilled") {
+        setBranches(branchesResult.value.data.filter((item) => item.is_active));
+      }
+      if (productsResult.status === "fulfilled") {
+        setProducts(productsResult.value.filter((item) => item.is_active));
+      }
+      if (methodsResult.status === "fulfilled") setPaymentMethods(methodsResult.value);
+      if (insightsResult.status === "fulfilled") setPortfolioInsights(insightsResult.value);
+    })();
+
+    await Promise.all([directoryTask, enrichmentTask]);
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadSequenceRef.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {
