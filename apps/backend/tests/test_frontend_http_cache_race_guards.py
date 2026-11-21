@@ -15,3 +15,16 @@ def test_late_request_cannot_restore_invalidated_client_cache():
     assert "state.revision += 1" in slice_
     assert "cacheScopeInvalidated(" in slice_
     assert "cacheTagsInvalidated(" in slice_
+
+
+def test_concurrent_get_uses_same_revision_key_for_lookup_and_storage():
+    adapter = (ROOT / "lib" / "http-cache.ts").read_text()
+    assert "inflightRequests.get(inflightKey)" in adapter
+    assert "inflightRequests.set(inflightKey, request)" in adapter
+    assert "inflightRequests.set(identity.key, request)" not in adapter
+
+
+def test_tag_invalidation_blocks_late_inflight_response():
+    source = (ROOT / "store" / "features" / "slices" / "httpCacheSlice.ts").read_text()
+    tag_handler = source.split("cacheTagsInvalidated(", 1)[1].split("cacheCleared(", 1)[0]
+    assert "state.revision += 1" in tag_handler
