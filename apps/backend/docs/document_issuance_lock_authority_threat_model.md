@@ -246,3 +246,26 @@ membership; explicit, audited per-object permissions are required instead.
 This remains a non-routed security prerequisite. The dedicated issuer service,
 actual least-privilege grants for lock operations, independent authenticated
 employee identity, and end-to-end transaction certification remain pending.
+
+
+## 2026-11-21: PostgreSQL transaction fingerprint
+
+The non-routed generic ledger registration now captures both
+`pg_backend_pid()` and `pg_current_xact_id()` after acquiring its issuer
+authorization locks and checks the pair again immediately before COMMIT.
+This supplements the SQLAlchemy root transaction object identity check:
+even if an underlying transaction was ended and a new transaction began
+on the same backend, a changed PostgreSQL transaction ID is rejected.
+The gate fails closed if an actual PostgreSQL transaction cannot be verified.
+
+Unit tests cover different connections, transaction identifiers and invalid
+fingerprints. A live PostgreSQL test ensures that two real successive
+transactions on the same connection have distinct transaction identifiers.
+
+This is still **not** proof of an isolated trusted issuer service or of
+complete source-to-final integrity: the signed-contract adapter currently
+also needs a PostgreSQL transaction fingerprint around its earlier source
+validation. The production SQL login requires independent credential
+isolation, safe row-lock privileges, reviewed RLS, and end-to-end lifecycle
+and failure-mode certification. No endpoints or production infrastructure
+are enabled.
