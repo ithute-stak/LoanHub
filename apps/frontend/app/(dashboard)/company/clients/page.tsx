@@ -43,6 +43,8 @@ import {
 } from "lucide-react";
 
 import { branchApi } from "@/api/branch";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import { expenseManagementApi } from "@/api/expenseManagement";
 import {
   checkCompanyClientExistingLoans,
@@ -244,10 +246,14 @@ function withinWindow(value: string | null | undefined, windowValue: string): bo
 
 export default function CompanyClientsPage() {
   const router = useRouter();
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const currentUserId = useAppSelector((state) => state.auth.user?.id ?? null);
+  const scopeKey = JSON.stringify([currentUserId, activeCompanyId, activeBranchId, activeRole]);
   const [clients, setClients] = useState<CompanyClient[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<LoanProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [directoryFilters, setDirectoryFilters] = useState<DirectoryFilters>(EMPTY_DIRECTORY_FILTERS);
@@ -335,9 +341,19 @@ export default function CompanyClientsPage() {
   }, [applyGlobalBorrowerLookup]);
 
   const loadedClientsRef = useRef(false);
+  const loadedScopeRef = useRef<string | null>(null);
   const loadSequenceRef = useRef(0);
   const load = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
+    if (loadedScopeRef.current !== scopeKey) {
+      loadedScopeRef.current = scopeKey;
+      loadedClientsRef.current = false;
+      setLoadedScopeKey(null);
+      setClients([]);
+      setBranches([]);
+      setProducts([]);
+      setPortfolioInsights(null);
+    }
     if (!loadedClientsRef.current) setLoading(true);
 
     const directoryTask = (async () => {
@@ -346,8 +362,10 @@ export default function CompanyClientsPage() {
         if (sequence !== loadSequenceRef.current) return;
         setClients(rows);
         loadedClientsRef.current = true;
+        setLoadedScopeKey(scopeKey);
       } catch (error: unknown) {
         if (sequence === loadSequenceRef.current) {
+          setLoadedScopeKey(scopeKey);
           toast.error(getErrorMessage(error, "Company clients could not be loaded."));
         }
       } finally {
@@ -376,7 +394,7 @@ export default function CompanyClientsPage() {
     })();
 
     await Promise.all([directoryTask, enrichmentTask]);
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -1044,7 +1062,7 @@ export default function CompanyClientsPage() {
       : client));
   }
 
-  if (loading) return <PageLoader rows={7} />;
+  if (loading || loadedScopeKey !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="loanhub-page space-y-6">
