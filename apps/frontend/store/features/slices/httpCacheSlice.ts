@@ -100,7 +100,8 @@ const httpCacheSlice = createSlice({
         ) {
             let removed = 0;
             for (const [key, entry] of Object.entries(state.entries)) {
-                if (entry.scope === action.payload.scope) {
+                if (entry.scope === action.payload.scope ||
+                    entry.scope.startsWith(`${action.payload.scope}:`)) {
                     delete state.entries[key];
                     removed += 1;
                 }
@@ -124,7 +125,8 @@ const httpCacheSlice = createSlice({
             for (const [key, entry] of Object.entries(state.entries)) {
                 if (
                     action.payload.scope &&
-                    entry.scope !== action.payload.scope
+                    entry.scope !== action.payload.scope &&
+                    !entry.scope.startsWith(`${action.payload.scope}:`)
                 ) {
                     continue;
                 }
