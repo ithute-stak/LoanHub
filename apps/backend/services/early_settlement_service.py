@@ -27,6 +27,7 @@ from database.models.enums import (
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
+from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.interest_calculation_service import (
     calculate_daily_accrued_interest,
     calculate_loan_terms,
@@ -385,6 +386,7 @@ def quote_early_settlement(
 ) -> LoanEarlySettlement:
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only an active or defaulted loan can be settled early")
+    require_standard_settlement_model(db, loan=loan)
     today = validate_settlement_date(loan, settlement_date)
     if settlement_date < today and not _is_company_owner(
         db,
@@ -621,6 +623,7 @@ def finalize_early_settlement_payment(
     )
     if not loan:
         raise HTTPException(status_code=404, detail="Settlement loan was not found")
+    require_standard_settlement_model(db, loan=loan)
     if money(payment.amount) != money(quote.settlement_amount):
         raise HTTPException(status_code=409, detail="Settlement payment does not match the signed quote")
     if money(loan.amount_paid) != money(quote.original_amount_paid):
@@ -746,6 +749,7 @@ def initiate_early_settlement_payment(
     loan = db.get(ClientCompanyLoan, quote.loan_id)
     if not loan:
         raise HTTPException(status_code=404, detail="Settlement loan was not found")
+    require_standard_settlement_model(db, loan=loan)
     if is_legacy_loan_locked(db, loan.company_id, loan.id):
         raise HTTPException(
             status_code=409,
