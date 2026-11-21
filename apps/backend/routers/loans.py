@@ -51,6 +51,7 @@ from database.schemas.early_settlement import (
     EarlySettlementPaymentResult,
     EarlySettlementQuoteCreate,
     EarlySettlementRead,
+    PrincipalXSettlementPreviewRead,
 )
 from database.schemas.loan import InstallmentDueDateAdjustmentCreate, LoanPaymentSlipRead, LoanRead
 from database.config.config import settings
@@ -67,6 +68,10 @@ from services.early_settlement_service import (
 )
 from services.installment_service import adjust_installment_due_date
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
+from services.settlement_payment_model_gate import require_standard_settlement_model
+from services.loan_payment_model_assignment_service import read_loan_payment_model
+from services.principal_x_settlement_preview_service import quote_principal_x_for_loan
+from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
     calculate_micro_loan_totals,
     disburse_cash_loan,
@@ -516,6 +521,55 @@ def collect_cash_repayment(
 
 
 
+@router.post(
+    "/{loan_id}/principal-x-settlements/preview",
+    response_model=PrincipalXSettlementPreviewRead,
+)
+def preview_principal_x_settlement(
+    loan_id: UUID,
+    payload: EarlySettlementQuoteCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only, tenant-scoped quote; never creates a payable settlement."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409, detail="Invalid loan payment-model assignment",
+        ) from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(
+            status_code=409,
+            detail="Principal x% preview requires an explicitly assigned Principal x% loan",
+        )
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        raise HTTPException(status_code=409, detail="Only active or defaulted loans can be previewed")
+    try:
+        quote = quote_principal_x_for_loan(
+            db, loan=loan, settlement_date=payload.settlement_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PrincipalXSettlementPreviewRead(
+        loan_id=loan.id,
+        payment_model=model.value,
+        settlement_date=payload.settlement_date,
+        period=quote.period,
+        uncapped_due=quote.uncapped_due,
+        settlement_amount=quote.collectible_due,
+        contractual_remaining=quote.contractual_remaining,
+        lifetime_cap_remaining=quote.lifetime_cap_remaining,
+        total_credited=quote.total_credited,
+        ceiling_reduction=quote.ceiling_reduction,
+        payment_enabled=False,
+    )
+
+
 @router.get("/{loan_id}/early-settlements", response_model=list[EarlySettlementRead])
 def list_early_settlements(
     loan_id: UUID,
@@ -544,6 +598,7 @@ def create_early_settlement_quote(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     return quote_early_settlement(
         db,
         loan=loan,
@@ -566,6 +621,7 @@ def pay_early_settlement(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     quote = (
         db.query(LoanEarlySettlement)
         .filter(
