@@ -34,3 +34,24 @@ rejected from the preview path. Other letter generators remain unchanged.
 `apps/backend/tests/test_workspace_document_export.py` verifies disabled-by-
 default behavior, visible preview labeling, letter-body ordering, cross-tenant
 rejection, no stamp on contracts and rejection for already-signed documents.
+
+## Read-only approval preflight (not routed)
+
+`services.document_studio_letter_stamp_authorization.preflight_approved_letter_stamp`
+now prepares evidence for a future trusted issuer. It checks that the letter,
+company and authenticated tenant match; that the source is an unsigned draft
+of a supported letter template; and that the issuer and version identifiers
+are valid. It then calls the existing protected PostgreSQL approval repository,
+which is responsible for checking RLS, current SQL role privileges, independent
+approver, approved content digest, expiry and revocation. Finally, it checks
+the company snapshot again to catch an observable modification.
+
+This helper **never renders or issues a document**, and it must not be called
+directly from a new API endpoint without the remaining trusted issuer
+authorization, transaction-lock continuity and immutable artifact binding.
+An unsigned in-memory document is not proof that no stored signatures exist:
+the eventual issuer must check and lock the persisted signature records.
+
+A new CI step runs the PDF export regressions and this non-routed preflight's
+denial and no-write tests. The official stamped-letter production path remains
+blocked by the previously documented issuer and storage certification gates.
