@@ -1,4 +1,7 @@
 import { api } from "@/lib/api";
+import { store } from "@/store";
+import { clientsReceived } from "@/store/features/slices/clientDataCenterSlice";
+import { getStoredValue, StorageKeys } from "@/lib/storage";
 import type {
   AssistedCompanyClientCreate,
   CompanyClient,
@@ -36,8 +39,49 @@ export type CompanyClientDirectoryParams = {
   limit?: number;
 };
 
+// Scope local client data to the signed-in identity, tenant, active role and
+// active branch. Client cache is intentionally memory-only (never persisted).
+function clientDataScope(): string | null {
+  const state = store.getState();
+  const user = state.auth.user;
+  const company = getStoredValue(StorageKeys.activeCompanyId);
+  const role = getStoredValue(StorageKeys.activeRole) ?? user?.role;
+  if (!user?.id || !company || !role) return null;
+  return [user.id, company, role].join(":");
+}
+
+const SEARCHABLE_FIELDS: (keyof CompanyClient)[] = [
+  "account_reference", "first_name", "middle_name", "last_name",
+  "full_name", "national_id", "passport_number", "phone", "email",
+  "employer_name", "recent_loan_reference",
+];
+
 export async function listCompanyClients(params?: CompanyClientDirectoryParams): Promise<CompanyClient[]> {
-  return (await api.get<CompanyClient[]>("/company-clients", { params })).data;
+  const scope = clientDataScope();
+  const search = params?.search?.trim().toLocaleLowerCase();
+  const searchOnly = Boolean(search) && Object.keys(params ?? {}).every((key) => key === "search");
+
+  if (scope && searchOnly) {
+    const bucket = store.getState().clientDataCenter.scopes[scope];
+    if (bucket) {
+      const matches = bucket.ids
+        .map((id) => bucket.byId[id])
+        .filter((client): client is CompanyClient => Boolean(client))
+        .filter((client) => SEARCHABLE_FIELDS.some((field) =>
+          String(client[field] ?? "").toLocaleLowerCase().includes(search!)
+        ));
+      // A local match needs no additional API search. If no match exists,
+      // ask the backend because this directory may be incomplete.
+      if (matches.length > 0) return matches;
+    }
+  }
+
+  const clients = (await api.get<CompanyClient[]>("/company-clients", { params })).data;
+  // Only cache records when tenant identity is still the same on completion.
+  if (scope && scope === clientDataScope()) {
+    store.dispatch(clientsReceived({ scope, clients }));
+  }
+  return clients;
 }
 
 export async function getCompanyClientPortfolioInsights(
