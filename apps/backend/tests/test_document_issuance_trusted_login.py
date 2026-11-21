@@ -7,12 +7,15 @@ from services.document_issuance_trusted_login import require_trusted_issuer_data
 
 
 def _db(login="loanhub_document_issuer", active=None, *, superuser=False,
-        bypass=False, can_login=True):
+        bypass=False, can_login=True, create_db=False, create_role=False,
+        replicate=False):
     db = Mock()
     db.bind.dialect.name = "postgresql"
     identity = dict(
         login_name=login, active_role=active or login,
         is_superuser=superuser, bypasses_rls=bypass, can_login=can_login,
+        can_create_db=create_db, can_create_role=create_role,
+        can_replicate=replicate,
     )
     db.execute.return_value.mappings.return_value.one_or_none.return_value = identity
     return db
@@ -34,6 +37,9 @@ def test_trusted_login_requires_exact_postgresql_session_identity():
     {"superuser": True},
     {"bypass": True},
     {"can_login": False},
+    {"create_db": True},
+    {"create_role": True},
+    {"replicate": True},
 ])
 def test_mismatched_or_privileged_sql_identity_rejected(changes):
     db = _db(**changes)
