@@ -711,6 +711,10 @@ def initiate_early_settlement_payment(
     )
     if not quote:
         raise HTTPException(status_code=404, detail="Early-settlement quote not found")
+    loan = db.get(ClientCompanyLoan, quote.loan_id)
+    if not loan:
+        raise HTTPException(status_code=404, detail="Settlement loan was not found")
+    require_standard_settlement_model(db, loan=loan)
 
     key = idempotency_key or f"early-settlement:{quote.id}"
     existing = (
@@ -746,10 +750,6 @@ def initiate_early_settlement_payment(
     if payment_method not in {PaymentMethod.CASH, PaymentMethod.LELEFAPAYGATE}:
         raise HTTPException(status_code=422, detail="Use Cash or LelefaPayGate for early settlement")
 
-    loan = db.get(ClientCompanyLoan, quote.loan_id)
-    if not loan:
-        raise HTTPException(status_code=404, detail="Settlement loan was not found")
-    require_standard_settlement_model(db, loan=loan)
     if is_legacy_loan_locked(db, loan.company_id, loan.id):
         raise HTTPException(
             status_code=409,
