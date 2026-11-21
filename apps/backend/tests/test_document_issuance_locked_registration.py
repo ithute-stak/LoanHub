@@ -238,3 +238,22 @@ def test_revocation_after_ledger_flush_prevents_commit_and_document_release():
     assert db.flush.call_count == 2
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
+
+
+def test_released_issuer_lock_transaction_prevents_final_commit():
+    db, context, store, staged = _fixtures()
+    db.get_transaction.side_effect = [object(), object()]
+    with patch("services.document_issuance_locked_registration.bind_locked_pdf_to_issuance"):
+        with pytest.raises(PermissionError, match="transaction changed"):
+            _register(db, context, store, staged)
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+
+
+def test_missing_issuer_lock_transaction_denies_registration():
+    db, context, store, staged = _fixtures()
+    db.get_transaction.return_value = None
+    with pytest.raises(PermissionError, match="active database transaction"):
+        _register(db, context, store, staged)
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
