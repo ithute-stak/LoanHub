@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require_tenant_roles
 from database.models.document_issuance import DocumentIssuance, DocumentIssuanceEvent
 from services.document_issuance_database_readiness import require_document_issuance_database_ready
+from services.document_issuance_trusted_login import require_trusted_issuer_database_login
 from services.document_issuance_immutable_binding import bind_locked_pdf_to_issuance
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_immutable_staging import StagedLockedCandidate
@@ -88,6 +89,7 @@ def register_locked_staged_document(
     # The connected session must have real tenant RLS, non-owner privileges,
     # and no unrestricted update/delete access.
     require_document_issuance_database_ready(db)
+    require_trusted_issuer_database_login(db=db)
     # Defense in depth: even generic, non-routed issuance must re-read the
     # authenticated issuer from persisted SQL records before writing the ledger.
     # This point-in-time gate is NOT a transaction-spanning revocation lock.
