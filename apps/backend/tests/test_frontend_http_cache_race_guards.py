@@ -39,3 +39,9 @@ def test_cache_key_is_branch_qualified_and_old_scope_invalidations_still_work():
     assert "membership.is_active" in adapter
     assert "const branchScope = matchingMemberships.length === 1" in adapter
     assert 'entry.scope.startsWith(`${action.payload.scope}:`)' in slice_
+
+
+def test_global_data_provider_reloads_when_active_membership_branch_changes():
+    provider = (ROOT / "provider" / "appDataProvider.tsx").read_text()
+    assert ':${activeMembership?.branch_id ?? "company-wide"}' in provider
+    assert "activeMembership?.role, activeMembership?.branch_id" in provider
