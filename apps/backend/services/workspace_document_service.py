@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import inspect
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -48,6 +49,7 @@ from database.config.config import settings
 from database.models.company import LoanCompany
 from database.models.workspace_document import WorkspaceDocument, WorkspaceDocumentAsset, WorkspaceDocumentSignature
 from services.document_branding_service import get_company_branding_logos
+from services.document_studio_letter_stamp_preview import (letter_stamp_preview_story, PREVIEW_LETTER_TEMPLATE_KEYS)
 from services.workspace_document_asset_service import active_signatures, asset_image_bytes, resolved_brand_asset
 
 
@@ -1167,7 +1169,23 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
     brand_asset = resolved_brand_asset(db, document)
     document_id = getattr(document, "id", None)
     signatures = active_signatures(db, document_id) if document_id is not None else {}
+
+    # Check preview authorization BEFORE rendering body, signatures or cover.
+    # Never enable preview for non-letter PDFs or for production documents.
+    preview_requested = (
+        os.getenv("LOANHUB_LETTER_STAMP_PREVIEW_ENABLED") == "1"
+        and getattr(document, "template_key", None) in PREVIEW_LETTER_TEMPLATE_KEYS
+    )
+    preview_story = []
+    if preview_requested:
+        if os.getenv("ENVIRONMENT", "").strip().lower() not in {"test", "testing", "development", "dev", "local"}:
+            raise PermissionError("Company stamp preview is unavailable outside development or test")
+        if signatures:
+            raise PermissionError("Cannot stamp a letter after document signatures")
+        preview_story = letter_stamp_preview_story(document=document, company=company)
+
     story = _cover_story(document, brand_asset) + _pdf_story_from_html(document, signatures)
+    story.extend(preview_story)
 
     def draw(canvas, doc):
         _draw_workspace_page(
