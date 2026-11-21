@@ -21,7 +21,7 @@ WITH issued AS (
       AND l.disbursed_at >= CAST(:start_date AS date)
       AND l.disbursed_at < CAST(:end_date AS date) + INTERVAL '1 day'
       AND (CAST(:branch_id AS uuid) IS NULL OR l.branch_id = CAST(:branch_id AS uuid))
-      AND l.status::text NOT IN ('cancelled', 'rejected')
+      AND LOWER(l.status::text) NOT IN ('cancelled', 'rejected')
 )
 SELECT
     issue_date,
