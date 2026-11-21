@@ -47,6 +47,9 @@ def register_signed_contract_locked_issuance(
     # Tenant context and staff membership may have changed since staging.
     # Reload the currently active issuer from the same SQL session.
     require_current_document_issuer(db=db, context=context)
+    locked_transaction = db.get_transaction()
+    if locked_transaction is None:
+        raise PermissionError("Signed-contract issuer locks require an active transaction")
     # Load loan, contract and current PDF under transaction-held FOR SHARE NOWAIT
     # locks. A competing update fails closed, rather than racing the final commit.
     source = load_signed_loan_contract_pdf(
@@ -64,6 +67,10 @@ def register_signed_contract_locked_issuance(
     if (staged.candidate.tenant_id != source.tenant_id
             or staged.source_sha256_hex != source.sha256_hex):
         raise PermissionError("Signed contract PDF changed after locked staging")
+    # Releasing the issuer/source locks between validation and registration
+    # would invalidate the authoritative contract snapshot.
+    if db.get_transaction() is not locked_transaction:
+        raise PermissionError("Signed-contract lock transaction changed before registration")
     return register_locked_staged_document(
         db=db, context=context, staged=staged, store=store,
         source_pdf=source.pdf_bytes, source_type="loan_contract",
