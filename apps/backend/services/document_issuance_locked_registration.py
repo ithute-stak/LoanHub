@@ -92,6 +92,9 @@ def register_locked_staged_document(
     # authenticated issuer from persisted SQL records before writing the ledger.
     # This point-in-time gate is NOT a transaction-spanning revocation lock.
     require_current_document_issuer(db=db, context=context)
+    locked_transaction = db.get_transaction()
+    if locked_transaction is None:
+        raise PermissionError("Issuer locks require an active database transaction")
     # Never accept approval data from callers: look up the exact approved
     # version and any revocation with the connected restricted SQL session.
     # This fails closed until the approval tables and runtime grants exist.
@@ -141,6 +144,10 @@ def register_locked_staged_document(
         # A trusted issuer transaction holding compatible authorization locks
         # throughout commit remains mandatory before routing this flow.
         require_current_document_issuer(db=db, context=context)
+        # An intervening commit/rollback would release all authorization and
+        # source row locks, even if the later authorization query still passes.
+        if db.get_transaction() is not locked_transaction:
+            raise PermissionError("Issuer lock transaction changed before issuance commit")
         db.commit()
     except Exception:
         db.rollback()
