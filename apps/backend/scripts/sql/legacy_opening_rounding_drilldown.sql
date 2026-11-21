@@ -9,7 +9,6 @@ WITH target(loan_id) AS (VALUES
 SELECT l.loan_reference,l.id AS loan_id,l.amount_paid::numeric(18,2) AS loan_amount_paid,
        ri.id AS installment_id,ri.installment_number,ri.status AS installment_status,
        ri.is_superseded,ri.paid_amount::numeric(18,2) AS installment_paid,
-       ri.amount::numeric(18,2) AS installment_amount,
        l.calculation_breakdown AS migration_calculation_breakdown
 FROM target t JOIN client_company_loan l ON l.id=t.loan_id
 LEFT JOIN repayment_installments ri ON ri.loan_id=l.id
