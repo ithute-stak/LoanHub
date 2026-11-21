@@ -249,37 +249,55 @@ export default function CompanyLoansPage() {
     const [calculating, setCalculating] = useState(false);
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
 
+    // Keep a populated portfolio visible during refresh. A new mount still
+    // waits for the authoritative loan list; optional endpoints cannot block it.
+    const loadedLoansRef = useRef(false);
+    const loadSequenceRef = useRef(0);
     const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [loanRows, contractRows, methodRows, clientRows, policy] = await Promise.all([
-                listLoans(),
-                canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
-                expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-                listCompanyClients().catch(() => []),
-                (canManageContracts || canDisburse) ? originationApi.getPolicy().catch(() => null) : Promise.resolve(null),
-            ]);
-            setLoans(loanRows);
-            setContracts(contractRows);
-            setMethods(methodRows);
-            setClients(clientRows);
-            setOriginationPolicy(policy);
-            if (activeRole === "company_owner" || activeRole === "branch_manager") {
-                try {
-                    const applications = await originationApi.listApplications();
-                    setPendingTopUps(applications.filter((application) =>
-                        application.application_type === "top_up" &&
-                        ["draft", "submitted", "under_review"].includes(application.status)
-                    ));
-                } catch {
-                    setPendingTopUps([]);
+        const sequence = ++loadSequenceRef.current;
+        if (!loadedLoansRef.current) setLoading(true);
+
+        const portfolioTask = (async () => {
+            try {
+                const rows = await listLoans();
+                if (sequence !== loadSequenceRef.current) return;
+                setLoans(rows);
+                loadedLoansRef.current = true;
+            } catch (error: unknown) {
+                if (sequence === loadSequenceRef.current) {
+                    toast.error(getErrorMessage(error, "Loan portfolio could not be loaded."));
                 }
+            } finally {
+                if (sequence === loadSequenceRef.current) setLoading(false);
             }
-        } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Loans and contracts could not be loaded."));
-        } finally {
-            setLoading(false);
-        }
+        })();
+
+        // These requests enrich the portfolio but must never block the list.
+        const enrichmentTask = (async () => {
+            const [contractsResult, methodsResult, clientsResult, policyResult, applicationsResult] =
+                await Promise.allSettled([
+                    canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
+                    expenseManagementApi.paymentMethods(),
+                    listCompanyClients(),
+                    (canManageContracts || canDisburse) ? originationApi.getPolicy() : Promise.resolve(null),
+                    activeRole === "company_owner" || activeRole === "branch_manager"
+                        ? originationApi.listApplications()
+                        : Promise.resolve([]),
+                ]);
+            if (sequence !== loadSequenceRef.current) return;
+            if (contractsResult.status === "fulfilled") setContracts(contractsResult.value);
+            if (methodsResult.status === "fulfilled") setMethods(methodsResult.value);
+            if (clientsResult.status === "fulfilled") setClients(clientsResult.value);
+            if (policyResult.status === "fulfilled") setOriginationPolicy(policyResult.value);
+            if (applicationsResult.status === "fulfilled") {
+                setPendingTopUps(applicationsResult.value.filter((application) =>
+                    application.application_type === "top_up" &&
+                    ["draft", "submitted", "under_review"].includes(application.status)
+                ));
+            }
+        })();
+
+        await Promise.all([portfolioTask, enrichmentTask]);
     }, [canDisburse, canManageContracts, activeRole]);
 
     // A deep-linked loan should open once, not reopen after the operator
@@ -308,7 +326,11 @@ export default function CompanyLoansPage() {
         } else if (requestedTab === "calculator") {
             setTab("calculator");
         }
-        return () => window.clearTimeout(timer);
+        return () => {
+            window.clearTimeout(timer);
+            // Ignore responses from an old role, company, or unmounted page.
+            loadSequenceRef.current += 1;
+        };
     }, [canManageContracts, load]);
 
     useEffect(() => {
