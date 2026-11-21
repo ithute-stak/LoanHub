@@ -7,6 +7,7 @@ company-owned client letters. The production default is disabled.
 from __future__ import annotations
 
 from html import escape
+from uuid import UUID
 
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
@@ -19,6 +20,7 @@ from services.client_document_template_service import CLIENT_LETTER_TEMPLATE_KEY
 PREVIEW_LETTER_TEMPLATE_KEYS = CLIENT_LETTER_TEMPLATE_KEYS | {
     "formal_letter", "business_letter",
 }
+
 from services.company_stamp_configuration import stamp_from_company
 
 
@@ -30,7 +32,7 @@ def letter_stamp_preview_story(*, document, company):
             or getattr(document, "status", "draft") not in ("draft",)):
         raise PermissionError("Only unsigned draft letters may show stamp previews")
     tenant_id = getattr(document, "company_id", None)
-    if company is None or getattr(company, "id", None) != tenant_id:
+    if not isinstance(tenant_id, UUID) or company is None or getattr(company, "id", None) != tenant_id:
         raise PermissionError("Letter company stamp must belong to document tenant")
     stamp = stamp_from_company(company, authenticated_tenant_id=tenant_id)
 
