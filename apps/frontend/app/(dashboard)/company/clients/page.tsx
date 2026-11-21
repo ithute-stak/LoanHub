@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -42,6 +43,8 @@ import {
 } from "lucide-react";
 
 import { branchApi } from "@/api/branch";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import { expenseManagementApi } from "@/api/expenseManagement";
 import {
   checkCompanyClientExistingLoans,
@@ -243,10 +246,14 @@ function withinWindow(value: string | null | undefined, windowValue: string): bo
 
 export default function CompanyClientsPage() {
   const router = useRouter();
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const currentUserId = useAppSelector((state) => state.auth.user?.id ?? null);
+  const scopeKey = JSON.stringify([currentUserId, activeCompanyId, activeBranchId, activeRole]);
   const [clients, setClients] = useState<CompanyClient[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<LoanProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [directoryFilters, setDirectoryFilters] = useState<DirectoryFilters>(EMPTY_DIRECTORY_FILTERS);
@@ -333,31 +340,68 @@ export default function CompanyClientsPage() {
     return () => window.removeEventListener(GLOBAL_BORROWER_LOOKUP_EVENT, handleGlobalLookup);
   }, [applyGlobalBorrowerLookup]);
 
+  const loadedClientsRef = useRef(false);
+  const loadedScopeRef = useRef<string | null>(null);
+  const loadSequenceRef = useRef(0);
   const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [clientRows, branchResponse, productRows, methodRows, insightRows] = await Promise.all([
-        listCompanyClients({ limit: 1000 }),
-        branchApi.getAll(),
-        listLoanProducts(),
-        expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-        getCompanyClientPortfolioInsights(14).catch(() => null),
-      ]);
-      setClients(clientRows);
-      setPortfolioInsights(insightRows);
-      setBranches(branchResponse.data.filter((item) => item.is_active));
-      setProducts(productRows.filter((item) => item.is_active));
-      setPaymentMethods(methodRows);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Company clients could not be loaded."));
-    } finally {
-      setLoading(false);
+    const sequence = ++loadSequenceRef.current;
+    if (loadedScopeRef.current !== scopeKey) {
+      loadedScopeRef.current = scopeKey;
+      loadedClientsRef.current = false;
+      setLoadedScopeKey(null);
+      setClients([]);
+      setBranches([]);
+      setProducts([]);
+      setPortfolioInsights(null);
     }
-  }, []);
+    if (!loadedClientsRef.current) setLoading(true);
+
+    const directoryTask = (async () => {
+      try {
+        const rows = await listCompanyClients({ limit: 1000 });
+        if (sequence !== loadSequenceRef.current) return;
+        setClients(rows);
+        loadedClientsRef.current = true;
+        setLoadedScopeKey(scopeKey);
+      } catch (error: unknown) {
+        if (sequence === loadSequenceRef.current) {
+          setLoadedScopeKey(scopeKey);
+          toast.error(getErrorMessage(error, "Company clients could not be loaded."));
+        }
+      } finally {
+        if (sequence === loadSequenceRef.current) setLoading(false);
+      }
+    })();
+
+    // Loading additional configuration and insights must not delay the directory.
+    const enrichmentTask = (async () => {
+      const [branchesResult, productsResult, methodsResult, insightsResult] =
+        await Promise.allSettled([
+          branchApi.getAll(),
+          listLoanProducts(),
+          expenseManagementApi.paymentMethods(),
+          getCompanyClientPortfolioInsights(14),
+        ]);
+      if (sequence !== loadSequenceRef.current) return;
+      if (branchesResult.status === "fulfilled") {
+        setBranches(branchesResult.value.data.filter((item) => item.is_active));
+      }
+      if (productsResult.status === "fulfilled") {
+        setProducts(productsResult.value.filter((item) => item.is_active));
+      }
+      if (methodsResult.status === "fulfilled") setPaymentMethods(methodsResult.value);
+      if (insightsResult.status === "fulfilled") setPortfolioInsights(insightsResult.value);
+    })();
+
+    await Promise.all([directoryTask, enrichmentTask]);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadSequenceRef.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -1018,7 +1062,7 @@ export default function CompanyClientsPage() {
       : client));
   }
 
-  if (loading) return <PageLoader rows={7} />;
+  if (loading || loadedScopeKey !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="loanhub-page space-y-6">
