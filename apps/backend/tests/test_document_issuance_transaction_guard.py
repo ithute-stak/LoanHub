@@ -1,5 +1,9 @@
 """PostgreSQL issuer connection and transaction identity checks."""
+import os
 from unittest.mock import Mock
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 import pytest
 
@@ -50,3 +54,25 @@ def test_non_postgresql_identity_denied():
     db.bind.dialect.name = "sqlite"
     with pytest.raises(PermissionError, match="PostgreSQL"):
         read_issuer_transaction_identity(db=db)
+
+
+def test_real_postgresql_new_transaction_fingerprint_is_rejected():
+    url = os.getenv("LOANHUB_ISSUANCE_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL test URL required")
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            with conn.begin():
+                with Session(bind=conn) as db:
+                    original = read_issuer_transaction_identity(db=db)
+                    require_same_issuer_transaction(db=db, expected=original)
+            with conn.begin():
+                with Session(bind=conn) as db:
+                    current = read_issuer_transaction_identity(db=db)
+                    assert current.backend_pid == original.backend_pid
+                    assert current.transaction_id != original.transaction_id
+                    with pytest.raises(PermissionError, match="transaction changed"):
+                        require_same_issuer_transaction(db=db, expected=original)
+    finally:
+        engine.dispose()
