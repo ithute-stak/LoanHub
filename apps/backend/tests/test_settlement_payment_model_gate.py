@@ -109,3 +109,48 @@ def test_principal_x_example_1500_at_20_percent_second_period():
     assert quote.total_credited == Decimal("696.00")
     assert quote.collectible_due == Decimal("1324.80")
     assert quote.contractual_remaining == Decimal("1392.00")
+
+
+
+def test_core_settlement_service_checks_assignment_at_all_mutation_boundaries():
+    service_path = (
+        Path(__file__).resolve().parents[1]
+        / "services"
+        / "early_settlement_service.py"
+    )
+    module = ast.parse(service_path.read_text(encoding="utf-8"))
+    for name in (
+        "quote_early_settlement",
+        "initiate_early_settlement_payment",
+        "finalize_early_settlement_payment",
+    ):
+        fn = next(
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        gates = [
+            node for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "require_standard_settlement_model"
+        ]
+        assert len(gates) == 1, name
+        # Check occurs before changes to the payment state or quote record.
+        if name == "initiate_early_settlement_payment":
+            commits = [
+                node.lineno for node in ast.walk(fn)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "commit"
+            ]
+            assert commits and gates[0].lineno < min(commits), name
+        if name == "finalize_early_settlement_payment":
+            statuses = [
+                node.lineno for node in ast.walk(fn)
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Attribute) and target.attr == "status"
+                    for target in node.targets
+                )
+            ]
+            assert statuses and gates[0].lineno < min(statuses), name
