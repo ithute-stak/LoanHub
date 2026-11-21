@@ -8,10 +8,14 @@ This is isolated test scaffolding, NOT a LoanHub production role model.
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+
+from services.document_issuance_trusted_login import require_trusted_issuer_database_login
 from sqlalchemy.exc import DBAPIError
 
 
@@ -97,6 +101,14 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                     "FROM pg_roles WHERE rolname=session_user"
                 )).scalar_one() is False
 
+                # Exercise the actual non-routed login gate over the
+                # authenticated PostgreSQL connection, not a mocked row.
+                with patch.dict(os.environ, {
+                    "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": login,
+                    "DB_USER": "ordinary_loanhub_app",
+                }):
+                    with Session(bind=caller) as checked:
+                        require_trusted_issuer_database_login(db=checked)
                 # An attempted impersonation changes both usual GUC values.
                 caller.execute(text(
                     "SELECT set_config('loanhub.actor_scope','tenant',true)"
@@ -120,6 +132,15 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                 assert caller.execute(text(f"""
                     SELECT "{schema}".lock_authorized_loan(:company,:loan)
                 """), {"company": tenant_a, "loan": loan_a}).scalar_one() is True
+
+                # Attacker-controlled tenant GUCs cannot satisfy login identity.
+                with patch.dict(os.environ, {
+                    "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": "another_issuer_login",
+                    "DB_USER": "ordinary_loanhub_app",
+                }):
+                    with Session(bind=caller) as checked:
+                        with pytest.raises(PermissionError, match="Untrusted"):
+                            require_trusted_issuer_database_login(db=checked)
 
                 # No table SELECT or direct UPDATE, even with approved login.
                 for operation in (
