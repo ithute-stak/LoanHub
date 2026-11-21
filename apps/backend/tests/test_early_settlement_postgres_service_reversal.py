@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine, text
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -47,7 +47,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
         status = Column(String, nullable=False)
         paid_amount = Column(Numeric(15, 2))
         paid_at = Column(DateTime(timezone=True))
-        is_superseded = Column(String)
+        is_superseded = Column(Boolean)
         superseded_at = Column(DateTime(timezone=True))
         loan = relationship("Loan", back_populates="installments")
 
@@ -79,7 +79,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
             ))
             db.add(Installment(
                 id=installment_id, loan_id=loan_id, status="waived",
-                paid_amount=Decimal("0.08"), is_superseded="yes",
+                paid_amount=Decimal("0.08"), is_superseded=True,
             ))
             db.add(Quote(
                 id=quote_id, loan_id=loan_id, status="settled",
@@ -116,7 +116,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
             assert loan.amount_paid == Decimal("500.00")
             assert installment.status == InstallmentStatus.PARTIALLY_PAID.value
             assert installment.paid_amount == Decimal("0.08")
-            assert installment.is_superseded == "false" or installment.is_superseded == "False"
+            assert installment.is_superseded is False
             assert service.reverse_early_settlement(db, SimpleNamespace()) is False
             db.rollback()
     finally:
