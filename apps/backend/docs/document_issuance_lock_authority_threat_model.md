@@ -152,3 +152,21 @@ transaction lifecycle are still absent. Because a caller could commit or
 rollback this Session before registration, a secure invocation boundary
 must guarantee one transaction from guard through final SQL COMMIT and
 defend against privilege-revocation races in real integration tests.
+
+
+## 2026-11-21: root transaction continuity guard
+
+The experimental signed-contract adapter now checks that its SQLAlchemy
+root transaction is still active and unchanged between issuer/source locks
+and dispatch to ledger registration. Generic locked issuance independently
+checks that its root transaction is unchanged between first issuer lock
+acquisition and final issuer recheck immediately before COMMIT. Missing or
+replaced root transactions fail closed, with regression tests.
+
+This prevents a transaction restart within the protected code region from
+being silently accepted as continued lock ownership. It cannot prove the
+database connection identity or secure a session from arbitrary hostile
+callers; SAVEPOINT handling and external effects require separate review.
+Most importantly, a normal SELECT-only SQL login still cannot acquire
+the required locks. **Do not merge or deploy** before the isolated trusted
+issuer and production-equivalent PostgreSQL permissions are verified.
