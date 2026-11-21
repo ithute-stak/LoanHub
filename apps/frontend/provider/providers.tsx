@@ -12,6 +12,7 @@ import { TenantProvider } from "@/provider/tenantProvider";
 import { NotificationProvider } from "@/provider/notificationProvider";
 import { ChatProvider } from "@/provider/chatProvider";
 import { RealtimeProvider } from "@/provider/realtimeProvider";
+import { LoanHubDataCenterBridge } from "@/provider/LoanHubDataCenterBridge";
 import { RealtimeScreenBoundary } from "@/provider/realtimeScreenBoundary";
 import { store } from "@/store";
 import { api } from "@/lib/api";
@@ -30,6 +31,7 @@ export function Providers({ children }: { children: ReactNode }) {
             <AuthProvider>
                 <TenantProvider>
                     <RealtimeProvider>
+                        <LoanHubDataCenterBridge />
                         <NotificationProvider>
                             <ChatProvider>
                                 <AppDataProvider>
