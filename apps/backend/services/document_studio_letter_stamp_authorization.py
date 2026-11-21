@@ -15,6 +15,7 @@ from services.document_issuance_stamp_approval_repository import (
     lookup_approved_stamp_from_database,
 )
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
+from services.document_issuance_trusted_login import require_trusted_issuer_database_login
 
 
 LETTER_TEMPLATES = frozenset(CLIENT_LETTER_TEMPLATE_KEYS | {
@@ -55,6 +56,11 @@ def preflight_approved_letter_stamp(
         raise PermissionError("Signed letters require separate issuance verification")
     if type(configuration_version) is not int or configuration_version < 1:
         raise PermissionError("Approved stamp configuration version required")
+
+    # Tenant GUCs alone are spoofable by the shared application DB login.
+    # This must run on a separately provisioned, narrowly authorized issuer
+    # connection, never the ordinary LoanHub runtime pool.
+    require_trusted_issuer_database_login(db=db)
 
     # The existing repository checks connected SQL identity, tenant RLS,
     # restricted SELECT-only privileges, approval version, snapshot digest,
