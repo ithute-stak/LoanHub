@@ -20,6 +20,7 @@ from services.document_issuance_immutable_binding import bind_locked_pdf_to_issu
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_immutable_staging import StagedLockedCandidate
 from services.document_issuance_integrity import pdf_fingerprint
+from services.document_issuance_issuer_authorization import require_current_document_issuer
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 from services.document_issuance_stamp_approval_repository import lookup_approved_stamp_from_database
 
@@ -87,6 +88,10 @@ def register_locked_staged_document(
     # The connected session must have real tenant RLS, non-owner privileges,
     # and no unrestricted update/delete access.
     require_document_issuance_database_ready(db)
+    # Defense in depth: even generic, non-routed issuance must re-read the
+    # authenticated issuer from persisted SQL records before writing the ledger.
+    # This point-in-time gate is NOT a transaction-spanning revocation lock.
+    require_current_document_issuer(db=db, context=context)
     # Never accept approval data from callers: look up the exact approved
     # version and any revocation with the connected restricted SQL session.
     # This fails closed until the approval tables and runtime grants exist.
