@@ -71,3 +71,19 @@ and role-inheritance auditing. Do not reuse a server-side privileged login
 from untrusted tenant request handling. A trusted issuer-authentication
 service or appropriately isolated capability is still required, followed by
 real integration tests against production-equivalent role grants and RLS.
+
+## 2026-11-21: ORM identity-cache revocation hazard
+
+The non-routed `require_current_document_issuer` gate now requests
+`populate_existing()` for User, LoanCompany, and CompanyStaff queries, so an
+earlier-loaded SQLAlchemy object cannot silently supply an outdated role or
+activation status after the database query. This is a defense-in-depth
+point-in-time verification, **not a transaction-wide lock**.
+
+The remaining time-of-check/time-of-use race is explicit: a membership may be
+revoked after that query but before issuance commits. Neither repeating a
+query without serialization nor trusting a tenant GUC closes the race.
+Before deployment, an approved trusted issuer service must hold an appropriate
+authorization guard through commit, or use an equivalent verified
+revocation-safe capability. The existing experimental direct FOR SHARE path
+continues to require privileges unavailable to SELECT-only SQL sessions.
