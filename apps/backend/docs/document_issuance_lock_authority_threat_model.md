@@ -103,3 +103,18 @@ transaction. An approved independently authenticated issuer transaction and
 real PostgreSQL revocation/issuance concurrency tests are required. Do not
 mistake additional point-in-time checks for serialization, do not grant broad
 UPDATE privileges, and do not enable the spoofable SECURITY DEFINER prototype.
+
+
+## 2026-11-21: isolated PostgreSQL revocation-lock proof
+
+The real-PostgreSQL source-lock test suite now also covers the three issuer
+authorization rows (user, company, staff) in disposable test tables. It
+acquires `FOR SHARE NOWAIT` locks in the issuer transaction, verifies that
+a second connection's revocation UPDATE fails with lock timeout SQLSTATE
+`55P03`, and verifies revocation succeeds after the issuer transaction ends.
+
+This proves PostgreSQL locking mechanics only. It **does not** show that
+production issuance holds these locks, or that a SELECT-only app role can
+acquire them. Real deployment still requires a separately authenticated,
+narrowly privileged issuer design that handles lock ordering, privilege
+revocation, transaction ownership, timeouts and RLS without tenant GUC spoofing.
