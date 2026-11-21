@@ -18,7 +18,9 @@ from database.models.enums import InstallmentStatus, LoanStatus
 from services import early_settlement_service as service
 
 
-def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
+@pytest.mark.parametrize("retained_cents", ["0.08", "0.40"])
+@pytest.mark.parametrize("commit_reversal", [False, True])
+def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, retained_cents, commit_reversal):
     url = os.getenv("LOANHUB_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("Disposable PostgreSQL URL required")
@@ -79,7 +81,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
             ))
             db.add(Installment(
                 id=installment_id, loan_id=loan_id, status="waived",
-                paid_amount=Decimal("0.08"), is_superseded=True,
+                paid_amount=Decimal(retained_cents), is_superseded=True,
             ))
             db.add(Quote(
                 id=quote_id, loan_id=loan_id, status="settled",
@@ -95,7 +97,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
                 }},
                 installment_snapshot=[{
                     "id": str(installment_id), "status": "partially_paid",
-                    "paid_amount": "0.08", "paid_at": None,
+                    "paid_amount": retained_cents, "paid_at": None,
                     "is_superseded": False, "superseded_at": None,
                 }],
             ))
@@ -104,20 +106,36 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch):
         monkeypatch.setattr(service, "ClientCompanyLoan", Loan)
         monkeypatch.setattr(service, "_quote_from_payment", lambda db, payment: db.get(Quote, quote_id))
 
-        # A successful reversal is fully persisted.
-        with Session.begin() as db:
+        # Execute the real service, then explicitly commit or roll back the
+        # entire transaction. No partially restored financial state may leak.
+        with Session() as db:
             assert service.reverse_early_settlement(db, SimpleNamespace()) is True
+            if commit_reversal:
+                db.commit()
+            else:
+                db.rollback()
         with Session() as db:
             loan = db.get(Loan, loan_id)
             installment = db.get(Installment, installment_id)
             quote = db.get(Quote, quote_id)
-            assert quote.status == "reversed"
-            assert loan.status == LoanStatus.ACTIVE.value
-            assert loan.amount_paid == Decimal("500.00")
-            assert installment.status == InstallmentStatus.PARTIALLY_PAID.value
-            assert installment.paid_amount == Decimal("0.08")
-            assert installment.is_superseded is False
-            assert service.reverse_early_settlement(db, SimpleNamespace()) is False
+            assert installment.paid_amount == Decimal(retained_cents)
+            if commit_reversal:
+                assert quote.status == "reversed"
+                assert quote.reversed_at is not None
+                assert loan.status == LoanStatus.ACTIVE.value
+                assert loan.amount_paid == Decimal("500.00")
+                assert loan.balance == Decimal("1000.00")
+                assert installment.status == InstallmentStatus.PARTIALLY_PAID.value
+                assert installment.is_superseded is False
+                assert service.reverse_early_settlement(db, SimpleNamespace()) is False
+            else:
+                assert quote.status == "settled"
+                assert quote.reversed_at is None
+                assert loan.status == LoanStatus.COMPLETED.value
+                assert loan.amount_paid == Decimal("1000.00")
+                assert loan.balance == Decimal("0.00")
+                assert installment.status == InstallmentStatus.WAIVED.value
+                assert installment.is_superseded is True
             db.rollback()
     finally:
         Base.metadata.drop_all(engine)
