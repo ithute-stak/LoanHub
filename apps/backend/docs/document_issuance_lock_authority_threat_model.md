@@ -87,3 +87,19 @@ Before deployment, an approved trusted issuer service must hold an appropriate
 authorization guard through commit, or use an equivalent verified
 revocation-safe capability. The existing experimental direct FOR SHARE path
 continues to require privileges unavailable to SELECT-only SQL sessions.
+
+
+## 2026-11-21: final commit-boundary issuer recheck
+
+The non-routed generic locked-document registration now rechecks persisted
+issuer activation, approved company and exact staff membership after ledger
+and audit flush, immediately before SQL COMMIT. If the second recheck observes
+revocation, the transaction rolls back and no issued PDF is returned.
+Regression coverage injects revocation between the two checks.
+
+**Still BLOCKED:** concurrent revocation can occur after the final read but
+before COMMIT because neither read holds compatible row locks for the entire
+transaction. An approved independently authenticated issuer transaction and
+real PostgreSQL revocation/issuance concurrency tests are required. Do not
+mistake additional point-in-time checks for serialization, do not grant broad
+UPDATE privileges, and do not enable the spoofable SECURITY DEFINER prototype.
