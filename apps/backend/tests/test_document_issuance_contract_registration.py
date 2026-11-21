@@ -189,3 +189,29 @@ def test_revoked_staff_blocks_contract_registration_before_source_reload():
     load.assert_not_called()
     register.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_signed_contract_rejects_replaced_lock_transaction_before_ledger():
+    db, context, source, prepared = _fixtures()
+    db.get_transaction.side_effect = [object(), object()]
+    with patch(
+        "services.document_issuance_contract_registration.load_signed_loan_contract_pdf",
+        return_value=source,
+    ), patch(
+        "services.document_issuance_contract_registration.register_locked_staged_document",
+    ) as register:
+        with pytest.raises(PermissionError, match="transaction changed"):
+            _run(db, context, source, prepared)
+    register.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_signed_contract_rejects_absent_lock_transaction():
+    db, context, source, prepared = _fixtures()
+    db.get_transaction.return_value = None
+    with patch(
+        "services.document_issuance_contract_registration.load_signed_loan_contract_pdf",
+    ) as load:
+        with pytest.raises(PermissionError, match="active transaction"):
+            _run(db, context, source, prepared)
+    load.assert_not_called()
