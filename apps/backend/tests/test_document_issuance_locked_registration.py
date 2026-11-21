@@ -219,3 +219,22 @@ def test_current_issuer_revocation_prevents_locked_registration():
     approval.assert_not_called()
     db.add.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_revocation_after_ledger_flush_prevents_commit_and_document_release():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.require_current_document_issuer",
+        side_effect=[
+            SimpleNamespace(user_id=context.user.id, company_id=context.company_id),
+            PermissionError("Company issuer membership was revoked before commit"),
+        ],
+    ) as issuer, patch(
+        "services.document_issuance_locked_registration.bind_locked_pdf_to_issuance",
+    ):
+        with pytest.raises(PermissionError, match="revoked before commit"):
+            _register(db, context, store, staged)
+    assert issuer.call_count == 2
+    assert db.flush.call_count == 2
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
