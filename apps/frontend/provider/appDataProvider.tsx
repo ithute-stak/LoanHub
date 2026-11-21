@@ -56,6 +56,7 @@ import { fetchBranchesThunk } from "@/store/features/thunks/branchThunks";
 import { fetchCompanyStaff } from "@/store/features/thunks/companyUserThunk";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { cacheScopeInvalidated } from "@/store/features/slices/httpCacheSlice";
+import { clientDataCenterCleared } from "@/store/features/slices/clientDataCenterSlice";
 import {
     fetchCompanies,
     type LoanCompany,
@@ -615,6 +616,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         const onDatabaseCommit = (event: Event) => {
             const detail = (event as CustomEvent<DbCommitBatchDetail>).detail;
             const resources = resourcesForCommitBatch(detail);
+            if (resources.has("borrowers") || resources.has("loans") || resources.has("payments")) {
+                dispatch(clientDataCenterCleared());
+            }
             for (const resource of resources) {
                 pendingResources.add(resource);
             }
@@ -686,7 +690,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             }
             pendingResources.clear();
         };
-    }, [refreshRealtimeResources]);
+    }, [dispatch, refreshRealtimeResources]);
 
     useEffect(() => {
         if (!authInitialized || !user) {
