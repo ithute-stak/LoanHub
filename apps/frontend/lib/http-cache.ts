@@ -494,7 +494,9 @@ export function installReduxHttpCache(
         ).finally(() => {
             inflightRequests.delete(inflightKey);
         });
-        inflightRequests.set(identity.key, request);
+        // Use the same revision-qualified identity as the lookup above.
+        // Otherwise identical concurrent GETs bypass single-flight.
+        inflightRequests.set(inflightKey, request);
         return request;
     };
 
