@@ -44,7 +44,6 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                 f'CREATE ROLE "{alternate_role}" NOLOGIN NOSUPERUSER '
                 'NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS'
             ))
-            owner.execute(text(f'GRANT "{alternate_role}" TO "{login}"'))
             owner.execute(text(
                 f'CREATE TABLE "{schema}".trusted_login_tenants '
                 '(role_name text PRIMARY KEY, company_id uuid NOT NULL)'
@@ -148,6 +147,20 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                         with pytest.raises(PermissionError, match="Untrusted"):
                             require_trusted_issuer_database_login(db=checked)
 
+                # Grant a disposable role after the initial successful login
+                # check; inherited memberships must fail before SET ROLE.
+                with owner_engine.begin() as owner:
+                    owner.execute(text(
+                        f'GRANT "{alternate_role}" TO "{login}"'
+                    ))
+                with patch.dict(os.environ, {
+                    "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": login,
+                    "DB_USER": "ordinary_loanhub_app",
+                }):
+                    with Session(bind=caller) as member:
+                        with pytest.raises(PermissionError, match="Untrusted"):
+                            require_trusted_issuer_database_login(db=member)
+
                 # Reject a switched active role even with the same session_user.
                 with patch.dict(os.environ, {
                     "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": login,
@@ -160,6 +173,18 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                                 require_trusted_issuer_database_login(db=switched)
                     finally:
                         caller.execute(text("RESET ROLE"))
+
+                # Remove the grant and prove the unchanged login is accepted.
+                with owner_engine.begin() as owner:
+                    owner.execute(text(
+                        f'REVOKE "{alternate_role}" FROM "{login}"'
+                    ))
+                with patch.dict(os.environ, {
+                    "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": login,
+                    "DB_USER": "ordinary_loanhub_app",
+                }):
+                    with Session(bind=caller) as checked:
+                        require_trusted_issuer_database_login(db=checked)
 
                 # No table SELECT or direct UPDATE, even with approved login.
                 for operation in (
