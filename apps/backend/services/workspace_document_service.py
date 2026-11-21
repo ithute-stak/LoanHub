@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import inspect
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -48,6 +49,7 @@ from database.config.config import settings
 from database.models.company import LoanCompany
 from database.models.workspace_document import WorkspaceDocument, WorkspaceDocumentAsset, WorkspaceDocumentSignature
 from services.document_branding_service import get_company_branding_logos
+from services.document_studio_letter_stamp_preview import letter_stamp_preview_story
 from services.workspace_document_asset_service import active_signatures, asset_image_bytes, resolved_brand_asset
 
 
@@ -1168,6 +1170,13 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
     document_id = getattr(document, "id", None)
     signatures = active_signatures(db, document_id) if document_id is not None else {}
     story = _cover_story(document, brand_asset) + _pdf_story_from_html(document, signatures)
+
+    # Preview only: never imply official approval or stamp signed documents.
+    # The feature is disabled by default, including in production.
+    if os.getenv("LOANHUB_LETTER_STAMP_PREVIEW_ENABLED") == "1":
+        if signatures:
+            raise PermissionError("Cannot stamp a letter after document signatures")
+        story.extend(letter_stamp_preview_story(document=document, company=company))
 
     def draw(canvas, doc):
         _draw_workspace_page(
