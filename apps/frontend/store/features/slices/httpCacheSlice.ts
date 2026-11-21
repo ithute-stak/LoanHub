@@ -140,6 +140,9 @@ const httpCacheSlice = createSlice({
             if (removed > 0) {
                 state.invalidations += 1;
             }
+            // Invalidate in-flight GETs as well as already stored entries.
+            // A response started before this event must never refill stale data.
+            state.revision += 1;
         },
         cacheCleared(state) {
             state.entries = {};
