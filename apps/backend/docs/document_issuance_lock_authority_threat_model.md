@@ -230,3 +230,19 @@ A pass here does not prove least privilege on application tables, role
 membership inheritance, credential isolation, per-request staff authentication
 or an issuer service running a single transaction. Those require separate
 production-equivalent integration testing before any feature routing.
+
+
+## 2026-11-21: reject delegated PostgreSQL role membership
+
+The experimental trusted-login gate now rejects issuer login roles with any
+entry in `pg_auth_members`, even if the active role is unchanged. Such grants
+could allow inherited privileges or later role switching and must not become
+an accidental privilege escalation route. The isolated PostgreSQL login test
+adds a disposable role grant, expects issuer authorization to fail, exercises
+the existing `SET ROLE` rejection, then revokes the grant and verifies the
+original login is accepted again. This is stricter than accepting NOINHERIT
+membership; explicit, audited per-object permissions are required instead.
+
+This remains a non-routed security prerequisite. The dedicated issuer service,
+actual least-privilege grants for lock operations, independent authenticated
+employee identity, and end-to-end transaction certification remain pending.
