@@ -32,7 +32,9 @@ def require_trusted_issuer_database_login(*, db: Session) -> None:
                r.rolcanlogin AS can_login,
                r.rolcreatedb AS can_create_db,
                r.rolcreaterole AS can_create_role,
-               r.rolreplication AS can_replicate
+               r.rolreplication AS can_replicate,
+               EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
+                   AS has_role_membership
         FROM pg_roles r WHERE r.rolname = session_user
     """)).mappings().one_or_none()
     if (identity is None
@@ -43,5 +45,6 @@ def require_trusted_issuer_database_login(*, db: Session) -> None:
             or identity["can_login"] is not True
             or identity["can_create_db"] is not False
             or identity["can_create_role"] is not False
-            or identity["can_replicate"] is not False):
+            or identity["can_replicate"] is not False
+            or identity["has_role_membership"] is not False):
         raise PermissionError("Untrusted document issuer database login")
