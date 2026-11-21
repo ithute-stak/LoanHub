@@ -28,6 +28,7 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
     suffix = uuid4().hex[:10]
     schema = "issuer_login_" + suffix
     login = "issuer_limited_" + suffix
+    alternate_role = "issuer_switched_" + suffix
     password = uuid4().hex + uuid4().hex
     tenant_a, tenant_b, loan_a, loan_b = [uuid4() for _ in range(4)]
     login_engine = None
@@ -39,6 +40,11 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                 f"CREATE ROLE \"{login}\" LOGIN PASSWORD '{password}' "
                 "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
             ))
+            owner.execute(text(
+                f'CREATE ROLE "{alternate_role}" NOLOGIN NOSUPERUSER '
+                'NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS'
+            ))
+            owner.execute(text(f'GRANT "{alternate_role}" TO "{login}"'))
             owner.execute(text(
                 f'CREATE TABLE "{schema}".trusted_login_tenants '
                 '(role_name text PRIMARY KEY, company_id uuid NOT NULL)'
@@ -142,6 +148,19 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
                         with pytest.raises(PermissionError, match="Untrusted"):
                             require_trusted_issuer_database_login(db=checked)
 
+                # Reject a switched active role even with the same session_user.
+                with patch.dict(os.environ, {
+                    "LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN": login,
+                    "DB_USER": "ordinary_loanhub_app",
+                }):
+                    caller.execute(text(f'SET LOCAL ROLE "{alternate_role}"'))
+                    try:
+                        with Session(bind=caller) as switched:
+                            with pytest.raises(PermissionError, match="Untrusted"):
+                                require_trusted_issuer_database_login(db=switched)
+                    finally:
+                        caller.execute(text("RESET ROLE"))
+
                 # No table SELECT or direct UPDATE, even with approved login.
                 for operation in (
                     f'SELECT id FROM "{schema}".trusted_login_tenants',
@@ -168,6 +187,8 @@ def test_locked_source_tenant_is_bound_to_authenticated_database_login():
         try:
             with owner_engine.begin() as owner:
                 owner.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                owner.execute(text(f'REVOKE "{alternate_role}" FROM "{login}"'))
+                owner.execute(text(f'DROP ROLE IF EXISTS "{alternate_role}"'))
                 owner.execute(text(f'DROP ROLE IF EXISTS "{login}"'))
         finally:
             owner_engine.dispose()
