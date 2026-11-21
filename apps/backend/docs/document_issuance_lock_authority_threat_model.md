@@ -216,3 +216,17 @@ The test then resets the role and drops the disposable grant and role.
 This verifies rejection of an active-role switch; it does not certify
 production connection-pool isolation or database-role inheritance. The
 trusted issuer service and operational credential controls remain blocked.
+
+
+## 2026-11-21: dedicated SQL login privilege ceiling
+
+The trusted-login gate now also rejects dedicated issuer identities with
+`CREATEDB`, `CREATEROLE` or `REPLICATION` capabilities, in addition to
+SUPERUSER, BYPASSRLS, changed active role, and non-login identities.
+Dedicated regression tests assert each forbidden PostgreSQL role attribute.
+The live PostgreSQL login probe uses a role with all these flags disabled.
+
+A pass here does not prove least privilege on application tables, role
+membership inheritance, credential isolation, per-request staff authentication
+or an issuer service running a single transaction. Those require separate
+production-equivalent integration testing before any feature routing.
