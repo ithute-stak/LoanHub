@@ -63,6 +63,13 @@ def daily_issuance_expected_returns(
         raise HTTPException(status_code=400, detail="Invalid reporting date range")
     # A platform administrator must explicitly select a tenant. Never aggregate
     # all tenants in a financial report.
+    if (not context.is_platform_admin and context.branch_id is None
+            and context.role not in {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}):
+        raise HTTPException(status_code=403, detail="A branch assignment is required for this report")
+    if (not context.is_platform_admin and context.branch_id is not None
+            and context.role not in {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}
+            and branch_id is not None and branch_id != context.branch_id):
+        raise HTTPException(status_code=403, detail="Cross-branch reporting is not allowed")
     company_id, branch_id = resolve_scope(context, "company", company_id, branch_id)
     if company_id is None:
         raise HTTPException(status_code=400, detail="Company selection is required")
