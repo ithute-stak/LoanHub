@@ -1,0 +1,94 @@
+name: LoanHub Document Issuance Security
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/services/document_issuance_*.py'
+      - 'apps/backend/services/document_stamp_certificate.py'
+      - 'apps/backend/services/company_stamp_configuration.py'
+      - 'apps/backend/database/models/document_issuance.py'
+      - 'apps/backend/alembic/versions/c5d6e7f8a912_document_issuance_registry.py'
+      - 'apps/backend/alembic/versions/e7f8a9b0c124_document_stamp_approval_registry.py'
+      - 'apps/backend/alembic/versions/f8a9b0c1d235_document_stamp_approval_revocations.py'
+      - 'apps/backend/scripts/check_document_issuance_bucket.py'
+      - 'apps/backend/tests/test_document_issuance_*.py'
+      - 'apps/backend/tests/test_document_stamp_certificate.py'
+      - 'apps/backend/tests/test_company_stamp_configuration.py'
+      - '.github/workflows/document-issuance-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  document-security:
+    name: Document issuance Python and security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: loan_db
+          POSTGRES_USER: loanhub
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loanhub -d loan_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-loanhub-secret-key-not-for-production
+      FERNET_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CHAT_ENCRYPTION_KEY: ci-only-chat-encryption-key
+      FILE_ENCRYPTION_KEY: ci-only-file-encryption-key
+      RATE_LIMIT_ENABLED: 'false'
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: loan_db
+      DB_USER: loanhub
+      DB_PASSWORD: ci-only-postgres-password
+      LOANHUB_ISSUANCE_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Generate ephemeral CI JWT keys
+        run: |
+          set -euo pipefail
+          key_dir="$GITHUB_WORKSPACE/.ci-secrets"
+          mkdir -p "$key_dir"
+          chmod 700 "$key_dir"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$key_dir/jwt_private.pem" >/dev/null 2>&1
+          openssl pkey -in "$key_dir/jwt_private.pem" -pubout -out "$key_dir/jwt_public.pem" >/dev/null 2>&1
+          chmod 600 "$key_dir/jwt_private.pem"
+          chmod 644 "$key_dir/jwt_public.pem"
+          printf 'JWT_PRIVATE_KEY_PATH=%s\n' "$key_dir/jwt_private.pem" >> "$GITHUB_ENV"
+          printf 'JWT_PUBLIC_KEY_PATH=%s\n' "$key_dir/jwt_public.pem" >> "$GITHUB_ENV"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/backend/requirements.txt -r apps/backend/requirements-dev.txt
+
+      - name: Compile issuance modules and tests
+        working-directory: apps/backend
+        run: |
+          python -m compileall -q services/document_issuance_integrity.py services/document_stamp_certificate.py services/company_stamp_configuration.py services/document_issuance_candidate.py services/document_issuance_registration.py services/document_issuance_verification.py services/document_issuance_finalization.py services/document_issuance_database_readiness.py services/document_issuance_storage_readiness.py services/document_issuance_immutable_s3.py services/document_issuance_immutable_binding.py services/document_issuance_immutable_staging.py services/document_issuance_locked_registration.py services/document_issuance_reconciliation.py services/document_issuance_bucket_preflight.py services/document_issuance_locked_verification.py services/document_issuance_stamp_snapshot.py services/document_issuance_stamp_approval.py services/document_issuance_stamp_approval_repository.py services/document_issuance_source_provenance.py services/document_issuance_loan_source.py services/document_issuance_contract_source.py services/document_issuance_contract_registration.py services/document_issuance_issuer_authorization.py services/document_issuance_trusted_login.py services/document_issuance_transaction_guard.py scripts/check_document_issuance_bucket.py database/models/document_issuance.py alembic/versions/e7f8a9b0c124_document_stamp_approval_registry.py alembic/versions/f8a9b0c1d235_document_stamp_approval_revocations.py
+          python -m compileall -q tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py tests/test_document_issuance_rls_postgres.py tests/test_document_issuance_database_readiness.py tests/test_document_issuance_storage_readiness.py tests/test_document_issuance_immutable_s3.py tests/test_document_issuance_immutable_binding.py tests/test_document_issuance_immutable_staging.py tests/test_document_issuance_locked_registration.py tests/test_document_issuance_reconciliation.py tests/test_document_issuance_bucket_preflight.py tests/test_document_issuance_locked_verification.py tests/test_document_issuance_stamp_approval.py tests/test_document_issuance_stamp_approval_repository.py tests/test_document_issuance_stamp_approval_rls_postgres.py tests/test_document_issuance_stamp_revocation_rls_postgres.py tests/test_document_issuance_source_provenance.py tests/test_document_issuance_loan_source.py tests/test_document_issuance_contract_source.py tests/test_document_issuance_contract_registration.py tests/test_document_issuance_issuer_authorization.py tests/test_document_issuance_contract_lock_postgres.py tests/test_document_issuance_contract_lock_role_postgres.py tests/test_document_issuance_privileged_lock_prototype_postgres.py tests/test_document_issuance_lock_identity_spoof_postgres.py tests/test_document_issuance_authenticated_lock_login_postgres.py tests/test_document_issuance_trusted_login.py tests/test_document_issuance_transaction_guard.py
+
+      - name: Run document issuance security regression tests
+        working-directory: apps/backend
+        run: |
+          python -m pytest -q -ra --maxfail=1 tests/test_document_issuance_integrity.py tests/test_document_stamp_certificate.py tests/test_company_stamp_configuration.py tests/test_document_issuance_candidate.py tests/test_document_issuance_registration.py tests/test_document_issuance_verification.py tests/test_document_issuance_models.py tests/test_document_issuance_finalization.py tests/test_document_issuance_migration_contract.py tests/test_document_issuance_rls_postgres.py tests/test_document_issuance_database_readiness.py tests/test_document_issuance_storage_readiness.py tests/test_document_issuance_immutable_s3.py tests/test_document_issuance_immutable_binding.py tests/test_document_issuance_immutable_staging.py tests/test_document_issuance_locked_registration.py tests/test_document_issuance_reconciliation.py tests/test_document_issuance_bucket_preflight.py tests/test_document_issuance_locked_verification.py tests/test_document_issuance_stamp_approval.py tests/test_document_issuance_stamp_approval_repository.py tests/test_document_issuance_stamp_approval_rls_postgres.py tests/test_document_issuance_stamp_revocation_rls_postgres.py tests/test_document_issuance_source_provenance.py tests/test_document_issuance_loan_source.py tests/test_document_issuance_contract_source.py tests/test_document_issuance_contract_registration.py tests/test_document_issuance_issuer_authorization.py tests/test_document_issuance_contract_lock_postgres.py tests/test_document_issuance_contract_lock_role_postgres.py tests/test_document_issuance_privileged_lock_prototype_postgres.py tests/test_document_issuance_lock_identity_spoof_postgres.py tests/test_document_issuance_authenticated_lock_login_postgres.py tests/test_document_issuance_trusted_login.py tests/test_document_issuance_transaction_guard.py
+
+      - name: Print Alembic heads (read-only)
+        working-directory: apps/backend
+        run: python -m alembic heads

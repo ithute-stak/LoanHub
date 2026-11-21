@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {FormEvent, useMemo, useState} from "react";
-import {Building2, GitBranch, Loader2, MapPin, Plus, Power, PowerOff, Search} from "lucide-react";
+import {Building2, GitBranch, Loader2, MapPin, Plus, Power, PowerOff} from "lucide-react";
 import {toast} from "@/utils/toast";
 
 import {branchApi} from "@/api/branch";

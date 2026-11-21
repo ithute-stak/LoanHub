@@ -185,7 +185,7 @@ export default function CompanyBorrowerCommandPage() {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
   }, [recordingUrl]);
 
-  const calls = callDetail?.recent_calls ?? [];
+  const calls = useMemo(() => callDetail?.recent_calls ?? [], [callDetail?.recent_calls]);
   const profileLoans = profile?.loans ?? [];
 
   const collectionOutstanding = useMemo(

@@ -43,9 +43,9 @@ export const loanPaymentOperationsApi = {
   requestRestructure: async (payload: Record<string, unknown>) => (await api.post<RestructureRequest>(`${base}/borrower/restructures`, payload)).data,
   restructures: async () => (await api.get<RestructureRequest[]>(`${base}/restructures`)).data,
   approveRestructure: async (id: string, payload: Record<string, unknown>) => (await api.post<RestructureRequest>(`${base}/restructures/${id}/approve`, payload)).data,
-  reminders: async () => (await api.get<any[]>(`${base}/reminders`)).data,
+  reminders: async () => (await api.get<Record<string, unknown>[]>(`${base}/reminders`)).data,
   runReminders: async () => (await api.post<{ created: number; configuration_required: number }>(`${base}/reminders/run`)).data,
   runDueMandates: async () => (await api.post<{ created: number; succeeded: number; processing: number; failed: number }>(`${base}/mandates/run-due`)).data,
-  accountingExports: async () => (await api.get<any[]>(`${base}/accounting-exports`)).data,
+  accountingExports: async () => (await api.get<Record<string, unknown>[]>(`${base}/accounting-exports`)).data,
   createAccountingExport: async (payload: Record<string, unknown>) => (await api.post(`${base}/accounting-exports`, payload)).data,
 };

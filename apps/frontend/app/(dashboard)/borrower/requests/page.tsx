@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Banknote, Calculator, CheckCircle2, FileText, HandCoins, Plus, RefreshCcw, Search, Send, ShieldCheck } from "lucide-react";
+import { Banknote, Calculator, CheckCircle2, FileText, HandCoins, Plus, RefreshCcw, Send, ShieldCheck } from "lucide-react";
 
 import { listOffersByRequest } from "@/api/loanOffers";
 import { acceptLoanOffer, createLoanRequest, listMyLoanRequests } from "@/api/loanRequests";
