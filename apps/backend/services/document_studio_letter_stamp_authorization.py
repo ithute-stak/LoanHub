@@ -48,6 +48,11 @@ def preflight_approved_letter_stamp(
     if (getattr(document, "finalized_at", None) is not None
             or getattr(document, "status", None) != "draft"):
         raise PermissionError("Official letter issuance requires a draft source")
+    # A caller must provide an authoritative signature-state check before
+    # issuing; this preflight refuses documents exposing any signature rows.
+    # A separately trusted issuer must still lock/recheck persisted signatures.
+    if getattr(document, "signatures", None):
+        raise PermissionError("Signed letters require separate issuance verification")
     if type(configuration_version) is not int or configuration_version < 1:
         raise PermissionError("Approved stamp configuration version required")
 
