@@ -76,3 +76,74 @@ def test_shared_source_lock_blocks_concurrent_mutation_on_postgresql(table):
                 teardown.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize("table", ["issuer_users", "issuer_companies", "issuer_staff"])
+def test_issuer_guard_row_lock_serializes_concurrent_revocation(table):
+    """Prove revocation UPDATE cannot commit while a matching SHARE lock is held.
+
+    Disposable PostgreSQL tables only. The actual issuer runtime still needs
+    an independently authenticated, narrowly privileged transaction owner.
+    """
+    url = os.getenv("LOANHUB_ISSUANCE_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL test URL required")
+    engine = create_engine(url, pool_size=2, max_overflow=0)
+    schema = "issuer_guard_" + uuid4().hex[:12]
+    issuer_id = uuid4()
+    tables = ("issuer_users", "issuer_companies", "issuer_staff")
+    try:
+        with engine.begin() as setup:
+            setup.execute(text(f'CREATE SCHEMA "{schema}"'))
+            for name in tables:
+                setup.execute(text(
+                    f'CREATE TABLE "{schema}"."{name}" '
+                    '(id uuid PRIMARY KEY, is_active boolean NOT NULL)'
+                ))
+                setup.execute(text(
+                    f'INSERT INTO "{schema}"."{name}" VALUES (:id, TRUE)'
+                ), {"id": issuer_id})
+
+        with engine.connect() as issuer, engine.connect() as revoker:
+            issuer_tx = issuer.begin()
+            revoker_tx = revoker.begin()
+            try:
+                # Lock the entire authorization set, not just a source contract.
+                for name in tables:
+                    assert issuer.execute(text(
+                        f'SELECT is_active FROM "{schema}"."{name}" '
+                        'WHERE id = :id FOR SHARE NOWAIT'
+                    ), {"id": issuer_id}).scalar_one() is True
+                revoker.execute(text("SET LOCAL lock_timeout = '150ms'"))
+                savepoint = revoker.begin_nested()
+                try:
+                    with pytest.raises(DBAPIError) as denied:
+                        revoker.execute(text(
+                            f'UPDATE "{schema}"."{table}" SET is_active=FALSE '
+                            'WHERE id=:id'
+                        ), {"id": issuer_id})
+                    assert (getattr(denied.value.orig, "pgcode", None)
+                            or getattr(denied.value.orig, "sqlstate", None)) == "55P03"
+                finally:
+                    savepoint.rollback()
+                assert issuer.execute(text(
+                    f'SELECT is_active FROM "{schema}"."{table}" WHERE id=:id'
+                ), {"id": issuer_id}).scalar_one() is True
+            finally:
+                revoker_tx.rollback()
+                issuer_tx.commit()
+
+        # A revocation succeeds once the issuer transaction releases its locks.
+        with engine.begin() as revoker:
+            revoker.execute(text(
+                f'UPDATE "{schema}"."{table}" SET is_active=FALSE WHERE id=:id'
+            ), {"id": issuer_id})
+            assert revoker.execute(text(
+                f'SELECT is_active FROM "{schema}"."{table}" WHERE id=:id'
+            ), {"id": issuer_id}).scalar_one() is False
+    finally:
+        try:
+            with engine.begin() as teardown:
+                teardown.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            engine.dispose()
