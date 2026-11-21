@@ -1,4 +1,10 @@
 import sys
+from io import BytesIO
+from unittest.mock import patch
+from uuid import uuid4
+
+import pytest
+from pypdf import PdfReader
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,3 +147,73 @@ def test_word_style_schema_repair_migration_is_present():
         "default_line_height_percent",
     ):
         assert expected in migration
+
+
+def _company_letter():
+    document = sample_document()
+    company_id = uuid4()
+    document.company_id = company_id
+    document.template_key = "client_confirmation_letter"
+    company = SimpleNamespace(
+        id=company_id,
+        legal_name="Example Financial Services (Pty) Ltd",
+        name="Example Financial Services",
+        registration_number="REG-0001",
+        license_number="LIC-0001",
+        address="Maseru, Lesotho",
+        phone="+266 50000000",
+        email="contact@example.test",
+    )
+    return document, company
+
+
+def _pdf_text(payload):
+    return "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(payload)).pages)
+
+
+def test_company_letter_preview_stamp_is_disabled_by_default():
+    document, company = _company_letter()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "0"}):
+        pdf = export_pdf(DummyDb(), document, company)
+    text = _pdf_text(pdf)
+    assert "RE: TEST LETTER" in text
+    assert "COMPANY STAMP" not in text
+
+
+def test_opt_in_unsigned_company_letter_has_non_authoritative_stamp_after_body():
+    document, company = _company_letter()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+        pdf = export_pdf(DummyDb(), document, company)
+    text = _pdf_text(pdf)
+    assert "RE: TEST LETTER" in text
+    assert "Example Financial Services (Pty) Ltd" in text
+    assert "COMPANY STAMP" in text
+    assert "NOT APPROVED OR VERIFIED" in text
+    assert text.index("RE: TEST LETTER") < text.index("COMPANY STAMP")
+
+
+def test_cross_tenant_company_cannot_render_letter_stamp_preview():
+    document, company = _company_letter()
+    company.id = uuid4()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+        with pytest.raises(PermissionError, match="document tenant"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_non_letter_document_never_receives_preview_stamp():
+    document, company = _company_letter()
+    document.template_key = "contract"
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "COMPANY STAMP" not in text
+
+
+def test_existing_signatures_block_preview_stamp_mutation():
+    document, company = _company_letter()
+    document.id = uuid4()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}), patch(
+        "services.workspace_document_service.active_signatures",
+        return_value={"field-1": object()},
+    ):
+        with pytest.raises(PermissionError, match="after document signatures"):
+            export_pdf(DummyDb(), document, company)
