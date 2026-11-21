@@ -1,14 +1,18 @@
 # Document Studio client-letter stamp preview (non-official)
 
 The existing letter PDF export path is `services.workspace_document_service.export_pdf`.
-Supported company client letters are identified by
+Supported client letters are identified by
 `CLIENT_LETTER_TEMPLATE_KEYS`: confirmation, good standing, paid-up, and settlement.
+The layout preview also covers ordinary `formal_letter` and `business_letter`
+templates.
 
 A new **layout-only preview** is available when the server is explicitly
 configured with `LOANHUB_LETTER_STAMP_PREVIEW_ENABLED=1`. It inserts a
 tenant-bound stamp-like visual at the end of the PDF story, below the letter
 body. It is clearly marked **NOT APPROVED OR VERIFIED — VISUAL PREVIEW ONLY**.
-The setting defaults to disabled. It does not alter PDF or DOCX output when
+The setting defaults to disabled and is forbidden outside local, development,
+or test environments even if enabled. Non-draft or finalized documents are
+refused; official production PDFs cannot receive preview marks. It does not alter PDF or DOCX output when
 disabled, does not sign or issue the letter, and does not create a QR code.
 
 Do not enable this preview on production or use it as proof that a company
