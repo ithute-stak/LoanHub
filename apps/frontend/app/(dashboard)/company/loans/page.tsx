@@ -78,6 +78,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from "@/components/ui/tabs";
 import {createIdempotencyKey, formatDate, formatMoney, titleCase} from "@/lib/format";
 import {INTEREST_METHOD_OPTIONS, interestMethodLabel, interestMethodOption} from "@/lib/interest-methods";
 import {useTenant} from "@/provider/tenantProvider";
+import {useAppSelector} from "@/store/hooks";
 import {api} from "@/lib/api";
 import {CASHIER_ROLES, DIRECT_APPLICATION_ROLES, FINANCE_ROLES, LENDING_ROLES, hasRole} from "@/types/auth";
 import type {CompanyClient} from "@/types/companyClient";
@@ -141,7 +142,9 @@ type WorkspaceTab = "portfolio" | "contracts" | "calculator";
 
 export default function CompanyLoansPage() {
     const router = useRouter();
-    const {activeRole} = useTenant();
+    const {activeRole, activeCompanyId, activeBranchId} = useTenant();
+    const currentUserId = useAppSelector((state) => state.auth.user?.id ?? null);
+    const scopeKey = JSON.stringify([currentUserId, activeCompanyId, activeBranchId, activeRole]);
     const canManageContracts = hasRole(activeRole, DIRECT_APPLICATION_ROLES);
     const canSearchBorrowers = hasRole(activeRole, LENDING_ROLES);
     const canAdjustDueDates = hasRole(activeRole, LENDING_ROLES);
@@ -155,6 +158,7 @@ export default function CompanyLoansPage() {
     const [pendingTopUps, setPendingTopUps] = useState<OriginationApplication[]>([]);
     const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
     const [loading, setLoading] = useState(true);
+    const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
     const [tab, setTab] = useState<WorkspaceTab>("portfolio");
     const [historyBorrowerId, setHistoryBorrowerId] = useState<string | null>(null);
     const [borrowerHistoryLoans, setBorrowerHistoryLoans] = useState<Loan[]>([]);
@@ -252,9 +256,19 @@ export default function CompanyLoansPage() {
     // Keep a populated portfolio visible during refresh. A new mount still
     // waits for the authoritative loan list; optional endpoints cannot block it.
     const loadedLoansRef = useRef(false);
+    const loadedScopeRef = useRef<string | null>(null);
     const loadSequenceRef = useRef(0);
     const load = useCallback(async () => {
         const sequence = ++loadSequenceRef.current;
+        if (loadedScopeRef.current !== scopeKey) {
+            loadedScopeRef.current = scopeKey;
+            loadedLoansRef.current = false;
+            setLoadedScopeKey(null);
+            setLoans([]);
+            setClients([]);
+            setContracts([]);
+            setPendingTopUps([]);
+        }
         if (!loadedLoansRef.current) setLoading(true);
 
         const portfolioTask = (async () => {
@@ -263,8 +277,10 @@ export default function CompanyLoansPage() {
                 if (sequence !== loadSequenceRef.current) return;
                 setLoans(rows);
                 loadedLoansRef.current = true;
+                setLoadedScopeKey(scopeKey);
             } catch (error: unknown) {
                 if (sequence === loadSequenceRef.current) {
+                    setLoadedScopeKey(scopeKey);
                     toast.error(getErrorMessage(error, "Loan portfolio could not be loaded."));
                 }
             } finally {
@@ -298,7 +314,7 @@ export default function CompanyLoansPage() {
         })();
 
         await Promise.all([portfolioTask, enrichmentTask]);
-    }, [canDisburse, canManageContracts, activeRole]);
+    }, [canDisburse, canManageContracts, activeRole, scopeKey]);
 
     // A deep-linked loan should open once, not reopen after the operator
     // closes its schedule and the portfolio refreshes in the background.
@@ -913,7 +929,7 @@ export default function CompanyLoansPage() {
         .sort((left, right) => left.installment_number - right.installment_number)[0] ?? null
         : null;
 
-    if (loading) return <PageLoader rows={8}/>;
+    if (loading || loadedScopeKey !== scopeKey) return <PageLoader rows={8}/>;
 
     return (
         <main className="loanhub-page space-y-5 pb-10">
