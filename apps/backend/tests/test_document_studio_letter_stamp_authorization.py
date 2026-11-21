@@ -118,3 +118,14 @@ def test_company_mutation_after_approval_read_is_rejected():
         side_effect=mutate_company,
     ), pytest.raises(PermissionError, match="changed during authorization"):
         check(Mock(), tenant, issuer, company, document)
+
+
+def test_signed_document_rejected_before_approval_query():
+    tenant, issuer, _, company, document, approval = fixture()
+    document.signatures = [SimpleNamespace(revoked_at=None)]
+    with patch(
+        "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
+        return_value=approval,
+    ) as lookup, pytest.raises(PermissionError, match="Signed letters"):
+        check(Mock(), tenant, issuer, company, document)
+    lookup.assert_not_called()
