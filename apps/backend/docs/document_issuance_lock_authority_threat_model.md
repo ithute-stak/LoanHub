@@ -189,3 +189,17 @@ tenant-specific authorization, scoped row-lock privileges, session ownership,
 retention/certification and real concurrency tests remain mandatory.
 Do not configure the normal application connection pool with this login.
 The flow remains intentionally non-routed; no production feature was enabled.
+
+
+## 2026-11-21: actual authenticated PostgreSQL gate test
+
+The disposable authenticated-login PostgreSQL test now invokes the
+`require_trusted_issuer_database_login` application gate directly with a
+SQLAlchemy Session bound to the restricted login connection. It verifies
+the configured login passes, and a different expected login fails despite
+caller-controllable tenant GUCs. This supplements mock unit tests.
+
+This is still only an identity prerequisite. It does not establish a
+server-only credential vault, issue human-bound capabilities, or certify
+the final issuer's real RLS grants and source/authorization row-lock
+permissions across a full commit. The draft stays blocked.
