@@ -79,3 +79,19 @@ class EarlySettlementRead(BaseModel):
 class EarlySettlementPaymentResult(BaseModel):
     settlement: EarlySettlementRead
     payment: CashPaymentResult
+
+
+
+class PrincipalXSettlementPreviewRead(BaseModel):
+    """Non-payable, non-persisted preview of an approved Principal x% loan."""
+    loan_id: UUID
+    payment_model: str
+    settlement_date: date
+    period: int
+    uncapped_due: Decimal
+    settlement_amount: Decimal
+    contractual_remaining: Decimal
+    lifetime_cap_remaining: Decimal
+    total_credited: Decimal
+    ceiling_reduction: Decimal
+    payment_enabled: bool = False
