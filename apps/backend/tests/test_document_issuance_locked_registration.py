@@ -62,7 +62,9 @@ def _register(db, context, store, staged):
 @pytest.fixture(autouse=True)
 def _mock_db_gate():
     with patch("services.document_issuance_locked_registration.require_document_issuance_database_ready"), \
-         patch("services.document_issuance_locked_registration.lookup_approved_stamp_from_database"):
+         patch("services.document_issuance_locked_registration.lookup_approved_stamp_from_database"), \
+         patch("services.document_issuance_locked_registration.require_current_document_issuer"):
+
         yield
 
 
@@ -199,5 +201,21 @@ def test_approval_lookup_uses_connected_database_and_not_supplied_evidence():
             _register(db, context, store, staged)
     assert approval.call_args.kwargs["db"] is db
     db.query.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_current_issuer_revocation_prevents_locked_registration():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.require_current_document_issuer",
+        side_effect=PermissionError("Company issuer membership was revoked or changed"),
+    ) as issuer, patch(
+        "services.document_issuance_locked_registration.lookup_approved_stamp_from_database",
+    ) as approval:
+        with pytest.raises(PermissionError, match="membership was revoked"):
+            _register(db, context, store, staged)
+    issuer.assert_called_once_with(db=db, context=context)
+    approval.assert_not_called()
     db.add.assert_not_called()
     db.commit.assert_not_called()
