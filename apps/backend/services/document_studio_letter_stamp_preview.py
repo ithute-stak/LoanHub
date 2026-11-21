@@ -14,13 +14,21 @@ from reportlab.lib.units import mm
 from reportlab.platypus import KeepTogether, Paragraph, Spacer, Table, TableStyle
 
 from services.client_document_template_service import CLIENT_LETTER_TEMPLATE_KEYS
+
+# Ordinary correspondence also uses Document Studio, not client-loan templates.
+PREVIEW_LETTER_TEMPLATE_KEYS = CLIENT_LETTER_TEMPLATE_KEYS | {
+    "formal_letter", "business_letter",
+}
 from services.company_stamp_configuration import stamp_from_company
 
 
 def letter_stamp_preview_story(*, document, company):
     """Render below the letter body, never overlay existing signatures/text."""
-    if getattr(document, "template_key", None) not in CLIENT_LETTER_TEMPLATE_KEYS:
+    if getattr(document, "template_key", None) not in PREVIEW_LETTER_TEMPLATE_KEYS:
         return []
+    if (getattr(document, "finalized_at", None) is not None
+            or getattr(document, "status", "draft") not in ("draft",)):
+        raise PermissionError("Only unsigned draft letters may show stamp previews")
     tenant_id = getattr(document, "company_id", None)
     if company is None or getattr(company, "id", None) != tenant_id:
         raise PermissionError("Letter company stamp must belong to document tenant")
