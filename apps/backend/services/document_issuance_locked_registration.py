@@ -17,6 +17,9 @@ from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext, require
 from database.models.document_issuance import DocumentIssuance, DocumentIssuanceEvent
 from services.document_issuance_database_readiness import require_document_issuance_database_ready
 from services.document_issuance_trusted_login import require_trusted_issuer_database_login
+from services.document_issuance_transaction_guard import (
+    read_issuer_transaction_identity, require_same_issuer_transaction,
+)
 from services.document_issuance_immutable_binding import bind_locked_pdf_to_issuance
 from services.document_issuance_immutable_s3 import S3ObjectLockPdfStore
 from services.document_issuance_immutable_staging import StagedLockedCandidate
@@ -95,6 +98,7 @@ def register_locked_staged_document(
     # This point-in-time gate is NOT a transaction-spanning revocation lock.
     require_current_document_issuer(db=db, context=context)
     locked_transaction = db.get_transaction()
+    issuer_transaction_identity = read_issuer_transaction_identity(db=db)
     if locked_transaction is None:
         raise PermissionError("Issuer locks require an active database transaction")
     # Never accept approval data from callers: look up the exact approved
@@ -150,6 +154,7 @@ def register_locked_staged_document(
         # source row locks, even if the later authorization query still passes.
         if db.get_transaction() is not locked_transaction:
             raise PermissionError("Issuer lock transaction changed before issuance commit")
+        require_same_issuer_transaction(db=db, expected=issuer_transaction_identity)
         db.commit()
     except Exception:
         db.rollback()
