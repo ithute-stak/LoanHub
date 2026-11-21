@@ -134,3 +134,21 @@ These tests are prerequisite evidence, **not a connected production issuer**.
 Production must prove the authorization guard spans final COMMIT with a
 separately trusted SQL identity, correct RLS permissions, robust handling of
 timeouts, and all signing/source integrity checks before any public route.
+
+
+## 2026-11-21: mandatory non-routed issuer locks
+
+The experimental issuer authorization gate now explicitly requests
+`FOR SHARE NOWAIT` for the current User, LoanCompany and CompanyStaff rows,
+using `populate_existing()` and the same SQLAlchemy Session as subsequent
+issuance registration. There is no fallback to unlocked reads. A caller
+without PostgreSQL lock permission receives an error and does not issue.
+Tests assert all three locking requests and fail-closed behavior.
+
+**This is an intentional fail-closed change, not production enablement.**
+Ordinary SELECT-only sessions cannot acquire those row locks; broad UPDATE
+grants are prohibited. The approved isolated issuer identity and
+transaction lifecycle are still absent. Because a caller could commit or
+rollback this Session before registration, a secure invocation boundary
+must guarantee one transaction from guard through final SQL COMMIT and
+defend against privilege-revocation races in real integration tests.
