@@ -32,7 +32,11 @@ class AuthorizedIssuer:
 def require_current_document_issuer(
     *, db: Session, context: TenantContext,
 ) -> AuthorizedIssuer:
-    """Reject revoked staff, changed company, inactive login or wrong role."""
+    """Reload live staff/company status, bypassing previously cached ORM objects.
+
+    This is a point-in-time recheck. It does not by itself serialize concurrent
+    privilege revocation with final issuance COMMIT.
+    """
     if (context.is_platform_admin or context.user is None
             or context.staff is None or context.company is None
             or not isinstance(context.user.id, UUID)
@@ -48,7 +52,7 @@ def require_current_document_issuer(
         User.id == context.user.id,
         User.is_active.is_(True),
         User.must_change_password.is_(False),
-    ).one_or_none()
+    ).populate_existing().one_or_none()
     if (user is None or user.id != context.user.id
             or user.is_active is not True
             or user.must_change_password is not False):
@@ -58,7 +62,7 @@ def require_current_document_issuer(
         LoanCompany.id == context.company_id,
         LoanCompany.is_active.is_(True),
         LoanCompany.status == CompanyStatus.APPROVED,
-    ).one_or_none()
+    ).populate_existing().one_or_none()
     if (company is None or company.id != context.company_id
             or company.is_active is not True
             or company.status != CompanyStatus.APPROVED):
@@ -70,7 +74,7 @@ def require_current_document_issuer(
         CompanyStaff.company_id == context.company_id,
         CompanyStaff.is_active.is_(True),
         CompanyStaff.role.in_(COMPANY_MANAGEMENT_ROLES),
-    ).one_or_none()
+    ).populate_existing().one_or_none()
     if (membership is None or membership.id != context.staff.id
             or membership.user_id != context.user.id
             or membership.company_id != context.company_id
