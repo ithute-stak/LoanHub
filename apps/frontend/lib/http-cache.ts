@@ -21,6 +21,7 @@ import {
     type HttpCacheEntry,
 } from "@/store/features/slices/httpCacheSlice";
 import type { RootState } from "@/store";
+import { clientDataCenterCleared } from "@/store/features/slices/clientDataCenterSlice";
 
 export type LoanHubCacheMode = "default" | "refresh" | "no-store";
 
@@ -546,6 +547,7 @@ export function installReduxHttpCache(
         );
         if (path.startsWith("/auth/")) {
             store.dispatch(cacheCleared());
+            store.dispatch(clientDataCenterCleared());
             return response;
         }
 
@@ -554,6 +556,8 @@ export function installReduxHttpCache(
             response.config as InternalAxiosRequestConfig,
         );
         store.dispatch(cacheScopeInvalidated({ scope }));
+        // Never leave a stale borrower summary after a completed mutation.
+        store.dispatch(clientDataCenterCleared());
         return response;
     });
 
@@ -564,6 +568,7 @@ export function installReduxHttpCache(
             if (nextUserId !== previousUserId) {
                 previousUserId = nextUserId;
                 store.dispatch(cacheCleared());
+                store.dispatch(clientDataCenterCleared());
             }
         });
         storeUnsubscribers.set(store, unsubscribe);
