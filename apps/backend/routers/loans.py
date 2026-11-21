@@ -67,6 +67,7 @@ from services.early_settlement_service import (
 )
 from services.installment_service import adjust_installment_due_date
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
+from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.loan_service import (
     calculate_micro_loan_totals,
     disburse_cash_loan,
@@ -544,6 +545,7 @@ def create_early_settlement_quote(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     return quote_early_settlement(
         db,
         loan=loan,
@@ -566,6 +568,7 @@ def pay_early_settlement(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     quote = (
         db.query(LoanEarlySettlement)
         .filter(
