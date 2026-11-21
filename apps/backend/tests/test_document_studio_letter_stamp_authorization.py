@@ -12,6 +12,16 @@ from services.document_studio_letter_stamp_authorization import (
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 
 
+@pytest.fixture(autouse=True)
+def isolated_trusted_issuer_gate():
+    # Approval tests exercise downstream behavior on an already trusted DB
+    # login. Dedicated gate failure is verified separately below.
+    with patch(
+        "services.document_studio_letter_stamp_authorization.require_trusted_issuer_database_login",
+    ):
+        yield
+
+
 def fixture():
     tenant, issuer, approver = uuid4(), uuid4(), uuid4()
     company = SimpleNamespace(
@@ -129,3 +139,36 @@ def test_signed_document_rejected_before_approval_query():
     ) as lookup, pytest.raises(PermissionError, match="Signed letters"):
         check(Mock(), tenant, issuer, company, document)
     lookup.assert_not_called()
+
+
+def test_untrusted_database_login_rejected_before_stamp_approval_lookup():
+    tenant, issuer, _, company, document, approval = fixture()
+    with patch(
+        "services.document_studio_letter_stamp_authorization.require_trusted_issuer_database_login",
+        side_effect=PermissionError("Untrusted document issuer database login"),
+    ) as trusted, patch(
+        "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
+        return_value=approval,
+    ) as lookup, pytest.raises(PermissionError, match="Untrusted"):
+        check(Mock(), tenant, issuer, company, document)
+    trusted.assert_called_once()
+    lookup.assert_not_called()
+
+
+def test_approval_lookup_occurs_only_after_trusted_login_gate():
+    tenant, issuer, _, company, document, approval = fixture()
+    order = []
+    def trusted_db(**kwargs):
+        order.append("trusted-login")
+    def lookup_approval(**kwargs):
+        order.append("approval")
+        return approval
+    with patch(
+        "services.document_studio_letter_stamp_authorization.require_trusted_issuer_database_login",
+        side_effect=trusted_db,
+    ), patch(
+        "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
+        side_effect=lookup_approval,
+    ):
+        check(Mock(), tenant, issuer, company, document)
+    assert order == ["trusted-login", "approval"]
