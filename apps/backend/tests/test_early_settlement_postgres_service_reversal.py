@@ -10,9 +10,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.exc import OperationalError
 
 from database.models.enums import InstallmentStatus, LoanStatus
 from services import early_settlement_service as service
@@ -111,6 +112,14 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
         with Session() as db:
             assert service.reverse_early_settlement(db, SimpleNamespace()) is True
             if commit_reversal:
+                # The first reversal still owns the quote row lock. A second
+                # real service invocation on another PostgreSQL connection
+                # must not proceed until the first transaction finishes.
+                with Session() as competing:
+                    competing.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                    with pytest.raises(OperationalError):
+                        service.reverse_early_settlement(competing, SimpleNamespace())
+                    competing.rollback()
                 db.commit()
             else:
                 db.rollback()
