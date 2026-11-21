@@ -14,13 +14,37 @@ from database.models.enums import InstallmentStatus, LoanStatus
 from services import early_settlement_service as service
 
 
-class FakeSession:
-    def __init__(self, loan):
-        self.loan = loan
-        self.added = []
+class LockedQuery:
+    def __init__(self, result):
+        self.result = result
+        self.locked = False
 
-    def get(self, model, key):
-        return self.loan if key == self.loan.id else None
+    def filter(self, *args):
+        return self
+
+    def with_for_update(self):
+        self.locked = True
+        return self
+
+    def first(self):
+        assert self.locked, "Financial rows must be locked"
+        return self.result
+
+
+class FakeSession:
+    def __init__(self, loan, quote):
+        self.loan = loan
+        self.quote = quote
+        self.added = []
+        self.queries = []
+
+    def query(self, model):
+        self.queries.append(model.__name__)
+        if model.__name__ == "LoanEarlySettlement":
+            return LockedQuery(self.quote)
+        if model.__name__ == "ClientCompanyLoan":
+            return LockedQuery(self.loan)
+        raise AssertionError(f"Unexpected model: {model}")
 
     def add(self, item):
         self.added.append(item)
@@ -51,6 +75,7 @@ def test_reversal_restores_paid_cents_and_loan_snapshot(monkeypatch, retained_ce
         calculation_breakdown={"early_settlement": {"test": True}},
     )
     quote = SimpleNamespace(
+        id=uuid4(),
         loan_id=loan.id,
         status="settled",
         original_total_repayable=Decimal("1500.00"),
@@ -79,7 +104,7 @@ def test_reversal_restores_paid_cents_and_loan_snapshot(monkeypatch, retained_ce
         reversed_at=None,
     )
     monkeypatch.setattr(service, "_quote_from_payment", lambda db, payment: quote)
-    db = FakeSession(loan)
+    db = FakeSession(loan, quote)
     assert service.reverse_early_settlement(db, SimpleNamespace()) is True
     assert loan.status == LoanStatus.ACTIVE
     assert loan.amount_paid == Decimal("500.00")
@@ -93,4 +118,6 @@ def test_reversal_restores_paid_cents_and_loan_snapshot(monkeypatch, retained_ce
     assert quote.status == "reversed"
     assert quote.reversed_at is not None
     assert db.added == [quote]
+    assert db.queries == ["LoanEarlySettlement", "ClientCompanyLoan"]
     assert service.reverse_early_settlement(db, SimpleNamespace()) is False
+    assert db.queries == ["LoanEarlySettlement", "ClientCompanyLoan", "LoanEarlySettlement"]
