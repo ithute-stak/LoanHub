@@ -41,7 +41,11 @@ rejection, no stamp on contracts and rejection for already-signed documents.
 now prepares evidence for a future trusted issuer. It checks that the letter,
 company and authenticated tenant match; that the source is an unsigned draft
 of a supported letter template; and that the issuer and version identifiers
-are valid. It then calls the existing protected PostgreSQL approval repository,
+are valid. Before it consults the approval registry it enforces the existing dedicated
+issuer PostgreSQL login gate: actual `session_user` and `current_user` must
+match a configured non-privileged login separate from `DB_USER`. This refuses
+ordinary shared application SQL sessions even when tenant GUCs appear valid.
+It then calls the existing protected PostgreSQL approval repository,
 which is responsible for checking RLS, current SQL role privileges, independent
 approver, approved content digest, expiry and revocation. Finally, it checks
 the company snapshot again to catch an observable modification.
@@ -55,3 +59,9 @@ the eventual issuer must check and lock the persisted signature records.
 A new CI step runs the PDF export regressions and this non-routed preflight's
 denial and no-write tests. The official stamped-letter production path remains
 blocked by the previously documented issuer and storage certification gates.
+
+**Important limitation:** A distinct database login does not itself verify
+human identity, make tenant GUCs unspoofable, or guarantee per-company
+authorization. This remains non-routed and must run only inside a future
+isolated issuer service after role, tenant, authorization and transaction
+continuity controls are certified.
