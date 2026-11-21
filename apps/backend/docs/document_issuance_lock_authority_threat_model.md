@@ -170,3 +170,22 @@ callers; SAVEPOINT handling and external effects require separate review.
 Most importantly, a normal SELECT-only SQL login still cannot acquire
 the required locks. **Do not merge or deploy** before the isolated trusted
 issuer and production-equivalent PostgreSQL permissions are verified.
+
+
+## 2026-11-21: fail-closed dedicated database login prerequisite
+
+Non-routed generic locked registration now requires the actual PostgreSQL
+`session_user` and `current_user` to match an explicitly configured
+`LOANHUB_ISSUANCE_TRUSTED_DB_LOGIN`. The login must differ from the ordinary
+`DB_USER`, be a LOGIN role, and have neither SUPERUSER nor BYPASSRLS.
+Missing/malformed configuration, changed active role, mismatched login or
+non-PostgreSQL sessions are rejected. These checks run after existing
+RLS/table privilege readiness checks and before issuer/stamp ledger work.
+
+This is **only an identity prerequisite**; the environment variable does
+not create an independent service, grant privileges or authenticate the
+human requesting issuance. Provisioning, credential isolation, RLS,
+tenant-specific authorization, scoped row-lock privileges, session ownership,
+retention/certification and real concurrency tests remain mandatory.
+Do not configure the normal application connection pool with this login.
+The flow remains intentionally non-routed; no production feature was enabled.
