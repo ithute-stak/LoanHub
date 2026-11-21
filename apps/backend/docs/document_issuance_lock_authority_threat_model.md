@@ -118,3 +118,19 @@ production issuance holds these locks, or that a SELECT-only app role can
 acquire them. Real deployment still requires a separately authenticated,
 narrowly privileged issuer design that handles lock ordering, privilege
 revocation, transaction ownership, timeouts and RLS without tenant GUC spoofing.
+
+
+## 2026-11-21: revocation-first PostgreSQL concurrency scenario
+
+The isolated PostgreSQL issuer-lock suite now verifies both orders:
+
+- **Issuance locks first:** a concurrent revocation cannot change user,
+  company or staff rows until the issuer transaction releases its locks.
+- **Revocation updates first:** a new issuer `FOR SHARE NOWAIT` fails with
+  SQLSTATE `55P03`; once revocation commits, a fresh authorization lock
+  query finds no active row.
+
+These tests are prerequisite evidence, **not a connected production issuer**.
+Production must prove the authorization guard spans final COMMIT with a
+separately trusted SQL identity, correct RLS permissions, robust handling of
+timeouts, and all signing/source integrity checks before any public route.
