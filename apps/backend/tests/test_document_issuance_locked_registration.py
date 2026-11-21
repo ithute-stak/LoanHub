@@ -63,7 +63,8 @@ def _register(db, context, store, staged):
 def _mock_db_gate():
     with patch("services.document_issuance_locked_registration.require_document_issuance_database_ready"), \
          patch("services.document_issuance_locked_registration.lookup_approved_stamp_from_database"), \
-         patch("services.document_issuance_locked_registration.require_current_document_issuer"):
+         patch("services.document_issuance_locked_registration.require_current_document_issuer"), \
+         patch("services.document_issuance_locked_registration.require_trusted_issuer_database_login"):
 
         yield
 
@@ -255,5 +256,21 @@ def test_missing_issuer_lock_transaction_denies_registration():
     db.get_transaction.return_value = None
     with pytest.raises(PermissionError, match="active database transaction"):
         _register(db, context, store, staged)
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_untrusted_sql_login_denies_registration_before_authorization():
+    db, context, store, staged = _fixtures()
+    with patch(
+        "services.document_issuance_locked_registration.require_trusted_issuer_database_login",
+        side_effect=PermissionError("Untrusted document issuer database login"),
+    ) as gate, patch(
+        "services.document_issuance_locked_registration.require_current_document_issuer",
+    ) as issuer:
+        with pytest.raises(PermissionError, match="Untrusted document issuer"):
+            _register(db, context, store, staged)
+    gate.assert_called_once_with(db=db)
+    issuer.assert_not_called()
     db.add.assert_not_called()
     db.commit.assert_not_called()
