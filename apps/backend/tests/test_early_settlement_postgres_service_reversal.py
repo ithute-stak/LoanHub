@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, create_engine, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.exc import OperationalError
@@ -116,7 +116,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
                 # real service invocation on another PostgreSQL connection
                 # must not proceed until the first transaction finishes.
                 with Session() as competing:
-                    competing.execute(__import__("sqlalchemy").text("SET LOCAL lock_timeout = '200ms'"))
+                    competing.execute(text("SET LOCAL lock_timeout = '200ms'"))
                     with pytest.raises(OperationalError):
                         service.reverse_early_settlement(competing, SimpleNamespace())
                     competing.rollback()
