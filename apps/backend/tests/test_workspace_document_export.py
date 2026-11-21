@@ -182,7 +182,7 @@ def test_company_letter_preview_stamp_is_disabled_by_default():
 
 def test_opt_in_unsigned_company_letter_has_non_authoritative_stamp_after_body():
     document, company = _company_letter()
-    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
         pdf = export_pdf(DummyDb(), document, company)
     text = _pdf_text(pdf)
     assert "RE: TEST LETTER" in text
@@ -216,4 +216,45 @@ def test_existing_signatures_block_preview_stamp_mutation():
         return_value={"field-1": object()},
     ):
         with pytest.raises(PermissionError, match="after document signatures"):
+            export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("template_key", ["formal_letter", "business_letter"])
+def test_ordinary_company_letter_preview_supported(template_key):
+    document, company = _company_letter()
+    document.template_key = template_key
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": "test",
+    }):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "COMPANY STAMP" in text
+    assert "NOT APPROVED OR VERIFIED" in text
+
+
+@pytest.mark.parametrize("change", [
+    {"status": "published"},
+    {"status": "finalized"},
+    {"finalized_at": "2026-11-21T12:00:00Z"},
+])
+def test_published_or_finalized_letter_cannot_be_preview_stamped(change):
+    document, company = _company_letter()
+    for attribute, value in change.items():
+        setattr(document, attribute, value)
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(PermissionError, match="unsigned draft"):
+            export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("environment", ["production", "staging", "", "PRODUCTION"])
+def test_preview_stamp_denied_outside_development_and_test(environment):
+    document, company = _company_letter()
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": environment,
+    }):
+        with pytest.raises(PermissionError, match="outside development or test"):
             export_pdf(DummyDb(), document, company)
