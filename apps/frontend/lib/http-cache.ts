@@ -444,6 +444,43 @@ export function installReduxHttpCache(
         const entry = store.getState().httpCache.entries[identity.key];
         const forceRefresh = config.loanHubCache?.mode === "refresh";
 
+        // Redux-first directory search: reuse the authenticated company's
+        // previously loaded, unfiltered directory before requesting the API.
+        // Never reuse a filtered result as a complete directory, and never
+        // cross an authenticated user/company/role cache scope.
+        if (!forceRefresh && path === "/company-clients") {
+            const url = new URL(axios.getUri(config), "http://loanhub.local");
+            const params = url.searchParams;
+            const search = params.get("search")?.trim().toLocaleLowerCase() ?? "";
+            if (search.length >= 2 && [...params.keys()].every((key) => key === "search")) {
+                const source = Object.values(store.getState().httpCache.entries).find((candidate) => {
+                    if (candidate.scope !== identity.scope || candidate.expiresAt <= now) return false;
+                    const sourceUrl = new URL(candidate.url, "http://loanhub.local");
+                    return sourceUrl.pathname.replace(/^\\/api\\/v1/, "") === "/company-clients"
+                        && sourceUrl.searchParams.size === 0 && Array.isArray(candidate.data);
+                });
+                if (source && Array.isArray(source.data)) {
+                    const matches = source.data.filter((item: unknown) => {
+                        if (!item || typeof item !== "object") return false;
+                        const client = item as Record<string, unknown>;
+                        return [
+                            "id", "account_reference", "first_name", "middle_name",
+                            "last_name", "full_name", "national_id", "passport_number",
+                            "phone", "email", "employer_name", "recent_loan_reference",
+                        ].some((field) => String(client[field] ?? "").toLocaleLowerCase().includes(search));
+                    });
+                    if (matches.length > 0) {
+                        store.dispatch(cacheHit({ key: source.key, accessedAt: now }));
+                        return responseFromEntry(
+                            { ...source, data: matches },
+                            config,
+                            "HIT",
+                        );
+                    }
+                }
+            }
+        }
+
         if (!forceRefresh && entry && entry.expiresAt > now) {
             store.dispatch(cacheHit({ key: identity.key, accessedAt: now }));
             return responseFromEntry(entry, config, "HIT");
@@ -494,7 +531,7 @@ export function installReduxHttpCache(
         ).finally(() => {
             inflightRequests.delete(inflightKey);
         });
-        inflightRequests.set(identity.key, request);
+        inflightRequests.set(inflightKey, request);
         return request;
     };
 
