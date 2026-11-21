@@ -195,7 +195,7 @@ def test_opt_in_unsigned_company_letter_has_non_authoritative_stamp_after_body()
 def test_cross_tenant_company_cannot_render_letter_stamp_preview():
     document, company = _company_letter()
     company.id = uuid4()
-    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
         with pytest.raises(PermissionError, match="document tenant"):
             export_pdf(DummyDb(), document, company)
 
@@ -203,7 +203,7 @@ def test_cross_tenant_company_cannot_render_letter_stamp_preview():
 def test_non_letter_document_never_receives_preview_stamp():
     document, company = _company_letter()
     document.template_key = "contract"
-    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}):
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
         text = _pdf_text(export_pdf(DummyDb(), document, company))
     assert "COMPANY STAMP" not in text
 
@@ -211,7 +211,7 @@ def test_non_letter_document_never_receives_preview_stamp():
 def test_existing_signatures_block_preview_stamp_mutation():
     document, company = _company_letter()
     document.id = uuid4()
-    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}), patch(
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}), patch(
         "services.workspace_document_service.active_signatures",
         return_value={"field-1": object()},
     ):
@@ -258,3 +258,36 @@ def test_preview_stamp_denied_outside_development_and_test(environment):
     }):
         with pytest.raises(PermissionError, match="outside development or test"):
             export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("tenant_field", [None, "not-a-uuid"])
+def test_stamp_preview_rejects_missing_or_invalid_tenant(tenant_field):
+    document, company = _company_letter()
+    document.company_id = tenant_field
+    company.id = tenant_field
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(PermissionError, match="document tenant"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_stamp_preview_rejects_unconfigured_legal_identity():
+    document, company = _company_letter()
+    company.email = None
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(ValueError, match="Invalid company email"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_nonletter_pdf_not_blocked_by_preview_environment_guard():
+    document, company = _company_letter()
+    document.template_key = "contract"
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "production",
+    }):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "RE: TEST LETTER" in text
+    assert "COMPANY STAMP" not in text
