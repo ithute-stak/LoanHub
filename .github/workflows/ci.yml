@@ -184,7 +184,7 @@ jobs:
           LOANHUB_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
         run: |
           set -euo pipefail
-          python -m pytest -q -rs tests/test_early_settlement_postgres_transaction_probe.py
+          python -m pytest -q -rs tests/test_early_settlement_postgres_transaction_probe.py tests/test_early_settlement_postgres_concurrent_lock.py
 
       - name: Verify PostgreSQL tenant isolation
         working-directory: apps/backend
