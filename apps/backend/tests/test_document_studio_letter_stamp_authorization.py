@@ -115,7 +115,7 @@ def test_cross_tenant_company_rejected_before_sql():
     with patch(
         "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
         return_value=approval,
-    ) as lookup, pytest.raises(PermissionError, match="authenticated tenant"):
+    ) as lookup, pytest.raises(PermissionError, match="Authenticated company staff context required"):
         check(Mock(), tenant, issuer, company, document)
     lookup.assert_not_called()
 
