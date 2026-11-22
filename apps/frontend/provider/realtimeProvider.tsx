@@ -92,6 +92,10 @@ export function RealtimeProvider({
     const dispatch = useAppDispatch();
     const router = useRouter();
     const pathname = usePathname();
+    // Route changes must not restart the authenticated WebSocket session.
+    // Read the latest path only when deciding whether a DB event refreshes it.
+    const pathnameRef = useRef(pathname);
+    pathnameRef.current = pathname;
     const userId = useAppSelector(
         (state) => state.auth.user?.id ?? null,
     );
@@ -171,6 +175,7 @@ export function RealtimeProvider({
             userId,
             activeCompanyId ?? "platform",
             activeRole,
+            activeMembership?.branch_id ?? "company-wide",
             accessToken,
         ].join(":");
         let generation = 0;
@@ -417,7 +422,7 @@ export function RealtimeProvider({
                         if (
                             hasRemoteChanges &&
                             document.visibilityState === "visible" &&
-                            shouldRefreshRouteForCommit(pathname, detailForDispatch)
+                            shouldRefreshRouteForCommit(pathnameRef.current, detailForDispatch)
                         ) {
                             router.refresh();
                         }
@@ -489,7 +494,7 @@ export function RealtimeProvider({
         closeCurrentSocket,
         dispatch,
         userId,
-        pathname,
+        activeMembership?.branch_id,
         router,
     ]);
 
