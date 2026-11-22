@@ -182,7 +182,19 @@ function requestScope(
         headers.get("X-Active-Role") ?? state.auth.user?.role ?? "anonymous",
     );
 
-    return `${userId}:${companyId}:${role}`;
+    // A role may be tied to a specific branch. The backend resolves the
+    // branch from the active company membership, not from a client-supplied
+    // branch header. Partition cached GETs by that resolved membership too.
+    const matchingMemberships = (state.auth.user?.memberships ?? []).filter(
+        (membership) =>
+            membership.is_active &&
+            membership.company_id === companyId &&
+            membership.role === role,
+    );
+    const branchScope = matchingMemberships.length === 1
+        ? matchingMemberships[0].branch_id ?? "company-wide"
+        : "unresolved";
+    return `${userId}:${companyId}:${role}:${branchScope}`;
 }
 
 function requestKey(

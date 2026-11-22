@@ -696,7 +696,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         if (isCompanyRole(user.role) && !activeCompanyId) {
             return;
         }
-        const scope = `${user.id}:${activeCompanyId ?? "platform"}:${activeMembership?.role ?? user.role}`;
+        const scope = `${user.id}:${activeCompanyId ?? "platform"}:${activeMembership?.role ?? user.role}:${activeMembership?.branch_id ?? "company-wide"}`;
         if (loadedScopeRef.current === scope) {
             return;
         }
@@ -707,7 +707,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             void loadAllData();
         }, 0);
         return () => window.clearTimeout(timer);
-    }, [activeCompanyId, activeMembership?.role, authInitialized, loadAllData, user]);
+    }, [activeCompanyId, activeMembership?.role, activeMembership?.branch_id, authInitialized, loadAllData, user]);
 
     const companyMap = useMemo(
         () => new Map(companies.map((company) => [company.id, company])),
