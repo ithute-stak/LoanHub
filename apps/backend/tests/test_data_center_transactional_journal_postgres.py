@@ -143,6 +143,62 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     ) ORDER BY relname
                 """)).all()
                 assert len(rows) == 3 and all(enabled for _, enabled in rows)
+
+            # Exercise the real source-table triggers, not just their helper.
+            from sqlalchemy.orm import Session
+            from database.models.company import LoanCompany
+            from database.models.branch import CompanyBranch
+            from database.models.enums import CompanyStatus
+            branch_id = uuid4()
+            disabled_branch_id = uuid4()
+            with Session(engine) as db:
+                db.add_all([
+                    LoanCompany(id=company, name="DC Test " + uuid4().hex,
+                                phone="000000000", status=CompanyStatus.APPROVED,
+                                is_active=True),
+                    LoanCompany(id=another_company, name="DC Disabled " + uuid4().hex,
+                                phone="000000001", status=CompanyStatus.APPROVED,
+                                is_active=True),
+                ])
+                db.flush()
+                db.add_all([
+                    CompanyBranch(id=branch_id, company_id=company,
+                                  name="Pilot", district="Maseru"),
+                    CompanyBranch(id=disabled_branch_id, company_id=another_company,
+                                  name="Not Captured", district="Maseru"),
+                ])
+                db.commit()
+            with engine.connect() as con:
+                assert con.execute(text("""
+                    SELECT cursor, resource, entity_id, branch_id, action
+                    FROM loanhub_dc_event
+                    WHERE company_id = :company ORDER BY cursor DESC LIMIT 1
+                """), {"company": company}).one() == (
+                    4, "branches", branch_id, branch_id, "created"
+                )
+                assert con.execute(text("""
+                    SELECT count(*) FROM loanhub_dc_event
+                    WHERE company_id = :company
+                """), {"company": another_company}).scalar_one() == 0
+            with Session(engine) as db:
+                branch = db.get(CompanyBranch, branch_id)
+                branch.is_active = False
+                db.commit()
+            with engine.connect() as con:
+                assert con.execute(text("""
+                    SELECT cursor, action FROM loanhub_dc_event
+                    WHERE company_id = :company ORDER BY cursor DESC LIMIT 1
+                """), {"company": company}).one() == (5, "updated")
+            with Session(engine) as db:
+                branch = db.get(CompanyBranch, branch_id)
+                branch.name = "Rolled back"
+                db.flush()
+                db.rollback()
+            with engine.connect() as con:
+                assert con.execute(text("""
+                    SELECT cursor FROM loanhub_dc_clock
+                    WHERE company_id = :company
+                """), {"company": company}).scalar_one() == 5
         finally:
             engine.dispose()
     finally:
