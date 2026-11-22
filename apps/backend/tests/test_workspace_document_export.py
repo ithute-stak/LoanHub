@@ -306,7 +306,8 @@ def test_multipage_pdf_freezes_resolved_company_logo_bytes():
     ) as resolve:
         pdf = export_pdf(DummyDb(), document, company)
     assert len(PdfReader(BytesIO(pdf)).pages) > 1
-    assert resolve.call_count == 1\n    assert resolve.call_args.args[1] is company
+    assert resolve.call_count == 1
+    assert resolve.call_args.args[1] is company
 
 
 def test_no_company_logo_lookup_for_headerless_pdf():
