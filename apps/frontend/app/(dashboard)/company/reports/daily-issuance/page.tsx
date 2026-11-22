@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { useAppData } from "@/provider/appDataProvider";
 import {
@@ -34,6 +34,7 @@ export default function DailyIssuancePage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [downloading, setDownloading] = useState<string | null>(null);
+    const requestId = useRef(0);
     const filters = useMemo(() => ({
         period_start: start,
         period_end: end,
@@ -41,20 +42,25 @@ export default function DailyIssuancePage() {
     }), [start, end, branchId]);
 
     const refresh = useCallback(async () => {
-        if (!start || !end || end < start) {
-            setError("Select a valid reporting date range.");
+        const currentRequest = ++requestId.current;
+        const rangeDays = start && end ? Math.round((Date.parse(end) - Date.parse(start)) / 86400000) : NaN;
+        if (!start || !end || !Number.isFinite(rangeDays) || rangeDays < 0 || rangeDays > 1095 || end === "9999-12-31") {
+            setError("Select a valid date range of no more than 1,096 calendar days.");
             setReport(null);
             return;
         }
         setLoading(true);
         setError("");
         try {
-            setReport(await getDailyIssuanceReport(filters));
+            const result = await getDailyIssuanceReport(filters);
+            if (currentRequest === requestId.current) setReport(result);
         } catch {
-            setError("Unable to load this report. Check your reporting permissions and try again.");
-            setReport(null);
+            if (currentRequest === requestId.current) {
+                setError("Unable to load this report. Check your reporting permissions and try again.");
+                setReport(null);
+            }
         } finally {
-            setLoading(false);
+            if (currentRequest === requestId.current) setLoading(false);
         }
     }, [filters, start, end]);
 
