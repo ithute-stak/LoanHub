@@ -77,6 +77,7 @@ def sample_document():
         margin_bottom_mm=24,
         margin_left_mm=22,
         include_brand_header=False,
+        brand_logo_asset_id=None,
         include_footer=True,
         style_key="modern_blue",
         default_font_family="Arial",
