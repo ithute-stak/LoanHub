@@ -103,3 +103,18 @@ A matching HTML digest is **not** a fingerprint of the finished PDF. An issuer
 must independently validate rendered PDF bytes, dynamic branding/assets and
 source metadata, any signing, immutable storage retention and ledger state.
 These protections are not yet routed to the normal Document Studio export.
+
+## Exact PDF candidate evidence (still non-routed)
+
+The pure `document_studio_letter_pdf_binding.bind_letter_pdf_candidate`
+function now checks the locked document's tenant, ID, version and HTML digest
+before capturing SHA-256 of the *exact* source PDF and final candidate PDF
+bytes. This is deterministic evidence for later comparison with an immutable
+stored version, not itself proof of a valid or officially issued letter.
+
+Important open controls: a trusted renderer must attest that the source PDF
+actually derives from the locked HTML and approved dynamic assets; the
+stamping/signing pipeline must retain the exact final candidate bytes, then
+bind the digest and Object Lock VersionId to the issuer/audit transaction,
+recheck authorization until COMMIT, and make public verification work.
+A bare candidate digest must never be treated as final issuance.
