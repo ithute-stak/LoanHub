@@ -328,7 +328,7 @@ jobs:
           docker compose -f compose.issuer-storage.yml config --quiet
           docker compose --profile configure -f compose.issuer-storage.yml config --quiet
           docker compose --profile configure -f compose.issuer-storage.yml config --format json | python -c '
-          import json,sys
+          import json,re,sys
           c=json.load(sys.stdin)
           assert c["networks"]["issuer_storage"]["internal"] is True
           store=c["services"]["object-store"]
@@ -338,8 +338,8 @@ jobs:
           command=" ".join(raw_command) if isinstance(raw_command,list) else str(raw_command)
           assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
           assert "attempt" in command and "sleep 2" in command
-          assert "mc mb --with-lock" in command
-          assert "COMPLIANCE 3650d" in command
+          assert re.search(r"mc\\s+mb\\s+--with-lock", command), "Bucket creation must enable Object Lock"
+          assert re.search(r"COMPLIANCE\\s+3650d", command), "Default retention must be compliance mode for 3650 days"
           '
           
       - name: Verify fully resolved Wacom staging Compose isolation
