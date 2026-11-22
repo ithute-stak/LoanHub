@@ -53,3 +53,15 @@ def test_replay_is_bound_to_exact_contract_company_and_metadata_only():
     assert "event.entity_id" in BRIDGE
     assert "event.branch_id" in BRIDGE
     assert "throw new Error(\"Replay cursor gap or invalid metadata\")" in BRIDGE
+
+
+def test_authentication_credential_change_retires_projection_session():
+    # The same user can receive a replacement token without changing ID.
+    # A fresh verified snapshot must be required for each credential epoch.
+    assert "state.auth.isAuthenticated" in BRIDGE
+    assert "state.auth.accessToken" in BRIDGE
+    assert "!authenticated ||" in BRIDGE
+    assert "!accessToken || !connected" in BRIDGE
+    assert "[accessToken, activeCompanyId, authenticated, authInitialized" in BRIDGE
+    assert "controller.abort();" in BRIDGE
+    assert "dispatch(dataCenterActions.clear(sessionId));" in BRIDGE
