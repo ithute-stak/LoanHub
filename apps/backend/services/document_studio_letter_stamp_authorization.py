@@ -18,6 +18,7 @@ from services.document_issuance_stamp_approval_repository import (
 )
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 from services.document_issuance_trusted_login import require_trusted_issuer_database_login
+from services.document_studio_letter_source_lock import lock_current_letter_source, LockedLetterSource
 from services.document_issuance_issuer_authorization import require_current_document_issuer
 from services.document_issuance_transaction_guard import (
     read_issuer_transaction_identity, require_same_issuer_transaction,
@@ -38,6 +39,7 @@ class AuthorizedLetterStamp:
     stamp_snapshot_sha256: str
     legal_name: str
     approved_by_user_id: UUID
+    source: LockedLetterSource
 
 
 def preflight_approved_letter_stamp(
@@ -83,6 +85,14 @@ def preflight_approved_letter_stamp(
     if root_transaction is None:
         raise PermissionError("Issuer row locks require an active SQL transaction")
     transaction_identity = read_issuer_transaction_identity(db=db)
+    # Lock the persisted letter version, not the caller's in-memory copy.
+    # This requires a narrowly permitted UPDATE row-lock capability for the
+    # isolated issuer; ordinary SELECT-only application sessions fail closed.
+    locked_source = lock_current_letter_source(
+        db=db, document=document, authenticated_tenant_id=authenticated_tenant_id,
+    )
+    if locked_source.template_key not in LETTER_TEMPLATES:
+        raise PermissionError("Unsupported persisted letter template")
 
     # The existing repository checks connected SQL identity, tenant RLS,
     # restricted SELECT-only privileges, approval version, snapshot digest,
@@ -108,4 +118,5 @@ def preflight_approved_letter_stamp(
         stamp_snapshot_sha256=digest,
         legal_name=stamp.legal_name,
         approved_by_user_id=approval.approved_by_user_id,
+        source=locked_source,
     )
