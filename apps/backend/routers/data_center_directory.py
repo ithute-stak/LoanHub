@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from core.access_control import TenantContext, get_tenant_context
 from database.models.branch import CompanyBranch
 from database.models.loan_product import LoanProduct
+from database.models.company_client import CompanyBorrowerAccount
+from services.data_center_client_projection import safe_client_row
 from database.models.company_staff import CompanyStaff
 from services.data_center_staff_projection import require_staff_directory_management, safe_staff_row
 from services.data_center_loan_product_projection import safe_loan_product_row
@@ -131,6 +133,45 @@ def staff_directory(
         "resource": "staff",
         "company_id": grant.company_id,
         "branch_id": None,
+        "records": safe,
+        "offset": offset,
+        "limit": limit,
+        "has_more": len(records) > limit,
+        "complete_data_center_snapshot": False,
+    }
+
+@router.get("/clients")
+def client_directory(
+    response: Response,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Minimal branch-authorized client-account directory, no PII."""
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        grant = verified_branch_grant(context)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Client directory access denied") from None
+    query = db.query(CompanyBorrowerAccount).filter(
+        CompanyBorrowerAccount.company_id == context.company_id
+    )
+    if not grant.company_wide:
+        query = query.filter(CompanyBorrowerAccount.branch_id == context.branch_id)
+    records = query.order_by(CompanyBorrowerAccount.id).offset(offset).limit(limit + 1).all()
+    try:
+        if verified_branch_grant(context) != grant:
+            raise PermissionError("Scope changed")
+        safe = [safe_client_row(row, grant) for row in records[:limit]]
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Client directory access denied") from None
+    return {
+        "contract": "loanhub.directory-page.v1",
+        "resource": "clients",
+        "company_id": grant.company_id,
+        "branch_id": None if grant.company_wide else grant.branch_id,
         "records": safe,
         "offset": offset,
         "limit": limit,
