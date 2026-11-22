@@ -475,6 +475,83 @@ def submit_pending_cdas_consent_evidence(
     }
 
 
+class CdasConsentReviewDecision(BaseModel):
+    decision: str = Field(pattern=r"^(reject|revoke)$")
+    reason: str = Field(min_length=8, max_length=400)
+
+
+@router.get("/consent-evidence")
+def list_cdas_consent_review_queue(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=25, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read-only tenant-scoped registry; never contacts CDAS."""
+    _require_company_manager(context)
+    assert context.company_id is not None
+    records = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.company_id == context.company_id,
+    )
+    total = records.count()
+    items = records.order_by(
+        CdasAffordabilityConsentEvidence.created_at.desc(),
+        CdasAffordabilityConsentEvidence.id.desc(),
+    ).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "total": total, "page": page, "page_size": page_size,
+        "items": [
+            {
+                "evidence_id": str(item.id),
+                "borrower_id": str(item.borrower_id),
+                "employee_number": item.employee_number,
+                "reference": item.reference,
+                "status": item.status,
+                "document_id": str(item.document_id),
+                "verified": item.status == "approved",
+                "cdas_request_authorized": False,
+            }
+            for item in items
+        ],
+        "note": "Review registry only. No CDAS request or automatic approval.",
+    }
+
+
+@router.post("/consent-evidence/{evidence_id}/decision")
+def reject_or_revoke_cdas_consent_evidence(
+    evidence_id: UUID,
+    payload: CdasConsentReviewDecision,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Independent reviewer may reject pending evidence or revoke approval.
+
+    Approval is intentionally unavailable until actual document integrity
+    verification can be bound to an audited reviewer decision.
+    """
+    _require_company_manager(context)
+    assert context.company_id is not None
+    record = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.id == evidence_id,
+        CdasAffordabilityConsentEvidence.company_id == context.company_id,
+    ).with_for_update().first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Consent evidence not found")
+    if context.user.id == record.submitted_by_user_id:
+        raise HTTPException(status_code=403, detail="Submitting user cannot review their own consent evidence")
+    expected = "pending" if payload.decision == "reject" else "approved"
+    if record.status != expected:
+        raise HTTPException(status_code=409, detail="Consent review status is no longer eligible for this decision")
+    record.status = "rejected" if payload.decision == "reject" else "revoked"
+    db.commit()
+    return {
+        "evidence_id": str(record.id),
+        "status": record.status,
+        "cdas_request_authorized": False,
+        "note": "Evidence closed without contacting CDAS",
+    }
+
+
 from services.cdas_affordability_attempts import (
     reserve_affordability_attempt,
     find_attempt,
