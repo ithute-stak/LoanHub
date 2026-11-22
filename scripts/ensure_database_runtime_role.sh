@@ -66,6 +66,28 @@ SELECT format(
 )
 \gexec
 
+-- The ordinary application login must NEVER be an issuer or stamp approver.
+-- Explicitly override the broad legacy grants and default privileges above.
+-- These tables are append-only or immutable in the official issuer design.
+SELECT format(
+    'REVOKE INSERT, UPDATE, DELETE ON TABLE %s FROM %I',
+    string_agg(quote_ident(table_name), ', '),
+    :'runtime_user'
+)
+FROM (
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN (
+          'document_stamp_approvals',
+          'document_stamp_approval_revocations',
+          'document_issuances',
+          'document_issuance_events'
+      )
+) restricted
+HAVING count(*) > 0
+\gexec
+
 SELECT format(
     'ALTER ROLE %I SET search_path = public',
     :'runtime_user'
