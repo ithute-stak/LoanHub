@@ -31,6 +31,13 @@ def isolated_trusted_issuer_gate():
         return_value=SimpleNamespace(backend_pid=123, transaction_id="1"),
     ), patch(
         "services.document_studio_letter_stamp_authorization.require_same_issuer_transaction",
+    ), patch(
+        "services.document_studio_letter_stamp_authorization.lock_current_letter_source",
+        side_effect=lambda *, db, document, authenticated_tenant_id: SimpleNamespace(
+            tenant_id=authenticated_tenant_id, document_id=document.id,
+            version=document.version, template_key=document.template_key,
+            content_sha256="a" * 64,
+        ),
     ):
         yield
 
@@ -43,6 +50,7 @@ def fixture():
         registration_number="REG-001", license_number="LIC-001",
     )
     document = SimpleNamespace(
+        id=uuid4(), version=1, content_html="<p>Example letter</p>",
         company_id=tenant, template_key="formal_letter",
         status="draft", finalized_at=None,
     )
@@ -234,3 +242,17 @@ def test_postgres_transaction_switch_after_stamp_lookup_denied():
         side_effect=PermissionError("PostgreSQL issuer transaction changed"),
     ), pytest.raises(PermissionError, match="transaction changed"):
         check(Mock(), tenant, issuer, company, document)
+
+
+def test_source_lock_failure_blocks_approval_query():
+    tenant, issuer, _, company, document, approval = fixture()
+    with patch(
+        "services.document_studio_letter_stamp_authorization.lock_current_letter_source",
+        side_effect=PermissionError("Letter content or version changed"),
+    ) as lock, patch(
+        "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
+        return_value=approval,
+    ) as lookup, pytest.raises(PermissionError, match="version changed"):
+        check(Mock(), tenant, issuer, company, document)
+    lock.assert_called_once()
+    lookup.assert_not_called()
