@@ -142,33 +142,34 @@ export function LoanHubDataCenterBridge() {
             let hasMore = false;
             try {
                 for (let page = 0; page < MAX_REPLAY_PAGES; page++) {
-                    const {data} = await api.get<Replay>("/realtime/data-center/replay", {
+                    const replayResponse: {data: Replay} = await api.get<Replay>("/realtime/data-center/replay", {
                         signal: controller.signal,
                         loanHubCache: {mode: "no-store"},
                         params: {generation, after_cursor: after, limit: 200},
                     });
                     if (cancelled) return;
-                    if (data.generation !== generation || data.from_cursor !== after ||
-                        typeof data.next_cursor !== "number" ||
-                        typeof data.high_watermark !== "number" ||
-                        !Number.isSafeInteger(data.next_cursor) ||
-                        !Number.isSafeInteger(data.high_watermark) ||
-                        !Array.isArray(data.events)) {
+                    const reply: Replay = replayResponse.data;
+                    if (reply.generation !== generation || reply.from_cursor !== after ||
+                        typeof reply.next_cursor !== "number" ||
+                        typeof reply.high_watermark !== "number" ||
+                        !Number.isSafeInteger(reply.next_cursor) ||
+                        !Number.isSafeInteger(reply.high_watermark) ||
+                        !Array.isArray(reply.events)) {
                         throw new Error("Invalid replay envelope");
                     }
                     let expected = after + 1;
-                    for (const event of data.events) {
+                    for (const event of reply.events) {
                         if (event.cursor !== expected++) {
                             throw new Error("Replay cursor gap");
                         }
                     }
-                    if (data.next_cursor !== expected - 1 ||
-                        data.next_cursor > data.high_watermark) {
+                    if (reply.next_cursor !== expected - 1 ||
+                        reply.next_cursor > reply.high_watermark) {
                         throw new Error("Replay cursor mismatch");
                     }
-                    after = data.next_cursor;
-                    hasMore = Boolean(data.has_more);
-                    if (hasMore !== (after < data.high_watermark)) {
+                    after = reply.next_cursor;
+                    hasMore = Boolean(reply.has_more);
+                    if (hasMore !== (after < reply.high_watermark)) {
                         throw new Error("Replay completeness mismatch");
                     }
                     if (!hasMore) break;
