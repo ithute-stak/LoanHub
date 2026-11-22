@@ -24,6 +24,28 @@ export PGPASSWORD="$DB_PASSWORD"
 psql --host "${DB_HOST:-db}" --port "${DB_PORT:-5432}" \
   --username "$DB_USER" --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 \
   --set=issuer_user="$ISSUER_DB_USER" --set=issuer_password="$ISSUER_DB_PASSWORD" <<'SQL'
+-- Refuse privileged issuer grants until *all* relevant tenant-owned sources
+-- enforce RLS. A restricted SQL role with UPDATE on non-RLS source tables
+-- would otherwise be able to alter documents belonging to other tenants.
+DO $preflight$
+DECLARE
+    missing TEXT;
+BEGIN
+    SELECT string_agg(name, ', ' ORDER BY name) INTO missing
+    FROM unnest(ARRAY[
+        'users', 'loan_companies', 'company_staff', 'workspace_documents',
+        'document_stamp_approvals', 'document_stamp_approval_revocations',
+        'document_issuances', 'document_issuance_events'
+    ]) AS wanted(name)
+    LEFT JOIN pg_class AS c
+      ON c.relname = wanted.name AND c.relnamespace = 'public'::regnamespace
+    WHERE c.oid IS NULL OR c.relrowsecurity IS NOT TRUE;
+    IF missing IS NOT NULL THEN
+        RAISE EXCEPTION 'Issuer bootstrap refused: missing tenant RLS on %', missing;
+    END IF;
+END
+$preflight$;
+
 BEGIN;
 SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION PASSWORD %L',
               :'issuer_user', :'issuer_password')
