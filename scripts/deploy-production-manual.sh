@@ -70,9 +70,10 @@ resolve_latest_release() {
   runs_json="$(api_get "$GITHUB_REPO_API/actions/workflows/release-images.yml/runs?branch=main&status=success&per_page=50")"
   while IFS= read -r candidate; do
     [[ "$candidate" =~ ^[0-9a-f]{40}$ ]] || continue
+    # A successful run for the deployed SHA is a fallback, not a reason to
+    # stop scanning: newer approved forward releases may appear later in the list.
     if [ "$candidate" = "$current_release" ]; then
-      printf '%s\n' "$candidate"
-      return 0
+      continue
     fi
 
     status="$(compare_release "$current_release" "$candidate" || true)"
@@ -85,8 +86,10 @@ resolve_latest_release() {
     fi
   done < <(printf '%s' "$runs_json" | python3 -c 'import json,sys; data=json.load(sys.stdin); [print(run.get("head_sha", "")) for run in data.get("workflow_runs", []) if run.get("conclusion") == "success" and run.get("head_branch") == "main"]')
 
-  echo "No approved forward LoanHub release is available after $current_release." >&2
-  return 1
+  # Idempotent pull: reconcile the current release only after all newer
+  # successful, forward-compatible candidates have been considered.
+  printf '%s\n' "$current_release"
+  return 0
 }
 
 case "$REQUESTED_RELEASE" in
