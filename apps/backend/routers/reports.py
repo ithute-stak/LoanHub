@@ -1,11 +1,14 @@
-from datetime import date
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from core.access_control import PERFORMANCE_ROLES, TRANSPARENCY_ROLES, TenantContext, get_user_context, require_tenant_roles
-from database.models.enums import UserRole
+from database.models.enums import UserRole, LoanStatus
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.reporting import GeneratedReport, ReportSchedule
 from database.schemas.reporting import (
     GeneratedReportRead,
@@ -41,6 +44,89 @@ def resolve_scope(context: TenantContext, scope_type: str, company_id, branch_id
     if context.branch_id and context.role not in {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}:
         selected_branch = context.branch_id
     return context.company_id, selected_branch
+
+
+
+
+@router.get("/daily-issuance")
+def daily_issuance_expected_returns(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Read-only daily disbursement and CURRENT contractual repayment snapshot."""
+    require_reports(context)
+    if period_end < period_start or (period_end - period_start).days > 1095:
+        raise HTTPException(status_code=400, detail="Invalid reporting date range")
+    # A platform administrator must explicitly select a tenant. Never aggregate
+    # all tenants in a financial report.
+    if (not context.is_platform_admin and context.branch_id is None
+            and context.role not in {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}):
+        raise HTTPException(status_code=403, detail="A branch assignment is required for this report")
+    if (not context.is_platform_admin and context.branch_id is not None
+            and context.role not in {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN}
+            and branch_id is not None and branch_id != context.branch_id):
+        raise HTTPException(status_code=403, detail="Cross-branch reporting is not allowed")
+    company_id, branch_id = resolve_scope(context, "company", company_id, branch_id)
+    if company_id is None:
+        raise HTTPException(status_code=400, detail="Company selection is required")
+    loan = ClientCompanyLoan
+    rows = (
+        db.query(
+            func.date(loan.disbursed_at).label("issue_date"),
+            func.count(loan.id).label("loans_issued"),
+            func.sum(loan.principal_amount).label("principal_issued"),
+            func.sum(loan.total_repayable).label("expected_contractual_return"),
+        )
+        .filter(
+            loan.company_id == company_id,
+            loan.disbursed_at >= datetime.combine(period_start, time.min),
+            loan.disbursed_at < datetime.combine(period_end + timedelta(days=1), time.min),
+            loan.status.notin_([LoanStatus.CANCELLED, LoanStatus.REJECTED]),
+        )
+    )
+    if branch_id is not None:
+        rows = rows.filter(loan.branch_id == branch_id)
+    results = (
+        rows.group_by(func.date(loan.disbursed_at))
+        .order_by(func.date(loan.disbursed_at).desc())
+        .all()
+    )
+    def money(value):
+        return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+
+    daily = [
+        {
+            "date": str(row.issue_date),
+            "loans_issued": row.loans_issued,
+            "principal_issued": str(money(row.principal_issued)),
+            "expected_contractual_return": str(money(row.expected_contractual_return)),
+            "expected_return_above_principal": str(
+                money(row.expected_contractual_return) - money(row.principal_issued)
+            ),
+        }
+        for row in results
+    ]
+    principal = sum((Decimal(item["principal_issued"]) for item in daily), Decimal("0.00"))
+    expected = sum((Decimal(item["expected_contractual_return"]) for item in daily), Decimal("0.00"))
+    return {
+        "company_id": str(company_id),
+        "branch_id": str(branch_id) if branch_id else None,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "basis": "current_contractual_snapshot",
+        "date_basis": "disbursed_at_database_timezone",
+        "totals": {
+            "loans_issued": sum(item["loans_issued"] for item in daily),
+            "principal_issued": str(principal),
+            "expected_contractual_return": str(expected),
+            "expected_return_above_principal": str(expected - principal),
+        },
+        "daily": daily,
+    }
 
 
 @router.get("/summary", response_model=ReportSummaryRead)
