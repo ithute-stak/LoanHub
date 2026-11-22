@@ -154,3 +154,44 @@ def test_core_settlement_service_checks_assignment_at_all_mutation_boundaries():
                 )
             ]
             assert statuses and gates[0].lineno < min(statuses), name
+
+
+
+def test_principal_x_readiness_is_tenant_scoped_and_never_postable():
+    """Readiness must not be mistaken for authorization to collect."""
+    source = (
+        Path(__file__).resolve().parents[1] / "routers" / "loans.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    fn = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "principal_x_settlement_readiness"
+    )
+    calls = {
+        node.func.id for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {"require_tenant_roles", "_tenant_loan_or_404", "read_loan_payment_model",
+            "inspect_loanhub_payment_evidence"} <= calls
+    assert "initiate_early_settlement_payment" not in calls
+    assert "coordinate_principal_x_collection" not in calls
+    assert any(
+        isinstance(node, ast.keyword)
+        and node.arg == "can_post_settlement"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is False
+        for node in ast.walk(fn)
+    )
+
+
+def test_principal_x_readiness_schema_rejects_true_posting_capability():
+    from database.schemas.early_settlement import PrincipalXSettlementReadinessRead
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PrincipalXSettlementReadinessRead(
+            loan_id=uuid4(), payment_model="principal_x",
+            can_post_settlement=True, payment_rows_reviewed=0,
+            unresolved_payment_rows=0, blocking_reasons=[],
+        )
