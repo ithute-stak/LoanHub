@@ -27,9 +27,6 @@ class PrincipalXSnapshotQuote:
 def quote_principal_x_for_loan_with_revision(
     db: Session, *, loan: ClientCompanyLoan, settlement_date: date
 ) -> PrincipalXSnapshotQuote:
-    """Compute preview and advisory source fingerprint from the same snapshot."""
-    db: Session, *, loan: ClientCompanyLoan, settlement_date: date
-) -> PrincipalXQuote:
     """Preview against persisted contract and succeeded repayment transactions.
 
     This intentionally refuses legacy, renewed, and mismatched records instead
