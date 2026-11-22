@@ -110,6 +110,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir apps/frontend install --frozen-lockfile
 
+      - name: Certify Data Center Redux scoped recovery
+        run: |
+          set -euo pipefail
+          cd apps/frontend
+          node --test tests/data-center-reducer.test.mjs
+
       - name: Compile polyglot workers
         run: |
           set -euo pipefail
