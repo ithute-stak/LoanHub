@@ -89,8 +89,19 @@ def replay_metadata(
     ):
         raise ReplayNotReady("Capture generation changed during replay")
 
-    # A membership may have been revoked during the read. Fail closed.
+    # The actor, company, or membership may have been revoked after the
+    # initial HTTP authorization. Recheck all three before returning replay.
     from database.models.company_staff import CompanyStaff
+    from database.models.company import LoanCompany
+    from database.models.user import User
+    active_user = db.query(User.id).filter(
+        User.id == context.user.id, User.is_active.is_(True),
+    ).first()
+    active_company = db.query(LoanCompany.id).filter(
+        LoanCompany.id == company_id, LoanCompany.is_active.is_(True),
+    ).first()
+    if active_user is None or active_company is None:
+        raise PermissionError("Replay actor or company became inactive")
     member = db.query(CompanyStaff).filter(
         CompanyStaff.id == context.staff.id,
         CompanyStaff.user_id == context.user.id,

@@ -407,6 +407,53 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     assert resumed["ready"] is True
                     assert resumed["generation"] == str(active.generation)
                     assert resumed["cursor"] >= baseline_cursor
+
+                # Revoke owner membership after the authenticated context
+                # was constructed. No replay may use that stale context.
+                with engine.begin() as con:
+                    con.execute(text("""
+                        UPDATE company_staff SET is_active = false
+                        WHERE id = :staff_id
+                    """), {"staff_id": member.id})
+                with Session(engine) as db:
+                    bind_database_tenant_context(
+                        db, user_id=member_user.id, company_id=company,
+                        role=UserRole.COMPANY_OWNER.value, actor_scope="tenant",
+                    )
+                    with pytest.raises(PermissionError):
+                        replay_metadata(
+                            db, context, after_cursor=baseline_cursor,
+                            generation=active.generation,
+                        )
+                with engine.begin() as con:
+                    con.execute(text("""
+                        UPDATE company_staff SET is_active = true
+                        WHERE id = :staff_id
+                    """), {"staff_id": member.id})
+
+                # A revoked user and an inactive company must also fail
+                # even if a stale HTTP context still contains valid staff.
+                for table, identifier in (("users", member_user.id), ("loan_companies", company)):
+                    with engine.begin() as con:
+                        con.execute(text(f"""
+                            UPDATE {table} SET is_active = false WHERE id = :id
+                        """), {"id": identifier})
+                    try:
+                        with Session(engine) as db:
+                            bind_database_tenant_context(
+                                db, user_id=member_user.id, company_id=company,
+                                role=UserRole.COMPANY_OWNER.value, actor_scope="tenant",
+                            )
+                            with pytest.raises(PermissionError, match="inactive"):
+                                replay_metadata(
+                                    db, context, after_cursor=baseline_cursor,
+                                    generation=active.generation,
+                                )
+                    finally:
+                        with engine.begin() as con:
+                            con.execute(text(f"""
+                                UPDATE {table} SET is_active = true WHERE id = :id
+                            """), {"id": identifier})
             finally:
                 if original_operator_url is None:
                     os.environ.pop("LOANHUB_DC_OPERATOR_DATABASE_URL", None)
