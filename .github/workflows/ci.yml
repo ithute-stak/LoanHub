@@ -316,6 +316,31 @@ jobs:
           PY
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
 
+      - name: Validate isolated issuer Object Lock Compose
+        env:
+          LOANHUB_ISSUER_MINIO_IMAGE: quay.io/minio/minio:ci-placeholder
+          LOANHUB_ISSUER_MC_IMAGE: quay.io/minio/mc:ci-placeholder
+          LOANHUB_ISSUER_STORAGE_ROOT_USER: ci-isolated-issuer
+          LOANHUB_ISSUER_STORAGE_ROOT_PASSWORD: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          # Validate both the default and opt-in setup profile; no deployment.
+          docker compose -f compose.issuer-storage.yml config --quiet
+          docker compose --profile configure -f compose.issuer-storage.yml config --quiet
+          docker compose --profile configure -f compose.issuer-storage.yml config --format json | python -c '
+          import json,sys
+          c=json.load(sys.stdin)
+          assert c["networks"]["issuer_storage"]["internal"] is True
+          store=c["services"]["object-store"]
+          assert not store.get("ports"), "Object Store must not publish a port"
+          setup=c["services"]["configure-locked-bucket"]
+          command=str(setup["command"])
+          assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
+          assert "$((attempt + 1))" in command
+          assert "mc mb --with-lock" in command
+          assert "COMPLIANCE 3650d" in command
+          '
+          
       - name: Verify fully resolved Wacom staging Compose isolation
         env:
           COMPOSE_PROJECT_NAME: loanhub-wacom-stage-ci
