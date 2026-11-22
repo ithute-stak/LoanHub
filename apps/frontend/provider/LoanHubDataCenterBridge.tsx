@@ -176,12 +176,12 @@ export function LoanHubDataCenterBridge() {
                         }
                     }
                     if (reply.next_cursor !== expected - 1 ||
-                        reply.next_cursor > reply.high_watermark) {
+                        reply.next_cursor > reply.high_watermark!) {
                         throw new Error("Replay cursor mismatch");
                     }
                     after = reply.next_cursor;
                     hasMore = Boolean(reply.has_more);
-                    if (hasMore !== (after < reply.high_watermark)) {
+                    if (hasMore !== (after < reply.high_watermark!)) {
                         throw new Error("Replay completeness mismatch");
                     }
                     if (!hasMore) break;
