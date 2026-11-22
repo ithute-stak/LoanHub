@@ -69,3 +69,20 @@ def test_company_owner_cannot_request_another_company_report():
             context=context,
         )
     assert error.value.status_code == 403
+
+
+def test_maximum_end_date_is_rejected_without_database_access():
+    context = SimpleNamespace(
+        is_platform_admin=False,
+        role=UserRole.COMPANY_OWNER,
+        company_id=uuid4(),
+        branch_id=None,
+    )
+    with pytest.raises(HTTPException) as error:
+        daily_issuance_expected_returns(
+            period_start=date(9999, 12, 31),
+            period_end=date(9999, 12, 31),
+            db=ForbiddenQuery(),
+            context=context,
+        )
+    assert error.value.status_code == 400
