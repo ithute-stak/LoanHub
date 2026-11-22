@@ -80,7 +80,7 @@ def test_principal_x_preview_route_requires_assigned_model_and_is_read_only():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert "read_loan_payment_model" in calls
-    assert "quote_principal_x_for_loan" in calls
+    assert "quote_principal_x_for_loan_with_revision" in calls
     assert "require_tenant_roles" in calls
     assert "_tenant_loan_or_404" in calls
     assert "initiate_early_settlement_payment" not in calls
