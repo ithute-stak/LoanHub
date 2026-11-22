@@ -353,3 +353,75 @@ def test_multipage_pdf_freezes_explicit_right_logo_asset_bytes():
         call.args[1] == b"frozen-selected-logo"
         for call in draw_image.call_args_list
     )
+
+
+def test_letter_render_candidate_captures_actual_header_branding_and_pdf_bytes():
+    from hashlib import sha256
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    document.include_brand_header = True
+    document.brand_logo_asset_id = uuid4()
+    selected_asset = SimpleNamespace(id=document.brand_logo_asset_id)
+    logos = SimpleNamespace(left_logo=b"left-logo-bytes", right_logo=b"fallback-right")
+    db = DummyDb()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "0"}), patch(
+        "services.workspace_document_service.resolved_brand_asset",
+        return_value=selected_asset,
+    ), patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve, patch(
+        "services.workspace_document_service.asset_image_bytes",
+        return_value=b"selected-right-logo",
+    ) as selected, patch(
+        "services.workspace_document_service._draw_fitted_canvas_image",
+    ):
+        candidate = render_letter_pdf_with_header_evidence(
+            db=db, document=document, company=company,
+            authenticated_tenant_id=document.company_id,
+        )
+    assert candidate.pdf_bytes.startswith(b"%PDF-")
+    assert candidate.pdf_sha256 == sha256(candidate.pdf_bytes).hexdigest()
+    assert candidate.header_branding.tenant_id == document.company_id
+    assert candidate.header_branding.left_logo_sha256 == sha256(b"left-logo-bytes").hexdigest()
+    assert candidate.header_branding.right_logo_sha256 == sha256(b"selected-right-logo").hexdigest()
+    resolve.assert_called_once_with(db, company)
+    selected.assert_called_once_with(selected_asset)
+
+
+def test_letter_render_candidate_rejects_preview_stamp_mode():
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}), patch(
+        "services.document_studio_letter_render_evidence.export_pdf",
+    ) as renderer, pytest.raises(PermissionError, match="Preview-marked"):
+        render_letter_pdf_with_header_evidence(
+            db=DummyDb(), document=document, company=company,
+            authenticated_tenant_id=document.company_id,
+        )
+    renderer.assert_not_called()
+
+
+def test_letter_render_candidate_rejects_cross_tenant_before_renderer():
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    with patch(
+        "services.document_studio_letter_render_evidence.export_pdf",
+    ) as renderer, pytest.raises(PermissionError, match="tenant mismatch"):
+        render_letter_pdf_with_header_evidence(
+            db=DummyDb(), document=document, company=company,
+            authenticated_tenant_id=uuid4(),
+        )
+    renderer.assert_not_called()
