@@ -1,0 +1,54 @@
+# Standalone, opt-in OFFLINE storage for official-document acceptance tests.
+# Do not run as a production deployment or expose MinIO publicly.
+# COMPOSE_PROJECT_NAME=loanhub-issuer-storage; separate Docker network/volume.
+name: loanhub-issuer-storage
+
+services:
+  object-store:
+    image: ${LOANHUB_ISSUER_MINIO_IMAGE:?Provide a reviewed version-pinned MinIO image}
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${LOANHUB_ISSUER_STORAGE_ROOT_USER:?Required}
+      MINIO_ROOT_PASSWORD: ${LOANHUB_ISSUER_STORAGE_ROOT_PASSWORD:?Required}
+    volumes:
+      - immutable_issuer_objects:/data
+    expose:
+      - "9000"
+    networks:
+      - issuer_storage
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+
+  # Run explicitly as a one-shot job; never as a dependency of LoanHub.
+  configure-locked-bucket:
+    profiles: ["configure"]
+    image: ${LOANHUB_ISSUER_MC_IMAGE:?Provide a reviewed version-pinned MinIO client image}
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      set -eu
+      mc alias set issuer http://object-store:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+      mc mb --with-lock issuer/official-loanhub-pdfs
+      mc retention set --default COMPLIANCE 3650d issuer/official-loanhub-pdfs
+      mc version info issuer/official-loanhub-pdfs
+      mc retention info --default issuer/official-loanhub-pdfs
+    environment:
+      MINIO_ROOT_USER: ${LOANHUB_ISSUER_STORAGE_ROOT_USER:?Required}
+      MINIO_ROOT_PASSWORD: ${LOANHUB_ISSUER_STORAGE_ROOT_PASSWORD:?Required}
+    depends_on:
+      object-store:
+        condition: service_healthy
+    networks:
+      - issuer_storage
+    restart: "no"
+
+networks:
+  issuer_storage:
+    internal: true
+
+volumes:
+  immutable_issuer_objects:
