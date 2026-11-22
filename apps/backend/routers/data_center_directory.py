@@ -8,7 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from core.access_control import TenantContext, get_tenant_context
+from core.access_control import LENDING_ROLES, TenantContext, get_tenant_context
 from database.models.branch import CompanyBranch
 from database.models.loan_product import LoanProduct
 from database.models.company_client import CompanyBorrowerAccount
@@ -151,6 +151,10 @@ def client_directory(
     """Minimal branch-authorized client-account directory, no PII."""
     response.headers["Cache-Control"] = "private, no-store"
     response.headers["Pragma"] = "no-cache"
+    # Same lending-role permission as GET /company-clients. The minimal
+    # projection still contains sensitive borrower-to-company relationships.
+    if context.role not in LENDING_ROLES:
+        raise HTTPException(status_code=403, detail="Client directory access denied")
     try:
         grant = verified_branch_grant(context)
     except PermissionError:
