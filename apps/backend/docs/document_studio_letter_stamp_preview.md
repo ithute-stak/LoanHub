@@ -201,3 +201,23 @@ a hash of resolved bytes does not on its own prove pixels were drawn.
 The trusted issuer must separately validate those dependencies, retain
 source/identity locks through COMMIT and bind the exact final PDF to
 immutable storage and an authorized audit record.
+
+## Transaction-bound rendered-letter evidence (non-routed)
+
+The experimental `render_authorized_letter_evidence` adapter now requires
+an `AuthorizedLetterStamp` preflight with a locked source identity and
+compares the persisted letter's tenant, ID, version, HTML SHA-256 and
+document-controlled rendering settings SHA-256. It then samples both the
+SQLAlchemy root transaction and real PostgreSQL backend PID/transaction ID,
+renders the PDF with the *same operation's* resolved header-branding evidence,
+validates the exact PDF bytes hash, and rechecks transaction identity and
+letter inputs before returning a frozen candidate.
+
+The adapter is **not** a public route or an official stamp issuer. Its caller
+must be a separately provisioned trusted issuer maintaining locks through
+approval recheck, final signing, immutable object storage, authoritative audit
+registration and COMMIT. A constructed Python approval object is not proof of
+database approval. Rendering uses existing Document Studio behavior, but
+cover artwork, font installation, external resources and exact final
+stamped/issued bytes still require independent binding. No production
+activation is authorized by this evidence adapter.
