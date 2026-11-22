@@ -47,3 +47,24 @@ def test_missing_opening_rejected():
 def test_invalid_debits_rejected(bad):
     with pytest.raises(FundingRejected):
         require_available_funds(opening_confirmed=True, available="5000", requested=bad)
+
+
+def test_debit_requires_tenant_branch_and_channel():
+    from services.branch_funding_policy import assert_branch_channel_debit
+
+    for company, branch, channel in [("", "b", "cash"), ("c", "", "cash"), ("c", "b", "")]:
+        with pytest.raises(FundingRejected, match="required"):
+            assert_branch_channel_debit(
+                company_id=company, branch_id=branch, channel=channel,
+                opening_confirmed=True, available="100", debit="10",
+            )
+
+
+def test_channel_debit_honors_reservations():
+    from services.branch_funding_policy import assert_branch_channel_debit
+
+    with pytest.raises(FundingRejected, match="Insufficient"):
+        assert_branch_channel_debit(
+            company_id="c", branch_id="b", channel="cash",
+            opening_confirmed=True, available="100", reserved="90", debit="11",
+        )
