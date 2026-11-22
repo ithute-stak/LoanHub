@@ -58,6 +58,14 @@ def upgrade():
                 AND current_setting('loanhub.actor_scope', true) = 'tenant'
             )
         """)
+    op.execute("""
+        CREATE POLICY loanhub_dc_capture_management_read ON public.loanhub_dc_capture
+        FOR SELECT USING (
+            company_id::text = current_setting('loanhub.company_id', true)
+            AND current_setting('loanhub.actor_scope', true) = 'tenant'
+            AND current_setting('loanhub.role', true) IN ('company_owner', 'company_admin')
+        )
+    """)
 
     op.execute("""
         CREATE FUNCTION public.loanhub_dc_append_change(
@@ -192,8 +200,8 @@ def upgrade():
             IF to_regrole('loanhub_app') IS NOT NULL THEN
                 REVOKE ALL ON TABLE public.loanhub_dc_capture,
                     public.loanhub_dc_clock, public.loanhub_dc_event FROM loanhub_app;
-                GRANT SELECT ON TABLE public.loanhub_dc_clock,
-                    public.loanhub_dc_event TO loanhub_app;
+                GRANT SELECT ON TABLE public.loanhub_dc_capture,
+                    public.loanhub_dc_clock, public.loanhub_dc_event TO loanhub_app;
             END IF;
         END;
         $body$
