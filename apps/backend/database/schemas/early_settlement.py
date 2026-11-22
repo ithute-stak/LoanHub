@@ -87,6 +87,7 @@ class PrincipalXSettlementPreviewRead(BaseModel):
     loan_id: UUID
     payment_model: str
     settlement_date: date
+    snapshot_revision: str
     period: int
     uncapped_due: Decimal
     settlement_amount: Decimal
