@@ -1,12 +1,12 @@
 # LoanHub Redux Data Center — disabled repository staging
 
-This commit stages a memory-only Redux boundary and provider entrypoint; **it does not install or activate the offline synchronization engine**.
+The repository contains a memory-only Redux boundary and a guarded browser bridge. The bridge is **off by default**, requires an explicit build-time pilot flag, and refuses installation unless the server supplies an authenticated complete six-directory snapshot with a durable generation and replay cursor. This document is not authorization to activate the pilot.
 
 ## Invariants
 - The existing authenticated WebSocket, DB_EVENT invalidation, notifications, HTTP cache, loans, payments and financial operations are unchanged.
-- The new bridge is hardcoded disabled.
-- The new slice stores no client records, financial details, tokens or persisted data; there is no record-bearing install action.
-- No database migrations or event-outbox endpoints are installed by this change.
+- The bridge is disabled by default. Its opt-in requires an explicit `NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED=true` build and a server-enabled, authorized capture generation.
+- The slice is memory-only and accepts only server-authorized allowlisted directory fields. No access tokens, bank details, salary figures, loan amounts or financial calculations are persisted.
+- Schema/capture and replay PRs are staged separately. Capture defaults off for every company; the bridge cannot become ready until a journal-backed snapshot contract is certified.
 
 ## Before enabling
 Integrate and review the separately developed offline projection engine, server-authorized snapshot/replay endpoints, transactional PostgreSQL outbox, Redis wake-up transport, cross-branch permission checks, and client-side session lifecycle. Then require:

@@ -15,3 +15,33 @@ def test_late_request_cannot_restore_invalidated_client_cache():
     assert "state.revision += 1" in slice_
     assert "cacheScopeInvalidated(" in slice_
     assert "cacheTagsInvalidated(" in slice_
+
+
+def test_concurrent_get_uses_same_revision_key_for_lookup_and_storage():
+    adapter = (ROOT / "lib" / "http-cache.ts").read_text()
+    assert "inflightRequests.get(inflightKey)" in adapter
+    assert "inflightRequests.set(inflightKey, request)" in adapter
+    assert "inflightRequests.set(identity.key, request)" not in adapter
+
+
+def test_tag_invalidation_blocks_late_inflight_response():
+    source = (ROOT / "store" / "features" / "slices" / "httpCacheSlice.ts").read_text()
+    tag_handler = source.split("cacheTagsInvalidated(", 1)[1].split("cacheCleared(", 1)[0]
+    assert "state.revision += 1" in tag_handler
+
+
+def test_cache_key_is_branch_qualified_and_old_scope_invalidations_still_work():
+    adapter = (ROOT / "lib" / "http-cache.ts").read_text()
+    slice_ = (ROOT / "store" / "features" / "slices" / "httpCacheSlice.ts").read_text()
+    assert "state.auth.user?.memberships ?? []" in adapter
+    assert "membership.company_id === companyId" in adapter
+    assert "membership.role === role" in adapter
+    assert "membership.is_active" in adapter
+    assert "const branchScope = matchingMemberships.length === 1" in adapter
+    assert 'entry.scope.startsWith(`${action.payload.scope}:`)' in slice_
+
+
+def test_global_data_provider_reloads_when_active_membership_branch_changes():
+    provider = (ROOT / "provider" / "appDataProvider.tsx").read_text()
+    assert ':${activeMembership?.branch_id ?? "company-wide"}' in provider
+    assert "activeMembership?.role, activeMembership?.branch_id" in provider

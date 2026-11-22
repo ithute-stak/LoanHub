@@ -34,8 +34,8 @@ type ConnectionLost = { type: 'dataCenter/connectionLost'; payload: { sessionId:
 type Action = ProjectionAction | ClearAction | ConnectionLost | { type: string; payload?: unknown };
 const KINDS: readonly DirectoryKind[] = ['clients', 'loans', 'payments', 'branches', 'staff', 'loanProducts'];
 const SAFE_FIELDS: Readonly<Record<DirectoryKind, readonly string[]>> = {
-    clients: ['id','company_id','branch_id','account_reference','full_name','status','updated_at'],
-    loans: ['id','company_id','branch_id','loan_reference','status','updated_at'],
+    clients: ['id','company_id','branch_id','borrower_id','account_reference','full_name','status','updated_at'],
+    loans: ['id','company_id','branch_id','borrower_id','loan_reference','status','updated_at'],
     payments: ['id','company_id','branch_id','loan_id','status','updated_at'],
     branches: ['id','company_id','branch_id','name','code','status','updated_at'],
     staff: ['id','company_id','branch_id','display_name','role','status','updated_at'],

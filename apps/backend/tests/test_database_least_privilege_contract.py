@@ -64,3 +64,22 @@ def test_env_templates_require_separate_runtime_secret() -> None:
         assert "DB_RUNTIME_PASSWORD=" in source
     assert "DB_RUNTIME_USER: loanhub_app" in ci
     assert "DB_RUNTIME_PASSWORD: ci-only-runtime-postgres-password" in ci
+
+
+def test_data_center_protected_tables_are_restricted_after_broad_grants() -> None:
+    script = _read("scripts/ensure_database_runtime_role.sh")
+    broad = script.index("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES")
+    defaults = script.index("ALTER DEFAULT PRIVILEGES")
+    restricted = script.index("CRITICAL: Broad legacy DML grants above")
+    assert broad < defaults < restricted
+    assert "REVOKE ALL ON TABLE public.%I FROM %I" in script
+    assert "GRANT SELECT ON TABLE public.%I TO %I" in script
+    for table in (
+        "loanhub_dc_capture",
+        "loanhub_dc_clock",
+        "loanhub_dc_event",
+        "loanhub_dc_pilot_audit",
+    ):
+        assert table in script
+    assert "data_center_runtime_permission_guard" in script
+    assert "has_table_privilege" in script

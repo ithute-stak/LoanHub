@@ -740,7 +740,27 @@ def list_company_clients(
                 )
             )
 
-    accounts = query.order_by(CompanyBorrowerAccount.created_at.desc()).all()
+    # Summary-dependent filters must inspect every candidate to preserve
+    # existing search semantics. Without such filters, bound the SQL query
+    # before constructing potentially expensive portfolio summaries.
+    needs_summary_filter = any((
+        loan_status is not None,
+        employment_status is not None,
+        bool(str(employer or "").strip()),
+        opening_fee_status is not None,
+        has_bank_account is not None,
+        has_loan is not None,
+        bool(str(bank_last4 or "").strip()),
+        overdue_only,
+        due_within_days is not None,
+        salary_due_within_days is not None,
+    ))
+    ordered_query = query.order_by(CompanyBorrowerAccount.created_at.desc())
+    accounts = (
+        ordered_query.all()
+        if needs_summary_filter
+        else ordered_query.limit(limit).all()
+    )
     summaries, _, _ = _directory_summaries(db, context=context, accounts=accounts)
     today = date.today()
     employer_filter = str(employer or "").strip().casefold()

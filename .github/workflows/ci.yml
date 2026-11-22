@@ -110,6 +110,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir apps/frontend install --frozen-lockfile
 
+      - name: Certify Data Center Redux scoped recovery
+        run: |
+          set -euo pipefail
+          cd apps/frontend
+          node --test tests/data-center-reducer.test.mjs
+
       - name: Compile polyglot workers
         run: |
           set -euo pipefail
@@ -183,6 +189,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -q tests/test_rollover_alembic_migrated_schema_postgres.py
+          python -m pytest -q tests/test_data_center_transactional_journal_postgres.py
+          python -m pytest -q tests/test_data_center_pilot_control.py
 
       - name: Verify early-settlement cent retention against disposable PostgreSQL
         working-directory: apps/backend
