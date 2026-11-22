@@ -154,3 +154,17 @@ images does not prove that the actual PDF renderer used them; neither
 does a snapshot certify company logo approval. Do not expose this as
 official issuance without source-and-asset provenance, issuer authorization
 and exact final PDF retention checks.
+
+## Multi-page PDF logo consistency
+
+The normal Document Studio PDF exporter now resolves the company's
+`BrandingLogos` once per export and reuses those exact bytes in all page
+header callbacks, instead of re-querying branding for every page. An explicit
+document-level right logo still takes precedence as before. This prevents
+different pages of one export from independently picking up logo changes.
+The exported DOCX path and existing logo selection priorities are unchanged.
+
+This is a step toward reliable renderer provenance, **not** proof that an
+official stamp has been approved or that immutable final issuance is complete.
+The eventual issuer must link the actual resolved logo-byte fingerprints,
+letter source, PDF bytes, approved stamp and object-lock version atomically.
