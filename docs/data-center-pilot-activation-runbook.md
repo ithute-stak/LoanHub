@@ -31,11 +31,29 @@ Use an isolated, disposable tenant and verified company owner/admin account. Ver
 - Missing event, invalid generation, stale cursor, 401/403, network outage, delayed response, login/logout, branch switch, tab resume, WebSocket reconnect and replay overflow fail closed.
 - The existing loans/payments/settlements/calculator remain authoritative. No Redux directory row ever supplies a financial balance or authorizes a payment.
 
-## 4. Controlled opt-in requires a separate approval and change procedure
+## 4. Privileged and audited pilot transitions (NOT automatically enabled)
+
+Revision `dc20261122002` creates an **operator-only** `loanhub_dc_pilot_audit` log. The migration does not change any existing company capture configuration. Its new control is a trusted terminal CLI, never an HTTP endpoint or a user-facing application feature.
+
+The normal `loanhub_app` database role is **forbidden** as an operator. A separate, explicitly approved database-operator connection must be provided using `LOANHUB_DC_OPERATOR_DATABASE_URL` (through a private, non-logged secret injection, never pasted into chat, command history or tickets). This account requires adequate privilege to select and update capture state and insert the audit row. Never substitute the runtime credentials.
+
+An operator may use a **dry run** after an approved change reference and named operator identity have been issued:
+
+```bash
+python -m scripts.data_center_pilot_control \\
+  --action activate --company-id '<approved-company-uuid>' \\
+  --operator '<assigned-operator-id>' --approval-ref '<approved-change-id>'
+```
+
+Dry run is the default and does not change the database. Activation or emergency disabling requires a **separate explicit change authorization** plus both `--apply` and `--confirm-company <exact-company-uuid>`. These are intentionally not shown as a copy-paste live command. Activation is rejected for inactive companies, oversized resource directories, missing triggers, inconsistent journal cursors and already-enabled capture. An approved **disable** remains available despite a subsequently corrupted journal, missing trigger or oversized dataset; it records the transition and generation in the same PostgreSQL transaction as the configuration update.
+
+The operator CLI logs only scoped counts and the generation UUID, **not** customer PII or payment amounts. A new generation is generated on enabling a previously disabled company. Do not activate in production until an isolated-tenant rehearsal, role controls and baseline/replay testing are independently signed off.
+
+## 5. Controlled opt-in requires a separate approval and change procedure
 
 Do not switch `loanhub_dc_capture.enabled` for any production company in this runbook. Do not rebuild frontend with `NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED=true` before the above tests and a company-specific approval. Capture is an opt-in database operation and must be paired with an audited, reversible release plan. Only a separately reviewed privileged operation may change it, and the browser must receive a new, consistent snapshot after opt-in.
 
-## 5. Rollback and stop conditions
+## 6. Rollback and stop conditions
 
 - If any snapshot is incomplete, journal gap appears, permissions fail, data becomes stale or financial response changes unexpectedly, stop the pilot. Keep the legacy LoanHub flows authoritative.
 - The frontend remains off unless explicitly built with the opt-in flag; remove it for a clean rollback.

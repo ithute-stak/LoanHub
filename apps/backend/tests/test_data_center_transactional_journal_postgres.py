@@ -277,6 +277,62 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     "action": "updated",
                 }]
                 assert replay["payloads_included"] is False
+
+            # Exercise the actual privileged operator CLI on this throwaway
+            # PostgreSQL database, never a production database.
+            from argparse import Namespace
+            from scripts.data_center_pilot_control import run as pilot_control
+            original_operator_url = os.environ.get("LOANHUB_DC_OPERATOR_DATABASE_URL")
+            os.environ["LOANHUB_DC_OPERATOR_DATABASE_URL"] = database_url.render_as_string(
+                hide_password=False
+            )
+            try:
+                def command(action, *, apply=False, confirm=None):
+                    return Namespace(
+                        action=action,
+                        company_id=company,
+                        confirm_company=confirm,
+                        operator="ci-pilot-operator",
+                        approval_ref="CI-DISPOSABLE-ONLY",
+                        apply=apply,
+                    )
+                assert pilot_control(command("disable")) == 0
+                with engine.connect() as con:
+                    assert con.execute(text("""
+                        SELECT enabled FROM loanhub_dc_capture WHERE company_id = :id
+                    """), {"id": company}).scalar_one() is True
+                    assert con.execute(text("""
+                        SELECT count(*) FROM loanhub_dc_pilot_audit
+                        WHERE company_id = :id
+                    """), {"id": company}).scalar_one() == 0
+
+                assert pilot_control(command("disable", apply=True, confirm=company)) == 0
+                with engine.connect() as con:
+                    inactive_generation = con.execute(text("""
+                        SELECT generation FROM loanhub_dc_capture WHERE company_id = :id
+                    """), {"id": company}).scalar_one()
+                    assert con.execute(text("""
+                        SELECT enabled FROM loanhub_dc_capture WHERE company_id = :id
+                    """), {"id": company}).scalar_one() is False
+
+                assert pilot_control(command("activate")) == 0
+                assert pilot_control(command("activate", apply=True, confirm=company)) == 0
+                with engine.connect() as con:
+                    active = con.execute(text("""
+                        SELECT enabled, generation FROM loanhub_dc_capture
+                        WHERE company_id = :id
+                    """), {"id": company}).one()
+                    assert active.enabled is True
+                    assert active.generation != inactive_generation
+                    assert con.execute(text("""
+                        SELECT array_agg(action ORDER BY id)
+                        FROM loanhub_dc_pilot_audit WHERE company_id = :id
+                    """), {"id": company}).scalar_one() == ["disable", "activate"]
+            finally:
+                if original_operator_url is None:
+                    os.environ.pop("LOANHUB_DC_OPERATOR_DATABASE_URL", None)
+                else:
+                    os.environ["LOANHUB_DC_OPERATOR_DATABASE_URL"] = original_operator_url
         finally:
             engine.dispose()
     finally:
