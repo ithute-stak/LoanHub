@@ -118,3 +118,21 @@ stamping/signing pipeline must retain the exact final candidate bytes, then
 bind the digest and Object Lock VersionId to the issuer/audit transaction,
 recheck authorization until COMMIT, and make public verification work.
 A bare candidate digest must never be treated as final issuance.
+
+## Document-controlled rendering snapshot
+
+The source-lock and candidate-evidence path now also bind a canonical SHA-256
+snapshot of the stored letter's PDF-relevant document settings, rather than
+only its HTML. The comparison covers page size/orientation, margins, title,
+reference, text, fonts, logo selection, header/footer flags, cover-page
+configuration, address blocks and source version. Unknown runtime objects in
+the snapshot fail closed. The trusted issuer must retain the persisted row
+lock through issuance commit.
+
+**Scope limitation:** This is a hash of document-controlled inputs, not the
+source PDF bytes and not a cryptographic attestation of the rendering engine,
+external company branding assets, dynamic timestamps or font deployment.
+The eventual trusted renderer must freeze or independently bind those
+dependencies, then link the actual final stored PDF hash and immutable
+object version to the issuance record. This remains an unexposed draft
+capability and must not be enabled for customer-facing letters.
