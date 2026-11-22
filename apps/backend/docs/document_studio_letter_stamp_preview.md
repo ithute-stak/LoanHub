@@ -136,3 +136,21 @@ The eventual trusted renderer must freeze or independently bind those
 dependencies, then link the actual final stored PDF hash and immutable
 object version to the issuance record. This remains an unexposed draft
 capability and must not be enabled for customer-facing letters.
+
+## Legal identity and logo-byte evidence
+
+The new pure `capture_letter_branding_evidence` helper records exact SHA-256
+fingerprints for the two resolved logo byte streams and canonical company
+identity fields, tied to the document tenant. The letter PDF candidate
+binding now requires a tenant-matching branding evidence digest. Regression
+tests prove that changing the logo bytes, legal name, registration, address
+or other company contact details changes that fingerprint.
+
+**Critical remaining boundary:** this helper takes already resolved bytes.
+It must be connected to one trusted, frozen rendering operation that uses
+exactly those bytes on every page and ties its output to an immutable
+version in the final issuance transaction. Simply hashing two supplied
+images does not prove that the actual PDF renderer used them; neither
+does a snapshot certify company logo approval. Do not expose this as
+official issuance without source-and-asset provenance, issuer authorization
+and exact final PDF retention checks.
