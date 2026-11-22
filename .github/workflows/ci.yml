@@ -115,6 +115,7 @@ jobs:
           set -euo pipefail
           cd apps/frontend
           node --test tests/data-center-reducer.test.mjs
+          node --test tests/data-center-replay-validation.test.mjs
 
       - name: Compile polyglot workers
         run: |
