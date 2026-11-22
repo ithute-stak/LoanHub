@@ -7,6 +7,7 @@ object registration and audit record.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from uuid import UUID
 
 from services.document_issuance_integrity import pdf_fingerprint
@@ -40,6 +41,8 @@ def render_letter_pdf_with_header_evidence(
             or getattr(document, "status", None) != "draft"
             or getattr(document, "finalized_at", None) is not None):
         raise PermissionError("Official evidence requires a draft company letter")
+    if os.getenv("LOANHUB_LETTER_STAMP_PREVIEW_ENABLED") == "1":
+        raise PermissionError("Preview-marked PDFs cannot be official issuance candidates")
     branding = []
     pdf = export_pdf(
         db, document, company, _branding_evidence_out=branding,
