@@ -334,7 +334,8 @@ jobs:
           store=c["services"]["object-store"]
           assert not store.get("ports"), "Object Store must not publish a port"
           setup=c["services"]["configure-locked-bucket"]
-          command=str(setup["command"])
+          raw_command=setup["command"]
+          command=" ".join(raw_command) if isinstance(raw_command,list) else str(raw_command)
           assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
           assert "attempt" in command and "sleep 2" in command
           assert "mc mb --with-lock" in command
