@@ -1098,6 +1098,7 @@ def _draw_workspace_page(
     company: LoanCompany | None,
     brand_asset: WorkspaceDocumentAsset | None,
     branding_logos=None,
+    resolved_right_logo=None,
 ) -> None:
     page_width, page_height = _workspace_page_size(document)
     is_cover = bool(getattr(document, "cover_page_enabled", False) and doc.page == 1)
@@ -1115,8 +1116,10 @@ def _draw_workspace_page(
             canvas.setFont("Helvetica-Bold", 13)
             canvas.drawString(18 * mm, page_height - 16 * mm, settings.PRODUCT_NAME)
 
-        right_logo = _header_right_logo_bytes(
-            db, document, company, brand_asset, branding_logos=branding_logos,
+        # A resolved explicit or company logo is held constant for every page.
+        right_logo = (
+            resolved_right_logo if branding_logos is not None
+            else _header_right_logo_bytes(db, document, company, brand_asset)
         )
         if right_logo:
             _draw_fitted_canvas_image(canvas, right_logo, page_width - 62 * mm, top_y, 44 * mm, 12 * mm, align="right")
@@ -1179,6 +1182,14 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
         if getattr(document, "include_brand_header", True)
         else None
     )
+    # The selected right logo can come from an explicit workspace asset;
+    # resolve its decrypted bytes once too, not once per page.
+    resolved_right_logo = (
+        _header_right_logo_bytes(
+            db, document, company, brand_asset, branding_logos=branding_logos,
+        )
+        if branding_logos is not None else None
+    )
     document_id = getattr(document, "id", None)
     signatures = active_signatures(db, document_id) if document_id is not None else {}
 
@@ -1208,6 +1219,7 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
             company=company,
             brand_asset=brand_asset,
             branding_logos=branding_logos,
+            resolved_right_logo=resolved_right_logo,
         )
 
     document_pdf.build(story, onFirstPage=draw, onLaterPages=draw)
