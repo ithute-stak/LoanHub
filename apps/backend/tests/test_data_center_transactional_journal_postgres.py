@@ -278,6 +278,47 @@ def test_journal_capture_is_off_until_explicitly_approved():
                 }]
                 assert replay["payloads_included"] is False
 
+                # Actual branch manager membership must be denied both
+                # full-company snapshot and metadata replay, even while
+                # capture is enabled for the owner's company.
+                manager_user = User(
+                    phone="590" + uuid4().hex[:9],
+                    password_hash="not-a-login",
+                    role=UserRole.BRANCH_MANAGER,
+                    is_active=True,
+                )
+                db.add(manager_user)
+                db.flush()
+                branch_manager = CompanyStaff(
+                    user_id=manager_user.id,
+                    company_id=company,
+                    branch_id=branch_id,
+                    role=UserRole.BRANCH_MANAGER,
+                    is_active=True,
+                )
+                db.add(branch_manager)
+                db.commit()
+                branch_context = TenantContext(
+                    user=manager_user,
+                    staff=branch_manager,
+                    company=owner_company,
+                    company_id=company,
+                    branch_id=branch_id,
+                    is_platform_admin=False,
+                )
+                with pytest.raises(PermissionError, match="management"):
+                    preview_snapshot(branch_context, db)
+                bind_database_tenant_context(
+                    db, user_id=manager_user.id, company_id=company,
+                    branch_id=branch_id, role=UserRole.BRANCH_MANAGER.value,
+                    actor_scope="tenant",
+                )
+                with pytest.raises(PermissionError, match="management"):
+                    replay_metadata(
+                        db, branch_context, after_cursor=baseline_cursor,
+                        generation=UUID(generation),
+                    )
+
             # Exercise the actual privileged operator CLI on this throwaway
             # PostgreSQL database, never a production database.
             from argparse import Namespace
@@ -315,6 +356,25 @@ def test_journal_capture_is_off_until_explicitly_approved():
                         SELECT enabled FROM loanhub_dc_capture WHERE company_id = :id
                     """), {"id": company}).scalar_one() is False
 
+                # Revoking capture must instantly revoke both server
+                # readiness and the replay contract for existing clients.
+                from services.data_center_replay import ReplayNotReady
+                with Session(engine) as db:
+                    disabled_snapshot = preview_snapshot(context, db)
+                    assert disabled_snapshot["ready"] is False
+                    assert disabled_snapshot["replay_supported"] is False
+                    assert disabled_snapshot["buckets"] == {}
+                    bind_database_tenant_context(
+                        db, user_id=member_user.id, company_id=company,
+                        role=UserRole.COMPANY_OWNER.value, actor_scope="tenant",
+                    )
+                    with pytest.raises(ReplayNotReady, match="Capture disabled"):
+                        replay_metadata(
+                            db, context, after_cursor=baseline_cursor,
+                            generation=UUID(generation),
+                        )
+                    db.rollback()
+
                 assert pilot_control(command("activate")) == 0
                 assert pilot_control(command("activate", apply=True, confirm=company)) == 0
                 with engine.connect() as con:
@@ -324,10 +384,29 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     """), {"id": company}).one()
                     assert active.enabled is True
                     assert active.generation != inactive_generation
+                    assert active.generation != UUID(generation)
                     assert con.execute(text("""
                         SELECT array_agg(action ORDER BY id)
                         FROM loanhub_dc_pilot_audit WHERE company_id = :id
                     """), {"id": company}).scalar_one() == ["disable", "activate"]
+
+                # Old-generation clients must not replay after an authorized
+                # stop/restart; a new consistent snapshot is mandatory.
+                with Session(engine) as db:
+                    bind_database_tenant_context(
+                        db, user_id=member_user.id, company_id=company,
+                        role=UserRole.COMPANY_OWNER.value, actor_scope="tenant",
+                    )
+                    with pytest.raises(ReplayNotReady, match="generation changed"):
+                        replay_metadata(
+                            db, context, after_cursor=baseline_cursor,
+                            generation=UUID(generation),
+                        )
+                    db.rollback()
+                    resumed = preview_snapshot(context, db)
+                    assert resumed["ready"] is True
+                    assert resumed["generation"] == str(active.generation)
+                    assert resumed["cursor"] >= baseline_cursor
             finally:
                 if original_operator_url is None:
                     os.environ.pop("LOANHUB_DC_OPERATOR_DATABASE_URL", None)
