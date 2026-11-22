@@ -1075,11 +1075,13 @@ def _header_right_logo_bytes(
     document: WorkspaceDocument,
     company: LoanCompany | None,
     brand_asset: WorkspaceDocumentAsset | None,
+    *,
+    branding_logos=None,
 ) -> bytes | None:
     # A logo chosen for this document is explicit and takes precedence.
     if document.brand_logo_asset_id and brand_asset:
         return asset_image_bytes(brand_asset)
-    logos = get_company_branding_logos(db, company)
+    logos = branding_logos if branding_logos is not None else get_company_branding_logos(db, company)
     if logos.right_logo:
         return logos.right_logo
     if brand_asset:
@@ -1095,6 +1097,7 @@ def _draw_workspace_page(
     document: WorkspaceDocument,
     company: LoanCompany | None,
     brand_asset: WorkspaceDocumentAsset | None,
+    branding_logos=None,
 ) -> None:
     page_width, page_height = _workspace_page_size(document)
     is_cover = bool(getattr(document, "cover_page_enabled", False) and doc.page == 1)
@@ -1103,7 +1106,7 @@ def _draw_workspace_page(
     canvas.saveState()
 
     if not is_cover and getattr(document, "include_brand_header", True):
-        logos = get_company_branding_logos(db, company)
+        logos = branding_logos if branding_logos is not None else get_company_branding_logos(db, company)
         top_y = page_height - 23 * mm
         if logos.left_logo:
             _draw_fitted_canvas_image(canvas, logos.left_logo, 18 * mm, top_y, 38 * mm, 12 * mm, align="left")
@@ -1112,7 +1115,9 @@ def _draw_workspace_page(
             canvas.setFont("Helvetica-Bold", 13)
             canvas.drawString(18 * mm, page_height - 16 * mm, settings.PRODUCT_NAME)
 
-        right_logo = _header_right_logo_bytes(db, document, company, brand_asset)
+        right_logo = _header_right_logo_bytes(
+            db, document, company, brand_asset, branding_logos=branding_logos,
+        )
         if right_logo:
             _draw_fitted_canvas_image(canvas, right_logo, page_width - 62 * mm, top_y, 44 * mm, 12 * mm, align="right")
 
@@ -1167,6 +1172,13 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
         creator=f"{settings.PRODUCT_NAME} by {settings.DEVELOPER_NAME}",
     )
     brand_asset = resolved_brand_asset(db, document)
+    # Freeze actual company logo bytes for all pages of this PDF export;
+    # do not refetch different image versions inside per-page callbacks.
+    branding_logos = (
+        get_company_branding_logos(db, company)
+        if getattr(document, "include_brand_header", True)
+        else None
+    )
     document_id = getattr(document, "id", None)
     signatures = active_signatures(db, document_id) if document_id is not None else {}
 
@@ -1195,6 +1207,7 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
             document=document,
             company=company,
             brand_asset=brand_asset,
+            branding_logos=branding_logos,
         )
 
     document_pdf.build(story, onFirstPage=draw, onLaterPages=draw)
