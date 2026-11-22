@@ -38,3 +38,9 @@ def test_issuer_bootstrap_fails_closed_without_tenant_rls_on_all_source_tables()
     assert "c.relrowsecurity IS NOT TRUE" in ISSUER
     for table in ("users", "loan_companies", "company_staff", "workspace_documents"):
         assert f"'{table}'" in ISSUER
+
+
+def test_runtime_issuer_restrictions_do_not_remove_existing_data_center_guards():
+    assert "data_center_runtime_permission_guard" in RUNTIME
+    assert "loanhub_dc_pilot_audit" in RUNTIME
+    assert "REVOKE ALL ON TABLE public.%I" in RUNTIME
