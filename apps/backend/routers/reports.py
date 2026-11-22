@@ -291,7 +291,8 @@ def export_daily_issuance_xlsx(
     sheet.append(["LoanHub | Daily Issuance and Expected Returns"])
     sheet.append(["Period", report["period_start"], report["period_end"]])
     sheet.append(["Basis", report["basis"]])
-    sheet.append(["Note", "Principal is not necessarily cash disbursed; expected returns are not guaranteed collections."])\n    sheet.append(["Date basis", report.get("date_basis", "disbursed_at_database_timezone")])
+    sheet.append(["Note", "Principal is not necessarily cash disbursed; expected returns are not guaranteed collections."])
+    sheet.append(["Date basis", report.get("date_basis", "disbursed_at_database_timezone")])
     sheet.append([])
     sheet.append(["Date", "Loans issued", "Principal (M)", "Expected return (M)", "Above principal (M)"])
     for item in report["daily"]:
