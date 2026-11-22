@@ -2,11 +2,13 @@
 from dataclasses import replace
 from hashlib import sha256
 from uuid import uuid4
+from types import SimpleNamespace
 
 import pytest
 
 from services.document_studio_letter_pdf_binding import bind_letter_pdf_candidate
 from services.document_studio_letter_source_lock import LockedLetterSource
+from services.document_studio_letter_branding_evidence import capture_letter_branding_evidence
 from services.document_issuance_integrity import pdf_fingerprint
 
 
@@ -19,7 +21,16 @@ def case():
         version=3, template_key="formal_letter", content_sha256=digest,
         render_snapshot_sha256=snapshot,
     )
+    branding = capture_letter_branding_evidence(
+        document=SimpleNamespace(company_id=tenant),
+        company=SimpleNamespace(id=tenant, name="Example Finance",
+            registration_number="REG", license_number="LIC",
+            phone="+266 50000000", email="office@example.test",
+            address="Maseru", website=None, district=None),
+        left_logo=b"left-image-bytes", right_logo=b"right-image-bytes",
+    )
     kwargs = dict(
+        branding_evidence=branding,
         locked_source=locked, tenant_id=tenant, document_id=document_id,
         document_version=3, expected_source_html_sha256=digest,
         expected_render_snapshot_sha256=snapshot,
@@ -34,6 +45,7 @@ def test_exact_bytes_bound_to_locked_letter_evidence():
     proof = bind_letter_pdf_candidate(**kwargs)
     assert proof.document_id == kwargs["document_id"]
     assert proof.document_version == 3
+    assert proof.branding_sha256 == kwargs["branding_evidence"].combined_sha256
     assert proof.render_snapshot_sha256 == kwargs["expected_render_snapshot_sha256"]
     assert proof.rendered_source_pdf_sha256 == pdf_fingerprint(kwargs["source_pdf"])
     assert proof.candidate_pdf_sha256 == pdf_fingerprint(kwargs["candidate_pdf"])
@@ -47,6 +59,7 @@ def test_exact_bytes_bound_to_locked_letter_evidence():
     {"expected_source_html_sha256": None},
     {"expected_render_snapshot_sha256": "f" * 64},
     {"expected_render_snapshot_sha256": None},
+    {"branding_evidence": None},
 ])
 def test_mismatched_source_identity_or_content_denied(change):
     kwargs = case()
@@ -76,3 +89,13 @@ def test_source_object_not_mutated_by_binding():
     original = kwargs["locked_source"]
     bind_letter_pdf_candidate(**kwargs)
     assert kwargs["locked_source"] == original
+
+
+def test_cross_tenant_branding_evidence_denied():
+    kwargs = case()
+    from dataclasses import replace
+    kwargs["branding_evidence"] = replace(
+        kwargs["branding_evidence"], tenant_id=uuid4(),
+    )
+    with pytest.raises(PermissionError, match="branding evidence"):
+        bind_letter_pdf_candidate(**kwargs)
