@@ -291,3 +291,29 @@ def test_nonletter_pdf_not_blocked_by_preview_environment_guard():
         text = _pdf_text(export_pdf(DummyDb(), document, company))
     assert "RE: TEST LETTER" in text
     assert "COMPANY STAMP" not in text
+
+
+def test_multipage_pdf_freezes_resolved_company_logo_bytes():
+    document, company = _company_letter()
+    document.content_html = "<p>Long multi-page letter</p>" + (
+        "<p>Repeated paragraph for long PDF export.</p>" * 280
+    )
+    document.include_brand_header = True
+    logos = SimpleNamespace(left_logo=None, right_logo=None)
+    with patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve:
+        pdf = export_pdf(DummyDb(), document, company)
+    assert len(PdfReader(BytesIO(pdf)).pages) > 1
+    assert resolve.call_count == 1\n    assert resolve.call_args.args[1] is company
+
+
+def test_no_company_logo_lookup_for_headerless_pdf():
+    document, company = _company_letter()
+    document.include_brand_header = False
+    with patch(
+        "services.workspace_document_service.get_company_branding_logos",
+    ) as resolve:
+        export_pdf(DummyDb(), document, company)
+    resolve.assert_not_called()
