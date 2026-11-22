@@ -7,6 +7,7 @@ import pytest
 
 from services.principal_x_settlement_preview_service import (
     quote_principal_x_for_loan, quote_principal_x_for_loan_with_revision,
+    require_unchanged_preview_snapshot,
 )
 
 
@@ -98,3 +99,22 @@ def test_snapshot_revision_changes_with_payment_or_schedule():
         mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
     )
     assert schedule_changed.snapshot_revision != first.snapshot_revision
+
+
+def test_snapshot_revision_preflight_rejects_stale_or_malformed_fingerprints():
+    loan = make_loan()
+    payment = SimpleNamespace(
+        id="payment-1", amount=Decimal("464"),
+        completed_at=datetime(2026, 11, 30),
+    )
+    snapshot = quote_principal_x_for_loan_with_revision(
+        mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
+    )
+    require_unchanged_preview_snapshot(
+        expected_revision=snapshot.snapshot_revision, current=snapshot,
+    )
+    for bad_revision in ("", "not-a-sha", "f" * 64, snapshot.snapshot_revision.upper()):
+        with pytest.raises(ValueError, match="fresh quotation"):
+            require_unchanged_preview_snapshot(
+                expected_revision=bad_revision, current=snapshot,
+            )
