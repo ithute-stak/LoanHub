@@ -34,12 +34,15 @@ type Preview = {
     buckets?: DirectoryProjection["buckets"];
 };
 type Replay = {
+    contract?: string;
+    company_id?: string;
+    payloads_included?: boolean;
     generation?: string;
     from_cursor?: number;
     next_cursor?: number;
     high_watermark?: number;
     has_more?: boolean;
-    events?: Array<{cursor: number}>;
+    events?: Array<{cursor: number; resource: string; entity_id: string; branch_id: string | null; action: string}>;
 };
 
 const MAX_REPLAY_PAGES = 40;
@@ -149,27 +152,36 @@ export function LoanHubDataCenterBridge() {
                     });
                     if (cancelled) return;
                     const reply: Replay = replayResponse.data;
-                    if (reply.generation !== generation || reply.from_cursor !== after ||
-                        typeof reply.next_cursor !== "number" ||
-                        typeof reply.high_watermark !== "number" ||
+                    if (reply.contract !== "loanhub.data-center-replay.v1" ||
+                        reply.company_id !== expectedScope.companyId ||
+                        reply.payloads_included !== false ||
+                        reply.generation !== generation || reply.from_cursor !== after ||
+                        typeof reply.has_more !== "boolean" ||
+                        !Number.isSafeInteger(reply.from_cursor) ||
                         !Number.isSafeInteger(reply.next_cursor) ||
                         !Number.isSafeInteger(reply.high_watermark) ||
-                        !Array.isArray(reply.events)) {
+                        reply.high_watermark! < after ||
+                        !Array.isArray(reply.events) || reply.events.length > 200) {
                         throw new Error("Invalid replay envelope");
                     }
                     let expected = after + 1;
                     for (const event of reply.events) {
-                        if (event.cursor !== expected++) {
-                            throw new Error("Replay cursor gap");
+                        if (!Number.isSafeInteger(event.cursor) ||
+                            event.cursor !== expected++ ||
+                            !["branches", "loanProducts", "staff", "clients", "loans", "payments"].includes(event.resource) ||
+                            !["created", "updated", "deleted"].includes(event.action) ||
+                            typeof event.entity_id !== "string" || !event.entity_id ||
+                            (event.branch_id !== null && typeof event.branch_id !== "string")) {
+                            throw new Error("Replay cursor gap or invalid metadata");
                         }
                     }
                     if (reply.next_cursor !== expected - 1 ||
-                        reply.next_cursor > reply.high_watermark) {
+                        reply.next_cursor > reply.high_watermark!) {
                         throw new Error("Replay cursor mismatch");
                     }
                     after = reply.next_cursor;
                     hasMore = Boolean(reply.has_more);
-                    if (hasMore !== (after < reply.high_watermark)) {
+                    if (hasMore !== (after < reply.high_watermark!)) {
                         throw new Error("Replay completeness mismatch");
                     }
                     if (!hasMore) break;
