@@ -65,3 +65,19 @@ human identity, make tenant GUCs unspoofable, or guarantee per-company
 authorization. This remains non-routed and must run only inside a future
 isolated issuer service after role, tenant, authorization and transaction
 continuity controls are certified.
+
+## Current issuer and transaction continuity
+
+The non-routed letter preflight now also requires a real `TenantContext`
+matching the supplied issuer, tenant and company. On the dedicated SQL
+issuer connection it invokes `require_current_document_issuer`, which
+reloads active User, approved LoanCompany and current management CompanyStaff
+membership with PostgreSQL `FOR SHARE NOWAIT` row locks. It captures the
+SQLAlchemy root transaction and actual PostgreSQL backend PID/transaction ID,
+then verifies both are unchanged after the approval read.
+
+This is an **in-transaction prerequisite** only, not a new endpoint. The
+future trusted issuer must keep these locks alive through immutable PDF
+binding and issuance COMMIT, and must prove that human identity cannot be
+spoofed by ordinary shared application credentials. A passing non-routed
+preflight is not an authorization token for later, separately transacted use.
