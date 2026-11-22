@@ -136,10 +136,12 @@ def upgrade():
                 ) THEN RETURN NEW; END IF;
             END IF;
             IF TG_OP IN ('UPDATE', 'DELETE') THEN
-                previous_branch := NULLIF(to_jsonb(OLD)->>'branch_id', '')::uuid;
+                previous_branch := CASE WHEN kind = 'branches' THEN OLD.id
+                    ELSE NULLIF(to_jsonb(OLD)->>'branch_id', '')::uuid END;
             END IF;
             IF TG_OP IN ('UPDATE', 'INSERT') THEN
-                next_branch := NULLIF(to_jsonb(NEW)->>'branch_id', '')::uuid;
+                next_branch := CASE WHEN kind = 'branches' THEN NEW.id
+                    ELSE NULLIF(to_jsonb(NEW)->>'branch_id', '')::uuid END;
             END IF;
 
             IF TG_OP = 'DELETE' THEN
