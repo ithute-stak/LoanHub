@@ -73,6 +73,19 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     INSERT INTO loanhub_dc_capture (company_id, enabled, enabled_at)
                     VALUES (:company, true, now())
                 """), {"company": company})
+                original_generation = con.execute(text("""
+                    SELECT generation FROM loanhub_dc_capture WHERE company_id = :company
+                """), {"company": company}).scalar_one()
+                con.execute(text("""
+                    UPDATE loanhub_dc_capture SET enabled = false WHERE company_id = :company
+                """), {"company": company})
+                con.execute(text("""
+                    UPDATE loanhub_dc_capture SET enabled = true WHERE company_id = :company
+                """), {"company": company})
+                rotated_generation = con.execute(text("""
+                    SELECT generation FROM loanhub_dc_capture WHERE company_id = :company
+                """), {"company": company}).scalar_one()
+                assert rotated_generation != original_generation
 
                 con.execute(text("""
                     SELECT public.loanhub_dc_append_change(
