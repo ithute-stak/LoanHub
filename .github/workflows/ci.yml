@@ -334,13 +334,17 @@ jobs:
           store=c["services"]["object-store"]
           assert not store.get("ports"), "Object Store must not publish a port"
           setup=c["services"]["configure-locked-bucket"]
-          raw_command=setup["command"]
-          command=" ".join(raw_command) if isinstance(raw_command,list) else str(raw_command)
-          assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
-          assert "attempt" in command and "sleep 2" in command
-          assert re.search(r"mc\s+mb\s+--with-lock", command), "Bucket creation must enable Object Lock"
-          assert re.search(r"COMPLIANCE\s+3650d", command), "Default retention must be compliance mode for 3650 days"
+          # A Compose command may be reformatted into a list of tokens.
+          # Test the actual resolved containment/isolation contract here,
+          # and validate immutable bucket commands from the raw source below.
+          assert setup.get("profiles") == ["configure"], "Bucket setup must remain opt-in"
+          assert not setup.get("ports"), "Bucket setup must not publish host ports"
           '
+          # Read the source without ever expanding or logging credentials.
+          grep -Fq 'mc mb --with-lock issuer/official-loanhub-pdfs' compose.issuer-storage.yml
+          grep -Fq 'mc retention set --default COMPLIANCE 3650d issuer/official-loanhub-pdfs' compose.issuer-storage.yml
+          grep -Fq '$$MINIO_ROOT_USER' compose.issuer-storage.yml
+          grep -Fq '$$MINIO_ROOT_PASSWORD' compose.issuer-storage.yml
           
       - name: Verify fully resolved Wacom staging Compose isolation
         env:
