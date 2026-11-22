@@ -278,6 +278,48 @@ def test_journal_capture_is_off_until_explicitly_approved():
                 }]
                 assert replay["payloads_included"] is False
 
+                # Actual branch manager membership must be denied both
+                # full-company snapshot and metadata replay, even while
+                # capture is enabled for the owner's company.
+                manager_user = User(
+                    phone="590" + uuid4().hex[:9],
+                    password_hash="not-a-login",
+                    role=UserRole.BRANCH_MANAGER,
+                    is_active=True,
+                )
+                db.add(manager_user)
+                db.flush()
+                branch_manager = CompanyStaff(
+                    user_id=manager_user.id,
+                    company_id=company,
+                    branch_id=branch_id,
+                    role=UserRole.BRANCH_MANAGER,
+                    is_active=True,
+                )
+                db.add(branch_manager)
+                db.commit()
+                branch_context = TenantContext(
+                    user=manager_user,
+                    staff=branch_manager,
+                    company=owner_company,
+                    company_id=company,
+                    branch_id=branch_id,
+                    is_platform_admin=False,
+                )
+                with pytest.raises(PermissionError, match="management"):
+                    preview_snapshot(branch_context, db)
+                bind_database_tenant_context(
+                    db, user_id=manager_user.id, company_id=company,
+                    branch_id=branch_id, role=UserRole.BRANCH_MANAGER.value,
+                    actor_scope="tenant",
+                )
+                with pytest.raises(PermissionError, match="management"):
+                    replay_metadata(
+                        db, branch_context, after_cursor=baseline_cursor,
+                        generation=UUID(generation),
+                    )
+                db.rollback()
+
             # Exercise the actual privileged operator CLI on this throwaway
             # PostgreSQL database, never a production database.
             from argparse import Namespace
