@@ -77,6 +77,18 @@ def replay_metadata(
     if not visible and high > after_cursor:
         raise ReplayNotReady("Missing journal entries")
 
+    # Reject a capture toggle that raced this read. A re-enabled company
+    # receives a new generation and must start from a fresh baseline.
+    latest_capture = db.execute(text("""
+        SELECT enabled, generation FROM public.loanhub_dc_capture
+        WHERE company_id = :company_id
+    """), {"company_id": company_id}).one_or_none()
+    if (
+        latest_capture is None or not latest_capture.enabled
+        or latest_capture.generation != generation
+    ):
+        raise ReplayNotReady("Capture generation changed during replay")
+
     # A membership may have been revoked during the read. Fail closed.
     from database.models.company_staff import CompanyStaff
     member = db.query(CompanyStaff).filter(
