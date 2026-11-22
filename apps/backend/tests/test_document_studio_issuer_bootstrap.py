@@ -31,3 +31,10 @@ def test_normal_runtime_provisioner_revokes_issuance_and_approval_writes():
         'document_issuances', 'document_issuance_events',
     ):
         assert table in RUNTIME
+
+
+def test_issuer_bootstrap_fails_closed_without_tenant_rls_on_all_source_tables():
+    assert "Issuer bootstrap refused: missing tenant RLS" in ISSUER
+    assert "c.relrowsecurity IS NOT TRUE" in ISSUER
+    for table in ("users", "loan_companies", "company_staff", "workspace_documents"):
+        assert f"'{table}'" in ISSUER
