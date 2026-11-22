@@ -319,3 +319,35 @@ def test_no_company_logo_lookup_for_headerless_pdf():
     ) as resolve:
         export_pdf(DummyDb(), document, company)
     resolve.assert_not_called()
+
+
+def test_multipage_pdf_freezes_explicit_right_logo_asset_bytes():
+    document, company = _company_letter()
+    document.content_html = "<p>Long multi-page letter</p>" + (
+        "<p>Repeated paragraph for long PDF export.</p>" * 280
+    )
+    document.include_brand_header = True
+    document.brand_logo_asset_id = uuid4()
+    selected_asset = SimpleNamespace(id=document.brand_logo_asset_id)
+    logos = SimpleNamespace(left_logo=None, right_logo=b"fallback-logo")
+    with patch(
+        "services.workspace_document_service.resolved_brand_asset",
+        return_value=selected_asset,
+    ), patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve, patch(
+        "services.workspace_document_service.asset_image_bytes",
+        return_value=b"frozen-selected-logo",
+    ) as load_selected, patch(
+        "services.workspace_document_service._draw_fitted_canvas_image",
+    ) as draw_image:
+        pdf = export_pdf(DummyDb(), document, company)
+    assert len(PdfReader(BytesIO(pdf)).pages) > 1
+    assert resolve.call_count == 1
+    load_selected.assert_called_once_with(selected_asset)
+    assert draw_image.call_count > 1
+    assert all(
+        call.args[1] == b"frozen-selected-logo"
+        for call in draw_image.call_args_list
+    )
