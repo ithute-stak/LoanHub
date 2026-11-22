@@ -61,7 +61,8 @@ def daily_issuance_expected_returns(
 ):
     """Read-only daily disbursement and CURRENT contractual repayment snapshot."""
     require_reports(context)
-    if period_end < period_start or (period_end - period_start).days > 1095:
+    if (period_end < period_start or (period_end - period_start).days > 1095
+            or period_end == date.max):
         raise HTTPException(status_code=400, detail="Invalid reporting date range")
     if (not context.is_platform_admin and company_id is not None
             and company_id != context.company_id):
