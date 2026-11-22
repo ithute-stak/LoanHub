@@ -102,6 +102,7 @@ def get_or_create_settings(db: Session, company_id: UUID) -> TreasurySettings:
         headquarters_branch_id=headquarters.id if headquarters else None,
         currency="LSL",
         timezone="Africa/Maseru",
+        opening_balance_mode="manual",
         auto_open_enabled=True,
         auto_open_time=time(0, 1),
         auto_submit_enabled=True,
@@ -306,7 +307,8 @@ def get_or_create_daily_ledger(
         # silently rewrite its carried-forward opening composition. Reopened
         # days can refresh because they are explicitly writable again.
         if ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}:
-            _ensure_previous_closing_source(db, ledger)
+            if get_or_create_settings(db, company_id).opening_balance_mode == "previous_closing":
+                _ensure_previous_closing_source(db, ledger)
         return ledger
     branch = db.get(CompanyBranch, branch_id)
     if not branch or branch.company_id != company_id:
@@ -326,7 +328,8 @@ def get_or_create_daily_ledger(
     )
     db.add(ledger)
     db.flush()
-    _ensure_previous_closing_source(db, ledger)
+    if get_or_create_settings(db, company_id).opening_balance_mode == "previous_closing":
+        _ensure_previous_closing_source(db, ledger)
     recalculate_daily_ledger(db, ledger)
     return ledger
 
