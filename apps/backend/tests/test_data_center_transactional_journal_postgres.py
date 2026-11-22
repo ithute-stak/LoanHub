@@ -318,7 +318,6 @@ def test_journal_capture_is_off_until_explicitly_approved():
                         db, branch_context, after_cursor=baseline_cursor,
                         generation=UUID(generation),
                     )
-                db.rollback()
 
             # Exercise the actual privileged operator CLI on this throwaway
             # PostgreSQL database, never a production database.
