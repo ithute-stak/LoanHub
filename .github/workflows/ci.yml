@@ -157,7 +157,7 @@ jobs:
         working-directory: apps/backend
         run: |
           set -euo pipefail
-          ENVIRONMENT=test python -m pytest -q -ra tests/test_workspace_document_export.py tests/test_document_studio_letter_stamp_authorization.py tests/test_document_studio_letter_source_lock.py tests/test_document_studio_letter_pdf_binding.py tests/test_document_studio_letter_render_snapshot.py tests/test_document_studio_letter_branding_evidence.py
+          ENVIRONMENT=test python -m pytest -q -ra tests/test_workspace_document_export.py tests/test_document_studio_letter_stamp_authorization.py tests/test_document_studio_letter_source_lock.py tests/test_document_studio_letter_pdf_binding.py tests/test_document_studio_letter_render_snapshot.py tests/test_document_studio_letter_branding_evidence.py tests/test_document_studio_letter_transaction_render.py
 
       - name: Verify Principal x refund and payment evidence safeguards
         working-directory: apps/backend
