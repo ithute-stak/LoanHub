@@ -51,14 +51,18 @@ export function LoanHubDataCenterBridge() {
     const dispatch = useAppDispatch();
     const userId = useAppSelector(state => state.auth.user?.id ?? null);
     const authInitialized = useAppSelector(state => state.auth.initialized);
+    const authenticated = useAppSelector(state => state.auth.isAuthenticated);
+    // Session credential changes must revoke memory-only projections even
+    // when the user ID and tenant remain the same (token replacement/logout).
+    const accessToken = useAppSelector(state => state.auth.accessToken);
     const {activeCompanyId, activeMembership} = useTenant();
     const {connected} = useRealtime();
     const role = activeMembership?.role ?? null;
     const branch = activeMembership?.branch_id ?? null;
 
     useEffect(() => {
-        if (!LOANHUB_DATA_CENTER_ENABLED || !authInitialized || !connected ||
-            !userId || !activeCompanyId ||
+        if (!LOANHUB_DATA_CENTER_ENABLED || !authInitialized || !authenticated ||
+            !accessToken || !connected || !userId || !activeCompanyId ||
             (role !== "company_owner" && role !== "company_admin")) {
             return;
         }
@@ -248,7 +252,7 @@ export function LoanHubDataCenterBridge() {
             document.removeEventListener("visibilitychange", onVisibility);
             dispatch(dataCenterActions.clear(sessionId));
         };
-    }, [activeCompanyId, authInitialized, branch, connected, dispatch, role, userId]);
+    }, [accessToken, activeCompanyId, authenticated, authInitialized, branch, connected, dispatch, role, userId]);
 
     return null;
 }
