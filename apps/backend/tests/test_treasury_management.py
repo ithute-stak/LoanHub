@@ -35,6 +35,7 @@ def test_only_cash_and_gateway_are_available_for_new_postings():
 
 def test_real_world_daily_cycle_defaults_and_validation():
     settings = TreasurySettingsUpdate()
+    assert settings.opening_balance_mode == "manual"
     assert settings.auto_open_time.isoformat() == "00:01:00"
     assert settings.auto_submit_time.isoformat() == "16:30:00"
 
