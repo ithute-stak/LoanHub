@@ -65,7 +65,9 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
     if row[0] == "loanhub_app" or row[1]:
         raise PilotControlBlocked("Refusing runtime application database role")
     privileges = connection.execute(text("""
-        SELECT has_table_privilege(current_user, 'public.loanhub_dc_capture', 'INSERT,UPDATE'),
+        SELECT has_table_privilege(current_user, 'public.loanhub_dc_capture', 'INSERT'),
+               has_table_privilege(current_user, 'public.loanhub_dc_capture', 'UPDATE'),
+               has_table_privilege(current_user, 'public.loanhub_dc_capture', 'SELECT'),
                has_table_privilege(current_user, 'public.loanhub_dc_pilot_audit', 'INSERT')
     """)).one()
     if not all(privileges):
