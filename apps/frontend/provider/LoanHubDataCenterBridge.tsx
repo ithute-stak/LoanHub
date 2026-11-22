@@ -94,7 +94,8 @@ export function LoanHubDataCenterBridge() {
                 !data.ready || !data.complete_data_center_snapshot ||
                 !data.replay_supported || !data.generation ||
                 !scopeIsCurrent(data.scope) ||
-                !Number.isSafeInteger(data.cursor) || (data.cursor ?? -1) < 0 ||
+                typeof data.cursor !== "number" ||
+                !Number.isSafeInteger(data.cursor) || data.cursor < 0 ||
                 !data.buckets) {
                 revoke();
                 return false;
@@ -117,11 +118,7 @@ export function LoanHubDataCenterBridge() {
                 // Only the old scope's effect may retire its own session.
                 return false;
             }
-            if (previous.sessionId === sessionId) {
-                dispatch(dataCenterActions.install(sessionId, projection));
-            } else {
-                dispatch(dataCenterActions.install(sessionId, projection));
-            }
+            dispatch(dataCenterActions.install(sessionId, projection));
             // The reducer independently validates the complete six-bucket
             // field allowlists, tenant scope and cursor before marking ready.
             const installed = store.getState().dataCenter;
@@ -152,6 +149,8 @@ export function LoanHubDataCenterBridge() {
                     });
                     if (cancelled) return;
                     if (data.generation !== generation || data.from_cursor !== after ||
+                        typeof data.next_cursor !== "number" ||
+                        typeof data.high_watermark !== "number" ||
                         !Number.isSafeInteger(data.next_cursor) ||
                         !Number.isSafeInteger(data.high_watermark) ||
                         !Array.isArray(data.events)) {
@@ -169,6 +168,9 @@ export function LoanHubDataCenterBridge() {
                     }
                     after = data.next_cursor;
                     hasMore = Boolean(data.has_more);
+                    if (hasMore !== (after < data.high_watermark)) {
+                        throw new Error("Replay completeness mismatch");
+                    }
                     if (!hasMore) break;
                     if (page === MAX_REPLAY_PAGES - 1) {
                         throw new Error("Replay capacity exceeded");
