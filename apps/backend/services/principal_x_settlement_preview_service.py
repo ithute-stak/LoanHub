@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
+from hmac import compare_digest
 import json
 
 from sqlalchemy.orm import Session
@@ -110,3 +111,20 @@ def quote_principal_x_for_loan(
     return quote_principal_x_for_loan_with_revision(
         db, loan=loan, settlement_date=settlement_date,
     ).quote
+
+
+def require_unchanged_preview_snapshot(
+    *, expected_revision: str, current: PrincipalXSnapshotQuote,
+) -> None:
+    """Reject a stale advisory quote before any subsequent consent workflow.
+
+    This is necessary but NOT sufficient for payment authorization: the
+    full authoritative ledger and loan state still require locked validation.
+    """
+    if (
+        not isinstance(expected_revision, str)
+        or len(expected_revision) != 64
+        or not all(character in "0123456789abcdef" for character in expected_revision)
+        or not compare_digest(expected_revision, current.snapshot_revision)
+    ):
+        raise ValueError("Settlement source snapshot changed; issue a fresh quotation")
