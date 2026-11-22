@@ -154,7 +154,8 @@ def export_daily_issuance_csv(
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
     writer.writerow(["LoanHub Daily Issuance and Expected Contractual Returns"])
-    writer.writerow(["Basis", report["basis"]])\n    writer.writerow(["Notice", "Principal is not necessarily cash disbursed; expected returns are not guaranteed collections."])
+    writer.writerow(["Basis", report["basis"]])
+    writer.writerow(["Notice", "Principal is not necessarily cash disbursed; expected returns are not guaranteed collections."])
     writer.writerow(["Period", report["period_start"], report["period_end"]])
     writer.writerow(["Date", "Loans issued", "Principal issued (M)", "Expected contractual return (M)", "Expected return above principal (M)"])
     for item in report["daily"]:
