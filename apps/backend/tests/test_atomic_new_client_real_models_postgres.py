@@ -665,3 +665,78 @@ def test_debt_failure_after_encrypted_bank_insert_rolls_back_bank_and_identity(
         assert conn.execute(text(f"""
             SELECT count(*) FROM {schema}.borrower_debt_obligations
         """)).scalar_one() == 1
+
+
+def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
+    real_models_sandbox,
+):
+    """Real, disposable PostgreSQL test: client survives a new connection."""
+    from contextlib import contextmanager
+    from services.batlokoa_new_only_registration_command import (
+        BatlokoaRegistrationNotReleased, submit_new_only_client,
+    )
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+        """), {"branch": branch, "company": company})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (
+                id, phone, password_hash, role, is_active, is_verified,
+                must_change_password
+            ) VALUES (
+                :actor, '69998888', 'synthetic-staff-hash-not-credential',
+                'LOAN_OFFICER', TRUE, TRUE, FALSE
+            )
+        """), {"actor": employee})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active
+            ) VALUES (
+                :actor, :actor, :company, :branch,
+                'LOAN_OFFICER', TRUE, TRUE
+            )
+        """), {"actor": employee, "company": company, "branch": branch})
+
+    request = FullNewOnlyClientCapture.model_validate(
+        applicant(branch, national_id="SYN-BATLOKOA-001", phone="59008881")
+        .model_dump(mode="python")
+    )
+    @contextmanager
+    def fresh_session():
+        with sandbox_session(engine, schema) as connection:
+            with Session(bind=connection, expire_on_commit=False) as db:
+                yield db
+
+    kwargs = dict(
+        context=context, payload=request,
+        idempotency_key="batlokoa-full-registration-001",
+        fingerprint_secret=b"ci-only-registration-hmac-key-64-characters-long",
+        session_factory=fresh_session,
+    )
+    with pytest.raises(BatlokoaRegistrationNotReleased):
+        submit_new_only_client(**kwargs)
+    assert totals(engine, schema) == (1, 0, 0, 0, 0, 0)
+
+    created = submit_new_only_client(
+        **kwargs, independently_approved_release=True,
+    )
+    assert created.replayed is False
+    assert totals(engine, schema) == (2, 1, 1, 1, 1, 1)
+
+    replay = submit_new_only_client(
+        **kwargs, independently_approved_release=True,
+    )
+    assert replay.client_account_id == created.client_account_id
+    assert replay.replayed is True
+    assert totals(engine, schema) == (2, 1, 1, 1, 1, 1)
+    with engine.connect() as conn:
+        persisted = conn.execute(text(f"""
+            SELECT company_id, branch_id, opened_by_user_id
+            FROM {schema}.company_borrower_accounts
+            WHERE id = :account
+        """), {"account": created.client_account_id}).one()
+        assert persisted == (company, branch, employee)
