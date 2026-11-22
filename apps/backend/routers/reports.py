@@ -195,11 +195,20 @@ def export_daily_issuance_pdf(
     context: TenantContext = Depends(get_user_context),
 ):
     """Read-only PDF export; authorization and amounts match the JSON report."""
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape
 
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    from database.models.company import LoanCompany
+    from services.pdf_design_system import (
+        BORDER, NAVY, SOFT_SLATE, DocumentContext, build_document,
+        callout, document_styles, hero_block, metric_grid, section,
+    )
+
+    # Keep the existing authorized query as the single source of report amounts.
     report = daily_issuance_expected_returns(
         period_start=period_start,
         period_end=period_end,
@@ -208,62 +217,99 @@ def export_daily_issuance_pdf(
         db=db,
         context=context,
     )
-    output = io.BytesIO()
-    document = SimpleDocTemplate(
-        output, pagesize=landscape(A4), leftMargin=30,
-        rightMargin=30, topMargin=30, bottomMargin=30,
+    # Resolve branding only for the tenant already authorized by the report.
+    authorized_company_id = report.get("company_id")
+    company = (
+        db.query(LoanCompany).filter(LoanCompany.id == UUID(authorized_company_id)).first()
+        if authorized_company_id else None
     )
-    styles = getSampleStyleSheet()
-    story = [
-        Paragraph("LoanHub | Daily Loan Issuance and Expected Returns", styles["Title"]),
-        Paragraph(
-            f"Period: {report['period_start']} to {report['period_end']}",
-            styles["Normal"],
-        ),
-        Paragraph(
-            "Basis: current contractual snapshot; not an immutable origination forecast. "
-            "Principal is not necessarily actual cash disbursed (particularly for top-ups). "
-            "Expected returns are contractual amounts, not guaranteed collections.",
-            styles["Normal"],
-        ),
-        Spacer(1, 14),
-    ]
-    data = [[
+    styles = document_styles()
+    reference = f"DAILY-ISSUANCE-{report['period_start']}-{report['period_end']}"
+    totals = report["totals"]
+    story = hero_block(
+        "Daily loan issuance and expected returns",
+        f"Reporting period: {escape(report['period_start'])} to {escape(report['period_end'])}",
+        reference,
+        styles=styles,
+    )
+    story.append(Spacer(1, 5 * mm))
+    story.append(metric_grid([
+        ("Loans issued", str(totals["loans_issued"]), "Disbursed loans in period", "blue"),
+        ("Principal issued", f"M {Decimal(totals['principal_issued']):,.2f}", "Recorded principal", "teal"),
+        ("Expected contractual return", f"M {Decimal(totals['expected_contractual_return']):,.2f}", "Current contractual snapshot", "green"),
+        ("Above principal", f"M {Decimal(totals['expected_return_above_principal']):,.2f}", "Difference, not collected income", "slate"),
+    ], styles=styles))
+    story.extend(section("Daily breakdown", styles=styles))
+    cell = ParagraphStyle(
+        "DailyIssuanceCell", fontName="Helvetica", fontSize=7.3,
+        leading=10, textColor=NAVY,
+    )
+    header = ParagraphStyle(
+        "DailyIssuanceHeader", parent=cell, fontName="Helvetica-Bold",
+        textColor=colors.white,
+    )
+    def p(value, style=cell):
+        return Paragraph(escape(str(value)), style)
+
+    data = [[p(label, header) for label in (
         "Date", "Loans", "Principal (M)", "Expected return (M)", "Above principal (M)",
-    ]]
+    )]]
     for row in report["daily"]:
         data.append([
-            row["date"], str(row["loans_issued"]), row["principal_issued"],
-            row["expected_contractual_return"], row["expected_return_above_principal"],
+            p(row["date"]), p(row["loans_issued"]),
+            p(f"{Decimal(row['principal_issued']):,.2f}"),
+            p(f"{Decimal(row['expected_contractual_return']):,.2f}"),
+            p(f"{Decimal(row['expected_return_above_principal']):,.2f}"),
         ])
-    totals = report["totals"]
     data.append([
-        "TOTAL", str(totals["loans_issued"]), totals["principal_issued"],
-        totals["expected_contractual_return"], totals["expected_return_above_principal"],
+        p("TOTAL"), p(totals["loans_issued"]),
+        p(f"{Decimal(totals['principal_issued']):,.2f}"),
+        p(f"{Decimal(totals['expected_contractual_return']):,.2f}"),
+        p(f"{Decimal(totals['expected_return_above_principal']):,.2f}"),
     ])
-    table = Table(data, repeatRows=1, colWidths=[110, 65, 140, 155, 155])
+    table = Table(
+        data, colWidths=[30 * mm, 19 * mm, 39 * mm, 44 * mm, 42 * mm],
+        repeatRows=1, hAlign="LEFT",
+    )
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E8EFF7")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("BACKGROUND", (0, -1), (-1, -1), SOFT_SLATE),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, SOFT_SLATE]),
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.7, BORDER),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.7, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(table)
-    document.build(story)
+    story.append(Spacer(1, 5 * mm))
+    story.append(callout(
+        "Reporting basis",
+        "Current contractual snapshot, not an immutable origination forecast. "
+        "Principal may differ from actual cash disbursed, especially for top-ups. "
+        "Expected returns are contractual amounts, not guaranteed collections.",
+        tone="amber", styles=styles,
+    ))
+    content = build_document(
+        story=story,
+        context=DocumentContext(
+            db=db, company=company,
+            title="Daily issuance and expected returns",
+            reference=reference,
+        ),
+        title="LoanHub | Daily loan issuance and expected returns",
+    )
     return Response(
-        content=output.getvalue(),
+        content=content,
         media_type="application/pdf",
         headers={
             "Content-Disposition": "attachment; filename=loanhub-daily-issuance.pdf",
             "Cache-Control": "no-store",
         },
     )
-
 
 
 
