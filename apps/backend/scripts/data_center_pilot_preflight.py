@@ -179,7 +179,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return run(args.company_id)
-    except Exception as exc:
+    except Exception:
         # Avoid logging SQLAlchemy connection URLs, database secrets, or the
         # original database exception content into application support logs.
         print("BLOCKED: read-only preflight could not verify database state.", file=sys.stderr)
