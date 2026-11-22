@@ -1,3 +1,5 @@
+import csv
+import io
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -127,6 +129,53 @@ def daily_issuance_expected_returns(
         },
         "daily": daily,
     }
+
+
+
+
+@router.get("/daily-issuance.csv")
+def export_daily_issuance_csv(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Export exactly the same authorized and scoped daily report as CSV."""
+    report = daily_issuance_expected_returns(
+        period_start=period_start,
+        period_end=period_end,
+        company_id=company_id,
+        branch_id=branch_id,
+        db=db,
+        context=context,
+    )
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
+    writer.writerow(["LoanHub Daily Issuance and Expected Contractual Returns"])
+    writer.writerow(["Basis", report["basis"]])
+    writer.writerow(["Period", report["period_start"], report["period_end"]])
+    writer.writerow(["Date", "Loans issued", "Principal issued (M)", "Expected contractual return (M)", "Expected return above principal (M)"])
+    for item in report["daily"]:
+        writer.writerow([
+            item["date"], item["loans_issued"], item["principal_issued"],
+            item["expected_contractual_return"], item["expected_return_above_principal"],
+        ])
+    writer.writerow([
+        "TOTAL", report["totals"]["loans_issued"],
+        report["totals"]["principal_issued"],
+        report["totals"]["expected_contractual_return"],
+        report["totals"]["expected_return_above_principal"],
+    ])
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=loanhub-daily-issuance.csv",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/summary", response_model=ReportSummaryRead)
