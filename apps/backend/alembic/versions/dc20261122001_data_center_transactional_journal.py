@@ -39,7 +39,7 @@ def upgrade():
         sa.Column("entity_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("branch_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("action", sa.String(12), nullable=False),
-        sa.Column("committed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("clock_timestamp()")),
         sa.PrimaryKeyConstraint("company_id", "cursor", name="pk_loanhub_dc_event"),
         sa.CheckConstraint("cursor > 0", name="ck_loanhub_dc_event_positive_cursor"),
         sa.CheckConstraint("action IN ('created', 'updated', 'deleted')", name="ck_loanhub_dc_event_action"),
@@ -115,6 +115,25 @@ def upgrade():
                 ELSE NULL END;
             IF kind IS NULL THEN
                 RAISE EXCEPTION 'Unsupported Data Center change table %', TG_TABLE_NAME;
+            END IF;
+            -- Fast exit: when no involved company opted in, never inspect
+            -- the actual row (which may contain encrypted financial fields).
+            IF TG_OP = 'INSERT' THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.loanhub_dc_capture
+                    WHERE company_id = NEW.company_id AND enabled IS TRUE
+                ) THEN RETURN NEW; END IF;
+            ELSIF TG_OP = 'DELETE' THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.loanhub_dc_capture
+                    WHERE company_id = OLD.company_id AND enabled IS TRUE
+                ) THEN RETURN OLD; END IF;
+            ELSE
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.loanhub_dc_capture
+                    WHERE company_id IN (OLD.company_id, NEW.company_id)
+                    AND enabled IS TRUE
+                ) THEN RETURN NEW; END IF;
             END IF;
             IF TG_OP IN ('UPDATE', 'DELETE') THEN
                 previous_branch := NULLIF(to_jsonb(OLD)->>'branch_id', '')::uuid;
