@@ -92,7 +92,7 @@ WHERE to_regclass(format('public.%I', tablename)) IS NOT NULL
 \gexec
 
 -- Fail closed rather than starting backend with a privileged runtime role.
-SELECT CASE WHEN EXISTS (
+SELECT 1 / (CASE WHEN EXISTS (
     SELECT 1 FROM (
         VALUES ('loanhub_dc_capture'),
                ('loanhub_dc_clock'),
@@ -107,7 +107,7 @@ SELECT CASE WHEN EXISTS (
         OR (tablename = 'loanhub_dc_pilot_audit' AND
             has_table_privilege(:'runtime_user', format('public.%I', tablename), 'SELECT'))
       )
-) THEN 1 / 0 ELSE 1 END AS data_center_runtime_permission_guard;
+) THEN 0 ELSE 1 END) AS data_center_runtime_permission_guard;
 
 SELECT format(
     'ALTER ROLE %I SET search_path = public',
