@@ -1,14 +1,14 @@
-"""Bounded, repeatable-read directory snapshot preview.
+"""Repeatable-read directory snapshot with journal-bound readiness.
 
-This preview is intentionally NOT an installable Redux Data Center snapshot:
-there is no transactional outbox, ordered replay cursor or reconnect gap
-recovery yet. The endpoint refuses incomplete data rather than claiming ready.
+Only a management-authorized, capture-enabled company can become ready.
+An absent or disabled journal retains the original fail-closed preview.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
@@ -101,6 +101,44 @@ def preview_snapshot(context: TenantContext, request_db: Session) -> dict[str, A
                 ):
                     raise PermissionError("Snapshot membership changed")
 
+                # Do not install Redux state unless change capture is active
+                # and an ordered replay cursor can be read under the SAME
+                # repeatable-read transaction as every directory record.
+                schema_ready = db.execute(text("""
+                    SELECT to_regclass('public.loanhub_dc_capture') IS NOT NULL
+                       AND to_regclass('public.loanhub_dc_clock') IS NOT NULL
+                       AND to_regclass('public.loanhub_dc_event') IS NOT NULL
+                """)).scalar_one()
+                capture = None
+                if schema_ready:
+                    capture = db.execute(text("""
+                        SELECT enabled, generation FROM public.loanhub_dc_capture
+                        WHERE company_id = :company_id
+                    """), {"company_id": context.company_id}).one_or_none()
+                if capture is None or not capture.enabled:
+                    return {
+                        "contract": "loanhub.directory-preview.v1",
+                        "scope": {
+                            "userId": str(context.user.id),
+                            "companyId": grant.company_id,
+                            "role": grant.role,
+                            "branchId": None,
+                        },
+                        "buckets": {},
+                        "read_consistency": "repeatable_read",
+                        "event_cursor": None,
+                        "replay_supported": False,
+                        "ready": False,
+                        "complete_data_center_snapshot": False,
+                    }
+                watermark = db.execute(text("""
+                    SELECT cursor FROM public.loanhub_dc_clock
+                    WHERE company_id = :company_id
+                """), {"company_id": context.company_id}).scalar_one_or_none()
+                cursor = int(watermark or 0)
+                if cursor < 0 or cursor > 9007199254740991:
+                    raise SnapshotUnavailable("Data Center cursor is invalid")
+
                 specs = (
                     ("branches", CompanyBranch, safe_branch_row),
                     ("loanProducts", LoanProduct, safe_loan_product_row),
@@ -134,8 +172,10 @@ def preview_snapshot(context: TenantContext, request_db: Session) -> dict[str, A
         },
         "buckets": buckets,
         "read_consistency": "repeatable_read",
-        "event_cursor": None,
-        "replay_supported": False,
-        "ready": False,
-        "complete_data_center_snapshot": False,
+        "generation": str(capture.generation),
+        "cursor": cursor,
+        "event_cursor": cursor,
+        "replay_supported": True,
+        "ready": True,
+        "complete_data_center_snapshot": True,
     }

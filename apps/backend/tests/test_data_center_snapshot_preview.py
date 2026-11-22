@@ -52,3 +52,22 @@ def test_snapshot_is_bounded_and_explicitly_not_ready():
     assert '"complete_data_center_snapshot": False' in source
     assert 'status_code=409' in route
     assert '"private, no-store"' in route
+
+
+def test_only_capture_enabled_consistent_journal_snapshot_can_be_ready():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "services" / "data_center_snapshot.py").read_text()
+    assert "to_regclass('public.loanhub_dc_capture')" in source
+    assert "to_regclass('public.loanhub_dc_clock')" in source
+    assert "to_regclass('public.loanhub_dc_event')" in source
+    assert "capture is None or not capture.enabled" in source
+    assert "REPEATABLE READ" in source
+    assert "cursor = int(watermark or 0)" in source
+    assert '"generation": str(capture.generation)' in source
+    assert '"replay_supported": True' in source
+    assert '"complete_data_center_snapshot": True' in source
+    assert '"ready": False' in source
+    assert '"ready": True' in source
+    assert source.index("if capture is None or not capture.enabled:") < source.index(
+        "specs = ("
+    )
