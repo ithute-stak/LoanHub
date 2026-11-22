@@ -2,7 +2,7 @@
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ISSUER = (ROOT / "scripts" / "bootstrap_document_issuer_role.sh").read_text()
 RUNTIME = (ROOT / "scripts" / "ensure_database_runtime_role.sh").read_text()
 
