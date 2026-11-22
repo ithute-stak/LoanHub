@@ -17,6 +17,7 @@ import {
     type DirectoryScope,
 } from "@/store/slices/dataCenterSlice";
 import {createUuid} from "@/lib/uuid";
+import {validateDataCenterReplay} from "@/lib/data-center-replay-validation";
 
 // Explicitly disabled in current production builds unless a separately
 // tested image is built with this opt-in flag and the server capture is on.
@@ -156,6 +157,14 @@ export function LoanHubDataCenterBridge() {
                     });
                     if (cancelled) return;
                     const reply: Replay = replayResponse.data;
+                    // The pure validator is also exercised directly by
+                    // executable recovery tests; never trust an unverified
+                    // envelope to advance this session's cursor.
+                    validateDataCenterReplay(reply, {
+                        companyId: expectedScope.companyId,
+                        generation,
+                        afterCursor: after,
+                    });
                     if (reply.contract !== "loanhub.data-center-replay.v1" ||
                         reply.company_id !== expectedScope.companyId ||
                         reply.payloads_included !== false ||
