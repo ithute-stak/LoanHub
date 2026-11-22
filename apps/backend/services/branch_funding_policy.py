@@ -60,3 +60,31 @@ def require_available_funds(
     if policy.prevent_negative_available_balance and remaining < 0:
         raise FundingRejected("Insufficient branch funds for this payment channel")
     return remaining
+
+
+def assert_branch_channel_debit(
+    *,
+    company_id: str,
+    branch_id: str,
+    channel: str,
+    opening_confirmed: bool,
+    available: Decimal | str | int,
+    debit: Decimal | str | int,
+    reserved: Decimal | str | int = "0",
+    policy: BranchFundingPolicy = BranchFundingPolicy(),
+) -> Decimal:
+    """Fail closed on missing tenant, branch or payment channel before debit.
+
+    Integration must obtain these from authenticated tenant-scoped records, not
+    from an untrusted client payload. Must execute under an exclusive ledger
+    lock in the SAME transaction that posts the outgoing movement.
+    """
+    if not company_id or not branch_id or not channel:
+        raise FundingRejected("Company, branch and payment channel are required")
+    return require_available_funds(
+        opening_confirmed=opening_confirmed,
+        available=available,
+        requested=debit,
+        reserved=reserved,
+        policy=policy,
+    )
