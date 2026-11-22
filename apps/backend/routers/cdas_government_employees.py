@@ -543,6 +543,25 @@ def reject_or_revoke_cdas_consent_evidence(
     if record.status != expected:
         raise HTTPException(status_code=409, detail="Consent review status is no longer eligible for this decision")
     record.status = "rejected" if payload.decision == "reject" else "revoked"
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=getattr(context, "branch_id", None),
+        action="cdas_affordability_consent_" + record.status,
+        table_name="cdas_affordability_consent_evidence",
+        entity_type="consent_evidence",
+        record_id=record.id,
+        description="Independent CDAS consent review decision",
+        actor_role=getattr(getattr(context, "role", None), "value", "company_manager"),
+        severity="info",
+        status="success",
+        event_data={
+            "decision": payload.decision, "reason": payload.reason.strip(),
+            "borrower_id": str(record.borrower_id),
+            "document_id": str(record.document_id),
+            "consent_reference": record.reference,
+        },
+    ))
     db.commit()
     return {
         "evidence_id": str(record.id),
