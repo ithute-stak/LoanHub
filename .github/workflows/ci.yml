@@ -338,8 +338,8 @@ jobs:
           command=" ".join(raw_command) if isinstance(raw_command,list) else str(raw_command)
           assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
           assert "attempt" in command and "sleep 2" in command
-          assert re.search(r"mc\\s+mb\\s+--with-lock", command), "Bucket creation must enable Object Lock"
-          assert re.search(r"COMPLIANCE\\s+3650d", command), "Default retention must be compliance mode for 3650 days"
+          assert re.search(r"mc\s+mb\s+--with-lock", command), "Bucket creation must enable Object Lock"
+          assert re.search(r"COMPLIANCE\s+3650d", command), "Default retention must be compliance mode for 3650 days"
           '
           
       - name: Verify fully resolved Wacom staging Compose isolation
