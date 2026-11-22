@@ -1159,7 +1159,10 @@ def _draw_workspace_page(
     canvas.restoreState()
 
 
-def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | None) -> bytes:
+def export_pdf(
+    db: Session, document: WorkspaceDocument, company: LoanCompany | None,
+    *, _branding_evidence_out: list | None = None,
+) -> bytes:
     page_size = _workspace_page_size(document)
     buffer = BytesIO()
     document_pdf = SimpleDocTemplate(
@@ -1222,7 +1225,22 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
             resolved_right_logo=resolved_right_logo,
         )
 
+    # Only the non-routed issuance candidate adapter supplies this collector.
+    # Observe the actual resolved logo bytes that the page callbacks reused;
+    # never independently re-read mutable assets after rendering.
+    captured_branding = None
+    if _branding_evidence_out is not None:
+        from services.document_studio_letter_branding_evidence import (
+            capture_letter_branding_evidence,
+        )
+        captured_branding = capture_letter_branding_evidence(
+            document=document, company=company,
+            left_logo=branding_logos.left_logo if branding_logos is not None else None,
+            right_logo=resolved_right_logo,
+        )
     document_pdf.build(story, onFirstPage=draw, onLaterPages=draw)
+    if _branding_evidence_out is not None:
+        _branding_evidence_out.append(captured_branding)
     return buffer.getvalue()
 
 def _set_cell_text(cell, text: str, *, bold: bool = False, size: float = 9) -> None:
