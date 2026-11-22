@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -102,7 +102,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     """Read-only diagnostics; never authorizes a financial transaction."""
     loan_id: UUID
     payment_model: str
-    can_post_settlement: bool = False
+    can_post_settlement: Literal[False] = False
     payment_rows_reviewed: int
     unresolved_payment_rows: int
     blocking_reasons: list[str]
