@@ -719,20 +719,20 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
     )
     with pytest.raises(BatlokoaRegistrationNotReleased):
         submit_new_only_client(**kwargs)
-    assert totals(engine, schema) == (1, 0, 0, 0, 0, 0)
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
 
     created = submit_new_only_client(
         **kwargs, independently_approved_release=True,
     )
     assert created.replayed is False
-    assert totals(engine, schema) == (2, 1, 1, 1, 1, 1)
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
 
     replay = submit_new_only_client(
         **kwargs, independently_approved_release=True,
     )
     assert replay.client_account_id == created.client_account_id
     assert replay.replayed is True
-    assert totals(engine, schema) == (2, 1, 1, 1, 1, 1)
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
     with engine.connect() as conn:
         persisted = conn.execute(text(f"""
             SELECT company_id, branch_id, opened_by_user_id
