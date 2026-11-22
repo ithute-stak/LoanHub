@@ -19,6 +19,7 @@ class LockedLetterPdfEvidence:
     document_id: UUID
     document_version: int
     source_html_sha256: str
+    render_snapshot_sha256: str
     rendered_source_pdf_sha256: str
     candidate_pdf_sha256: str
 
@@ -27,6 +28,7 @@ def bind_letter_pdf_candidate(
     *, locked_source: LockedLetterSource, tenant_id: UUID,
     document_id: UUID, document_version: int,
     expected_source_html_sha256: str, source_pdf: bytes,
+    expected_render_snapshot_sha256: str,
     candidate_pdf: bytes,
 ) -> LockedLetterPdfEvidence:
     """Check immutable source IDs and hash the exact provided PDF bytes.
@@ -49,12 +51,20 @@ def bind_letter_pdf_candidate(
                 locked_source.content_sha256, expected_source_html_sha256,
             )):
         raise PermissionError("Letter PDF candidate source content changed")
+    if (not isinstance(expected_render_snapshot_sha256, str)
+            or len(expected_render_snapshot_sha256) != 64
+            or not compare_digest(
+                locked_source.render_snapshot_sha256,
+                expected_render_snapshot_sha256,
+            )):
+        raise PermissionError("Letter rendering snapshot changed")
     source_digest = pdf_fingerprint(source_pdf)
     candidate_digest = pdf_fingerprint(candidate_pdf)
     return LockedLetterPdfEvidence(
         tenant_id=tenant_id, document_id=document_id,
         document_version=document_version,
         source_html_sha256=locked_source.content_sha256,
+        render_snapshot_sha256=locked_source.render_snapshot_sha256,
         rendered_source_pdf_sha256=source_digest,
         candidate_pdf_sha256=candidate_digest,
     )
