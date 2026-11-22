@@ -336,7 +336,7 @@ jobs:
           setup=c["services"]["configure-locked-bucket"]
           command=str(setup["command"])
           assert "$MINIO_ROOT_USER" in command and "$MINIO_ROOT_PASSWORD" in command
-          assert "$((attempt + 1))" in command
+          assert "attempt" in command and "sleep 2" in command
           assert "mc mb --with-lock" in command
           assert "COMPLIANCE 3650d" in command
           '
