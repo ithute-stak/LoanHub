@@ -39,6 +39,7 @@ def test_persisted_source_lock_and_unsigned_letter_attestation():
     assert result.document_id == candidate.id
     assert result.version == 2
     assert len(result.content_sha256) == 64
+    assert len(result.render_snapshot_sha256) == 64
     db.commit.assert_not_called()
     db.add.assert_not_called()
 
@@ -51,7 +52,7 @@ def test_persisted_source_lock_and_unsigned_letter_attestation():
 def test_stale_candidate_denied(field, value):
     db, candidate, persisted, tenant = case()
     setattr(candidate, field, value)
-    with pytest.raises(PermissionError, match="Letter content or version changed"):
+    with pytest.raises(PermissionError, match="Letter rendering inputs changed"):
         lock_current_letter_source(
             db=db, document=candidate, authenticated_tenant_id=tenant,
         )
@@ -101,3 +102,19 @@ def test_unpersisted_document_denied_without_sql(id_value):
             db=db, document=candidate, authenticated_tenant_id=tenant,
         )
     db.query.assert_not_called()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("page_size", "LETTER"), ("orientation", "landscape"),
+    ("margin_top_mm", 48), ("default_font_size_pt", 18),
+    ("include_brand_header", False), ("brand_logo_asset_id", uuid4()),
+    ("cover_page_enabled", True), ("cover_page", {"title": "Changed"}),
+    ("address_blocks", [{"text": "Changed address"}]),
+])
+def test_changed_layout_or_branding_settings_denied(field, value):
+    db, candidate, persisted, tenant = case()
+    setattr(persisted, field, value)
+    with pytest.raises(PermissionError, match="Letter rendering inputs changed"):
+        lock_current_letter_source(
+            db=db, document=candidate, authenticated_tenant_id=tenant,
+        )
