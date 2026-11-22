@@ -78,12 +78,14 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
     # borrowers, loans or payments, and never change any financial tables.
     company_lock = "FOR UPDATE" if apply else ""
     company = connection.execute(text(f"""
-        SELECT id FROM public.loan_companies
-        WHERE id = :company_id AND is_active IS TRUE
+        SELECT id, is_active FROM public.loan_companies
+        WHERE id = :company_id
         {company_lock}
     """), {"company_id": company_id}).one_or_none()
     if company is None:
-        raise PilotControlBlocked("Active company not found")
+        raise PilotControlBlocked("Company not found")
+    if action == "activate" and not company.is_active:
+        raise PilotControlBlocked("Company is inactive")
 
     missing = []
     counts = {}
@@ -105,7 +107,7 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
             ) AS bounded_rows
         """), {"company_id": company_id, "limit": CAP + 1}).scalar_one())
         counts[resource] = count
-    if missing:
+    if action == "activate" and missing:
         raise PilotControlBlocked("Missing active capture triggers: " + ", ".join(missing))
     if action == "activate" and any(c > CAP for c in counts.values()):
         raise PilotControlBlocked("A directory exceeds the 500-row snapshot limit")
@@ -129,9 +131,11 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
         WHERE company_id = :company_id
     """), {"company_id": company_id}).one()
     event_count, first, last = stats
-    if (cursor < 0 or cursor > MAX_JS_CURSOR or event_count != cursor
+    if action == "activate" and (
+        cursor < 0 or cursor > MAX_JS_CURSOR or event_count != cursor
         or (event_count and (first != 1 or last != cursor))
-        or (not event_count and (first is not None or last is not None))):
+        or (not event_count and (first is not None or last is not None))
+    ):
         raise PilotControlBlocked("Journal cursor is not contiguous")
     return {
         "enabled": bool(capture and capture.enabled),
