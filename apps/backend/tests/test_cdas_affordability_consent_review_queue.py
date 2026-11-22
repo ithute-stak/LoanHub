@@ -40,6 +40,10 @@ class DB:
     def __init__(self, rows):
         self.rows = rows
         self.commits = 0
+        self.audit_rows = []
+        
+    def add(self, row):
+        self.audit_rows.append(row)
     def query(self, model):
         assert model is module.CdasAffordabilityConsentEvidence
         return Query(self.rows)
@@ -92,6 +96,8 @@ def test_independent_rejection_is_terminal_without_cdas(monkeypatch):
     assert response["status"] == "rejected"
     assert not response["cdas_request_authorized"]
     assert db.commits == 1
+    assert len(db.audit_rows) == 1
+    assert db.audit_rows[0].event_data["reason"] == "Document does not grant CDAS consent"
     with pytest.raises(HTTPException) as repeated:
         module.reject_or_revoke_cdas_consent_evidence(
             evidence_id=row.id,
