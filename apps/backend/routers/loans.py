@@ -52,6 +52,7 @@ from database.schemas.early_settlement import (
     EarlySettlementQuoteCreate,
     EarlySettlementRead,
     PrincipalXSettlementPreviewRead,
+    PrincipalXSettlementReadinessRead,
 )
 from database.schemas.loan import InstallmentDueDateAdjustmentCreate, LoanPaymentSlipRead, LoanRead
 from database.config.config import settings
@@ -71,6 +72,7 @@ from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.loan_payment_model_assignment_service import read_loan_payment_model
 from services.principal_x_settlement_preview_service import quote_principal_x_for_loan
+from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
     calculate_micro_loan_totals,
@@ -519,6 +521,47 @@ def collect_cash_repayment(
     }
 
 
+
+
+@router.get(
+    "/{loan_id}/principal-x-settlements/readiness",
+    response_model=PrincipalXSettlementReadinessRead,
+)
+def principal_x_settlement_readiness(
+    loan_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Diagnostic only: absence of a certified posting adapter keeps payments off."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Invalid loan payment-model assignment") from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(status_code=409, detail="Loan is not assigned Principal x%")
+    audit = inspect_loanhub_payment_evidence(
+        db, company_id=loan.company_id, loan_id=loan.id,
+    )
+    blockers = [
+        "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
+        "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
+    ]
+    if audit.unresolved_payment_ids:
+        blockers.append("Payment rows require reconciliation before settlement posting.")
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        blockers.append("Loan is not active or defaulted.")
+    return PrincipalXSettlementReadinessRead(
+        loan_id=loan.id,
+        payment_model=model.value,
+        can_post_settlement=False,
+        payment_rows_reviewed=audit.payment_count,
+        unresolved_payment_rows=len(audit.unresolved_payment_ids),
+        blocking_reasons=blockers,
+    )
 
 
 @router.post(
