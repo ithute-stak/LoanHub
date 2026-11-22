@@ -11,6 +11,7 @@ from uuid import UUID
 
 from services.document_issuance_integrity import pdf_fingerprint
 from services.document_studio_letter_source_lock import LockedLetterSource
+from services.document_studio_letter_branding_evidence import LetterBrandingEvidence
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class LockedLetterPdfEvidence:
     document_version: int
     source_html_sha256: str
     render_snapshot_sha256: str
+    branding_sha256: str
     rendered_source_pdf_sha256: str
     candidate_pdf_sha256: str
 
@@ -29,6 +31,7 @@ def bind_letter_pdf_candidate(
     document_id: UUID, document_version: int,
     expected_source_html_sha256: str, source_pdf: bytes,
     expected_render_snapshot_sha256: str,
+    branding_evidence: LetterBrandingEvidence,
     candidate_pdf: bytes,
 ) -> LockedLetterPdfEvidence:
     """Check immutable source IDs and hash the exact provided PDF bytes.
@@ -58,6 +61,11 @@ def bind_letter_pdf_candidate(
                 expected_render_snapshot_sha256,
             )):
         raise PermissionError("Letter rendering snapshot changed")
+    if (not isinstance(branding_evidence, LetterBrandingEvidence)
+            or branding_evidence.tenant_id != tenant_id
+            or not isinstance(branding_evidence.combined_sha256, str)
+            or len(branding_evidence.combined_sha256) != 64):
+        raise PermissionError("Letter PDF branding evidence belongs to another tenant")
     source_digest = pdf_fingerprint(source_pdf)
     candidate_digest = pdf_fingerprint(candidate_pdf)
     return LockedLetterPdfEvidence(
@@ -65,6 +73,7 @@ def bind_letter_pdf_candidate(
         document_version=document_version,
         source_html_sha256=locked_source.content_sha256,
         render_snapshot_sha256=locked_source.render_snapshot_sha256,
+        branding_sha256=branding_evidence.combined_sha256,
         rendered_source_pdf_sha256=source_digest,
         candidate_pdf_sha256=candidate_digest,
     )
