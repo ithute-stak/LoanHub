@@ -17,12 +17,6 @@ services:
       - "9000"
     networks:
       - issuer_storage
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 20s
-      timeout: 10s
-      retries: 8
-      start_period: 20s
 
   # Run explicitly as a one-shot job; never as a dependency of LoanHub.
   configure-locked-bucket:
@@ -31,7 +25,12 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: |
       set -eu
-      mc alias set issuer http://object-store:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+      attempt=0
+      until mc alias set issuer http://object-store:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 30 ]; then echo "Object store is not ready" >&2; exit 1; fi
+        sleep 2
+      done
       mc mb --with-lock issuer/official-loanhub-pdfs
       mc retention set --default COMPLIANCE 3650d issuer/official-loanhub-pdfs
       mc version info issuer/official-loanhub-pdfs
@@ -41,7 +40,7 @@ services:
       MINIO_ROOT_PASSWORD: ${LOANHUB_ISSUER_STORAGE_ROOT_PASSWORD:?Required}
     depends_on:
       object-store:
-        condition: service_healthy
+        condition: service_started
     networks:
       - issuer_storage
     restart: "no"
