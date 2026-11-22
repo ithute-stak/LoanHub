@@ -72,8 +72,9 @@ def test_invalid_persisted_document_denied(field, value):
 
 def test_existing_persisted_signature_denied():
     db, candidate, persisted, tenant = case()
+    queries = iter(db.query.side_effect)
     db.query.side_effect = [
-        db.query.side_effect[0],
+        next(queries),
         Mock(filter=lambda *args: Mock(first=lambda: (uuid4(),))),
     ]
     with pytest.raises(PermissionError, match="Stored letter signatures"):
