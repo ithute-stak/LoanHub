@@ -62,3 +62,11 @@ def test_platform_user_denied():
     actor.is_platform_admin = True
     with pytest.raises(PermissionError):
         verified_branch_grant(actor)
+
+
+def test_client_directory_requires_existing_lending_roles():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "routers" / "data_center_directory.py").read_text()
+    method = source.split('def client_directory(', 1)[1]
+    assert "context.role not in LENDING_ROLES" in method
+    assert 'status_code=403, detail="Client directory access denied"' in method
