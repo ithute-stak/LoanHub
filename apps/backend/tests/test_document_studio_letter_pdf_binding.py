@@ -13,13 +13,16 @@ from services.document_issuance_integrity import pdf_fingerprint
 def case():
     tenant, document_id = uuid4(), uuid4()
     digest = sha256(b"<p>Original letter</p>").hexdigest()
+    snapshot = sha256(b"render settings").hexdigest()
     locked = LockedLetterSource(
         tenant_id=tenant, document_id=document_id,
         version=3, template_key="formal_letter", content_sha256=digest,
+        render_snapshot_sha256=snapshot,
     )
     kwargs = dict(
         locked_source=locked, tenant_id=tenant, document_id=document_id,
         document_version=3, expected_source_html_sha256=digest,
+        expected_render_snapshot_sha256=snapshot,
         source_pdf=b"%PDF-1.4\nOriginal preview bytes",
         candidate_pdf=b"%PDF-1.4\nStamped candidate bytes",
     )
@@ -31,6 +34,7 @@ def test_exact_bytes_bound_to_locked_letter_evidence():
     proof = bind_letter_pdf_candidate(**kwargs)
     assert proof.document_id == kwargs["document_id"]
     assert proof.document_version == 3
+    assert proof.render_snapshot_sha256 == kwargs["expected_render_snapshot_sha256"]
     assert proof.rendered_source_pdf_sha256 == pdf_fingerprint(kwargs["source_pdf"])
     assert proof.candidate_pdf_sha256 == pdf_fingerprint(kwargs["candidate_pdf"])
     assert proof.rendered_source_pdf_sha256 != proof.candidate_pdf_sha256
@@ -41,6 +45,8 @@ def test_exact_bytes_bound_to_locked_letter_evidence():
     {"document_version": 4}, {"document_version": True},
     {"expected_source_html_sha256": "0" * 64},
     {"expected_source_html_sha256": None},
+    {"expected_render_snapshot_sha256": "f" * 64},
+    {"expected_render_snapshot_sha256": None},
 ])
 def test_mismatched_source_identity_or_content_denied(change):
     kwargs = case()
