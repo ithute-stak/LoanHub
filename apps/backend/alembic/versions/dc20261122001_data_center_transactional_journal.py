@@ -23,6 +23,8 @@ def upgrade():
         "loanhub_dc_capture",
         sa.Column("company_id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("generation", postgresql.UUID(as_uuid=True), nullable=False,
+                  server_default=sa.text("gen_random_uuid()")),
         sa.Column("enabled_at", sa.DateTime(timezone=True), nullable=True),
     )
     op.create_table(
@@ -65,6 +67,26 @@ def upgrade():
             AND current_setting('loanhub.actor_scope', true) = 'tenant'
             AND current_setting('loanhub.role', true) IN ('company_owner', 'company_admin')
         )
+    """)
+
+    op.execute("""
+        CREATE FUNCTION public.loanhub_dc_rotate_generation() RETURNS trigger
+        LANGUAGE plpgsql
+        SET search_path = pg_catalog, public
+        AS $body$
+        BEGIN
+            IF NEW.enabled IS TRUE AND OLD.enabled IS DISTINCT FROM TRUE THEN
+                NEW.generation := gen_random_uuid();
+                NEW.enabled_at := clock_timestamp();
+            END IF;
+            RETURN NEW;
+        END;
+        $body$
+    """)
+    op.execute("""
+        CREATE TRIGGER loanhub_dc_rotate_generation
+        BEFORE UPDATE ON public.loanhub_dc_capture
+        FOR EACH ROW EXECUTE FUNCTION public.loanhub_dc_rotate_generation()
     """)
 
     op.execute("""
@@ -209,6 +231,8 @@ def upgrade():
 
 
 def downgrade():
+    op.execute("DROP TRIGGER IF EXISTS loanhub_dc_rotate_generation ON public.loanhub_dc_capture")
+    op.execute("DROP FUNCTION IF EXISTS public.loanhub_dc_rotate_generation()")
     for table in (
         "payment_transactions", "client_company_loan",
         "company_borrower_accounts", "company_staff",
