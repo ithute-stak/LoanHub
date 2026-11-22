@@ -71,7 +71,7 @@ from services.installment_service import adjust_installment_due_date
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.loan_payment_model_assignment_service import read_loan_payment_model
-from services.principal_x_settlement_preview_service import quote_principal_x_for_loan
+from services.principal_x_settlement_preview_service import quote_principal_x_for_loan_with_revision
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
@@ -593,15 +593,17 @@ def preview_principal_x_settlement(
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only active or defaulted loans can be previewed")
     try:
-        quote = quote_principal_x_for_loan(
+        result = quote_principal_x_for_loan_with_revision(
             db, loan=loan, settlement_date=payload.settlement_date,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    quote = result.quote
     return PrincipalXSettlementPreviewRead(
         loan_id=loan.id,
         payment_model=model.value,
         settlement_date=payload.settlement_date,
+        snapshot_revision=result.snapshot_revision,
         period=quote.period,
         uncapped_due=quote.uncapped_due,
         settlement_amount=quote.collectible_due,
