@@ -168,3 +168,16 @@ This is a step toward reliable renderer provenance, **not** proof that an
 official stamp has been approved or that immutable final issuance is complete.
 The eventual issuer must link the actual resolved logo-byte fingerprints,
 letter source, PDF bytes, approved stamp and object-lock version atomically.
+
+## Explicit selected-logo consistency
+
+The PDF exporter now freezes both the tenant's resolved branding logos
+and an explicitly selected right-hand document-logo asset before rendering.
+Its page callbacks reuse the identical bytes rather than loading the
+selected encrypted asset on each page. CI covers a multi-page export
+whose selected logo is read only once. This is compatible with the
+existing logo-precedence rule; it does not change DOCX exports.
+
+This protects consistency *within one export*, not final official issuance.
+The future issuer must use these same resolved bytes when capturing
+branding evidence, then verify the completed PDF and immutable stored version.
