@@ -30,6 +30,7 @@ class TreasurySettingsUpdate(BaseModel):
     headquarters_branch_id: UUID | None = None
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     timezone: str = Field(default="Africa/Maseru", min_length=3, max_length=80)
+    opening_balance_mode: Literal["manual", "previous_closing"] = "manual"
     auto_open_enabled: bool = True
     auto_open_time: time = time(0, 1)
     auto_submit_enabled: bool = True
