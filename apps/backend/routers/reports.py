@@ -63,6 +63,9 @@ def daily_issuance_expected_returns(
     require_reports(context)
     if period_end < period_start or (period_end - period_start).days > 1095:
         raise HTTPException(status_code=400, detail="Invalid reporting date range")
+    if (not context.is_platform_admin and company_id is not None
+            and company_id != context.company_id):
+        raise HTTPException(status_code=403, detail="Cross-company reporting is not allowed")
     # A platform administrator must explicitly select a tenant. Never aggregate
     # all tenants in a financial report.
     if (not context.is_platform_admin and context.branch_id is None
