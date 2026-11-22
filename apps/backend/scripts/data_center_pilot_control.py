@@ -57,7 +57,7 @@ def validate_request(
         raise PilotControlBlocked("Apply requires exact matching --confirm-company")
 
 
-def verify_database(connection, company_id: UUID, *, action: str) -> dict:
+def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -> dict:
     row = connection.execute(text("""
         SELECT current_user,
                pg_has_role(current_user, 'loanhub_app', 'MEMBER')
@@ -76,10 +76,11 @@ def verify_database(connection, company_id: UUID, *, action: str) -> dict:
 
     # Serialize transitions for the target company. Never acquire locks on
     # borrowers, loans or payments, and never change any financial tables.
-    company = connection.execute(text("""
+    company_lock = "FOR UPDATE" if apply else ""
+    company = connection.execute(text(f"""
         SELECT id FROM public.loan_companies
         WHERE id = :company_id AND is_active IS TRUE
-        FOR UPDATE
+        {company_lock}
     """), {"company_id": company_id}).one_or_none()
     if company is None:
         raise PilotControlBlocked("Active company not found")
@@ -109,9 +110,10 @@ def verify_database(connection, company_id: UUID, *, action: str) -> dict:
     if action == "activate" and any(c > CAP for c in counts.values()):
         raise PilotControlBlocked("A directory exceeds the 500-row snapshot limit")
 
-    capture = connection.execute(text("""
+    capture_lock = "FOR UPDATE" if apply else ""
+    capture = connection.execute(text(f"""
         SELECT enabled, generation FROM public.loanhub_dc_capture
-        WHERE company_id = :company_id FOR UPDATE
+        WHERE company_id = :company_id {capture_lock}
     """), {"company_id": company_id}).one_or_none()
     if action == "activate" and capture and capture.enabled:
         raise PilotControlBlocked("Capture is already enabled")
@@ -158,9 +160,8 @@ def run(args: argparse.Namespace) -> int:
             connection.execute(text("SET LOCAL statement_timeout = '30s'"))
             if not args.apply:
                 connection.execute(text("SET TRANSACTION READ ONLY"))
-                # Read-only mode cannot take row locks. Verified dry-run in a
-                # separate transaction, with the same SQL checks but no locks.
-            state = verify_database(connection, args.company_id, action=args.action)
+                # Dry runs do not take row locks or mutate the company.
+            state = verify_database(connection, args.company_id, action=args.action, apply=args.apply)
             print("Company:", str(args.company_id))
             print("Action:", args.action)
             print("Mode:", "APPLY" if args.apply else "DRY RUN")
