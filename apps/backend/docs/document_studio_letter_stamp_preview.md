@@ -221,3 +221,23 @@ database approval. Rendering uses existing Document Studio behavior, but
 cover artwork, font installation, external resources and exact final
 stamped/issued bytes still require independent binding. No production
 activation is authorized by this evidence adapter.
+
+## Linked official-letter issuance pipeline (still non-routed)
+
+The `issue_approved_company_letter_locked` orchestrator now connects the
+existing trusted-issuer approval preflight, locked persisted WorkspaceDocument
+source, transaction-bound PDF renderer, fail-closed source/final-PDF malware
+scans, approved-stamp certificate rendering, exact-version S3 Object Lock
+staging and audited issuance SQL registration. It rechecks the source's tenant,
+ID, HTML hash, rendering-settings hash, approved-stamp digest and underlying
+PostgreSQL transaction after staging and before registration. The registrar
+checks approval, issuer authority, exact immutable-version bytes and the
+transaction again before SQL COMMIT. Failure must not be described as an
+issued document; an orphan retained object requires reconciliation.
+
+**This function is not connected to public routes.** Do not activate it
+without an isolated, least-privilege PostgreSQL issuer connection, verified
+approval schema, authorized Batlokoa stamp artwork/approval, hardened storage,
+trusted render-assets provenance, production-like end-to-end tests and a
+working authoritative document verification endpoint. CI with mocks is not
+evidence that those deployment requirements exist.
