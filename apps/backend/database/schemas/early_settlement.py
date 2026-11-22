@@ -95,3 +95,14 @@ class PrincipalXSettlementPreviewRead(BaseModel):
     total_credited: Decimal
     ceiling_reduction: Decimal
     payment_enabled: bool = False
+
+
+
+class PrincipalXSettlementReadinessRead(BaseModel):
+    """Read-only diagnostics; never authorizes a financial transaction."""
+    loan_id: UUID
+    payment_model: str
+    can_post_settlement: bool = False
+    payment_rows_reviewed: int
+    unresolved_payment_rows: int
+    blocking_reasons: list[str]
