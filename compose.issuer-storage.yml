@@ -26,9 +26,9 @@ services:
     command: |
       set -eu
       attempt=0
-      until mc alias set issuer http://object-store:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
-        attempt=$((attempt + 1))
-        if [ "$attempt" -ge 30 ]; then echo "Object store is not ready" >&2; exit 1; fi
+      until mc alias set issuer http://object-store:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+        attempt=$$((attempt + 1))
+        if [ "$$attempt" -ge 30 ]; then echo "Object store is not ready" >&2; exit 1; fi
         sleep 2
       done
       mc mb --with-lock issuer/official-loanhub-pdfs
