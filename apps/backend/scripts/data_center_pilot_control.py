@@ -60,7 +60,7 @@ def validate_request(
 def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -> dict:
     row = connection.execute(text("""
         SELECT current_user,
-               pg_has_role(current_user, 'loanhub_app', 'MEMBER')
+               COALESCE(pg_has_role(current_user, to_regrole('loanhub_app'), 'MEMBER'), false)
     """)).one()
     if row[0] == "loanhub_app" or row[1]:
         raise PilotControlBlocked("Refusing runtime application database role")
