@@ -38,3 +38,18 @@ def test_allowlisted_server_borrower_ids_not_bank_data():
     assert "'borrower_id'" in REDUCER
     for sensitive in ("account_number", "national_id", "payer_phone", "provider_payload", "interest_rate"):
         assert sensitive not in REDUCER
+
+
+def test_replay_is_bound_to_exact_contract_company_and_metadata_only():
+    assert 'reply.contract !== "loanhub.data-center-replay.v1"' in BRIDGE
+    assert "reply.company_id !== expectedScope.companyId" in BRIDGE
+    assert "reply.payloads_included !== false" in BRIDGE
+    assert 'typeof reply.has_more !== "boolean"' in BRIDGE
+    assert "!Number.isSafeInteger(reply.from_cursor)" in BRIDGE
+    assert "reply.events.length > 200" in BRIDGE
+    assert "event.cursor !== expected++" in BRIDGE
+    assert "event.resource" in BRIDGE
+    assert "event.action" in BRIDGE
+    assert "event.entity_id" in BRIDGE
+    assert "event.branch_id" in BRIDGE
+    assert "throw new Error(\"Replay cursor gap or invalid metadata\")" in BRIDGE
