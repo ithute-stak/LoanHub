@@ -260,6 +260,75 @@ def export_daily_issuance_pdf(
     )
 
 
+
+
+@router.get("/daily-issuance.xlsx")
+def export_daily_issuance_xlsx(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Native spreadsheet export using the same tenant-scoped reporting query."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    report = daily_issuance_expected_returns(
+        period_start=period_start,
+        period_end=period_end,
+        company_id=company_id,
+        branch_id=branch_id,
+        db=db,
+        context=context,
+    )
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Daily Issuance"
+    sheet.append(["LoanHub | Daily Issuance and Expected Returns"])
+    sheet.append(["Period", report["period_start"], report["period_end"]])
+    sheet.append(["Basis", report["basis"]])
+    sheet.append(["Note", "Principal is not necessarily cash disbursed; expected returns are not guaranteed collections."])
+    sheet.append([])
+    sheet.append(["Date", "Loans issued", "Principal (M)", "Expected return (M)", "Above principal (M)"])
+    for item in report["daily"]:
+        sheet.append([
+            item["date"], item["loans_issued"], Decimal(item["principal_issued"]),
+            Decimal(item["expected_contractual_return"]),
+            Decimal(item["expected_return_above_principal"]),
+        ])
+    totals = report["totals"]
+    sheet.append([
+        "TOTAL", totals["loans_issued"], Decimal(totals["principal_issued"]),
+        Decimal(totals["expected_contractual_return"]),
+        Decimal(totals["expected_return_above_principal"]),
+    ])
+    for cell in sheet[6]:
+        cell.fill = PatternFill("solid", fgColor="17365D")
+        cell.font = Font(color="FFFFFF", bold=True)
+    for cell in sheet[sheet.max_row]:
+        cell.font = Font(bold=True)
+    for row in sheet.iter_rows(min_row=7, min_col=3, max_col=5):
+        for cell in row:
+            cell.number_format = '#,##0.00'
+    for column, width in enumerate([22, 20, 23, 26, 25], start=1):
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    sheet.freeze_panes = "A7"
+    sheet.auto_filter.ref = f"A6:E{sheet.max_row}"
+    output = io.BytesIO()
+    book.save(output)
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "attachment; filename=loanhub-daily-issuance.xlsx",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("/summary", response_model=ReportSummaryRead)
 def report_summary(
     scope_type: str = "company",
