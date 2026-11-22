@@ -181,3 +181,23 @@ existing logo-precedence rule; it does not change DOCX exports.
 This protects consistency *within one export*, not final official issuance.
 The future issuer must use these same resolved bytes when capturing
 branding evidence, then verify the completed PDF and immutable stored version.
+
+## Exact header logo evidence from the same rendering operation
+
+The non-routed `render_letter_pdf_with_header_evidence` adapter now invokes
+the regular Document Studio PDF exporter with an internal evidence collector.
+The exporter supplies SHA-256 evidence for the exact resolved **header**
+logo byte streams passed to its renderer, and the adapter returns the
+resulting PDF bytes plus their SHA-256 in the same frozen return value.
+It refuses cross-tenant, non-draft and visual-preview-marked candidates.
+Normal `export_pdf` callers still receive PDF bytes unchanged.
+
+**Do not confuse this with official issuance:** this is not an approval,
+locked persisted source or immutable storage record. It does not freeze
+or attest cover art, embedded HTML images, active signatures, font files,
+external renderer configuration, or the database transaction. Also, the
+standard page renderer may suppress malformed image bytes when decoding;
+a hash of resolved bytes does not on its own prove pixels were drawn.
+The trusted issuer must separately validate those dependencies, retain
+source/identity locks through COMMIT and bind the exact final PDF to
+immutable storage and an authorized audit record.
