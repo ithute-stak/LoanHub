@@ -2,8 +2,11 @@
 
 No mutation, no calculator calls, no legacy inference, and no automatic settlement.
 """
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from hashlib import sha256
+import json
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +17,17 @@ from payment_engine.principal_x_schedule_adapter import quote_from_approved_sche
 from payment_engine.principal_x_settlement import DatedCredit, PrincipalXQuote
 
 
-def quote_principal_x_for_loan(
+@dataclass(frozen=True)
+class PrincipalXSnapshotQuote:
+    """Change-detection fingerprint, NOT certified payment or consent evidence."""
+    quote: PrincipalXQuote
+    snapshot_revision: str
+
+
+def quote_principal_x_for_loan_with_revision(
+    db: Session, *, loan: ClientCompanyLoan, settlement_date: date
+) -> PrincipalXSnapshotQuote:
+    """Compute preview and advisory source fingerprint from the same snapshot."""
     db: Session, *, loan: ClientCompanyLoan, settlement_date: date
 ) -> PrincipalXQuote:
     """Preview against persisted contract and succeeded repayment transactions.
@@ -56,7 +69,7 @@ def quote_principal_x_for_loan(
     total = sum((Decimal(str(p.amount)) for p in payments), Decimal("0"))
     if abs(total - Decimal(str(loan.amount_paid))) > Decimal("0.01"):
         raise ValueError("Repayment ledger does not reconcile with loan amount paid")
-    return quote_from_approved_schedule(
+    quote = quote_from_approved_schedule(
         principal=Decimal(str(loan.principal_amount)),
         rate_percent=Decimal(str(loan.interest_rate)),
         schedule_rows=rows,
@@ -65,3 +78,38 @@ def quote_principal_x_for_loan(
             DatedCredit(p.completed_at.date(), Decimal(str(p.amount))) for p in payments
         ],
     )
+
+    # This digest is a read-only change detector, not a durable ledger revision
+    # or permission to post. A production posting service must re-read and
+    # reconcile ALL financial sources under an actual loan row lock.
+    fingerprint = {
+        "version": 1,
+        "company_id": str(loan.company_id),
+        "loan_id": str(loan.id),
+        "principal": str(Decimal(str(loan.principal_amount))),
+        "rate": str(Decimal(str(loan.interest_rate))),
+        "contractual_total": str(Decimal(str(loan.total_repayable))),
+        "amount_paid": str(Decimal(str(loan.amount_paid))),
+        "settlement_date": settlement_date.isoformat(),
+        "schedule": [
+            [str(r.installment_number), r.due_date.isoformat(), str(Decimal(str(r.total_due)))]
+            for r in rows
+        ],
+        "repayments": sorted([
+            [str(p.id), p.completed_at.isoformat(), str(Decimal(str(p.amount)))]
+            for p in payments
+        ]),
+    }
+    revision = sha256(
+        json.dumps(fingerprint, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return PrincipalXSnapshotQuote(quote=quote, snapshot_revision=revision)
+
+
+def quote_principal_x_for_loan(
+    db: Session, *, loan: ClientCompanyLoan, settlement_date: date
+) -> PrincipalXQuote:
+    """Backward-compatible non-payable Principal x% quote."""
+    return quote_principal_x_for_loan_with_revision(
+        db, loan=loan, settlement_date=settlement_date,
+    ).quote
