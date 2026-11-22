@@ -178,6 +178,88 @@ def export_daily_issuance_csv(
     )
 
 
+
+
+@router.get("/daily-issuance.pdf")
+def export_daily_issuance_pdf(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    company_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Read-only PDF export; authorization and amounts match the JSON report."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    report = daily_issuance_expected_returns(
+        period_start=period_start,
+        period_end=period_end,
+        company_id=company_id,
+        branch_id=branch_id,
+        db=db,
+        context=context,
+    )
+    output = io.BytesIO()
+    document = SimpleDocTemplate(
+        output, pagesize=landscape(A4), leftMargin=30,
+        rightMargin=30, topMargin=30, bottomMargin=30,
+    )
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("LoanHub | Daily Loan Issuance and Expected Returns", styles["Title"]),
+        Paragraph(
+            f"Period: {report['period_start']} to {report['period_end']}",
+            styles["Normal"],
+        ),
+        Paragraph(
+            "Basis: current contractual snapshot; not an immutable origination forecast. "
+            "Principal is not necessarily actual cash disbursed (particularly for top-ups). "
+            "Expected returns are contractual amounts, not guaranteed collections.",
+            styles["Normal"],
+        ),
+        Spacer(1, 14),
+    ]
+    data = [[
+        "Date", "Loans", "Principal (M)", "Expected return (M)", "Above principal (M)",
+    ]]
+    for row in report["daily"]:
+        data.append([
+            row["date"], str(row["loans_issued"]), row["principal_issued"],
+            row["expected_contractual_return"], row["expected_return_above_principal"],
+        ])
+    totals = report["totals"]
+    data.append([
+        "TOTAL", str(totals["loans_issued"]), totals["principal_issued"],
+        totals["expected_contractual_return"], totals["expected_return_above_principal"],
+    ])
+    table = Table(data, repeatRows=1, colWidths=[110, 65, 140, 155, 155])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E8EFF7")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+    ]))
+    story.append(table)
+    document.build(story)
+    return Response(
+        content=output.getvalue(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "attachment; filename=loanhub-daily-issuance.pdf",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("/summary", response_model=ReportSummaryRead)
 def report_summary(
     scope_type: str = "company",
