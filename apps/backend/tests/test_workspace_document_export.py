@@ -164,6 +164,8 @@ def _company_letter():
         address="Maseru, Lesotho",
         phone="+266 50000000",
         email="contact@example.test",
+        website=None,
+        district=None,
     )
     return document, company
 
