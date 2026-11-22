@@ -199,6 +199,84 @@ def test_journal_capture_is_off_until_explicitly_approved():
                     SELECT cursor FROM loanhub_dc_clock
                     WHERE company_id = :company
                 """), {"company": company}).scalar_one() == 5
+
+            # Full integration: commit a staff membership, build the actual
+            # six-resource repeatable-read snapshot, then replay a later
+            # committed branch change from that exact cursor.
+            from core.access_control import TenantContext
+            from database.models.user import User
+            from database.models.company_staff import CompanyStaff
+            from database.models.enums import UserRole
+            from services.data_center_snapshot import preview_snapshot
+            from services.data_center_replay import replay_metadata
+            from database.tenant_context import bind_database_tenant_context
+
+            with Session(engine, expire_on_commit=False) as db:
+                member_user = User(
+                    phone="590" + uuid4().hex[:9],
+                    password_hash="not-a-login",
+                    role=UserRole.COMPANY_OWNER,
+                    is_active=True,
+                )
+                db.add(member_user)
+                db.flush()
+                member = CompanyStaff(
+                    user_id=member_user.id,
+                    company_id=company,
+                    role=UserRole.COMPANY_OWNER,
+                    is_active=True,
+                )
+                db.add(member)
+                db.commit()
+                owner_company = db.get(LoanCompany, company)
+                context = TenantContext(
+                    user=member_user,
+                    staff=member,
+                    company=owner_company,
+                    company_id=company,
+                    branch_id=None,
+                    is_platform_admin=False,
+                )
+                preview = preview_snapshot(context, db)
+                assert preview["ready"] is True
+                assert preview["complete_data_center_snapshot"] is True
+                assert preview["replay_supported"] is True
+                assert set(preview["buckets"]) == {
+                    "branches", "loanProducts", "staff", "clients", "loans", "payments",
+                }
+                assert str(branch_id) in preview["buckets"]["branches"]["byId"]
+                assert str(member.id) in preview["buckets"]["staff"]["byId"]
+                baseline_cursor = preview["cursor"]
+                generation = preview["generation"]
+
+                # A subsequent committed change must appear as the next
+                # journal cursor, with no row payload or loan amount.
+                tracked_branch = db.get(CompanyBranch, branch_id)
+                tracked_branch.name = "Updated after snapshot"
+                db.commit()
+                bind_database_tenant_context(
+                    db,
+                    user_id=member_user.id,
+                    company_id=company,
+                    role=UserRole.COMPANY_OWNER.value,
+                    actor_scope="tenant",
+                )
+                from uuid import UUID
+                replay = replay_metadata(
+                    db, context,
+                    after_cursor=baseline_cursor,
+                    generation=UUID(generation),
+                )
+                assert replay["next_cursor"] == baseline_cursor + 1
+                assert replay["has_more"] is False
+                assert replay["events"] == [{
+                    "cursor": baseline_cursor + 1,
+                    "resource": "branches",
+                    "entity_id": str(branch_id),
+                    "branch_id": str(branch_id),
+                    "action": "updated",
+                }]
+                assert replay["payloads_included"] is False
         finally:
             engine.dispose()
     finally:
