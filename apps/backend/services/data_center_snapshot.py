@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from core.access_control import TenantContext
 from database.models.branch import CompanyBranch
+from database.models.company import LoanCompany
+from database.models.user import User
 from database.models.company_client import CompanyBorrowerAccount
 from database.models.company_staff import CompanyStaff
 from database.models.client_loan_company import ClientCompanyLoan
@@ -76,6 +78,15 @@ def preview_snapshot(context: TenantContext, request_db: Session) -> dict[str, A
                     branch_id=context.branch_id, role=context.role.value,
                     actor_scope="tenant",
                 )
+                # Reconfirm active user and company inside the MVCC view.
+                active_user = db.query(User.id).filter(
+                    User.id == context.user.id, User.is_active.is_(True),
+                ).first()
+                active_company = db.query(LoanCompany.id).filter(
+                    LoanCompany.id == context.company_id, LoanCompany.is_active.is_(True),
+                ).first()
+                if active_user is None or active_company is None:
+                    raise PermissionError("Snapshot actor or company is inactive")
                 # Recheck membership in the same read-consistent transaction.
                 membership = db.query(CompanyStaff).filter(
                     CompanyStaff.id == context.staff.id,
