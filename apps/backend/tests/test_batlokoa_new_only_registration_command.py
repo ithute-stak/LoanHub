@@ -52,3 +52,66 @@ def test_invalid_capture_or_context_never_opens_transaction():
             independently_approved_release=True,
         )
     open_session.assert_not_called()
+
+
+def test_approved_staging_path_binds_tenant_before_writer(monkeypatch):
+    from database.models.enums import UserRole
+    from services.atomic_new_client_registration import AtomicRegistrationResult
+    user_id, company_id, branch_id, account_id = (uuid4() for _ in range(4))
+    selected = TenantContext(
+        user=SimpleNamespace(id=user_id, is_active=True, role=UserRole.LOAN_OFFICER),
+        staff=SimpleNamespace(
+            user_id=user_id, company_id=company_id,
+            is_active=True, role=UserRole.LOAN_OFFICER,
+        ),
+        company=None, company_id=company_id,
+        branch_id=branch_id, is_platform_admin=False,
+    )
+
+    # The real Pydantic contract is checked by the adapter. Construct a valid
+    # synthetic instance without customer details ever reaching production.
+    from datetime import date
+    from database.models.enums import Gender, EmploymentStatus
+    payload = FullNewOnlyClientCapture(
+        branch_id=branch_id, first_name="Synthetic", last_name="Registration",
+        phone="59990001", date_of_birth=date(1991, 1, 1),
+        national_id="SYNTHETIC-NOT-REAL-001", gender=Gender.MALE,
+        district="Maseru", employment_status=EmploymentStatus.EMPLOYED,
+        consent_to_share_profile=True, consent_to_credit_checks=True,
+    )
+    events = []
+
+    class FakeSession:
+        def __enter__(self):
+            events.append("session_open")
+            return self
+        def __exit__(self, *args):
+            events.append("session_close")
+
+    def bind(db, **kwargs):
+        assert kwargs["company_id"] == company_id
+        assert kwargs["user_id"] == user_id
+        assert kwargs["branch_id"] == branch_id
+        assert kwargs["actor_scope"] == "tenant"
+        events.append("tenant_bound")
+
+    def writer(db, **kwargs):
+        assert kwargs["context"] is selected
+        assert kwargs["payload"] is payload
+        events.append("atomic_writer")
+        return AtomicRegistrationResult(account_id, False)
+
+    monkeypatch.setattr(command, "bind_database_tenant_context", bind)
+    monkeypatch.setattr(command, "create_full_new_client_atomically", writer)
+    receipt = command.submit_new_only_client(
+        context=selected, payload=payload,
+        idempotency_key="test-approved-command-1234",
+        fingerprint_secret=b"x" * 32,
+        session_factory=FakeSession,
+        independently_approved_release=True,
+    )
+    assert receipt.client_account_id == account_id
+    assert receipt.replayed is False
+    assert events == [
+        "session_open", "tenant_bound", "atomic_writer", "session_close",
+    ]
