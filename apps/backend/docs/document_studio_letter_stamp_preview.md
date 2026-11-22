@@ -81,3 +81,25 @@ future trusted issuer must keep these locks alive through immutable PDF
 binding and issuance COMMIT, and must prove that human identity cannot be
 spoofed by ordinary shared application credentials. A passing non-routed
 preflight is not an authorization token for later, separately transacted use.
+
+## Locked persisted letter source (non-routed)
+
+Before stamp approval lookup, the experimental preflight now invokes
+`lock_current_letter_source`. This reloads the company's actual
+`WorkspaceDocument` record under `FOR UPDATE NOWAIT`, compares its
+version/template/body/status to the prepared draft and refuses deleted or
+finalized records. It also checks for any persisted
+`WorkspaceDocumentSignature` rows. Its source identity includes a SHA-256
+fingerprint of the exact UTF-8 HTML stored in that locked version.
+
+The exclusive parent row lock blocks concurrent FK-backed signature
+insertions that need a key-share lock, **provided** the approved issuer retains
+the same PostgreSQL transaction through the final issuance COMMIT.
+This is intentionally stronger than a SELECT-only application runtime can do.
+The dedicated issuer requires narrowly scoped UPDATE/row-lock privileges;
+broad grants to the shared LoanHub runtime are prohibited.
+
+A matching HTML digest is **not** a fingerprint of the finished PDF. An issuer
+must independently validate rendered PDF bytes, dynamic branding/assets and
+source metadata, any signing, immutable storage retention and ledger state.
+These protections are not yet routed to the normal Document Studio export.
