@@ -719,6 +719,64 @@ def list_applications(
     return [_application_payload(db, item) for item in query.order_by(DirectLoanApplication.created_at.desc()).limit(500)]
 
 
+
+class RejectTopUpRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=1000)
+
+
+@router.post("/applications/{application_id}/reject-top-up")
+def reject_top_up(
+    application_id: UUID,
+    payload: RejectTopUpRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_user_context),
+):
+    """Reject only an unprocessed top-up, preserving the original loan and audit history."""
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.BRANCH_MANAGER})
+    application = _application(db, context=context, application_id=application_id, lock=True)
+    if application.application_type != "top_up" or application.status not in {"draft", "submitted", "under_review"}:
+        raise HTTPException(409, "Only an unprocessed top-up can be rejected")
+    if application.loan_id is not None or application.approved_at is not None:
+        raise HTTPException(409, "An approved or linked loan requires a separate review")
+    reason = payload.reason.strip()
+    if len(reason) < 10:
+        raise HTTPException(422, "Provide a rejection reason of at least 10 characters")
+    parent = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == application.parent_loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+        ClientCompanyLoan.borrower_id == application.borrower_id,
+    ).with_for_update().first() if application.parent_loan_id else None
+    previous_status = application.status
+    application.status = "rejected"
+    application.rejected_at = datetime.now(timezone.utc)
+    application.rejected_by_user_id = context.user.id
+    application.decision_notes = (
+        (application.decision_notes or "") + "\\nRejected top-up: " + reason
+    ).strip()
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=application.branch_id,
+        action="top_up.application_rejected",
+        table_name="direct_loan_application",
+        entity_type="application",
+        record_id=application.id,
+        description="Unprocessed top-up rejected without changing its parent loan.",
+        actor_role=context.role.value,
+        status="success",
+        event_data={
+            "application_reference": application.application_reference,
+            "parent_loan_id": str(application.parent_loan_id) if application.parent_loan_id else None,
+            "parent_status": parent.status.value if parent and hasattr(parent.status, "value") else (str(parent.status) if parent else "missing"),
+            "prior_application_status": previous_status,
+            "reason": reason,
+        },
+    ))
+    db.commit()
+    db.refresh(application)
+    return _application_payload(db, application)
+
+
 @router.delete("/applications/{application_id}/draft-top-up")
 def delete_draft_top_up(
     application_id: UUID,
@@ -806,6 +864,13 @@ def approve_top_up_exception(
         raise HTTPException(status_code=409, detail="This application does not require a top-up exception")
     if application.status not in {"draft", "submitted", "under_review"}:
         raise HTTPException(status_code=409, detail="This top-up application can no longer receive an exception decision")
+    parent = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == application.parent_loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+        ClientCompanyLoan.borrower_id == application.borrower_id,
+    ).with_for_update().first() if application.parent_loan_id else None
+    if parent is None or parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED} or Decimal(parent.balance or 0) <= 0:
+        raise HTTPException(409, "Parent loan is no longer eligible for a top-up exception")
     policy = get_or_create_policy(db, context.company_id, context.user.id)
     if not policy.top_up_owner_exception_enabled:
         raise HTTPException(status_code=403, detail="Owner top-up exceptions are disabled by company policy")
@@ -828,6 +893,14 @@ def submit_application(
     application = _application(db, context=context, application_id=application_id, lock=True)
     if application.status != "draft":
         raise HTTPException(status_code=409, detail="Only a draft application can be submitted")
+    if application.application_type == "top_up":
+        parent = db.query(ClientCompanyLoan).filter(
+            ClientCompanyLoan.id == application.parent_loan_id,
+            ClientCompanyLoan.company_id == context.company_id,
+            ClientCompanyLoan.borrower_id == application.borrower_id,
+        ).with_for_update().first() if application.parent_loan_id else None
+        if parent is None or parent.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED} or Decimal(parent.balance or 0) <= 0:
+            raise HTTPException(409, "Parent loan has been settled or is no longer eligible; reject this top-up.")
     policy = get_or_create_policy(db, context.company_id, context.user.id)
     enforce_duplicate_policy(
         db,

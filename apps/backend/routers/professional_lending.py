@@ -458,8 +458,8 @@ def approve_direct(
             .with_for_update()
             .first()
         )
-        if not parent_loan:
-            raise HTTPException(status_code=409, detail="The existing loan selected for this top-up is no longer active")
+        if not parent_loan or Decimal(parent_loan.balance or 0) <= 0:
+            raise HTTPException(status_code=409, detail="The existing loan selected for this top-up has been settled or is no longer active")
         # The balance contains unearned scheduled interest. Never use it as
         # top-up settlement or cash-to-borrower: quote the same ledger-based
         # settlement amount that disbursement will validate.
