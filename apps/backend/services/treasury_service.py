@@ -488,6 +488,18 @@ def create_opening_source(
     settings = get_or_create_settings(db, company_id)
     target_date = payload.business_date or local_business_date(settings)
     ledger = get_or_create_daily_ledger(db, company_id=company_id, branch_id=branch_id, business_date=target_date)
+    # Serialize opening-float edits with outgoing payments for this branch day.
+    # A confirmed zero opening remains a real, auditable opening source.
+    ledger = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == company_id,
+            BranchDailyLedger.branch_id == branch_id,
+        )
+        .with_for_update()
+        .one()
+    )
     assert_ledger_writable(ledger)
     validate_manual_proof(settings, payload.payment_method, payload.proof_reference, payload.proof_url)
     reference = (payload.source_reference or "").strip() or f"OPEN-{target_date:%Y%m%d}-{secrets.token_hex(4).upper()}"
