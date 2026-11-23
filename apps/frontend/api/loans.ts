@@ -101,6 +101,19 @@ export async function getLoan(loanId: string): Promise<Loan> {
   return normalizeLoanCurrentState((await api.get<Loan>(`/loans/${loanId}`)).data);
 }
 
+export async function cancelApprovedUndisbursedLoan(
+  loanId: string,
+  payload: {
+    reason: string;
+    signed_termination_reference: string;
+    confirm_no_disbursement: boolean;
+  },
+): Promise<Loan> {
+  return normalizeLoanCurrentState(
+    (await api.post<Loan>(`/loans/${loanId}/cancel-before-disbursement`, payload)).data,
+  );
+}
+
 export async function getLoanByReference(loanReference: string): Promise<Loan> {
   return normalizeLoanCurrentState(
     (await api.get<Loan>(`/loans/by-reference/${encodeURIComponent(loanReference.trim().toUpperCase())}`)).data,
