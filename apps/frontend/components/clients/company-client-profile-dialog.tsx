@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
@@ -54,6 +54,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
+import { api } from "@/lib/api";
 import type {
   CompanyClient,
   CompanyClientProfile,
@@ -163,6 +164,46 @@ export function CompanyClientProfileDialog({
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentInputKey, setDocumentInputKey] = useState(0);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [affordabilityOpen, setAffordabilityOpen] = useState(false);
+  const [affordabilityLoading, setAffordabilityLoading] = useState(false);
+  const [affordabilityAmount, setAffordabilityAmount] = useState<number | null>(null);
+  const [affordabilityError, setAffordabilityError] = useState<string | null>(null);
+  const affordabilityRequest = useRef(0);
+
+  useEffect(() => {
+    affordabilityRequest.current += 1;
+    setAffordabilityOpen(false);
+    setAffordabilityLoading(false);
+    setAffordabilityAmount(null);
+    setAffordabilityError(null);
+  }, [client?.id, open]);
+
+  async function showEmployeeAffordability() {
+    const employeeNo = profile?.cdas_employee_number?.trim();
+    if (!profile?.is_government_employee || !employeeNo || affordabilityLoading) return;
+    const requestId = ++affordabilityRequest.current;
+    setAffordabilityOpen(true);
+    setAffordabilityLoading(true);
+    setAffordabilityError(null);
+    setAffordabilityAmount(null);
+    try {
+      // Use LoanHub's existing authenticated CDAS affordability endpoint.
+      const response = await api.post<{ ok: boolean; affordability: number }>("/cdas/employees/affordability", {
+        employee_no: employeeNo,
+      });
+      if (requestId !== affordabilityRequest.current) return;
+      if (!response.data.ok || !Number.isFinite(Number(response.data.affordability))) {
+        throw new Error("CDAS did not return a valid affordability amount.");
+      }
+      setAffordabilityAmount(Number(response.data.affordability));
+    } catch (requestError: unknown) {
+      if (requestId === affordabilityRequest.current) {
+        setAffordabilityError(getErrorMessage(requestError, "CDAS affordability is unavailable. Please try again."));
+      }
+    } finally {
+      if (requestId === affordabilityRequest.current) setAffordabilityLoading(false);
+    }
+  }
 
   const loadProfile = useCallback(async () => {
     if (!client) return;
@@ -304,7 +345,7 @@ export function CompanyClientProfileDialog({
                 <DialogDescription className="mt-2 flex min-w-0 flex-wrap gap-2 text-xs sm:text-sm">
                   <span className="max-w-full break-all rounded-full border bg-background/70 px-2.5 py-1 font-mono">{currentClient?.account_reference ?? "Loading account..."}</span>
                   <span className="max-w-full break-all rounded-full border bg-background/70 px-2.5 py-1">ID: {currentClient?.national_id || currentClient?.passport_number || "Not recorded"}</span>
-                  {profile?.is_government_employee ? <span className="max-w-full break-all rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium">Employee no: {profile.cdas_employee_number || "Not recorded"}</span> : null}
+                  {profile?.is_government_employee ? (profile.cdas_employee_number ? <button type="button" onClick={() => void showEmployeeAffordability()} aria-label={`Check CDAS affordability for employee ${profile.cdas_employee_number}`} className="max-w-full break-all rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">Employee no: {profile.cdas_employee_number} · View affordability</button> : <span className="max-w-full break-all rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium">Employee no: Not recorded</span>) : null}
                   {currentClient?.phone ? <span className="rounded-full border bg-background/70 px-2.5 py-1">{currentClient.phone}</span> : null}
                 </DialogDescription>
               </div>
@@ -329,6 +370,18 @@ export function CompanyClientProfileDialog({
             </div>
           </div>
         </DialogHeader>
+
+        {affordabilityOpen && profile?.is_government_employee ? (
+          <section className="shrink-0 border-b bg-background px-4 py-3 sm:px-6" aria-label="CDAS employee affordability" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-bold">CDAS affordability · Employee {profile.cdas_employee_number}</p>
+              <Button variant="ghost" size="sm" onClick={() => { affordabilityRequest.current += 1; setAffordabilityOpen(false); setAffordabilityLoading(false); }}>Close</Button>
+            </div>
+            {affordabilityLoading ? <p className="mt-2 text-sm text-muted-foreground" role="status">Checking current CDAS affordability...</p> : null}
+            {affordabilityError ? <Alert variant="destructive" className="mt-2"><AlertTriangle className="h-4 w-4" /><AlertTitle>Affordability unavailable</AlertTitle><AlertDescription>{affordabilityError}</AlertDescription></Alert> : null}
+            {affordabilityAmount !== null ? <div className="mt-2"><p className="text-xl font-black text-primary">{formatMoney(affordabilityAmount)}</p><p className="text-xs text-muted-foreground">Provider-reported available affordability. This is not an approved loan amount or authorisation to disburse. Existing CDAS deductions must not be subtracted a second time.</p></div> : null}
+          </section>
+        ) : null}
 
         {error ? (
           <div className="p-5">
@@ -384,6 +437,7 @@ export function CompanyClientProfileDialog({
                     <CompanyClientProfileEditorCards
                       profile={profile}
                       onUpdated={setProfile}
+                      onViewEmployeeAffordability={() => void showEmployeeAffordability()}
                     />
                   </>
                 ) : null}
