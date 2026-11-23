@@ -68,3 +68,26 @@ def test_channel_debit_honors_reservations():
             company_id="c", branch_id="b", channel="cash",
             opening_confirmed=True, available="100", reserved="90", debit="11",
         )
+
+
+def test_pending_gateway_reservation_reduces_available_cash_channel_funds():
+    assert require_available_funds(
+        opening_confirmed=True, available="5000", reserved="3000", requested="2000"
+    ) == Decimal("0.00")
+    with pytest.raises(FundingRejected, match="Insufficient"):
+        require_available_funds(
+            opening_confirmed=True, available="5000", reserved="3000", requested="2000.01"
+        )
+
+
+def test_confirmed_zero_opening_does_not_authorize_positive_debit():
+    with pytest.raises(FundingRejected, match="Insufficient"):
+        require_available_funds(
+            opening_confirmed=True, available="0.00", requested="0.01"
+        )
+
+
+def test_failed_gateway_reservation_can_be_released():
+    assert require_available_funds(
+        opening_confirmed=True, available="5000", reserved="0", requested="5000"
+    ) == Decimal("0.00")
