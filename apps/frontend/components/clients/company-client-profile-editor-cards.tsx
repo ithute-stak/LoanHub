@@ -134,9 +134,11 @@ function CardHeading({
 export function CompanyClientProfileEditorCards({
   profile,
   onUpdated,
+  onViewEmployeeAffordability,
 }: {
   profile: CompanyClientProfile;
   onUpdated: (profile: CompanyClientProfile) => void;
+  onViewEmployeeAffordability?: () => void;
 }) {
   const client = profile.client;
   const permissions = profile.permissions;
@@ -454,7 +456,7 @@ export function CompanyClientProfileEditorCards({
             <>
               <EditableRow label="Employment" value={titleCase(client.employment_status)} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Employer" value={client.employer_name} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
-              {profile.is_government_employee ? <EditableRow label="Government employee no." value={profile.cdas_employee_number || "Not recorded"} /> : null}
+              {profile.is_government_employee ? (profile.cdas_employee_number && onViewEmployeeAffordability ? <div className="border-b py-3"><p className="text-xs font-semibold text-muted-foreground">Government employee no.</p><button type="button" onClick={onViewEmployeeAffordability} className="mt-1 break-all text-left text-sm font-semibold text-primary underline underline-offset-2 hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{profile.cdas_employee_number} · View affordability</button></div> : <EditableRow label="Government employee no." value="Not recorded" />) : null}
               <EditableRow label="Job title" value={client.job_title} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Monthly income" value={client.monthly_income === null ? null : formatMoney(client.monthly_income)} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Salary date" value={client.salary_date} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
