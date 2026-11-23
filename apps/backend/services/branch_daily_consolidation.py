@@ -32,6 +32,17 @@ def consolidate_branch_day(rows: list[BranchDay]) -> dict[str, Decimal | int]:
     reporting misleading company cash. Never sum day-end balances over dates.
     """
     ids = [row.branch_id for row in rows]
+    if any(not branch_id.strip() for branch_id in ids):
+        raise ValueError("Branch identity is required for consolidated reporting")
+    nonnegative_fields = (
+        "opening", "loan_disbursements", "repayments", "expenses",
+        "external_funding_in", "external_funding_out",
+        "internal_transfers_in", "internal_transfers_out",
+    )
+    for row in rows:
+        for field in nonnegative_fields:
+            if amount(getattr(row, field)) < 0:
+                raise ValueError(f"Negative {field} in branch {row.branch_id}")
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate branch in consolidated daily statement")
     fields = ("opening", "loan_disbursements", "repayments", "expenses",
