@@ -701,10 +701,10 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
             )
         """), {"actor": employee, "company": company, "branch": branch})
 
-    request = FullNewOnlyClientCapture.model_validate(
-        applicant(branch, national_id="SYN-BATLOKOA-001", phone="59008881")
-        .model_dump(mode="python")
-    )
+    # Exercise the complete Batlokoa capture, including employment details
+    # and an external debt, not just the minimal borrower identity fields.
+    request = full_capture(
+        branch, national_id="SYN-BATLOKOA-001", phone="59008881")
     @contextmanager
     def fresh_session():
         with sandbox_session(engine, schema) as connection:
@@ -740,3 +740,28 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
             WHERE id = :account
         """), {"account": created.client_account_id}).one()
         assert persisted == (company, branch, employee)
+        # Fresh database connection proves committed details survive the
+        # original request/session and the idempotent replay.
+        person = conn.execute(text(f"""
+            SELECT p.first_name, p.middle_name, p.last_name, p.national_id,
+                   b.employer_name, b.monthly_income
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrowers b ON b.id = a.borrower_id
+            JOIN {schema}.people p ON p.user_id = b.user_id
+            WHERE a.id = :account
+        """), {"account": created.client_account_id}).one()
+        assert person == (
+            "Palesa", "K", "Mokoena", "SYN-BATLOKOA-001",
+            "Synthetic Employer", Decimal("6000.00"),
+        )
+        debt = conn.execute(text(f"""
+            SELECT d.creditor, d.current_balance, d.installment_amount
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrower_debt_obligations d
+              ON d.borrower_id = a.borrower_id
+            WHERE a.id = :account
+        """), {"account": created.client_account_id}).one()
+        assert debt == (
+            "Synthetic historical external creditor",
+            Decimal("550.00"), Decimal("55.00"),
+        )
