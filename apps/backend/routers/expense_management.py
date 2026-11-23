@@ -665,6 +665,64 @@ def repair_integrity(
     return result
 
 
+@router.get("/owner/branch-day-summary")
+def owner_branch_day_summary(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only owner overview from existing tenant-scoped daily ledgers.
+
+    Does not create ledgers, recalculate posted amounts or change production data.
+    Missing ledgers are explicitly identified instead of reported as zero activity.
+    """
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    company_id = company_id_from(context)
+    branches = (
+        db.query(CompanyBranch)
+        .filter(CompanyBranch.company_id == company_id, CompanyBranch.is_active.is_(True))
+        .order_by(CompanyBranch.name.asc())
+        .all()
+    )
+    ledgers = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.company_id == company_id,
+            BranchDailyLedger.business_date == business_date,
+        )
+        .all()
+    )
+    by_branch = {ledger.branch_id: ledger for ledger in ledgers}
+    rows = []
+    for branch in branches:
+        ledger = by_branch.get(branch.id)
+        rows.append({
+            "branch_id": str(branch.id),
+            "branch_name": branch.name,
+            "has_ledger": ledger is not None,
+            "status": ledger.status.value if ledger else None,
+            "opening_balance": str(ledger.opening_balance) if ledger else None,
+            "money_in": str(ledger.total_money_in) if ledger else None,
+            "money_out": str(ledger.total_money_out) if ledger else None,
+            "expected_closing": str(ledger.expected_closing_balance) if ledger else None,
+        })
+    from decimal import Decimal
+    recorded = [ledger for ledger in ledgers if ledger.branch_id in {branch.id for branch in branches}]
+    return {
+        "business_date": business_date.isoformat(),
+        "branch_count": len(branches),
+        "recorded_branch_count": len([row for row in rows if row["has_ledger"]]),
+        "missing_branch_count": len([row for row in rows if not row["has_ledger"]]),
+        "opening_balance": str(sum((Decimal(str(row.opening_balance)) for row in recorded), Decimal("0"))),
+        "money_in": str(sum((Decimal(str(row.total_money_in)) for row in recorded), Decimal("0"))),
+        "money_out": str(sum((Decimal(str(row.total_money_out)) for row in recorded), Decimal("0"))),
+        "expected_closing": str(sum((Decimal(str(row.expected_closing_balance)) for row in recorded), Decimal("0"))),
+        "includes_internal_transfers": True,
+        "complete": len(recorded) == len(branches),
+        "branches": rows,
+    }
+
+
 @router.get("/statements", response_model=TreasuryStatementRead)
 def statement(
     date_from: date,
