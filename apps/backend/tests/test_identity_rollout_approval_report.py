@@ -33,7 +33,13 @@ def test_clean_report_is_never_permission_to_migrate_or_register():
         database_name="loanhub_sandbox",
         legacy_audit=SimpleNamespace(national_id_overlap_groups=0,
                                      passport_overlap_groups=0,
-                                     repeated_legacy_passport_groups=0))
+                                     repeated_legacy_passport_groups=0),
+        legacy_triage=SimpleNamespace(
+            matching_identity_groups=0, linked_only_groups=0,
+            mixed_linkage_groups=0, unlinked_only_groups=0,
+            unlinked_legacy_rows=0,
+            unlinked_with_single_borrower_and_company_account=0,
+            unlinked_needing_manual_review=0))
     assert report["operator_review_candidate"]
     assert not report["safe_to_execute"]
     assert not report["production_approved"]
@@ -125,3 +131,45 @@ def test_legacy_audit_missing_blocks_candidate_review():
         database_name="loanhub_sandbox")
     assert report["legacy_cross_source_audit_complete"] is False
     assert report["operator_review_candidate"] is False
+
+
+def test_legacy_link_triage_is_aggregate_only_and_never_approves_registration():
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox",
+        legacy_audit=SimpleNamespace(
+            national_id_overlap_groups=113,
+            passport_overlap_groups=6,
+            repeated_legacy_passport_groups=0),
+        legacy_triage=SimpleNamespace(
+            matching_identity_groups=113,
+            linked_only_groups=96, mixed_linkage_groups=15,
+            unlinked_only_groups=2, unlinked_legacy_rows=17,
+            unlinked_with_single_borrower_and_company_account=17,
+            unlinked_needing_manual_review=17),
+    )
+    assert report["legacy_linkage_review_complete"] is True
+    assert report["legacy_linkage_review"]["unresolved_identity_groups"] == 17
+    assert report["legacy_linkage_review"]["linked_only_groups"] == 96
+    assert report["operator_review_candidate"] is False
+    assert report["production_approved"] is False
+    assert report["registration_enabled"] is False
+    assert "national_id" not in report["legacy_linkage_review"]
+
+
+def test_conflicting_cross_source_legacy_audits_fail_closed():
+    with pytest.raises(IndexRolloutPreflightError, match="disagree"):
+        render_approval_report(
+            scan(), database_role="identity_audit_reader",
+            database_name="loanhub_sandbox",
+            legacy_audit=SimpleNamespace(
+                national_id_overlap_groups=1,
+                passport_overlap_groups=0,
+                repeated_legacy_passport_groups=0),
+            legacy_triage=SimpleNamespace(
+                matching_identity_groups=0, linked_only_groups=0,
+                mixed_linkage_groups=0, unlinked_only_groups=0,
+                unlinked_legacy_rows=0,
+                unlinked_with_single_borrower_and_company_account=0,
+                unlinked_needing_manual_review=0),
+        )
