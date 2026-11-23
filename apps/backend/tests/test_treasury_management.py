@@ -43,6 +43,13 @@ def test_real_world_daily_cycle_defaults_and_validation():
         TreasurySettingsUpdate(auto_open_time="17:00", auto_submit_time="16:30")
 
 
+def test_previous_closing_requires_explicit_opt_in():
+    assert TreasurySettingsUpdate().opening_balance_mode == "manual"
+    assert TreasurySettingsUpdate(opening_balance_mode="previous_closing").opening_balance_mode == "previous_closing"
+    with pytest.raises(ValidationError):
+        TreasurySettingsUpdate(opening_balance_mode="automatic")
+
+
 def test_non_cash_proof_can_be_required_by_company_policy():
     settings = SimpleNamespace(require_proof_for_non_cash=True)
     with pytest.raises(HTTPException) as caught:
