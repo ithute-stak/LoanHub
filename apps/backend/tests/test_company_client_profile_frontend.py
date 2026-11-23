@@ -29,3 +29,20 @@ def test_profile_dialog_contains_rating_profile_image_documents_and_history():
     assert "uploadCompanyClientProfileImage" in text
     assert "uploadCompanyClientDocument" in text
     assert "downloadCompanyClientFile" in text
+
+
+def test_government_employee_number_appears_in_client_profile_only_when_applicable():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    cards = (root / "frontend" / "components" / "clients" / "company-client-profile-editor-cards.tsx").read_text(encoding="utf-8")
+    router = (root / "backend" / "routers" / "company_clients.py").read_text(encoding="utf-8")
+    schema = (root / "backend" / "database" / "schemas" / "company_clients.py").read_text(encoding="utf-8")
+
+    assert "profile?.is_government_employee" in dialog
+    assert "Employee no:" in dialog
+    assert "profile.is_government_employee" in cards
+    assert "Government employee no." in cards
+    assert "profile.cdas_employee_number" in cards
+    assert "CDASPayrollProfile.company_id == context.company_id" in router
+    assert "CDASPayrollProfile.borrower_id == account.borrower_id" in router
+    assert "cdas_employee_number: str | None = None" in schema
