@@ -344,6 +344,22 @@ def initiate_gateway_payment(
             integration_context=integration_context,
         ),
     )
+    # Reserve branch-channel funds under the same ledger lock used by cash
+    # disbursements and expenses. The PROCESSING payment becomes durable on
+    # commit; competing initiations then see it as a pending reservation.
+    if purpose == PaymentPurpose.LOAN_DISBURSEMENT and company_id and branch_id:
+        from services.treasury_service import (
+            _assert_expense_funds_locked,
+            get_or_create_daily_ledger,
+            get_or_create_settings,
+            local_business_date,
+        )
+        treasury_settings = get_or_create_settings(db, company_id)
+        branch_day = get_or_create_daily_ledger(
+            db, company_id=company_id, branch_id=branch_id,
+            business_date=local_business_date(treasury_settings),
+        )
+        _assert_expense_funds_locked(db, branch_day, PaymentMethod.LELEFAPAYGATE, value)
     db.add(payment)
     db.commit()
     db.refresh(payment)
