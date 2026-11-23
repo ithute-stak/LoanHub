@@ -218,14 +218,14 @@ def test_zero_opening_balance_is_valid_and_negative_is_rejected():
     from database.schemas.treasury import OpeningSourceCreate
 
     opening = OpeningSourceCreate(
-        source_type=OpeningSourceType.MANUAL,
+        source_type=OpeningSourceType.CASH_FLOAT,
         amount=Decimal("0.00"),
         description="Verified zero opening cash balance",
     )
     assert opening.amount == Decimal("0.00")
     with pytest.raises(ValidationError):
         OpeningSourceCreate(
-            source_type=OpeningSourceType.MANUAL,
+            source_type=OpeningSourceType.CASH_FLOAT,
             amount=Decimal("-0.01"),
             description="Invalid negative opening",
         )
