@@ -19,6 +19,8 @@ def test_rejection_is_authorized_audited_and_not_a_loan_mutation():
     assert 'application.status not in {"draft", "submitted", "under_review"}' in section
     assert "application.loan_id is not None or application.approved_at is not None" in section
     assert 'application.status = "rejected"' in section
+    assert "application.rejected_at =" in section
+    assert "application.rejected_by_user_id =" in section
     assert 'action="top_up.application_rejected"' in section
     assert '"parent_status":' in section
     assert "db.delete(" not in section
@@ -39,3 +41,9 @@ def test_direct_topup_screen_offers_rejection_and_disables_submission():
     assert "!parentEligible" in PAGE
     assert "window.confirm(" in PAGE
     assert "/reject-top-up" in API
+
+
+def test_manager_approval_blocks_zero_balance_parent():
+    approval = (BACKEND / "routers/professional_lending.py").read_text().split("def approve_direct(", 1)[1].split("@router.", 1)[0]
+    assert "Decimal(parent_loan.balance or 0) <= 0" in approval
+    assert "ClientCompanyLoan.status.in_([LoanStatus.ACTIVE, LoanStatus.DEFAULTED])" in approval
