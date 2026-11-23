@@ -15,12 +15,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.branch import CompanyBranch
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import (
     BranchTransferStatus,
     OpeningSourceType,
     PaymentDirection,
     PaymentMethod,
     PaymentPurpose,
+    PaymentStatus,
     TreasuryDayStatus,
     TreasuryDirection,
     TreasuryEntryApprovalStatus,
@@ -610,8 +612,6 @@ def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment
             PaymentTransaction.payment_method == payment_method,
             PaymentTransaction.purpose == PaymentPurpose.LOAN_DISBURSEMENT,
             PaymentTransaction.status.in_([PaymentStatus.PENDING, PaymentStatus.PROCESSING]),
-            PaymentTransaction.created_at >= datetime.combine(locked.business_date, time.min, tzinfo=timezone.utc),
-            PaymentTransaction.created_at < datetime.combine(locked.business_date, time.max, tzinfo=timezone.utc),
         )
         .scalar()
     )
