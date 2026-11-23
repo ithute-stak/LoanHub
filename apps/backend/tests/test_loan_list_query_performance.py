@@ -56,3 +56,18 @@ def test_superadmin_loan_listing_remains_unscoped(monkeypatch):
     query.filter.assert_not_called()
     query.offset.assert_called_once_with(10)
     query.limit.assert_called_once_with(30)
+
+
+def test_listing_invokes_focused_loader_not_detailed_loader(monkeypatch):
+    from unittest.mock import Mock
+
+    query = _query()
+    db = MagicMock()
+    focused = Mock(return_value=query)
+    monkeypatch.setattr(loans, "loan_list_query", focused)
+    monkeypatch.setattr(loans, "loan_query", lambda _: pytest.fail("Detail loader must not run"))
+    loans.list_loans(
+        skip=0, limit=10, borrower_id=None, x_company_id=None,
+        x_active_role=None, db=db, current_user=SimpleNamespace(role=UserRole.SUPERADMIN),
+    )
+    focused.assert_called_once_with(db)
