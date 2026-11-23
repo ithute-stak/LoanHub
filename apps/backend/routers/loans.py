@@ -315,6 +315,14 @@ def loan_query(db: Session):
     )
 
 
+def loan_list_query(db: Session):
+    """Only load relationships serialized by LoanRead; preserve detailed loader elsewhere."""
+    return db.query(ClientCompanyLoan).options(
+        selectinload(ClientCompanyLoan.installments),
+        selectinload(ClientCompanyLoan.renewal_cycles),
+    )
+
+
 def loan_or_404(db: Session, loan_id: UUID) -> ClientCompanyLoan:
     loan = loan_query(db).filter(ClientCompanyLoan.id == loan_id).first()
     if not loan:
@@ -1070,15 +1078,7 @@ def list_loans(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    # LoanRead only serializes loan columns, installments and renewal cycles.
-    # The detail loader joins payment transactions and borrower/company records,
-    # multiplying result rows unnecessarily for every listed loan.
-    # Select-in loading keeps both nested response collections while avoiding
-    # the transaction fan-out and retaining the existing authorization filters.
-    query = db.query(ClientCompanyLoan).options(
-        selectinload(ClientCompanyLoan.installments),
-        selectinload(ClientCompanyLoan.renewal_cycles),
-    )
+    query = loan_list_query(db)
     if current_user.role == UserRole.SUPERADMIN:
         pass
     elif current_user.role == UserRole.BORROWER:
