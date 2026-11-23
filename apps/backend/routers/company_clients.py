@@ -536,22 +536,12 @@ def _directory_summaries(
     *,
     context: TenantContext,
     accounts: list[CompanyBorrowerAccount],
+    include_summaries: bool = True,
 ) -> tuple[dict, list[ClientCompanyLoan], list[RepaymentInstallment]]:
     borrower_ids = [account.borrower_id for account in accounts]
     if not borrower_ids:
         return {}, [], []
 
-    banks = (
-        db.query(BorrowerBankAccount)
-        .filter(
-            BorrowerBankAccount.borrower_id.in_(borrower_ids),
-        )
-        .order_by(
-            BorrowerBankAccount.salary_account.asc(),
-            BorrowerBankAccount.updated_at.asc(),
-        )
-        .all()
-    )
     loans = (
         db.query(ClientCompanyLoan)
         .filter(
@@ -569,6 +559,23 @@ def _directory_summaries(
         if loan_ids
         else []
     )
+    # The portfolio side rail only uses loans and installments. Avoid loading
+    # bank details, case entries, and building per-client summaries for it.
+    if not include_summaries:
+        return {}, loans, installments
+
+    banks = (
+        db.query(BorrowerBankAccount)
+        .filter(
+            BorrowerBankAccount.borrower_id.in_(borrower_ids),
+        )
+        .order_by(
+            BorrowerBankAccount.salary_account.asc(),
+            BorrowerBankAccount.updated_at.asc(),
+        )
+        .all()
+    )
+
     account_ids = [account.id for account in accounts]
     case_entries = (
         db.query(CompanyClientCaseEntry)
@@ -816,7 +823,9 @@ def company_client_portfolio_insights(
     """Small side-rail feed for the full-screen client directory."""
     require_tenant_roles(context, LENDING_ROLES)
     accounts = _client_query(db, context).all()
-    _, loans, installments = _directory_summaries(db, context=context, accounts=accounts)
+    _, loans, installments = _directory_summaries(
+        db, context=context, accounts=accounts, include_summaries=False,
+    )
     client_by_borrower = {account.borrower_id: account for account in accounts}
     loan_by_id = {loan.id: loan for loan in loans}
     open_statuses = OPEN_INSTALLMENT_STATUSES
