@@ -319,6 +319,76 @@ def test_journal_capture_is_off_until_explicitly_approved():
                         generation=UUID(generation),
                     )
 
+                # Exercise the actual HTTP routes, dependency authorization
+                # and response headers against this throwaway PostgreSQL DB.
+                # No real credentials, customer records or production traffic.
+                from fastapi import FastAPI
+                from fastapi.testclient import TestClient
+                from core.access_control import get_tenant_context
+                from database.session import get_db
+                from routers.data_center_snapshot import router as snapshot_router
+                from routers.data_center_replay import router as replay_router
+
+                test_app = FastAPI()
+                test_app.include_router(snapshot_router)
+                test_app.include_router(replay_router)
+                current_context = [context]
+
+                def resolve_test_context():
+                    return current_context[0]
+
+                def disposable_test_session():
+                    with Session(engine) as test_db:
+                        actor = current_context[0]
+                        bind_database_tenant_context(
+                            test_db, user_id=actor.user.id,
+                            company_id=actor.company_id,
+                            branch_id=actor.branch_id,
+                            role=actor.role.value, actor_scope="tenant",
+                        )
+                        yield test_db
+
+                test_app.dependency_overrides[get_tenant_context] = resolve_test_context
+                test_app.dependency_overrides[get_db] = disposable_test_session
+                replay_params = {
+                    "generation": generation,
+                    "after_cursor": baseline_cursor,
+                }
+                with TestClient(test_app) as http:
+                    owner_snapshot = http.get("/realtime/data-center/snapshot-preview")
+                    assert owner_snapshot.status_code == 200, owner_snapshot.text
+                    assert owner_snapshot.headers["cache-control"] == "private, no-store"
+                    assert owner_snapshot.json()["ready"] is True
+                    assert owner_snapshot.json()["cursor"] == baseline_cursor + 1
+                    owner_replay = http.get(
+                        "/realtime/data-center/replay", params=replay_params,
+                    )
+                    assert owner_replay.status_code == 200, owner_replay.text
+                    assert owner_replay.headers["cache-control"] == "private, no-store"
+                    assert owner_replay.json()["next_cursor"] == baseline_cursor + 1
+                    assert owner_replay.json()["payloads_included"] is False
+
+                    current_context[0] = branch_context
+                    assert http.get(
+                        "/realtime/data-center/snapshot-preview"
+                    ).status_code == 403
+                    assert http.get(
+                        "/realtime/data-center/replay",
+                        params=replay_params,
+                    ).status_code == 403
+                    current_context[0] = context
+
+                    # FastAPI's query validation must reject malformed cursors,
+                    # generation and oversized pages before service execution.
+                    for invalid in (
+                        {"generation": generation, "after_cursor": -1},
+                        {"generation": generation, "limit": 201},
+                        {"generation": "not-a-uuid"},
+                    ):
+                        assert http.get(
+                            "/realtime/data-center/replay", params=invalid,
+                        ).status_code == 422
+
             # Exercise the actual privileged operator CLI on this throwaway
             # PostgreSQL database, never a production database.
             from argparse import Namespace
