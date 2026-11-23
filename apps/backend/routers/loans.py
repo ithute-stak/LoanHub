@@ -31,7 +31,8 @@ from database.models.payment import PaymentTransaction
 from database.models.lending_operations import CDASDeductionMandate
 from database.models.cdas_official import CdasOfficialMandateState
 from database.models.enums import InstallmentStatus
-from database.models.professional_lending import PaymentReceipt
+from database.models.professional_lending import PaymentReceipt, DirectLoanApplication
+from database.models.origination import LoanContract, LoanTopUpSettlement
 from database.models.user import User
 from database.models.person import Person
 from database.schemas.cash import (
@@ -1472,6 +1473,114 @@ def disbursement_integrity_preview(
             "a green preview does not bypass final disbursement validation."
         ),
     }
+
+
+
+class CancelUndisbursedLoanRequest(BaseModel):
+    reason: str = Field(min_length=12, max_length=1000)
+    signed_termination_reference: str = Field(min_length=5, max_length=180)
+    confirm_no_disbursement: bool
+
+
+@router.post("/{loan_id}/cancel-before-disbursement", response_model=LoanRead)
+def cancel_approved_undisbursed_loan(
+    loan_id: UUID,
+    payload: CancelUndisbursedLoanRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Cancel an approved but never funded loan; preserve signed evidence and financial history.
+
+    A signed agreement requires a separate mutual termination record; cancellation
+    does not erase original signatures, PDF, installments or underwriting evidence.
+    """
+    require_tenant_roles(context, {UserRole.COMPANY_OWNER, UserRole.COMPANY_ADMIN})
+    if not payload.confirm_no_disbursement:
+        raise HTTPException(status_code=422, detail="Confirm that no money has been paid out")
+    if len(payload.reason.strip()) < 12 or len(payload.signed_termination_reference.strip()) < 5:
+        raise HTTPException(status_code=422, detail="A reason and signed termination reference are mandatory")
+
+    # Identical row lock as the payout engine: either payout or cancellation wins.
+    loan = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.id == loan_id,
+        ClientCompanyLoan.company_id == context.company_id,
+    ).with_for_update().first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    assert_branch_scope(context, loan.branch_id)
+    if loan.status != LoanStatus.APPROVED or loan.disbursed_at is not None or loan.disbursed_by_user_id is not None:
+        raise HTTPException(status_code=409, detail="Only approved loans with no recorded disbursement may be cancelled")
+    if Decimal(loan.amount_paid or 0) != 0:
+        raise HTTPException(status_code=409, detail="Loan has recorded payments and requires financial reconciliation")
+    if any(Decimal(item.paid_amount or 0) != 0 for item in loan.installments):
+        raise HTTPException(status_code=409, detail="Loan has installment payments and requires reconciliation")
+
+    # Fail closed on any payment transaction, including pending/failed gateway
+    # attempts, until finance reconciles that no funds moved externally.
+    if db.query(PaymentTransaction.id).filter(PaymentTransaction.loan_id == loan.id).first():
+        raise HTTPException(status_code=409, detail="Loan has payment/disbursement activity; reconcile before cancellation")
+    if db.query(CDASDeductionMandate.id).filter(CDASDeductionMandate.loan_id == loan.id).first():
+        raise HTTPException(status_code=409, detail="A CDAS mandate exists; revoke or reconcile it first")
+    if db.query(LoanTopUpSettlement.id).filter(
+        (LoanTopUpSettlement.new_loan_id == loan.id) | (LoanTopUpSettlement.parent_loan_id == loan.id)
+    ).first():
+        raise HTTPException(status_code=409, detail="A top-up settlement exists; use a dedicated financial reversal")
+    if db.query(ClientCompanyLoan.id).filter(
+        ClientCompanyLoan.parent_loan_id == loan.id,
+        ClientCompanyLoan.status != LoanStatus.CANCELLED,
+    ).first():
+        raise HTTPException(status_code=409, detail="Related top-up loan requires review before cancellation")
+
+    contract = db.query(LoanContract).filter(
+        LoanContract.company_id == context.company_id,
+        LoanContract.loan_id == loan.id,
+    ).with_for_update().first()
+    previous_contract_status = contract.status if contract else None
+
+    loan.status = LoanStatus.CANCELLED
+    # Preserve the signed document, its hash, locked PDF and original schedule.
+    # The loan is excluded from current receivables by its terminal status.
+    if contract:
+        contract.status = "cancelled"
+    linked_application = db.query(DirectLoanApplication).filter(
+        DirectLoanApplication.company_id == context.company_id,
+        DirectLoanApplication.loan_id == loan.id,
+    ).with_for_update().first()
+    if linked_application:
+        linked_application.status = "cancelled"
+        linked_application.decision_notes = (
+            (linked_application.decision_notes or "")
+            + "\\nApproved facility cancelled before disbursement: "
+            + payload.reason.strip()
+        ).strip()
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=loan.branch_id,
+        action="loan.approved_undisbursed_cancelled",
+        table_name="client_company_loan",
+        entity_type="loan",
+        record_id=loan.id,
+        description="Approved facility cancelled without payout; signed document and schedule preserved.",
+        actor_role=context.role.value,
+        severity="critical",
+        status="success",
+        event_data={
+            "loan_reference": loan.loan_reference,
+            "original_status": "approved",
+            "original_balance": str(loan.balance),
+            "original_total_repayable": str(loan.total_repayable),
+            "contract_id": str(contract.id) if contract else None,
+            "contract_previous_status": previous_contract_status,
+            "contract_hash": contract.contract_hash if contract else None,
+            "signed_termination_reference": payload.signed_termination_reference.strip(),
+            "reason": payload.reason.strip(),
+            "disbursement_confirmed_absent": True,
+        },
+    ))
+    db.commit()
+    db.refresh(loan)
+    return loan
 
 
 @router.post("/{loan_id}/disburse", response_model=CashPaymentResult)
