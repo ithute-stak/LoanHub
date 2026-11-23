@@ -211,3 +211,21 @@ def test_platform_fee_and_billing_schemas_accept_verified_non_cash_methods():
     assert unlock.payment_method == PaymentMethod.MPESA_MERCHANT
     assert request_fee.payment_method == PaymentMethod.ECOCASH_WALLET
     assert claim.payment_method == PaymentMethod.CDAS
+
+
+def test_zero_opening_balance_is_valid_and_negative_is_rejected():
+    from database.models.enums import OpeningSourceType
+    from database.schemas.treasury import OpeningSourceCreate
+
+    opening = OpeningSourceCreate(
+        source_type=OpeningSourceType.MANUAL,
+        amount=Decimal("0.00"),
+        description="Verified zero opening cash balance",
+    )
+    assert opening.amount == Decimal("0.00")
+    with pytest.raises(ValidationError):
+        OpeningSourceCreate(
+            source_type=OpeningSourceType.MANUAL,
+            amount=Decimal("-0.01"),
+            description="Invalid negative opening",
+        )
