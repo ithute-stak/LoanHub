@@ -1,0 +1,89 @@
+# Dedicated, intentionally non-production Data Center browser certification stack.
+# Never combine (-f) with compose.yaml. Never mount production media, secrets or databases.
+name: loanhub-dc-cert
+
+x-app: &app
+  build:
+    context: ./apps/backend
+    dockerfile: Dockerfile
+  env_file:
+    - path: ./.env.dc-staging
+      required: true
+  environment: &backend-env
+    ENVIRONMENT: staging
+    DB_HOST: dc-db
+    DB_PORT: "5432"
+    DB_NAME: dc_cert
+    DB_USER: dc_cert
+    DB_PASSWORD: ${DC_CERT_DB_PASSWORD:?Set isolated database password}
+    REDIS_URL: redis://dc-redis:6379/0
+    JWT_PRIVATE_KEY_PATH: /app/secrets/jwt_private.pem
+    JWT_PUBLIC_KEY_PATH: /app/secrets/jwt_public.pem
+    RUN_MIGRATIONS: "false"
+    CORS_ORIGINS: ${DC_CERT_APP_ORIGIN:?Set dedicated staging HTTPS origin}
+    PUBLIC_APP_URL: ${DC_CERT_APP_ORIGIN:?Set dedicated staging HTTPS origin}
+  volumes:
+    - ./dc-cert-secrets:/app/secrets:ro
+  networks: [dc-cert]
+
+services:
+  dc-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dc_cert
+      POSTGRES_USER: dc_cert
+      POSTGRES_PASSWORD: ${DC_CERT_DB_PASSWORD:?Set isolated database password}
+    volumes:
+      - dc_cert_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dc_cert -d dc_cert"]
+      interval: 10s
+      retries: 12
+    networks: [dc-cert]
+
+  dc-redis:
+    image: redis:7-alpine
+    command: ["redis-server","--save","","--appendonly","no"]
+    networks: [dc-cert]
+
+  dc-migrate:
+    <<: *app
+    command: ["alembic","upgrade","head"]
+    depends_on:
+      dc-db: {condition: service_healthy}
+    restart: "no"
+
+  dc-backend:
+    <<: *app
+    environment:
+      <<: *backend-env
+      WEB_CONCURRENCY: "1"
+    depends_on:
+      dc-migrate: {condition: service_completed_successfully}
+      dc-redis: {condition: service_started}
+    ports:
+      - "127.0.0.1:38100:8000"
+
+  dc-frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${DC_CERT_API_URL:?Set isolated staging HTTPS API URL}
+        NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED: "true"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - dc-backend
+    ports:
+      - "127.0.0.1:38101:3000"
+    networks: [dc-cert]
+
+networks:
+  dc-cert:
+    internal: false
+
+volumes:
+  dc_cert_db:
