@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from core.access_control import (
     CASHIER_ROLES,
@@ -1070,7 +1070,15 @@ def list_loans(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    query = loan_query(db)
+    # LoanRead only serializes loan columns, installments and renewal cycles.
+    # The detail loader joins payment transactions and borrower/company records,
+    # multiplying result rows unnecessarily for every listed loan.
+    # Select-in loading keeps both nested response collections while avoiding
+    # the transaction fan-out and retaining the existing authorization filters.
+    query = db.query(ClientCompanyLoan).options(
+        selectinload(ClientCompanyLoan.installments),
+        selectinload(ClientCompanyLoan.renewal_cycles),
+    )
     if current_user.role == UserRole.SUPERADMIN:
         pass
     elif current_user.role == UserRole.BORROWER:
