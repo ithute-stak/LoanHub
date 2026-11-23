@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {useSearchParams} from "next/navigation";
 import {useEffect, useMemo, useState, type ReactNode} from "react";
 import {
@@ -370,7 +371,7 @@ export function LoanPortfolioWorkspace({
 }) {
     const searchParams = useSearchParams();
     const folioFromUrl = searchParams.get("folio")?.trim() ?? "";
-    const [search, setSearch] = useState(folioFromUrl);
+    const [search, setSearch] = useReduxTableField("loan-portfolio", "search", folioFromUrl);
     const [expanded, setExpanded] = useState(false);
     const [exportingBankZip, setExportingBankZip] = useState(false);
     const [exportingOverduePdf, setExportingOverduePdf] = useState(false);
@@ -385,10 +386,10 @@ export function LoanPortfolioWorkspace({
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     });
     const [exportingStatement, setExportingStatement] = useState(false);
-    const [filtersCollapsed, setFiltersCollapsed] = useState(false);
-    const [filters, setFilters] = useState<PortfolioFilters>(DEFAULT_FILTERS);
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState<number>(15);
+    const [filtersCollapsed, setFiltersCollapsed] = useReduxTableField("loan-portfolio", "filtersCollapsed", false);
+    const [filters, setFilters] = useReduxTableField<PortfolioFilters>("loan-portfolio", "filters", DEFAULT_FILTERS);
+    const [page, setPage] = useReduxTableField("loan-portfolio", "page", 1);
+    const [pageSize, setPageSize] = useReduxTableField<number>("loan-portfolio", "pageSize", 15);
     const [branches, setBranches] = useState<Branch[]>([]);
 
     useEffect(() => {
