@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -579,6 +579,18 @@ def _directory_summaries(
     account_ids = [account.id for account in accounts]
     case_entries = (
         db.query(CompanyClientCaseEntry)
+        # Directory summaries only read these fields. Do not transfer the
+        # potentially large private note body/title or action details for every
+        # case entry; full records remain available from case-detail endpoints.
+        .options(
+            load_only(
+                CompanyClientCaseEntry.id,
+                CompanyClientCaseEntry.company_borrower_account_id,
+                CompanyClientCaseEntry.entry_type,
+                CompanyClientCaseEntry.status,
+                CompanyClientCaseEntry.created_at,
+            )
+        )
         .filter(
             CompanyClientCaseEntry.company_id == context.company_id,
             CompanyClientCaseEntry.company_borrower_account_id.in_(account_ids),
