@@ -33,6 +33,15 @@ END
 $verify$;
 
 REVOKE ALL ON TABLE public.document_issuer_role_tenants FROM PUBLIC;
+-- LoanHub's schema-owner default privileges may grant SELECT to the shared
+-- runtime role even on newly created tables. Revoke it explicitly.
+DO $revoke$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'loanhub_app') THEN
+        EXECUTE 'REVOKE ALL ON TABLE public.document_issuer_role_tenants FROM loanhub_app';
+    END IF;
+END
+$revoke$;
 -- No GRANT SELECT, INSERT, UPDATE or DELETE to any issuer here.
 -- Review the exact per-company issuer login and separately GRANT SELECT
 -- only after its CREATE ROLE, isolation, and revocation tests pass.
