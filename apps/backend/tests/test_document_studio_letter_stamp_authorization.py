@@ -22,6 +22,8 @@ def isolated_trusted_issuer_gate():
     with patch(
         "services.document_studio_letter_stamp_authorization.require_trusted_issuer_database_login",
     ), patch(
+        "services.document_studio_letter_stamp_authorization.require_issuer_role_tenant_binding",
+    ), patch(
         "services.document_studio_letter_stamp_authorization.require_current_document_issuer",
         side_effect=lambda *, db, context: SimpleNamespace(
             user_id=context.user.id, company_id=context.company_id,
@@ -193,15 +195,20 @@ def test_approval_lookup_occurs_only_after_trusted_login_gate():
     def lookup_approval(**kwargs):
         order.append("approval")
         return approval
+    def role_tenant_binding(**kwargs):
+        order.append("role-tenant-binding")
     with patch(
         "services.document_studio_letter_stamp_authorization.require_trusted_issuer_database_login",
         side_effect=trusted_db,
+    ), patch(
+        "services.document_studio_letter_stamp_authorization.require_issuer_role_tenant_binding",
+        side_effect=role_tenant_binding,
     ), patch(
         "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
         side_effect=lookup_approval,
     ):
         check(Mock(), tenant, issuer, company, document)
-    assert order == ["trusted-login", "approval"]
+    assert order == ["trusted-login", "role-tenant-binding", "approval"]
 
 
 def test_revoked_current_staff_denies_approval_lookup():
@@ -255,4 +262,21 @@ def test_source_lock_failure_blocks_approval_query():
     ) as lookup, pytest.raises(PermissionError, match="version changed"):
         check(Mock(), tenant, issuer, company, document)
     lock.assert_called_once()
+    lookup.assert_not_called()
+
+
+def test_unbound_database_company_rejected_before_source_lock_or_approval():
+    tenant, issuer, _, company, document, approval = fixture()
+    with patch(
+        "services.document_studio_letter_stamp_authorization.require_issuer_role_tenant_binding",
+        side_effect=PermissionError("Issuer SQL login is not bound to authenticated company"),
+    ) as binding, patch(
+        "services.document_studio_letter_stamp_authorization.lock_current_letter_source",
+    ) as source_lock, patch(
+        "services.document_studio_letter_stamp_authorization.lookup_approved_stamp_from_database",
+        return_value=approval,
+    ) as lookup, pytest.raises(PermissionError, match="not bound"):
+        check(Mock(), tenant, issuer, company, document)
+    binding.assert_called_once()
+    source_lock.assert_not_called()
     lookup.assert_not_called()
