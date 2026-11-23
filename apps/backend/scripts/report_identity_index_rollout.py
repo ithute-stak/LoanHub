@@ -18,6 +18,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from services.legacy_identity_cross_reference import inspect_legacy_identity_cross_reference
+from services.legacy_link_triage import inspect_legacy_link_triage
 from services.identity_index_rollout_preflight import (
     inspect_index_rollout_preflight,
     IndexRolloutPreflightError,
@@ -29,7 +30,7 @@ ACK_VALUE = "read_only_identity_audit"
 ROLE_ENV = "LOANHUB_IDENTITY_AUDIT_EXPECTED_ROLE"
 
 
-def render_approval_report(preflight, *, database_role: str, database_name: str, legacy_audit=None) -> dict:
+def render_approval_report(preflight, *, database_role: str, database_name: str, legacy_audit=None, legacy_triage=None) -> dict:
     """Privacy-safe deterministic manifest; approval is always false."""
     if not database_role or not database_name:
         raise IndexRolloutPreflightError("Audited role and database name required")
@@ -48,8 +49,35 @@ def render_approval_report(preflight, *, database_role: str, database_name: str,
         }
         if any(type(value) is not int or value < 0 for value in legacy_counts.values()):
             raise IndexRolloutPreflightError("Untrustworthy historical collision counts")
+    triage_counts = None
+    if legacy_triage is not None:
+        triage_counts = {
+            "matching_identity_groups": legacy_triage.matching_identity_groups,
+            "linked_only_groups": legacy_triage.linked_only_groups,
+            "mixed_linkage_groups": legacy_triage.mixed_linkage_groups,
+            "unlinked_only_groups": legacy_triage.unlinked_only_groups,
+            "unlinked_legacy_rows": legacy_triage.unlinked_legacy_rows,
+            "unlinked_with_existing_same_company_account":
+                legacy_triage.unlinked_with_single_borrower_and_company_account,
+            "unresolved_identity_groups":
+                legacy_triage.unlinked_needing_manual_review,
+        }
+        if any(type(v) is not int or v < 0 for v in triage_counts.values()):
+            raise IndexRolloutPreflightError("Untrustworthy legacy triage")
+        if (triage_counts["linked_only_groups"]
+                + triage_counts["mixed_linkage_groups"]
+                + triage_counts["unlinked_only_groups"]
+                != triage_counts["matching_identity_groups"]):
+            raise IndexRolloutPreflightError("Inconsistent legacy triage")
+        if (triage_counts["unlinked_with_existing_same_company_account"]
+                > triage_counts["unlinked_legacy_rows"]):
+            raise IndexRolloutPreflightError("Inconsistent legacy linkage evidence")
+        if (legacy_audit is not None and
+                triage_counts["matching_identity_groups"]
+                != legacy_audit.national_id_overlap_groups):
+            raise IndexRolloutPreflightError("Legacy overlap and triage disagree")
     return {
-        "report_version": 2,
+        "report_version": 3,
         "checked_at": preflight.checked_at.isoformat(),
         "database_role": database_role,
         "database_name": database_name,
@@ -62,13 +90,17 @@ def render_approval_report(preflight, *, database_role: str, database_name: str,
         "candidate_index_names": list(preflight.invalid_existing_index_names),
         "legacy_cross_source_counts": legacy_counts,
         "legacy_cross_source_audit_complete": legacy_counts is not None,
+        "legacy_linkage_review": triage_counts,
+        "legacy_linkage_review_complete": triage_counts is not None,
         "requires_manual_legacy_reconciliation": (
             preflight.requires_manual_legacy_reconciliation
         ),
         "operator_review_candidate": bool(
             preflight.operator_review_candidate
             and legacy_counts is not None
+            and triage_counts is not None
             and not any(legacy_counts.values())
+            and triage_counts["unresolved_identity_groups"] == 0
         ),
         "index_statements_for_DBA_review_only": list(
             preflight.proposed_statements
@@ -121,9 +153,10 @@ def generate_read_only_report(url: str, *, expected_role: str) -> dict:
                     with session.begin():
                         scan = inspect_index_rollout_preflight(session)
                         legacy = inspect_legacy_identity_cross_reference(session)
+                        triage = inspect_legacy_link_triage(session)
                 return render_approval_report(
                     scan, database_role=role, database_name=db_name,
-                    legacy_audit=legacy,
+                    legacy_audit=legacy, legacy_triage=triage,
                 )
     finally:
         engine.dispose()
