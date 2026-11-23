@@ -26,13 +26,13 @@ def test_company_loan_listing_uses_lightweight_loader_with_tenant_branch_scope(m
     db = MagicMock()
     db.query.return_value = query
     company_id, branch_id = uuid4(), uuid4()
-    context = SimpleNamespace(company_id=company_id, branch_id=branch_id, role=UserRole.CASHIER)
+    context = SimpleNamespace(company_id=company_id, branch_id=branch_id, role=UserRole.LOAN_OFFICER)
     monkeypatch.setattr(loans, "resolve_tenant_context", lambda *_: context)
     monkeypatch.setattr(loans, "loan_query", lambda _: pytest.fail("Detail eager-loader must not run on list"))
     result = loans.list_loans(
         skip=0, limit=100, borrower_id=None,
-        x_company_id=str(company_id), x_active_role="cashier",
-        db=db, current_user=SimpleNamespace(role=UserRole.CASHIER),
+        x_company_id=str(company_id), x_active_role="loan_officer",
+        db=db, current_user=SimpleNamespace(role=UserRole.LOAN_OFFICER),
     )
     assert result == []
     db.query.assert_called_once_with(ClientCompanyLoan)
