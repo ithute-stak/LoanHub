@@ -426,6 +426,18 @@ def test_journal_capture_is_off_until_explicitly_approved():
                         SELECT enabled FROM loanhub_dc_capture WHERE company_id = :id
                     """), {"id": company}).scalar_one() is False
 
+                # The HTTP endpoint must also return not-ready after an
+                # audited disable; an old generation cannot yield events.
+                with TestClient(test_app) as http:
+                    current_context[0] = context
+                    stopped = http.get("/realtime/data-center/snapshot-preview")
+                    assert stopped.status_code == 200
+                    assert stopped.json()["ready"] is False
+                    assert stopped.json()["replay_supported"] is False
+                    assert http.get(
+                        "/realtime/data-center/replay", params=replay_params,
+                    ).status_code == 409
+
                 # Revoking capture must instantly revoke both server
                 # readiness and the replay contract for existing clients.
                 from services.data_center_replay import ReplayNotReady
@@ -459,6 +471,17 @@ def test_journal_capture_is_off_until_explicitly_approved():
                         SELECT array_agg(action ORDER BY id)
                         FROM loanhub_dc_pilot_audit WHERE company_id = :id
                     """), {"id": company}).scalar_one() == ["disable", "activate"]
+
+                # Actual HTTP replay must reject clients still using their
+                # old generation after the audited reactivation.
+                with TestClient(test_app) as http:
+                    assert http.get(
+                        "/realtime/data-center/replay", params=replay_params,
+                    ).status_code == 409
+                    refreshed = http.get("/realtime/data-center/snapshot-preview")
+                    assert refreshed.status_code == 200
+                    assert refreshed.json()["ready"] is True
+                    assert refreshed.json()["generation"] == str(active.generation)
 
                 # Old-generation clients must not replay after an authorized
                 # stop/restart; a new consistent snapshot is mandatory.
