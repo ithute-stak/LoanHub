@@ -118,6 +118,11 @@ jobs:
           node --test tests/data-center-replay-validation.test.mjs
           node --test tests/data-center-two-session-replay.test.mjs
 
+      - name: Check isolated Data Center staging safety preflight
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_data_center_cert_preflight.py' -v
+
       - name: Compile polyglot workers
         run: |
           set -euo pipefail
