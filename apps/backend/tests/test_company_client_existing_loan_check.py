@@ -108,3 +108,25 @@ def test_client_registration_requires_current_national_id_lookup():
     assert 'existingLoanCheck?.national_id.trim() !== nationalId' in source
     assert 'existingLoanCheck?.national_id.trim() !== submittedNationalId' in source
     assert 'setClientStep(0);' in source
+
+
+def test_registration_review_checks_historical_captures_globally_without_exposing_tenant_data():
+    """A different company's unlinked legacy identity must block new-only capture.
+
+    The existing loan-exposure endpoint deliberately remains tenant-scoped;
+    only the protected registration decision queries all legacy identities,
+    returning a boolean instead of a cross-tenant loan count.
+    """
+    import inspect
+    from routers.company_clients import (
+        check_company_client_existing_loans, review_assisted_registration,
+    )
+
+    review_source = inspect.getsource(review_assisted_registration)
+    existing_source = inspect.getsource(check_company_client_existing_loans)
+    assert 'db.query(LegacyLoanCapture.id)' in review_source
+    assert 'legacy_count = int(legacy_match is not None)' in review_source
+    assert 'LegacyLoanCapture.company_id == context.company_id' not in review_source
+    assert '"legacy_capture_found": result.legacy_capture_found' in review_source
+    assert 'LegacyLoanCapture.company_id == context.company_id' in existing_source
+    assert 'db.query(func.count(LegacyLoanCapture.id))' in existing_source
