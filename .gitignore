@@ -50,3 +50,7 @@ backups/
 .patch-backups/
 .loanhub-patch-backups/
 .*-backup-*/
+
+# Isolated Data Center certification keys and artifacts
+dc-cert-secrets/
+dc-cert-evidence/

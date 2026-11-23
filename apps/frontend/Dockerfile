@@ -35,6 +35,8 @@ FROM dependencies AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ARG NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED=false
+ENV NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED=${NEXT_PUBLIC_LOANHUB_DATA_CENTER_ENABLED}
 COPY . .
 RUN mkdir -p public/wasm
 COPY --from=wasm-builder /src/target/wasm32-unknown-unknown/release/loanhub_compute_wasm.wasm /app/public/wasm/loanhub_compute_wasm.wasm
