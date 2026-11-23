@@ -1,6 +1,7 @@
 "use client";
 
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { SuggestionSearch } from "@/components/ui/suggestion-search";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,7 +44,7 @@ export function SystemErrorsPage() {
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [search, setSearch] = useState("");
+    const [search, setSearch] = useReduxTableField("system-errors", "search", "");
     const [unresolvedOnly, setUnresolvedOnly] = useState(true);
     const [selected, setSelected] = useState<SystemErrorLog | null>(null);
     const [resolution, setResolution] = useState("");
