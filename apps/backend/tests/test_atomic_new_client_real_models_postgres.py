@@ -765,3 +765,112 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
             "Synthetic historical external creditor",
             Decimal("550.00"), Decimal("55.00"),
         )
+
+
+def test_isolated_http_save_then_readback_and_retry_uses_actual_postgres(
+    real_models_sandbox,
+):
+    """Synthetic HTTP boundary -> real LoanHub writer -> committed SQL readback.
+
+    This app exists ONLY inside a disposable PostgreSQL CI test. It is not
+    LoanHub's public API router and cannot activate production registration.
+    """
+    from fastapi import FastAPI, Header, HTTPException
+    from fastapi.testclient import TestClient
+
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    captured = full_capture(
+        branch, national_id="SYN-HTTP-PERSIST-001", phone="59008771")
+    app = FastAPI()
+
+    def authenticate(authorization, tenant):
+        if (authorization != "Bearer synthetic-ci-staff"
+                or tenant != str(company)):
+            raise HTTPException(401, "Unauthorized")
+
+    @app.post("/isolated-test-only/registration/clients", status_code=201)
+    def save(
+        payload: FullNewOnlyClientCapture,
+        authorization: str = Header(default=""),
+        x_company_id: str = Header(default=""),
+        idempotency_key: str = Header(default=""),
+    ):
+        authenticate(authorization, x_company_id)
+        # Same synthetic staff and branch provisioning used by existing
+        # disposable PostgreSQL tests; no production customer exists here.
+        result = invoke_full(engine, schema, context, payload, idempotency_key)
+        return {
+            "client_account_id": str(result.client_account_id),
+            "replayed": result.existing,
+        }
+
+    @app.get("/isolated-test-only/company-clients/{account_id}")
+    def readback(
+        account_id: str,
+        authorization: str = Header(default=""),
+        x_company_id: str = Header(default=""),
+    ):
+        authenticate(authorization, x_company_id)
+        with engine.connect() as connection:
+            row = connection.execute(text(f"""
+                SELECT a.id, a.company_id, a.branch_id, a.opened_by_user_id,
+                       a.source, p.first_name, p.last_name
+                FROM {schema}.company_borrower_accounts a
+                JOIN {schema}.borrowers b ON b.id = a.borrower_id
+                JOIN {schema}.people p ON p.user_id = b.user_id
+                WHERE a.id = :account AND a.company_id = :company
+            """), {"account": account_id, "company": company}).one_or_none()
+        if row is None:
+            raise HTTPException(404, "Client not found")
+        return {
+            "id": str(row[0]), "company_id": str(row[1]),
+            "branch_id": str(row[2]),
+            "opened_by_user_id": str(row[3]),
+            "source": row[4], "first_name": row[5], "last_name": row[6],
+        }
+
+    headers = {
+        "Authorization": "Bearer synthetic-ci-staff",
+        "X-Company-ID": str(company),
+        "Idempotency-Key": "synthetic-http-save-unique-001",
+    }
+    with TestClient(app) as http:
+        invalid = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"),
+            headers={**headers, "X-Company-ID": str(uuid4())},
+        )
+        assert invalid.status_code == 401
+        assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+
+        first = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"), headers=headers)
+        assert first.status_code == 201
+        created = first.json()
+        assert created["replayed"] is False
+        assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+        retrieved = http.get(
+            "/isolated-test-only/company-clients/"
+            + created["client_account_id"], headers=headers)
+        assert retrieved.status_code == 200
+        assert retrieved.json() == {
+            "id": created["client_account_id"],
+            "company_id": str(company),
+            "branch_id": str(branch),
+            "opened_by_user_id": str(employee),
+            "source": "new_only_registration",
+            "first_name": "Palesa",
+            "last_name": "Mokoena",
+        }
+        replay = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"), headers=headers)
+        assert replay.status_code == 201
+        assert replay.json() == {
+            "client_account_id": created["client_account_id"],
+            "replayed": True,
+        }
+        assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
