@@ -54,3 +54,12 @@ def test_loans_and_contracts_cancellation_interface():
     assert "Cancel approved undisbursed loan" in PAGE
     assert "signed_termination_reference" in PAGE
     assert "confirm_no_disbursement: true" in PAGE
+
+
+def test_cancelled_loans_do_not_inflate_current_portfolio_totals():
+    report = (BACKEND / "services/reporting_service.py").read_text()
+    assert "portfolio_loans = [" in report
+    assert "LoanStatus.CANCELLED, LoanStatus.REJECTED" in report
+    assert "(item.balance for item in portfolio_loans)" in report
+    assert "(item.principal_amount for item in portfolio_loans)" in report
+    assert "(item.amount_paid for item in portfolio_loans)" in report
