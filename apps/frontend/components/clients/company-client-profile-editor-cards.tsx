@@ -454,6 +454,7 @@ export function CompanyClientProfileEditorCards({
             <>
               <EditableRow label="Employment" value={titleCase(client.employment_status)} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Employer" value={client.employer_name} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
+              {profile.is_government_employee ? <EditableRow label="Government employee no." value={profile.cdas_employee_number || "Not recorded"} /> : null}
               <EditableRow label="Job title" value={client.job_title} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Monthly income" value={client.monthly_income === null ? null : formatMoney(client.monthly_income)} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
               <EditableRow label="Salary date" value={client.salary_date} editable={permissions.can_edit_profile} onEdit={() => startEditing("employment")} />
