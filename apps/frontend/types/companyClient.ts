@@ -320,6 +320,8 @@ export type CompanyClientProfileUpdate = {
 
 export type CompanyClientProfile = {
     client: CompanyClient;
+    is_government_employee: boolean;
+    cdas_employee_number: string | null;
     stats: CompanyClientProfileStats;
     payment_rating: CompanyClientPaymentRating;
     permissions: CompanyClientProfilePermissions;
