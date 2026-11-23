@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from core.access_control import (
     CASHIER_ROLES,
@@ -312,6 +312,14 @@ def loan_query(db: Session):
         joinedload(ClientCompanyLoan.branch),
         joinedload(ClientCompanyLoan.payment_transactions),
         joinedload(ClientCompanyLoan.borrower).joinedload(Borrower.user).joinedload(User.person),
+    )
+
+
+def loan_list_query(db: Session):
+    """Only load relationships serialized by LoanRead; preserve detailed loader elsewhere."""
+    return db.query(ClientCompanyLoan).options(
+        selectinload(ClientCompanyLoan.installments),
+        selectinload(ClientCompanyLoan.renewal_cycles),
     )
 
 
@@ -1070,7 +1078,7 @@ def list_loans(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    query = loan_query(db)
+    query = loan_list_query(db)
     if current_user.role == UserRole.SUPERADMIN:
         pass
     elif current_user.role == UserRole.BORROWER:
