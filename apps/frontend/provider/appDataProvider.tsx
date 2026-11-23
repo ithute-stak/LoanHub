@@ -701,12 +701,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             return;
         }
         loadedScopeRef.current = scope;
+        let started = false;
         const timer = window.setTimeout(() => {
+            started = true;
             setLoanOffers([]);
             setSelectedMarketplaceRequest(null);
             void loadAllData();
         }, 0);
-        return () => window.clearTimeout(timer);
+        return () => {
+            window.clearTimeout(timer);
+            // A rapid rerender may cancel the deferred load before it starts.
+            // Do not mark that scope as loaded when no request was made.
+            if (!started && loadedScopeRef.current === scope) {
+                loadedScopeRef.current = null;
+            }
+        };
     }, [activeCompanyId, activeMembership?.role, activeMembership?.branch_id, authInitialized, loadAllData, user]);
 
     const companyMap = useMemo(
