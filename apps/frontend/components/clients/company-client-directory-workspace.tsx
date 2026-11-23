@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   BadgeAlert,
@@ -391,12 +392,12 @@ export function CompanyClientDirectoryWorkspace({
   onCaseEntryCreated: (accountId: string, entry: CompanyClientCaseEntry) => void;
   onCaseEntryStatusChanged: (accountId: string, previousStatus: string, entry: CompanyClientCaseEntry) => void;
 }) {
-  const [tab, setTab] = useState<WorkspaceTab>("directory");
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<DirectoryFilters>(DEFAULT_FILTERS);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(15);
+  const [tab, setTab] = useReduxTableField<WorkspaceTab>("company-client-directory", "tab", "directory");
+  const [filtersCollapsed, setFiltersCollapsed] = useReduxTableField("company-client-directory", "filtersCollapsed", false);
+  const [search, setSearch] = useReduxTableField("company-client-directory", "search", "");
+  const [filters, setFilters] = useReduxTableField<DirectoryFilters>("company-client-directory", "filters", DEFAULT_FILTERS);
+  const [page, setPage] = useReduxTableField("company-client-directory", "page", 1);
+  const [pageSize, setPageSize] = useReduxTableField<number>("company-client-directory", "pageSize", 15);
   const [caseRecords, setCaseRecords] = useState<CompanyClientCaseRecord[]>([]);
   const [caseRecordsLoading, setCaseRecordsLoading] = useState(false);
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
