@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight, Banknote, RefreshCcw, Search, WalletCards } from "lucide-react";
 
@@ -18,7 +19,7 @@ import { toast } from "@/utils/toast";
 export function CashPaymentsPage({ title, description }: { title: string; description: string }) {
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useReduxTableField("cash-payments", "search", "");
 
   const load = useCallback(async () => {
     setLoading(true);
