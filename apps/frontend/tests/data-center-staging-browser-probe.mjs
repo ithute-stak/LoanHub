@@ -34,15 +34,22 @@ try {playwright=await import("playwright");}
 catch {throw new Error("Install Playwright locally; this opt-in probe is not a CI dependency");}
 const browser=await playwright.chromium.launch({headless:true});
 const outcomes=[];
+// Both contexts run concurrently so a second session cannot hide a first-session failure.
 async function checkContext(stateFile, label) {
   const context=await browser.newContext({storageState:stateFile});
   const page=await context.newPage();
   const sockets=[];
+  const openedSockets=[];
   const previews=[];
   const failures=[];
   page.on("websocket",socket=>{
     try {
-      if(new URL(socket.url()).pathname.endsWith("/ws")) sockets.push(socket);
+      if(new URL(socket.url()).pathname.endsWith("/ws")) {
+        sockets.push(socket);
+        // A websocket event alone does not prove a successful handshake.
+        socket.on("socketerror",()=>failures.push("WebSocket connection failed"));
+        openedSockets.push(socket);
+      }
     } catch { /* URL ignored */ }
   });
   page.on("response",async response=>{
@@ -64,11 +71,11 @@ async function checkContext(stateFile, label) {
   });
   try {
     await page.goto(base.toString(),{waitUntil:"domcontentloaded",timeout:30000});
-    await page.waitForFunction(()=>document.readyState==="complete",{timeout:15000}).catch(()=>{});
+    await page.waitForFunction(()=>document.readyState==="complete",null,{timeout:15000});
     // Bridge requires an authenticated realtime socket and the opt-in staging build.
     await page.waitForTimeout(7000);
     assert.equal(failures.length,0,`${label}: snapshot API failure`);
-    assert.ok(sockets.length>0,`${label}: authenticated WebSocket not observed`);
+    assert.ok(openedSockets.length>0,`${label}: authenticated WebSocket not observed`);
     assert.ok(previews.length>0,`${label}: Data Center snapshot not observed; check staging flag/auth/role`);
     const first=previews.at(-1);
     assert.equal(first.contract,"loanhub.directory-preview.v1");
@@ -90,7 +97,8 @@ async function checkContext(stateFile, label) {
   }
 }
 try {
-  for(let i=0;i<states.length;i++) await checkContext(states[i],i===0?"A":"B");
+  await Promise.all(states.map((state,i)=>checkContext(state,i===0?"A":"B")));
+  assert.equal(outcomes.length,2,"Both independent browser contexts must pass");
   console.log(JSON.stringify({probe:"data-center-staging-read-only",result:"PASS",outcomes}));
 } finally {
   await browser.close();
