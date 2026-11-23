@@ -1146,14 +1146,19 @@ def review_assisted_registration(
     exposure = borrower_existing_loan_exposure(
         db, borrower=borrower, company_id=context.company_id,
     )
-    legacy_count = (
-        db.query(func.count(LegacyLoanCapture.id))
+    # Registration screening must detect an existing historical identity in
+    # ANY LoanHub company. Return only existence, never another company's
+    # loan count, borrower, branch, company identifier, or financial data.
+    # This is specific to the protected, always-read-only review endpoint;
+    # the tenant-scoped loan exposure endpoint above remains unchanged.
+    legacy_match = (
+        db.query(LegacyLoanCapture.id)
         .filter(
-            LegacyLoanCapture.company_id == context.company_id,
             func.lower(func.trim(LegacyLoanCapture.national_id)) == cleaned_id.lower(),
         )
-        .scalar()
-    ) or 0
+        .first()
+    )
+    legacy_count = int(legacy_match is not None)
     result = decide_registration_review(
         identity_match_found=person is not None,
         legacy_capture_count=int(legacy_count),
