@@ -460,6 +460,8 @@ class CompanyClientProfileDocumentRead(BaseModel):
 
 class CompanyClientProfileRead(BaseModel):
     client: CompanyClientRead
+    is_government_employee: bool = False
+    cdas_employee_number: str | None = None
     stats: CompanyClientProfileStatsRead
     payment_rating: CompanyClientPaymentRatingRead
     permissions: CompanyClientProfilePermissionsRead = Field(default_factory=CompanyClientProfilePermissionsRead)
