@@ -34,3 +34,23 @@ def test_empty_company_summary_is_zero():
     summary = consolidate_branch_day([])
     assert summary["branch_count"] == 0
     assert summary["expected_closing"] == Decimal("0.00")
+
+
+@pytest.mark.parametrize("field", [
+    "opening", "loan_disbursements", "repayments", "expenses",
+    "external_funding_in", "external_funding_out",
+    "internal_transfers_in", "internal_transfers_out",
+])
+def test_negative_financial_movements_fail_closed(field):
+    from dataclasses import replace
+
+    row = BranchDay("maseru", Decimal("100"), Decimal("0"), Decimal("0"), Decimal("0"))
+    with pytest.raises(ValueError, match="Negative"):
+        consolidate_branch_day([replace(row, **{field: Decimal("-0.01")})])
+
+
+def test_missing_branch_identity_fails_closed():
+    with pytest.raises(ValueError, match="Branch identity"):
+        consolidate_branch_day([
+            BranchDay("  ", Decimal("100"), Decimal("0"), Decimal("0"), Decimal("0"))
+        ])
