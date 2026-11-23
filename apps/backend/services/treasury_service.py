@@ -568,10 +568,10 @@ def _requires_expense_approval(settings: TreasurySettings, payload: TreasuryEntr
 
 
 def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment_method: PaymentMethod, debit: Decimal) -> None:
-    """Lock the branch-day row and check posted channel funds before paying an expense.
+    """Check outgoing treasury funds under a branch-day lock.
 
-    This covers treasury expenses only. Loan disbursement and other debit
-    pathways require the same lock before the control is globally effective.
+    Used for manual expenses, cash disbursements and gateway payout initiation.
+    This does not authorize untracked outgoing paths or replace end-to-end tests.
     """
     from services.branch_funding_policy import FundingRejected, require_available_funds
 
@@ -587,8 +587,9 @@ def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment
         .with_for_update()
         .one()
     )
+    assert_ledger_writable(locked)
     opening_rows = (
-        db.query(BranchOpeningSource.amount, BranchOpeningSource.is_system_generated)
+        db.query(BranchOpeningSource.amount)
         .filter(
             BranchOpeningSource.daily_ledger_id == locked.id,
             BranchOpeningSource.payment_method == payment_method,
