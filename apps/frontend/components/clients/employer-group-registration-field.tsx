@@ -28,6 +28,9 @@ type Props = {
   newEmployerGroup?: EmployerGroupCreate | null;
   onChange: (selection: Selection) => void;
   required?: boolean;
+  onCdasEmployeeNumberBlur?: () => void;
+  cdasEmployeeVerificationStatus?: "idle" | "checking" | "verified" | "invalid";
+  cdasEmployeeVerificationMessage?: string | null;
 };
 
 const CREATE_PREFIX = "__create_work_group__:";
@@ -70,6 +73,9 @@ export function EmployerGroupRegistrationField({
   newEmployerGroup,
   onChange,
   required = false,
+  onCdasEmployeeNumberBlur,
+  cdasEmployeeVerificationStatus = "idle",
+  cdasEmployeeVerificationMessage,
 }: Props) {
   const [groups, setGroups] = useState<EmployerGroup[]>([]);
   const [search, setSearch] = useState("");
@@ -228,16 +234,23 @@ export function EmployerGroupRegistrationField({
               <div className="space-y-1">
                 <Label className="text-xs font-black tracking-[0.01em] text-foreground/90">Employee No.</Label>
                 <p className="text-[11px] leading-4 text-muted-foreground/90">
-                  Optional at registration. This prepares an unverified CDAS payroll profile; CDAS is not selected automatically as the loan collection method.
+                  Required for government employees. Verification runs when you leave this field. CDAS does not automatically become the collection method.
                 </p>
               </div>
               <Input
                 className="h-11"
                 value={cdasEmployeeNumber ?? ""}
                 onChange={(event) => onChange({ cdas_employee_number: event.target.value })}
+                onBlur={onCdasEmployeeNumberBlur}
+                aria-invalid={cdasEmployeeVerificationStatus === "invalid"}
+                aria-describedby="government-employee-cdas-verification"
                 placeholder="Government employee / payroll number"
                 autoComplete="off"
+                required
               />
+              <p id="government-employee-cdas-verification" role="status" aria-live="polite" className={`text-xs ${cdasEmployeeVerificationStatus === "verified" ? "text-emerald-600 dark:text-emerald-400" : cdasEmployeeVerificationStatus === "invalid" ? "text-destructive" : "text-muted-foreground"}`}>
+                {cdasEmployeeVerificationStatus === "checking" ? "Checking employee number with CDAS..." : cdasEmployeeVerificationMessage || "Enter the number, then leave this field to verify it."}
+              </p>
             </div>
           ) : null}
         </div>
