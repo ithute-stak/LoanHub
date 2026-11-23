@@ -553,6 +553,60 @@ def _requires_expense_approval(settings: TreasurySettings, payload: TreasuryEntr
     return threshold > 0 and money(payload.amount) >= threshold
 
 
+def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment_method: PaymentMethod, debit: Decimal) -> None:
+    """Lock the branch-day row and check posted channel funds before paying an expense.
+
+    This covers treasury expenses only. Loan disbursement and other debit
+    pathways require the same lock before the control is globally effective.
+    """
+    from services.branch_funding_policy import FundingRejected, require_available_funds
+
+    # A PostgreSQL row lock serializes competing treasury expense postings
+    # on the same branch/day, including expenses on different channels.
+    locked = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == ledger.company_id,
+            BranchDailyLedger.branch_id == ledger.branch_id,
+        )
+        .with_for_update()
+        .one()
+    )
+    opening_rows = (
+        db.query(BranchOpeningSource.amount, BranchOpeningSource.is_system_generated)
+        .filter(
+            BranchOpeningSource.daily_ledger_id == locked.id,
+            BranchOpeningSource.payment_method == payment_method,
+            BranchOpeningSource.is_voided.is_(False),
+            BranchOpeningSource.is_confirmed.is_(True),
+        )
+        .all()
+    )
+    opening = sum((money(row.amount) for row in opening_rows), Decimal("0.00"))
+    movements = (
+        db.query(TreasuryEntry.direction, TreasuryEntry.amount)
+        .filter(
+            TreasuryEntry.daily_ledger_id == locked.id,
+            TreasuryEntry.payment_method == payment_method,
+            TreasuryEntry.is_voided.is_(False),
+            _posted_entry_filter(),
+        )
+        .all()
+    )
+    available = opening
+    for direction, value in movements:
+        available += money(value) if direction == TreasuryDirection.MONEY_IN else -money(value)
+    try:
+        require_available_funds(
+            opening_confirmed=bool(opening_rows),
+            available=available,
+            requested=debit,
+        )
+    except FundingRejected as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 def create_manual_entry(
     db: Session,
     *,
@@ -582,6 +636,8 @@ def create_manual_entry(
             raise HTTPException(status_code=422, detail="Choose an active expense category from this company")
 
     requires_approval = _requires_expense_approval(settings, payload)
+    if payload.entry_type == TreasuryEntryType.EXPENSE and payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
+        _assert_expense_funds_locked(db, ledger, payload.payment_method, money(payload.amount))
     entry = TreasuryEntry(
         company_id=company_id,
         branch_id=branch_id,
@@ -625,6 +681,8 @@ def approve_treasury_entry(db: Session, entry: TreasuryEntry, *, user_id: UUID, 
     if not ledger:
         raise HTTPException(status_code=404, detail="Branch day was not found")
     assert_ledger_writable(ledger)
+    if entry.entry_type == TreasuryEntryType.EXPENSE and entry.direction == TreasuryDirection.MONEY_OUT:
+        _assert_expense_funds_locked(db, ledger, entry.payment_method, money(entry.amount))
     entry.approval_status = TreasuryEntryApprovalStatus.APPROVED
     entry.approved_at = datetime.now(timezone.utc)
     entry.approved_by_user_id = user_id
