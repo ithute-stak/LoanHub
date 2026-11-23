@@ -34,6 +34,7 @@ from database.models.company_client_case import CompanyClientCaseEntry
 from database.models.company_client_identity_change import CompanyClientIdentityChangeRequest
 from database.models.file_management import ManagedFile
 from database.models.loan_product import LoanProduct
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.enums import InstallmentStatus, LoanStatus, PaymentProvider, PaymentPurpose, PaymentStatus, UserRole
 from database.models.person import Person
 from database.models.legacy_loan_capture import LegacyLoanCapture
@@ -1595,8 +1596,23 @@ def get_company_client_profile(
         account_id=account.id,
     )
 
+    payroll_profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == account.borrower_id,
+        )
+        .first()
+    )
+    is_government_employee = (
+        str(getattr(account.borrower, "employment_type", "") or "").lower() == "government"
+        or payroll_profile is not None
+    )
+
     return CompanyClientProfileRead(
         client=_client_read(account, summary),
+        is_government_employee=is_government_employee,
+        cdas_employee_number=(payroll_profile.employee_number if payroll_profile else None),
         stats=stats,
         payment_rating=payment_rating,
         permissions=_profile_permissions(context),
