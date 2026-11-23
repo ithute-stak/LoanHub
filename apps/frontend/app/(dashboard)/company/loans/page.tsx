@@ -31,6 +31,7 @@ import {expenseManagementApi} from "@/api/expenseManagement";
 import {
     calculateLoan,
     disburseLoan,
+    cancelApprovedUndisbursedLoan,
     adjustInstallmentDueDate,
     getLoan,
     getDisbursementIntegrityPreview,
@@ -216,6 +217,34 @@ export default function CompanyLoansPage() {
     const [installmentPaymentAmount, setInstallmentPaymentAmount] = useState("");
     const [installmentPaymentEvidence, setInstallmentPaymentEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
     const [postingInstallmentPayment, setPostingInstallmentPayment] = useState(false);
+    const [cancelLoanOpen, setCancelLoanOpen] = useState(false);
+    const [cancelLoanReason, setCancelLoanReason] = useState("");
+    const [cancelLoanReference, setCancelLoanReference] = useState("");
+    const [cancelLoanConfirmed, setCancelLoanConfirmed] = useState(false);
+    const [cancellingLoan, setCancellingLoan] = useState(false);
+
+    async function cancelSignedUndisbursedLoan() {
+        if (!selectedLoan || selectedLoan.status !== "approved" || selectedLoan.disbursed_at || !cancelLoanConfirmed) return;
+        setCancellingLoan(true);
+        try {
+            const result = await cancelApprovedUndisbursedLoan(selectedLoan.id, {
+                reason: cancelLoanReason.trim(),
+                signed_termination_reference: cancelLoanReference.trim(),
+                confirm_no_disbursement: true,
+            });
+            setSelectedLoan(result);
+            setLoans(previous => previous.map(item => item.id === result.id ? result : item));
+            setContracts(previous => previous.map(item => item.loan_id === result.id ? {...item, status: "cancelled"} : item));
+            setCancelLoanOpen(false);
+            setScheduleOpen(false);
+            toast.success("Undisbursed loan cancelled. Original signed documents and audit history preserved.");
+            void load();
+        } catch (error) {
+            toast.error(getErrorMessage(error, "Loan could not be cancelled. Review payout and mandate records."));
+        } finally {
+            setCancellingLoan(false);
+        }
+    }
     const [disburseOpen, setDisburseOpen] = useState(false);
     const [disbursing, setDisbursing] = useState(false);
     const [disbursementIntegrity, setDisbursementIntegrity] = useState<DisbursementIntegrityPreview | null>(null);
@@ -1600,6 +1629,14 @@ export default function CompanyLoansPage() {
                                 Print PDF
                             </Button>
                         ) : null}
+                        {selectedLoan && ["company_owner", "company_admin"].includes(activeRole ?? "") && selectedLoan.status === "approved" && !selectedLoan.disbursed_at ? (
+                            <Button type="button" variant="outline" className="border-destructive/40 text-destructive" onClick={() => {
+                                setCancelLoanReason("");
+                                setCancelLoanReference("");
+                                setCancelLoanConfirmed(false);
+                                setCancelLoanOpen(true);
+                            }}>Cancel approved undisbursed loan</Button>
+                        ) : null}
                         {selectedLoan && canSettleEarly && ["active", "defaulted"].includes(selectedLoan.status) ? (
                             <Button
                                 onClick={() => {
@@ -1787,6 +1824,35 @@ export default function CompanyLoansPage() {
                             <CalendarClock className="h-4 w-4"/>
                             Save adjusted date
                         </LoadingButton>
+                    </DialogFooter>
+                </div>
+            </CustomDialog>
+
+            <CustomDialog open={cancelLoanOpen} onOpenChange={(open) => !cancellingLoan && setCancelLoanOpen(open)}
+                          title="Cancel approved loan before disbursement"
+                          description={selectedLoan ? `${selectedLoan.loan_reference} · Owner/admin approval · Signed termination evidence required` : undefined}
+                          contentClassName="sm:max-w-xl">
+                <div className="space-y-4 p-5 sm:p-8">
+                    <Alert><ShieldCheck className="h-4 w-4"/><AlertTitle>Permanent pre-disbursement cancellation</AlertTitle>
+                        <AlertDescription>This is only allowed if no money was paid out, no payment transaction was initiated, and no active financial or CDAS obligations exist. The signed original contract and audit record are retained. Do not use this to reverse a payment.</AlertDescription>
+                    </Alert>
+                    <div className="space-y-2"><Label htmlFor="cancel-loan-reason">Cancellation reason</Label>
+                        <Textarea id="cancel-loan-reason" value={cancelLoanReason} onChange={event => setCancelLoanReason(event.target.value)}
+                                  placeholder="Explain the cancellation (minimum 12 characters)"/>
+                    </div>
+                    <div className="space-y-2"><Label htmlFor="cancel-loan-reference">Signed mutual termination reference</Label>
+                        <Input id="cancel-loan-reference" value={cancelLoanReference} onChange={event => setCancelLoanReference(event.target.value)}
+                               placeholder="Document/reference of signed cancellation agreement"/>
+                    </div>
+                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={cancelLoanConfirmed}
+                        onChange={event => setCancelLoanConfirmed(event.target.checked)}/>
+                        I confirm that neither the company nor any payment provider has paid out this loan, and that the signed termination evidence is held on file.
+                    </label>
+                    <DialogFooter className="flex-wrap">
+                        <Button variant="outline" disabled={cancellingLoan} onClick={() => setCancelLoanOpen(false)}>Keep loan</Button>
+                        <LoadingButton variant="destructive" loading={cancellingLoan}
+                            disabled={!cancelLoanConfirmed || cancelLoanReason.trim().length < 12 || cancelLoanReference.trim().length < 5}
+                            onClick={() => void cancelSignedUndisbursedLoan()}>Confirm loan cancellation</LoadingButton>
                     </DialogFooter>
                 </div>
             </CustomDialog>
