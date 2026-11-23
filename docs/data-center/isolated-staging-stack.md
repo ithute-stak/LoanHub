@@ -13,9 +13,9 @@ This stack is **not deployed automatically**. It is **not a certified pilot** an
 3. Create `dc-cert-secrets/jwt_private.pem` and `dc-cert-secrets/jwt_public.pem` as a **new** signing keypair, never reused from production, generated using the backend's documented accepted key algorithm. Keep them outside version control.
 4. Ensure the reverse proxy routes only the staging hostnames to `127.0.0.1:38101` (web) and `127.0.0.1:38100` (API including WebSocket upgrade); enforce HTTPS and access restrictions. The compose file intentionally **does not** publish a public service.
 5. Ensure there are no port conflicts, the deployment host has headroom, and an operator can monitor the separate stack. A separate VPS is preferable to avoid resource contention with financial production.
-6. Run `python3 scripts/data-center-cert-preflight.py`. **A PASS only checks local configuration.** Validate all routes, outbound integrations, and data isolation separately before any launch.
-7. If approved, review the fully rendered `docker compose -f compose.dc-cert.yml --project-name loanhub-dc-cert config` in a secure environment; note that the rendering may include secret values and must never be pasted into CI logs.
-8. Only after an explicit deployment decision, use `docker compose -f compose.dc-cert.yml --project-name loanhub-dc-cert up -d --build` from a clean, isolated checkout. Do not use `pull loanhub latest` or merge with production compose.
+6. Run `python3 scripts/data-center-cert-preflight.py`. The staging env file is used for **both** container environment and Compose variable interpolation only when explicitly passed via `--env-file`; `env_file:` alone is not enough. **A PASS only checks local configuration.** Validate all routes, outbound integrations, and data isolation separately before any launch.
+7. If approved, review the fully rendered `docker compose --env-file .env.dc-staging -f compose.dc-cert.yml --project-name loanhub-dc-cert config` in a secure environment; note that the rendering may include secret values and must never be pasted into CI logs.
+8. Only after an explicit deployment decision, use `docker compose --env-file .env.dc-staging -f compose.dc-cert.yml --project-name loanhub-dc-cert up -d --build` from a clean, isolated checkout. Do not use `pull loanhub latest` or merge with production compose.
 
 ## Important limitations
 
@@ -28,4 +28,4 @@ This stack is **not deployed automatically**. It is **not a certified pilot** an
 
 ## Safe removal (only after verifying the Compose project)
 
-Use `docker compose -f compose.dc-cert.yml --project-name loanhub-dc-cert down` to stop containers. Removing volumes (`down -v`) destroys staging data and requires explicit authorization; do not run it as a routine cleanup.
+Use `docker compose --env-file .env.dc-staging -f compose.dc-cert.yml --project-name loanhub-dc-cert down` to stop containers. Removing volumes (`down -v`) destroys staging data and requires explicit authorization; do not run it as a routine cleanup.
