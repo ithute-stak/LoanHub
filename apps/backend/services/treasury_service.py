@@ -597,10 +597,29 @@ def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment
     available = opening
     for direction, value in movements:
         available += money(value) if direction == TreasuryDirection.MONEY_IN else -money(value)
+    # Pending gateway disbursements are durable reservations: the gateway
+    # initiation transaction inserts PROCESSING payment records before it
+    # releases this branch-day lock. Failed/cancelled payments release funds
+    # automatically by leaving this status set.
+    reserved = (
+        db.query(func.coalesce(func.sum(PaymentTransaction.amount), 0))
+        .join(ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id)
+        .filter(
+            PaymentTransaction.company_id == locked.company_id,
+            ClientCompanyLoan.branch_id == locked.branch_id,
+            PaymentTransaction.payment_method == payment_method,
+            PaymentTransaction.purpose == PaymentPurpose.LOAN_DISBURSEMENT,
+            PaymentTransaction.status.in_([PaymentStatus.PENDING, PaymentStatus.PROCESSING]),
+            PaymentTransaction.created_at >= datetime.combine(locked.business_date, time.min, tzinfo=timezone.utc),
+            PaymentTransaction.created_at < datetime.combine(locked.business_date, time.max, tzinfo=timezone.utc),
+        )
+        .scalar()
+    )
     try:
         require_available_funds(
             opening_confirmed=bool(opening_rows),
             available=available,
+            reserved=money(reserved or 0),
             requested=debit,
         )
     except FundingRejected as error:
