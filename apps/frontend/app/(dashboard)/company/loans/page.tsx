@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
 import {
@@ -160,7 +161,7 @@ export default function CompanyLoansPage() {
     const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
     const [loading, setLoading] = useState(true);
     const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
-    const [tab, setTab] = useState<WorkspaceTab>("portfolio");
+    const [tab, setTab] = useReduxTableField<WorkspaceTab>("loans-page", "tab", "portfolio");
     const [historyBorrowerId, setHistoryBorrowerId] = useState<string | null>(null);
     const [borrowerHistoryLoans, setBorrowerHistoryLoans] = useState<Loan[]>([]);
     const [borrowerHistoryLoading, setBorrowerHistoryLoading] = useState(false);
