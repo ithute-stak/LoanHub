@@ -46,3 +46,19 @@ def test_government_employee_number_appears_in_client_profile_only_when_applicab
     assert "CDASPayrollProfile.company_id == context.company_id" in router
     assert "CDASPayrollProfile.borrower_id == account.borrower_id" in router
     assert "cdas_employee_number: str | None = None" in schema
+
+
+def test_government_employee_number_click_uses_existing_cdas_affordability_api():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    cards = (root / "frontend" / "components" / "clients" / "company-client-profile-editor-cards.tsx").read_text(encoding="utf-8")
+
+    assert 'api.post<{ ok: boolean; affordability: number }>("/cdas/employees/affordability"' in dialog
+    assert 'employee_no: employeeNo' in dialog
+    assert 'onClick={() => void showEmployeeAffordability()}' in dialog
+    assert 'profile?.is_government_employee' in dialog
+    assert 'affordabilityAmount !== null' in dialog
+    assert 'affordabilityError ?' in dialog
+    assert 'onViewEmployeeAffordability={(' in dialog
+    assert 'onClick={onViewEmployeeAffordability}' in cards
+    assert 'profile.is_government_employee' in cards
