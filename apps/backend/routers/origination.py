@@ -748,6 +748,8 @@ def reject_top_up(
     ).with_for_update().first() if application.parent_loan_id else None
     previous_status = application.status
     application.status = "rejected"
+    application.rejected_at = datetime.now(timezone.utc)
+    application.rejected_by_user_id = context.user.id
     application.decision_notes = (
         (application.decision_notes or "") + "\\nRejected top-up: " + reason
     ).strip()
