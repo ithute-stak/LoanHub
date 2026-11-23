@@ -304,6 +304,7 @@ export function CompanyClientProfileDialog({
                 <DialogDescription className="mt-2 flex min-w-0 flex-wrap gap-2 text-xs sm:text-sm">
                   <span className="max-w-full break-all rounded-full border bg-background/70 px-2.5 py-1 font-mono">{currentClient?.account_reference ?? "Loading account..."}</span>
                   <span className="max-w-full break-all rounded-full border bg-background/70 px-2.5 py-1">ID: {currentClient?.national_id || currentClient?.passport_number || "Not recorded"}</span>
+                  {profile?.is_government_employee ? <span className="max-w-full break-all rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium">Employee no: {profile.cdas_employee_number || "Not recorded"}</span> : null}
                   {currentClient?.phone ? <span className="rounded-full border bg-background/70 px-2.5 py-1">{currentClient.phone}</span> : null}
                 </DialogDescription>
               </div>
