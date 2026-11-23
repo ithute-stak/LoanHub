@@ -712,7 +712,22 @@ def disburse_cash_loan(
     if disbursement_amount <= 0:
         raise HTTPException(status_code=409, detail="The loan does not have a positive amount to disburse")
 
+    # Verify the actual cash channel BEFORE creating a successful payout.
+    # Keep the branch-day row lock until the enclosing transaction commits;
+    # the treasury entry is recorded by finalize_loan_payment below.
+    from services.treasury_service import (
+        _assert_expense_funds_locked,
+        get_or_create_daily_ledger,
+        local_business_date,
+    )
     now = datetime.now(timezone.utc)
+    branch_day = get_or_create_daily_ledger(
+        db,
+        company_id=loan.company_id,
+        branch_id=loan.branch_id,
+        business_date=local_business_date(settings, now),
+    )
+    _assert_expense_funds_locked(db, branch_day, payment_method, disbursement_amount)
     reference = _recorded_payment_reference(payment_method, PaymentDirection.OUTBOUND, proof_reference)
     payment = PaymentTransaction(
         company_id=loan.company_id,
