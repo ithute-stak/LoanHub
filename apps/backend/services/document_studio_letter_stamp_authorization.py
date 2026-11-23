@@ -18,6 +18,7 @@ from services.document_issuance_stamp_approval_repository import (
 )
 from services.document_issuance_stamp_snapshot import stamp_snapshot_sha256
 from services.document_issuance_trusted_login import require_trusted_issuer_database_login
+from services.document_issuance_role_tenant_binding import require_issuer_role_tenant_binding
 from services.document_studio_letter_source_lock import lock_current_letter_source, LockedLetterSource
 from services.document_issuance_issuer_authorization import require_current_document_issuer
 from services.document_issuance_transaction_guard import (
@@ -76,6 +77,9 @@ def preflight_approved_letter_stamp(
     # This must run on a separately provisioned, narrowly authorized issuer
     # connection, never the ordinary LoanHub runtime pool.
     require_trusted_issuer_database_login(db=db)
+    # A protected, administrator-owned SQL-login mapping binds this DB role
+    # to exactly one company. A caller-controlled tenant GUC cannot replace it.
+    require_issuer_role_tenant_binding(db=db, authenticated_tenant_id=authenticated_tenant_id)
     # Re-read active user, approved company and management membership under
     # SHARE NOWAIT locks on the SAME isolated issuer transaction.
     authorized = require_current_document_issuer(db=db, context=context)
