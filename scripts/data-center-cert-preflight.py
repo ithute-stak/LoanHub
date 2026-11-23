@@ -73,6 +73,24 @@ if values.get("REDIS_URL", "") not in ("", "redis://dc-redis:6379/0"):
 if any(key in values for key in ("JWT_PRIVATE_KEY", "JWT_SECRET", "JWT_PUBLIC_KEY")):
     fail("Use isolated key files, not inline JWT secrets")
 
+# Fail closed on inherited production integration credentials and destinations.
+# Staging is a directory/browser certification stack, not a payment or messaging pilot.
+sensitive_fragments = (
+    "MPESA", "M_PESA", "ECOCASH", "GOLINK", "NEDBANK",
+    "PAYMENT", "DISBURSE", "BANK_API", "SMS", "SMTP", "TWILIO",
+    "SENDGRID", "RESEND", "WEBHOOK", "S3_", "AWS_", "MINIO",
+    "PRODUCTION_DATABASE_URL", "DATABASE_URL", "CELERY_BROKER",
+)
+for key, value in values.items():
+    if value and any(fragment in key.upper() for fragment in sensitive_fragments):
+        fail(f"Unexpected integration setting {key}: remove it from browser-test staging")
+    if key.upper() in ("DB_PASSWORD", "DB_USER", "DB_NAME", "DB_HOST", "REDIS_URL") and value:
+        fail(f"Set isolated infrastructure values only through dedicated Compose settings: {key}")
+for key in ("DC_CERT_APP_ORIGIN", "DC_CERT_API_URL"):
+    value = os.environ.get(key) or values.get(key, "")
+    if "localhost" in value.lower() or "127.0.0.1" in value:
+        fail(f"{key} must use a dedicated HTTPS staging hostname")
+
 if errors:
     for reason in errors:
         print("BLOCKED:", reason, file=sys.stderr)
