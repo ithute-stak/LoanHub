@@ -41,7 +41,7 @@ def test_linked_sources_are_not_double_counted():
     db = SessionDouble(
         [SimpleNamespace(id=payment_id, amount=Decimal('100'))],
         [SimpleNamespace(payment_id=payment_id)],
-        [SimpleNamespace(payment_id=payment_id)],
+        [SimpleNamespace(payment_id=payment_id, amount=Decimal("100.00"))],
         [SimpleNamespace(payment_transaction_id=payment_id)],
     )
     result = inspect_principal_x_collection_sources(
