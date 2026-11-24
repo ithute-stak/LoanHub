@@ -25,6 +25,15 @@ def upgrade():
             server_default=sa.text("false"),
         ),
     )
+    op.add_column(
+        "treasury_settings",
+        sa.Column(
+            "enforce_branch_cash_controls_enabled",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
 
 
 def downgrade():
