@@ -153,6 +153,14 @@ def update_settings(
 ):
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
     settings = get_or_create_settings(db, company_id_from(context))
+    # Activation is intentionally not available through routine settings updates:
+    # existing cash sessions require a reconciled, separately certified rollout.
+    if (payload.enforce_branch_cash_controls_enabled
+            and not settings.enforce_branch_cash_controls_enabled):
+        raise HTTPException(
+            status_code=409,
+            detail="Branch cash enforcement requires certified cash-session reconciliation and an approved activation workflow",
+        )
     set_headquarters_branch(db, settings, payload.headquarters_branch_id)
     for field, value in payload.model_dump(exclude={"headquarters_branch_id"}, exclude_unset=True).items():
         setattr(settings, field, value)
