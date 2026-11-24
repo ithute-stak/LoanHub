@@ -140,9 +140,9 @@ def parse_government_payslip(text: str) -> GovernmentPayslip:
                     item_amount = money(match.group("amount"))
                     entry = PayslipEntry(item_label, item_amount)
                     (earnings if section == "earnings" else deductions).append(entry)
-                elif re.search(r"\d[\d,]*\.\d{2}", line):
-                    # An amount-containing row that OCR failed to segment
-                    # cannot be ignored without risking a false reconciliation.
+                else:
+                    # An OCR-corrupted financial row must never vanish silently;
+                    # even a completely unreadable monetary value is rejected.
                     raise GovernmentPayslipError("unparseable financial line")
     if not earnings or not deductions:
         raise GovernmentPayslipError("earnings or deductions missing")
