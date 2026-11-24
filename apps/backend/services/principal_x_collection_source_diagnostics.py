@@ -108,7 +108,7 @@ def inspect_principal_x_collection_sources(
         try:
             applied = Decimal(str(row.applied_amount))
             received = Decimal(str(payment.amount))
-        except (ValueError, TypeError, ArithmeticError):
+        except (ValueError, TypeError, ArithmeticError, AttributeError):
             invalid_cash += 1
             continue
         if not applied.is_finite() or not received.is_finite() or applied < 0 or received < 0:
