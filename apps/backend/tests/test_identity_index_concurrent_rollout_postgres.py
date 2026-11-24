@@ -161,8 +161,8 @@ def test_actual_postgres_index_audit_matches_registration_writer(rollout):
     def verify(*, expected_ready):
         with engine.connect() as connection:
             with connection.begin():
-                connection.execute(text(f"SET LOCAL search_path TO {schema}"))
                 connection.execute(text("SET TRANSACTION READ ONLY"))
+                connection.execute(text(f"SET LOCAL search_path TO {schema}"))
                 with Session(bind=connection) as db:
                     with db.begin():
                         with patch(
