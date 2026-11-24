@@ -715,21 +715,21 @@ def disburse_cash_loan(
     disbursement_amount = money(loan.top_up_cash_amount if loan.is_top_up else loan.principal_amount)
     if disbursement_amount <= 0:
         raise HTTPException(status_code=409, detail="The loan does not have a positive amount to disburse")
-    if loan.branch_id is None:
-        raise HTTPException(status_code=409, detail="A branch assignment is required before cash disbursement")
-
     now = datetime.now(timezone.utc)
-    branch_day = get_or_create_daily_ledger(
-        db, company_id=loan.company_id, branch_id=loan.branch_id,
-        business_date=local_business_date(settings, now),
-    )
-    branch_day = ensure_current_payment_day_writable(
-        db, branch_day, settings=settings, occurred_at=now,
-    )
-    assert_branch_outflow_funded(
-        db, ledger=branch_day, payment_method=payment_method,
-        amount=disbursement_amount, settings=settings,
-    )
+    if settings.enforce_branch_cash_controls_enabled:
+        if loan.branch_id is None:
+            raise HTTPException(status_code=409, detail="A branch assignment is required before cash disbursement")
+        branch_day = get_or_create_daily_ledger(
+            db, company_id=loan.company_id, branch_id=loan.branch_id,
+            business_date=local_business_date(settings, now),
+        )
+        branch_day = ensure_current_payment_day_writable(
+            db, branch_day, settings=settings, occurred_at=now,
+        )
+        assert_branch_outflow_funded(
+            db, ledger=branch_day, payment_method=payment_method,
+            amount=disbursement_amount, settings=settings,
+        )
     reference = _recorded_payment_reference(payment_method, PaymentDirection.OUTBOUND, proof_reference)
     payment = PaymentTransaction(
         company_id=loan.company_id,
