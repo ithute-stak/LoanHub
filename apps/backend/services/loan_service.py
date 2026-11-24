@@ -702,6 +702,7 @@ def disburse_cash_loan(
 
     from services.treasury_service import (
         assert_branch_outflow_funded,
+        ensure_current_payment_day_writable,
         get_or_create_daily_ledger,
         get_or_create_settings,
         local_business_date,
@@ -721,6 +722,9 @@ def disburse_cash_loan(
     branch_day = get_or_create_daily_ledger(
         db, company_id=loan.company_id, branch_id=loan.branch_id,
         business_date=local_business_date(settings, now),
+    )
+    branch_day = ensure_current_payment_day_writable(
+        db, branch_day, settings=settings, occurred_at=now,
     )
     assert_branch_outflow_funded(
         db, ledger=branch_day, payment_method=payment_method,
