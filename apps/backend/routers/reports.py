@@ -385,8 +385,8 @@ def export_daily_issuance_pdf(
         for item in report["details"]:
             detail_rows.append([
                 p(item["date"] + " " + item["time"]),
-                p(item["branch"] + "\\n" + item["client_name"]),
-                p(item["loan_reference"] + "\\n" + item["disbursed_by"]),
+                p(item["branch"] + " / " + item["client_name"]),
+                p(item["loan_reference"] + " / " + item["disbursed_by"]),
                 p(f"M {Decimal(item['principal_issued']):,.2f}"),
                 p(f"M {Decimal(item['cash_to_borrower']):,.2f}"),
                 p(f"{item['installments']} x M {Decimal(item['installment_amount']):,.2f}"),
