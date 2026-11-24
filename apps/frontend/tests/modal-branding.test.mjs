@@ -60,5 +60,18 @@ test("repository source audit identifies modal surfaces outside shared wrappers"
   assert.ok(scanned > 0);
   console.log("Modal audit scanned " + scanned + " source files.");
   console.log(findings.length ? "Review potential bypasses:\n" + findings.join("\n") : "No matching bypass patterns found.");
-  // Inventory only: candidates require review to distinguish non-modal or already branded surfaces.
+  const reviewedBranded = new Set([
+    "components/navigation/mobile-app-navigation.tsx",
+    "components/portal/portal-shell.tsx",
+  ]);
+  const unresolved = findings.filter((finding) => {
+    const path = finding.split(":")[0];
+    if (reviewedBranded.has(path)) return !/<DialogBrand\s*\/>/.test(read(path));
+    if (path === "components/system/mobile-pull-to-refresh.tsx" &&
+        finding.endsWith("role='dialog'")) {
+      return !read(path).includes("[role='dialog']");
+    }
+    return true;
+  });
+  assert.deepEqual(unresolved, [], "Unreviewed modal branding bypasses detected");
 });
