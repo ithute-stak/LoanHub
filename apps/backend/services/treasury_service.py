@@ -549,6 +549,82 @@ def void_opening_source(db: Session, source: BranchOpeningSource, *, user_id: UU
     return source
 
 
+def assert_branch_outflow_funded(
+    db: Session, *,
+    ledger: BranchDailyLedger,
+    payment_method: PaymentMethod,
+    amount: Decimal,
+    settings: TreasurySettings,
+) -> Decimal:
+    """Serialize outgoing cash decisions on the existing day ledger row.
+
+    The branch opening must be entered and confirmed manually by default.
+    Available funds are calculated from posted, non-voided movements only.
+    This helper is called before creating a cash payout or posting expenses,
+    in the same database transaction as the financial event.
+    """
+    if not getattr(ledger, "id", None):
+        raise HTTPException(status_code=409, detail="Branch business day has not been initialized")
+    locked = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == ledger.company_id,
+            BranchDailyLedger.branch_id == ledger.branch_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if locked is None:
+        raise HTTPException(status_code=409, detail="Branch day is unavailable for a cash-control check")
+    assert_ledger_writable(locked)
+    if not settings.carry_previous_closing_enabled:
+        manual_source = (
+            db.query(BranchOpeningSource.id)
+            .filter(
+                BranchOpeningSource.daily_ledger_id == locked.id,
+                BranchOpeningSource.payment_method == payment_method,
+                BranchOpeningSource.source_type != OpeningSourceType.PREVIOUS_CLOSING,
+                BranchOpeningSource.is_system_generated.is_(False),
+                BranchOpeningSource.is_confirmed.is_(True),
+                BranchOpeningSource.is_voided.is_(False),
+            )
+            .first()
+        )
+        if manual_source is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Record and confirm today's opening balance for this payment method before paying out or posting expenses",
+            )
+    opening = db.query(func.coalesce(func.sum(BranchOpeningSource.amount), 0)).filter(
+        BranchOpeningSource.daily_ledger_id == locked.id,
+        BranchOpeningSource.payment_method == payment_method,
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).scalar()
+    movements = db.query(
+        TreasuryEntry.direction,
+        func.coalesce(func.sum(TreasuryEntry.amount), 0),
+    ).filter(
+        TreasuryEntry.daily_ledger_id == locked.id,
+        TreasuryEntry.payment_method == payment_method,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).group_by(TreasuryEntry.direction).all()
+    available = money(opening)
+    for direction, value in movements:
+        available += money(value) if direction == TreasuryDirection.MONEY_IN else -money(value)
+    requested = money(amount)
+    if requested <= 0:
+        raise HTTPException(status_code=422, detail="The payout amount must be positive")
+    if money(available) < requested:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Insufficient branch funds for {PAYMENT_METHOD_LABELS[payment_method]}: available M {money(available):,.2f}; requested M {requested:,.2f}",
+        )
+    return money(available)
+
+
 def _requires_expense_approval(settings: TreasurySettings, payload: TreasuryEntryCreate) -> bool:
     if payload.entry_type != TreasuryEntryType.EXPENSE or payload.direction != TreasuryDirection.MONEY_OUT:
         return False
@@ -585,6 +661,11 @@ def create_manual_entry(
             raise HTTPException(status_code=422, detail="Choose an active expense category from this company")
 
     requires_approval = _requires_expense_approval(settings, payload)
+    if payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
+        assert_branch_outflow_funded(
+            db, ledger=ledger, payment_method=payload.payment_method,
+            amount=payload.amount, settings=settings,
+        )
     entry = TreasuryEntry(
         company_id=company_id,
         branch_id=branch_id,
@@ -628,6 +709,11 @@ def approve_treasury_entry(db: Session, entry: TreasuryEntry, *, user_id: UUID, 
     if not ledger:
         raise HTTPException(status_code=404, detail="Branch day was not found")
     assert_ledger_writable(ledger)
+    if entry.direction == TreasuryDirection.MONEY_OUT:
+        assert_branch_outflow_funded(
+            db, ledger=ledger, payment_method=entry.payment_method,
+            amount=entry.amount, settings=settings,
+        )
     entry.approval_status = TreasuryEntryApprovalStatus.APPROVED
     entry.approved_at = datetime.now(timezone.utc)
     entry.approved_by_user_id = user_id
