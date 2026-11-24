@@ -62,6 +62,24 @@ export type DailyIssuanceReport = {
         expected_contractual_return: string;
         expected_return_above_principal: string;
     };
+    cash_to_borrowers: string | null;
+    details: Array<{
+        date: string;
+        time: string;
+        loan_reference: string;
+        folio_number: string;
+        client_name: string;
+        branch: string;
+        disbursed_by: string;
+        is_top_up: boolean;
+        principal_issued: string;
+        cash_to_borrower: string;
+        top_up_settlement: string;
+        expected_contractual_return: string;
+        installments: number;
+        installment_amount: string;
+        first_payment_due: string | null;
+    }>;
     daily: Array<{
         date: string;
         loans_issued: number;
@@ -78,7 +96,7 @@ export type DailyIssuanceFilters = {
 };
 
 export async function getDailyIssuanceReport(filters: DailyIssuanceFilters): Promise<DailyIssuanceReport> {
-    const response = await api.get<DailyIssuanceReport>("/reports/daily-issuance", { params: filters });
+    const response = await api.get<DailyIssuanceReport>("/reports/daily-issuance", { params: { ...filters, include_details: true } });
     return response.data;
 }
 

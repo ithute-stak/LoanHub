@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session, joinedload
 from core.access_control import PERFORMANCE_ROLES, TRANSPARENCY_ROLES, TenantContext, get_user_context, require_tenant_roles
 from database.models.enums import UserRole, LoanStatus
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.borrower import Borrower
+from database.models.user import User
+from database.models.branch import CompanyBranch
 from database.models.reporting import GeneratedReport, ReportSchedule
 from database.schemas.reporting import (
     GeneratedReportRead,
@@ -56,10 +59,11 @@ def daily_issuance_expected_returns(
     period_end: date = Query(...),
     company_id: UUID | None = None,
     branch_id: UUID | None = None,
+    include_details: bool = False,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    """Read-only daily disbursement and CURRENT contractual repayment snapshot."""
+    """Tenant-scoped disbursement snapshot; optional borrower-level register."""
     require_reports(context)
     if (period_end < period_start or (period_end - period_start).days > 1095
             or period_end == date.max):
@@ -118,6 +122,61 @@ def daily_issuance_expected_returns(
     ]
     principal = sum((Decimal(item["principal_issued"]) for item in daily), Decimal("0.00"))
     expected = sum((Decimal(item["expected_contractual_return"]) for item in daily), Decimal("0.00"))
+    details = []
+    if include_details:
+        # The same tenant, branch, disbursement-time and status filters used
+        # for the aggregate govern the confidential borrower-level register.
+        # Limit expanded reporting to a quarter to bound response size.
+        if (period_end - period_start).days > 92:
+            raise HTTPException(status_code=400, detail="Detailed loan register supports up to 93 calendar days. Narrow the date range.")
+        detail_query = (
+            db.query(ClientCompanyLoan)
+            .options(
+                joinedload(ClientCompanyLoan.borrower)
+                    .joinedload(Borrower.user).joinedload(User.person),
+                joinedload(ClientCompanyLoan.branch),
+                joinedload(ClientCompanyLoan.disbursed_by).joinedload(User.person),
+            )
+            .filter(
+                loan.company_id == company_id,
+                loan.disbursed_at >= datetime.combine(period_start, time.min),
+                loan.disbursed_at < datetime.combine(period_end + timedelta(days=1), time.min),
+                loan.status.notin_([LoanStatus.CANCELLED, LoanStatus.REJECTED]),
+            )
+        )
+        if branch_id is not None:
+            detail_query = detail_query.filter(loan.branch_id == branch_id)
+        loans = detail_query.order_by(loan.disbursed_at.asc(), loan.id.asc()).all()
+        for item in loans:
+            borrower_person = getattr(getattr(item.borrower, "user", None), "person", None)
+            officer_person = getattr(item.disbursed_by, "person", None) if item.disbursed_by else None
+            principal_value = money(item.principal_amount)
+            # Top-ups use net cash to borrower, not the larger new principal.
+            # Cash settlement/paid-out totals are recorded separately for review.
+            cash_value = money(item.top_up_cash_amount if item.is_top_up else item.principal_amount)
+            details.append({
+                "date": item.disbursed_at.date().isoformat(),
+                "time": item.disbursed_at.strftime("%H:%M"),
+                "loan_reference": item.loan_reference,
+                "folio_number": item.folio_number,
+                "client_name": borrower_person.full_name if borrower_person else "Name unavailable",
+                "branch": item.branch.name if item.branch else "Unassigned",
+                "disbursed_by": officer_person.full_name if officer_person else "Not recorded",
+                "is_top_up": bool(item.is_top_up),
+                "principal_issued": str(principal_value),
+                "cash_to_borrower": str(cash_value),
+                "top_up_settlement": str(money(item.top_up_settlement_amount if item.is_top_up else 0)),
+                "expected_contractual_return": str(money(item.total_repayable)),
+                "installments": item.repayment_period,
+                "installment_amount": str(money(item.installment_amount)),
+                "first_payment_due": item.first_payment_due.isoformat() if item.first_payment_due else None,
+            })
+        # If the detailed and aggregate queries disagree due to a concurrent
+        # disbursement, do not silently publish an unreconciled report.
+        if (len(details) != sum(row["loans_issued"] for row in daily)
+                or sum((Decimal(item["principal_issued"]) for item in details), Decimal("0.00")) != principal):
+            raise HTTPException(status_code=409, detail="Issuance changed while preparing the register. Refresh the report.")
+
     return {
         "company_id": str(company_id),
         "branch_id": str(branch_id) if branch_id else None,
@@ -132,6 +191,8 @@ def daily_issuance_expected_returns(
             "expected_return_above_principal": str(expected - principal),
         },
         "daily": daily,
+        "details": details,
+        "cash_to_borrowers": str(sum((Decimal(item["cash_to_borrower"]) for item in details), Decimal("0.00"))) if include_details else None,
     }
 
 
@@ -152,6 +213,7 @@ def export_daily_issuance_csv(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
@@ -173,6 +235,28 @@ def export_daily_issuance_csv(
         report["totals"]["expected_contractual_return"],
         report["totals"]["expected_return_above_principal"],
     ])
+    if report.get("details"):
+        writer.writerow([])
+        writer.writerow(["CLIENT-LEVEL DISBURSEMENT REGISTER"])
+        writer.writerow([
+            "Date", "Time", "Branch", "Client", "Loan reference", "Folio",
+            "Principal (M)", "Cash to borrower (M)", "Top-up settlement (M)",
+            "Expected return (M)", "Instalments", "Instalment (M)", "First due", "Disbursed by",
+        ])
+        for item in report["details"]:
+            # Protect spreadsheet applications from formula injection in
+            # borrower, branch and employee text opened from CSV.
+            def safe(value):
+                text = str(value or "")
+                return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
+            writer.writerow([
+                item["date"], item["time"], safe(item["branch"]), safe(item["client_name"]),
+                safe(item["loan_reference"]), safe(item["folio_number"]),
+                item["principal_issued"], item["cash_to_borrower"], item["top_up_settlement"],
+                item["expected_contractual_return"], item["installments"], item["installment_amount"],
+                item["first_payment_due"] or "", safe(item["disbursed_by"]),
+            ])
+        writer.writerow(["CASH TO BORROWERS", report.get("cash_to_borrowers", "0.00")])
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
@@ -214,6 +298,7 @@ def export_daily_issuance_pdf(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
@@ -285,6 +370,45 @@ def export_daily_issuance_pdf(
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(table)
+    if report.get("details"):
+        story.append(Spacer(1, 5 * mm))
+        story.extend(section("Individual loans issued", styles=styles))
+        story.append(Paragraph(
+            "Amounts paid out to borrowers are shown separately from principal. "
+            "For top-ups, cash to borrower excludes the recorded settlement of the previous loan.",
+            cell,
+        ))
+        story.append(Spacer(1, 3 * mm))
+        detail_header = ("Date / time", "Branch / client", "Loan reference / officer",
+                         "Principal", "Cash paid", "Repayment")
+        detail_rows = [[p(label, header) for label in detail_header]]
+        for item in report["details"]:
+            detail_rows.append([
+                p(item["date"] + " " + item["time"]),
+                p(item["branch"] + " / " + item["client_name"]),
+                p(item["loan_reference"] + " / " + item["disbursed_by"]),
+                p(f"M {Decimal(item['principal_issued']):,.2f}"),
+                p(f"M {Decimal(item['cash_to_borrower']):,.2f}"),
+                p(f"{item['installments']} x M {Decimal(item['installment_amount']):,.2f}"),
+            ])
+        detail_rows.append([
+            p("TOTAL"), p(str(len(report["details"])) + " disbursements"),
+            p(""), p(f"M {Decimal(totals['principal_issued']):,.2f}"),
+            p(f"M {Decimal(report['cash_to_borrowers']):,.2f}"), p(""),
+        ])
+        detailed_table = Table(detail_rows, colWidths=[27*mm, 39*mm, 39*mm, 22*mm, 22*mm, 25*mm],
+                               repeatRows=1, hAlign="LEFT")
+        detailed_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("BACKGROUND", (0, -1), (-1, -1), SOFT_SLATE),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, SOFT_SLATE]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(detailed_table)
     story.append(Spacer(1, 5 * mm))
     story.append(callout(
         "Reporting basis",
@@ -332,6 +456,7 @@ def export_daily_issuance_xlsx(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
@@ -368,7 +493,37 @@ def export_daily_issuance_xlsx(
     for column, width in enumerate([22, 20, 23, 26, 25], start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     sheet.freeze_panes = "A7"
-    sheet.auto_filter.ref = f"A6:E{sheet.max_row}"
+    sheet.auto_filter.ref = f"A7:E{sheet.max_row}"
+    if report.get("details"):
+        detail_sheet = book.create_sheet("Individual Loans")
+        detail_sheet.append([
+            "Date", "Time", "Branch", "Client", "Loan reference", "Folio",
+            "Principal (M)", "Cash to borrower (M)", "Top-up settlement (M)",
+            "Expected return (M)", "Instalments", "Instalment (M)",
+            "First due", "Disbursed by",
+        ])
+        for item in report["details"]:
+            detail_sheet.append([
+                item["date"], item["time"], *[
+                    "'" + str(item[key]) if str(item[key]).lstrip().startswith(("=", "+", "-", "@")) else item[key]
+                    for key in ("branch", "client_name", "loan_reference", "folio_number")
+                ], Decimal(item["principal_issued"]),
+                Decimal(item["cash_to_borrower"]), Decimal(item["top_up_settlement"]),
+                Decimal(item["expected_contractual_return"]), item["installments"],
+                Decimal(item["installment_amount"]), item["first_payment_due"],
+                ("'" + item["disbursed_by"] if item["disbursed_by"].lstrip().startswith(("=", "+", "-", "@")) else item["disbursed_by"]),
+            ])
+        for cell in detail_sheet[1]:
+            cell.fill = PatternFill("solid", fgColor="17365D")
+            cell.font = Font(color="FFFFFF", bold=True)
+        for row in detail_sheet.iter_rows(min_row=2, min_col=7, max_col=12):
+            for cell in row:
+                if cell.column != 11:
+                    cell.number_format = '#,##0.00'
+        for index, width in enumerate([16, 10, 22, 28, 27, 18, 18, 22, 23, 22, 14, 20, 18, 25], start=1):
+            detail_sheet.column_dimensions[get_column_letter(index)].width = width
+        detail_sheet.freeze_panes = "D2"
+        detail_sheet.auto_filter.ref = f"A1:N{detail_sheet.max_row}"
     output = io.BytesIO()
     book.save(output)
     return Response(
