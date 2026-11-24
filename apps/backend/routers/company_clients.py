@@ -115,6 +115,7 @@ PROFILE_DOCUMENT_CATEGORIES = {
     "proof_of_residence": "borrower_proof_of_residence",
     "employment_letter": "borrower_employment_letter",
     "loan_agreement": "borrower_loan_agreement",
+    "cdas_affordability": "borrower_cdas_affordability",
     "other": "borrower_other",
 }
 PROFILE_CATEGORY_DOCUMENT_TYPES = {
