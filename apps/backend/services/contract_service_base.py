@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from database.config.config import settings
 from database.models.branch import CompanyBranch
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.enums import LoanStatus
 from database.models.company import LoanCompany
 from database.models.file_management import ManagedFile
 from database.models.loan_product import LoanProduct
