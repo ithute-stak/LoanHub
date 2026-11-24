@@ -718,6 +718,25 @@ def assert_branch_outflow_funded(
     if locked is None:
         raise HTTPException(status_code=409, detail="Branch day is unavailable for a cash-control check")
     assert_ledger_writable(locked)
+    if payment_method == PaymentMethod.CASH:
+        from database.models.company_operating_system import CompanyOperatingRecord
+        reference = f"cash-day:{locked.branch_id}:{locked.business_date.isoformat()}"
+        cash_session = (
+            db.query(CompanyOperatingRecord)
+            .filter(
+                CompanyOperatingRecord.company_id == locked.company_id,
+                CompanyOperatingRecord.branch_id == locked.branch_id,
+                CompanyOperatingRecord.module == "cash_control",
+                CompanyOperatingRecord.record_type == "daily_cash_session",
+                CompanyOperatingRecord.reference == reference,
+            )
+            .first()
+        )
+        if cash_session is not None and cash_session.status == "closed":
+            raise HTTPException(
+                status_code=409,
+                detail="This branch cash session is closed. An authorised closing adjustment is required before further cash outflows",
+            )
     if not settings.carry_previous_closing_enabled:
         manual_source = (
             db.query(BranchOpeningSource.id)
