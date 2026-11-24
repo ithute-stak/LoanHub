@@ -17,12 +17,11 @@ def case():
     )
     candidate, persisted = SimpleNamespace(**attrs), SimpleNamespace(**attrs)
     db = Mock()
+    db.execute.return_value.scalar_one_or_none.return_value = document_id
     db.query.side_effect = [
         Mock(filter=lambda *args: Mock(
             populate_existing=lambda: Mock(
-                with_for_update=lambda **kwargs: Mock(
-                    one_or_none=lambda: persisted,
-                )
+                one_or_none=lambda: persisted,
             )
         )),
         Mock(filter=lambda *args: Mock(first=lambda: None)),
@@ -101,6 +100,7 @@ def test_unpersisted_document_denied_without_sql(id_value):
         lock_current_letter_source(
             db=db, document=candidate, authenticated_tenant_id=tenant,
         )
+    db.execute.assert_not_called()
     db.query.assert_not_called()
 
 
@@ -118,3 +118,39 @@ def test_changed_layout_or_branding_settings_denied(field, value):
         lock_current_letter_source(
             db=db, document=candidate, authenticated_tenant_id=tenant,
         )
+
+
+def test_delegated_lock_denial_blocks_document_read():
+    db, candidate, _, tenant = case()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    with pytest.raises(PermissionError, match="source lock was not acquired"):
+        lock_current_letter_source(
+            db=db, document=candidate, authenticated_tenant_id=tenant,
+        )
+    db.query.assert_not_called()
+
+
+def test_different_document_lock_denied_before_document_read():
+    db, candidate, _, tenant = case()
+    db.execute.return_value.scalar_one_or_none.return_value = uuid4()
+    with pytest.raises(PermissionError, match="source lock was not acquired"):
+        lock_current_letter_source(
+            db=db, document=candidate, authenticated_tenant_id=tenant,
+        )
+    db.query.assert_not_called()
+
+
+def test_readback_requires_prior_delegated_lock_without_direct_for_update():
+    db, candidate, _, tenant = case()
+    lock_current_letter_source(
+        db=db, document=candidate, authenticated_tenant_id=tenant,
+    )
+    db.execute.assert_called_once()
+    query, parameters = db.execute.call_args.args
+    assert "lock_document_issuer_workspace_source" in str(query)
+    assert parameters == {"document_id": candidate.id}
+    assert db.query.call_count == 2
+    # Direct FOR UPDATE requires source-table UPDATE grants, which the issuer
+    # deliberately does not possess.
+    source_query = db.query.side_effect[0]
+    assert "with_for_update" not in str(source_query.filter)
