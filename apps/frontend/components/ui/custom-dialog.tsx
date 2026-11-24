@@ -16,7 +16,9 @@ type CustomDialogProps = {
   trigger?: React.ReactNode;
   title?: string;
   description?: React.ReactNode;
+  /** @deprecated Modal branding is fixed to the official LoanHub image. */
   banner?: string;
+  /** @deprecated The shared logo has a fixed accessible label. */
   bannerAlt?: string;
   solidHeader?: boolean;
   children: React.ReactNode;
@@ -30,8 +32,6 @@ export function CustomDialog({
   trigger,
   title,
   description,
-  banner = "/loanhub-horizontal-logo.png",
-  bannerAlt = "LoanHub dialog banner",
   solidHeader = false,
   children,
   open,
@@ -44,8 +44,6 @@ export function CustomDialog({
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
 
       <DialogContent
-        brandSrc={banner}
-        brandAlt={bannerAlt}
         className={cn(
           "flex max-h-[95vh] flex-col gap-0 overflow-hidden rounded-[1.75rem]",
           "border border-white/20 bg-card p-0 shadow-2xl sm:max-w-4xl",
