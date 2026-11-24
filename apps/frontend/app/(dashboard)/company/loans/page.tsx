@@ -888,7 +888,7 @@ export default function CompanyLoansPage() {
     }
 
     async function regenerateContractPdf() {
-        if (!selectedContract || selectedContract.status === "signed") return;
+        if (!selectedContract || selectedContract.status === "signed" || selectedContract.status === "cancelled" || selectedContract.borrower_signed_at || selectedContract.company_signed_at) return;
         setContractWorking(selectedContract.id);
         try {
             const updated = await originationApi.regenerateContractPdf(selectedContract.id);
@@ -905,7 +905,7 @@ export default function CompanyLoansPage() {
         const locked = Boolean(
             contract.borrower_signed_at ||
             contract.company_signed_at ||
-            contract.status === "signed",
+            contract.status === "signed" || contract.status === "cancelled",
         );
 
         if (locked) {
@@ -1383,7 +1383,7 @@ export default function CompanyLoansPage() {
                     {signatureMethod === "wacom_preview" ? <div className="space-y-3 rounded-xl border p-3 sm:p-4" role="region" aria-label="Wacom test preview">
                         <p className="text-sm font-semibold">Wacom STU-540 — temporary test preview</p>
                         <p className="text-xs text-muted-foreground">Use only an unsigned test contract. This mode cannot mark the borrower or company as signed, and no Wacom pen strokes are transmitted to the server.</p>
-                        {!selectedContract.borrower_signed_at && selectedContract.status !== "signed" ?
+                        {!selectedContract.borrower_signed_at && selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?
                             <ContractPadPreflight key={`${selectedContract.id}:${selectedContract.contract_hash ?? ""}`} contractId={selectedContract.id}/> :
                             <p role="status" className="text-sm text-muted-foreground">This contract is already signed or closed. A new pad preview cannot be prepared.</p>}
                     </div> : null}
@@ -1398,9 +1398,9 @@ export default function CompanyLoansPage() {
                         className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" ?
                         <LoadingButton type="button" variant="outline" loading={contractWorking === selectedContract.id}
                                        onClick={() => void regenerateContractPdf()}><RefreshCcw className="h-4 w-4"/>Regenerate
-                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
+                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && selectedContract.status !== "cancelled" && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower
-                            signed</LoadingButton> : null}{!selectedContract.company_signed_at && signatureMethod !== "wacom_preview" ?
+                            signed</LoadingButton> : null}{!selectedContract.company_signed_at && selectedContract.status !== "cancelled" && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="button" loading={contractWorking === selectedContract.id}
                                        onClick={() => void companySign()}>Company signed</LoadingButton> : null}
                     </DialogFooter></form> : null}
