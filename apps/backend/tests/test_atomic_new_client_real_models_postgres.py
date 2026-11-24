@@ -874,3 +874,40 @@ def test_isolated_http_save_then_readback_and_retry_uses_actual_postgres(
             "replayed": True,
         }
         assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("missing_index", [
+    "uq_people_national_id_normalized",
+    "uq_people_passport_normalized",
+    "uq_users_phone_normalized",
+    "uq_users_email_normalized",
+])
+def test_registration_refuses_missing_identity_index_before_writes(
+    real_models_sandbox, missing_index,
+):
+    """Reproduce production's missing-index blocker in an isolated schema.
+
+    Each required normalized uniqueness index is independently fail-closed.
+    No client, user, borrower, debt, audit or idempotency rows may survive.
+    """
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    with engine.begin() as conn:
+        # An explicit, fixed set of CI-only index names; never interpolate
+        # externally supplied SQL identifiers or touch public schema.
+        conn.execute(text(f"DROP INDEX {schema}.{missing_index}"))
+    with pytest.raises(
+        AtomicRegistrationUnavailable,
+        match="Verified normalized identity constraints required",
+    ):
+        invoke_full(
+            engine, schema, staff(company, branch, employee),
+            full_capture(branch, national_id="SYN-MISSING-IDX-001",
+                         phone="59008441"),
+            "synthetic-index-gate-registration-001",
+        )
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 0
