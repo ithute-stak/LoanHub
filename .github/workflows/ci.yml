@@ -166,6 +166,12 @@ jobs:
           set -euo pipefail
           bash ./scripts/validate_project.sh
 
+      - name: Verify normalized identity-index readiness audit matches writer gates
+        working-directory: apps/backend
+        run: |
+          set -euo pipefail
+          python -m pytest -q -ra --maxfail=1 tests/test_identity_index_readiness.py
+
       - name: Verify Principal x refund and payment evidence safeguards
         working-directory: apps/backend
         run: |
