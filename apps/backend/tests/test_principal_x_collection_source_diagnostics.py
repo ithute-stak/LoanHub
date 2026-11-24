@@ -42,7 +42,7 @@ def test_linked_sources_are_not_double_counted():
         [SimpleNamespace(id=payment_id, amount=Decimal('100'))],
         [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal('100.00'))],
         [SimpleNamespace(payment_id=payment_id, amount=Decimal("100.00"))],
-        [SimpleNamespace(payment_transaction_id=payment_id)],
+        [SimpleNamespace(payment_transaction_id=payment_id, amount=Decimal("100.00"), currency="LSL")],
     )
     result = inspect_principal_x_collection_sources(
         db, company_id=uuid4(), loan_id=uuid4(),
@@ -281,3 +281,55 @@ def test_missing_cash_applied_evidence_is_reported_not_crashed():
     )
     assert result.invalid_cash_amount_count == 1
     assert result.complete is False
+
+
+def test_linked_posted_treasury_amount_mismatch_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"), currency="LSL")],
+            [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.01"),
+                currency="LSL", approval_status="posted", is_voided=False,
+            )],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_amount_mismatch_count == 1
+    assert result.treasury_currency_mismatch_count == 0
+    assert result.complete is False
+
+
+def test_linked_treasury_wrong_currency_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"), currency="LSL")],
+            [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.00"),
+                currency="USD", approval_status="posted", is_voided=False,
+            )],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_amount_mismatch_count == 0
+    assert result.treasury_currency_mismatch_count == 1
+
+
+def test_voided_treasury_entry_is_not_compared_to_a_live_payment():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"), currency="LSL")],
+            [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("200.00"),
+                currency="USD", approval_status="posted", is_voided=True,
+            )],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_amount_mismatch_count == 0
+    assert result.treasury_currency_mismatch_count == 0
