@@ -60,7 +60,7 @@ def ctx(company=None, user=None):
 
 def evidence(submitter):
     return SimpleNamespace(
-        id=uuid4(), borrower_id=uuid4(), document_id=uuid4(),
+        id=uuid4(), borrower_id=uuid4(), document_id=uuid4(), managed_file_id=uuid4(),
         employee_number="EMP-123", reference="CONSENT-123",
         status="pending", submitted_by_user_id=submitter,
     )
@@ -76,6 +76,7 @@ def test_queue_is_company_scoped_and_read_only(monkeypatch):
     )
     assert response["total"] == 1
     assert response["items"][0]["status"] == "pending"
+    assert response["items"][0]["managed_file_id"] == str(row.managed_file_id)
     assert response["items"][0]["cdas_request_authorized"] is False
     assert db.commits == 0
 
@@ -126,7 +127,7 @@ def test_submitter_cannot_review_own_evidence(monkeypatch):
     assert db.commits == 0
 
 
-def test_revoke_only_approved_and_approve_is_not_exposed(monkeypatch):
+def test_revoke_only_approved_and_approve_is_not_a_denial_decision(monkeypatch):
     monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
     with pytest.raises(ValidationError):
         module.CdasConsentReviewDecision(
