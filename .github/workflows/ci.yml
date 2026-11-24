@@ -114,6 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/frontend
+          node --test tests/modal-branding.test.mjs
           node --test tests/data-center-reducer.test.mjs
           node --test tests/data-center-replay-validation.test.mjs
           node --test tests/data-center-two-session-replay.test.mjs
