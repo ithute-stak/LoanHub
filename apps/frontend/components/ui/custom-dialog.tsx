@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 
 import {
   Dialog,
@@ -45,23 +44,16 @@ export function CustomDialog({
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
 
       <DialogContent
+        brandSrc={banner}
+        brandAlt={bannerAlt}
         className={cn(
           "flex max-h-[95vh] flex-col gap-0 overflow-hidden rounded-[1.75rem]",
           "border border-white/20 bg-card p-0 shadow-2xl sm:max-w-4xl",
           contentClassName,
         )}
       >
-        <div className={cn("relative h-32 w-full shrink-0 overflow-hidden", solidHeader && "bg-slate-950")}>
-          {!solidHeader ? <Image
-            src={banner}
-            alt={bannerAlt}
-            fill
-            sizes="(max-width: 768px) 100vw, 896px"
-            className="object-cover"
-            preload
-          /> : null}
-          {!solidHeader ? <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/60 to-primary/25" /> : null}
-          <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-5 text-left sm:px-8">
+        <div className={cn("w-full shrink-0 border-b border-white/10 bg-gradient-to-r from-slate-950 to-slate-800", solidHeader && "from-slate-950 to-slate-950")}>
+          <div className="px-4 py-4 text-left sm:px-6">
             <DialogHeader className="gap-1 pr-10">
               <DialogTitle className="text-2xl font-black tracking-tight text-white">
                 {title ?? "LoanHub"}
@@ -75,7 +67,7 @@ export function CustomDialog({
           </div>
         </div>
 
-        <div className={cn("min-h-0 flex-1 overflow-y-auto", bodyClassName)}>
+        <div className={cn("min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto", bodyClassName)}>
           {children}
         </div>
       </DialogContent>
