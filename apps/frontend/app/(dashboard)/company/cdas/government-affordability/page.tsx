@@ -346,7 +346,10 @@ export default function GovernmentAffordabilityPage() {
                     <h1 className="text-2xl font-bold tracking-tight">Government employee affordability</h1>
                     <p className="text-sm text-muted-foreground">Discover employees, review saved assessments and prepare controlled CDAS batches.</p>
                 </div>
-                <Button variant="outline" onClick={() => void refresh()} disabled={busy !== null}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button asChild variant="outline"><Link href="/company/cdas/government-affordability/consent-review"><ShieldCheck className="mr-2 h-4 w-4" />Review consent evidence</Link></Button>
+                    <Button variant="outline" onClick={() => void refresh()} disabled={busy !== null}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
+                </div>
             </div>
             <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Bulk execution is disabled</AlertTitle><AlertDescription>Drafts do not contact CDAS or approve loans. A consent reference is not proof of consent; evidence must be verified before future execution.</AlertDescription></Alert>
             {error && <Alert variant="destructive"><AlertTitle>Action unsuccessful</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
