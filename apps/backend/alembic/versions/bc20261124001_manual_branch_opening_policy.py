@@ -22,8 +22,15 @@ def upgrade():
             "carry_previous_closing_enabled",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("false"),
+            server_default=sa.text("true"),
         ),
+    )
+    # Preserve each existing company's currently active carry-forward policy.
+    # Newly created treasury settings default to manual opening; existing
+    # companies require an explicit migration to the new rule.
+    op.alter_column(
+        "treasury_settings", "carry_previous_closing_enabled",
+        server_default=sa.text("false"),
     )
     op.add_column(
         "treasury_settings",
