@@ -351,6 +351,8 @@ from services.cdas_affordability_pdf import build_government_affordability_pdf
 
 
 from database.models.documents import BorrowerDocument
+from database.models.file_management import ManagedFile
+from services.cdas_affordability_managed_consent_integrity import verify_managed_cdas_consent_bytes
 from database.models.cdas_affordability_consent_evidence import CdasAffordabilityConsentEvidence
 from services.cdas_affordability_consent_policy import PURPOSE, consent_evidence_blockers
 
@@ -358,6 +360,7 @@ from services.cdas_affordability_consent_policy import PURPOSE, consent_evidence
 class PendingCdasConsentEvidenceRequest(BaseModel):
     borrower_id: UUID
     document_id: UUID
+    managed_file_id: UUID
     employee_number: str = Field(min_length=1, max_length=100)
     reference: str = Field(min_length=6, max_length=200)
     borrower_authorization_confirmed: bool = False
@@ -403,6 +406,18 @@ def _require_approved_affordability_consent(
             status_code=409,
             detail="Approved CDAS evidence document is no longer linked to this borrower",
         )
+    if not getattr(evidence, "managed_file_id", None):
+        raise HTTPException(
+            status_code=409, detail="Approved CDAS consent lacks verified managed-file binding",
+        )
+    file = db.query(ManagedFile).filter(
+        ManagedFile.id == evidence.managed_file_id,
+        ManagedFile.company_id == company_id,
+    ).first()
+    verify_managed_cdas_consent_bytes(
+        file=file, company_id=company_id, borrower_id=borrower_id,
+        expected_digest=evidence.document_sha256,
+    )
     return evidence
 
 
@@ -441,6 +456,16 @@ def submit_pending_cdas_consent_evidence(
     ).first()
     if document is None:
         raise HTTPException(status_code=404, detail="Borrower-linked evidence document not found")
+    managed_file = db.query(ManagedFile).filter(
+        ManagedFile.id == payload.managed_file_id,
+        ManagedFile.company_id == context.company_id,
+    ).first()
+    # Submission is still pending; this is only a source-byte integrity check.
+    # Never derive evidence from BorrowerDocument.file_url or a user-supplied hash.
+    verify_managed_cdas_consent_bytes(
+        file=managed_file, company_id=context.company_id,
+        borrower_id=payload.borrower_id,
+    )
     existing = db.query(CdasAffordabilityConsentEvidence).filter(
         CdasAffordabilityConsentEvidence.company_id == context.company_id,
         CdasAffordabilityConsentEvidence.reference == reference,
@@ -451,6 +476,7 @@ def submit_pending_cdas_consent_evidence(
         company_id=context.company_id,
         borrower_id=payload.borrower_id,
         document_id=document.id,
+        managed_file_id=managed_file.id,
         employee_number=number,
         reference=reference,
         purpose=PURPOSE,
