@@ -57,6 +57,7 @@ import {
 } from "@/api/companyClients";
 import { listLoanProducts } from "@/api/loanProducts";
 import { calculateLoan } from "@/api/loans";
+import { api } from "@/lib/api";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { CompanyClientDirectoryWorkspace } from "@/components/clients/company-client-directory-workspace";
 import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";
@@ -288,6 +289,41 @@ export default function CompanyClientsPage() {
   const [existingLoanCheckNonce, setExistingLoanCheckNonce] = useState(0);
   const [clientStep, setClientStep] = useState<ClientStep>(0);
   const [clientStepErrors, setClientStepErrors] = useState<string[]>([]);
+  const [cdasVerification, setCdasVerification] = useState<{number: string; status: "idle" | "checking" | "verified" | "invalid"; message: string | null}>({number: "", status: "idle", message: null});
+  const cdasVerificationSequence = useRef(0);
+  const governmentEmployeeNumber = String(clientForm.cdas_employee_number ?? "").trim();
+  const needsCdasVerification = clientForm.employment_status === "employed" && clientForm.employment_type === "government";
+  const cdasVerificationBlocked = needsCdasVerification && !(governmentEmployeeNumber && cdasVerification.status === "verified" && cdasVerification.number === governmentEmployeeNumber);
+
+  function invalidateCdasVerification() {
+    cdasVerificationSequence.current += 1;
+    setCdasVerification({number: "", status: "idle", message: null});
+  }
+
+  async function verifyEmployeeOnBlur() {
+    const number = String(clientForm.cdas_employee_number ?? "").trim();
+    if (!needsCdasVerification) return;
+    const sequence = ++cdasVerificationSequence.current;
+    if (!number) {
+      setCdasVerification({number, status: "invalid", message: "Enter a government employee number."});
+      return;
+    }
+    setCdasVerification({number, status: "checking", message: null});
+    try {
+      const response = await api.post<{ok: boolean; employee: {EmployeeNo?: string | null}}>("/cdas/employees/verify", {employee_no: number});
+      if (sequence !== cdasVerificationSequence.current) return;
+      const returned = String(response.data.employee?.EmployeeNo ?? "").trim();
+      if (!response.data.ok || !returned || returned.toLowerCase() !== number.toLowerCase()) {
+        setCdasVerification({number, status: "invalid", message: "Employee number not confirmed by CDAS. Check it and retry."});
+        return;
+      }
+      setCdasVerification({number, status: "verified", message: "Employee number verified by CDAS."});
+    } catch (error: unknown) {
+      if (sequence !== cdasVerificationSequence.current) return;
+      setCdasVerification({number, status: "invalid", message: getErrorMessage(error, "CDAS verification failed. Please retry.")});
+    }
+  }
+
 
   const applyGlobalBorrowerLookup = useCallback((detail: GlobalBorrowerLookupDetail) => {
     const nationalId = detail.nationalId.trim();
@@ -308,6 +344,8 @@ export default function CompanyClientsPage() {
     setExistingLoanCheckNonce(0);
     setClientStep(0);
     setClientStepErrors([]);
+    cdasVerificationSequence.current += 1;
+    setCdasVerification({number: "", status: "idle", message: null});
     setClientDialog(true);
   }, []);
 
@@ -635,6 +673,7 @@ export default function CompanyClientsPage() {
   const clientProgress = ((clientStep + 1) / CLIENT_STEPS.length) * 100;
 
   function resetClientDialog() {
+    invalidateCdasVerification();
     setClientForm(emptyClient);
     setExistingLoanCheck(null);
     setExistingLoanCheckStatus("idle");
@@ -723,6 +762,11 @@ export default function CompanyClientsPage() {
     }
 
     if (step === 2) {
+      if (cdasVerificationBlocked) {
+        errors.push(cdasVerification.status === "invalid" && cdasVerification.number === governmentEmployeeNumber
+          ? cdasVerification.message || "CDAS employee verification failed."
+          : "Verify the government employee number with CDAS before continuing.");
+      }
       if (Number(clientForm.monthly_income ?? 0) < 0) errors.push("Monthly income cannot be negative.");
       const needsIncomeDay = ["employed", "self_employed", "pensioner"].includes(clientForm.employment_status);
       if (clientForm.employment_status === "employed" && !clientForm.employment_type) {
@@ -1534,6 +1578,7 @@ export default function CompanyClientsPage() {
                           <Select value={clientForm.employment_status} onValueChange={(value) => {
                             const employmentStatus = value as AssistedCompanyClientCreate["employment_status"];
                             setClientStepErrors([]);
+                            invalidateCdasVerification();
                             setClientForm((current) => ({
                               ...current,
                               employment_status: employmentStatus,
@@ -1560,8 +1605,12 @@ export default function CompanyClientsPage() {
                             employerName={clientForm.employer_name}
                             newEmployerGroup={clientForm.new_employer_group}
                             required={clientForm.employment_status === "employed"}
+                            onCdasEmployeeNumberBlur={() => void verifyEmployeeOnBlur()}
+                            cdasEmployeeVerificationStatus={cdasVerification.number === governmentEmployeeNumber ? cdasVerification.status : "idle"}
+                            cdasEmployeeVerificationMessage={cdasVerification.number === governmentEmployeeNumber ? cdasVerification.message : null}
                             onChange={(selection) => {
                               setClientStepErrors([]);
+                              if (Object.prototype.hasOwnProperty.call(selection, "cdas_employee_number") || Object.prototype.hasOwnProperty.call(selection, "employment_type")) invalidateCdasVerification();
                               setClientForm((current) => ({ ...current, ...selection }));
                             }}
                           />
@@ -1717,7 +1766,7 @@ export default function CompanyClientsPage() {
                 </Button>
               )}
               {clientStep < LAST_CLIENT_STEP ? (
-                <Button type="button" onClick={nextClientStep} disabled={saving || borrowerAlreadyLinked || existingLoanCheckStatus === "checking"}>
+                <Button type="button" onClick={nextClientStep} disabled={saving || borrowerAlreadyLinked || existingLoanCheckStatus === "checking" || (clientStep === 2 && cdasVerificationBlocked)}>
                   Continue
                   <ChevronRight className="h-4 w-4" />
                 </Button>

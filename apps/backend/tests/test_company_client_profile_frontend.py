@@ -62,3 +62,21 @@ def test_government_employee_number_click_uses_existing_cdas_affordability_api()
     assert 'onViewEmployeeAffordability={(' in dialog
     assert 'onClick={onViewEmployeeAffordability}' in cards
     assert 'profile.is_government_employee' in cards
+
+
+def test_government_employee_registration_requires_successful_cdas_lookup():
+    root = Path(__file__).parents[2]
+    page = (root / "frontend" / "app" / "(dashboard)" / "company" / "clients" / "page.tsx").read_text(encoding="utf-8")
+    field = (root / "frontend" / "components" / "clients" / "employer-group-registration-field.tsx").read_text(encoding="utf-8")
+
+    assert '"/cdas/employees/verify"' in page
+    assert 'employee_no: number' in page
+    assert 'returned.toLowerCase() !== number.toLowerCase()' in page
+    assert 'cdasVerificationBlocked' in page
+    assert 'clientStep === 2 && cdasVerificationBlocked' in page
+    assert 'if (cdasVerificationBlocked)' in page
+    assert 'onCdasEmployeeNumberBlur={() => void verifyEmployeeOnBlur()}' in page
+    assert 'onBlur={onCdasEmployeeNumberBlur}' in field
+    assert 'Checking employee number with CDAS...' in field
+    assert 'aria-invalid={cdasEmployeeVerificationStatus === "invalid"}' in field
+    assert 'invalidateCdasVerification()' in page
