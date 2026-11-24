@@ -46,7 +46,7 @@ def test_low_confidence_is_flagged_not_silently_accepted():
 
 def test_missing_or_duplicate_headings_rejected():
     with pytest.raises(AmbiguousPayslipLayout, match="missing or duplicate"):
-        separate_financial_columns(valid_words()[:-4], page_width=900)
+        separate_financial_columns(valid_words()[1:], page_width=900)
     with pytest.raises(AmbiguousPayslipLayout, match="missing or duplicate"):
         separate_financial_columns(valid_words() + [word("Deductions", 600, 100, 8)], page_width=900)
 
