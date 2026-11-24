@@ -1540,8 +1540,9 @@ def cancel_approved_undisbursed_loan(
     loan.status = LoanStatus.CANCELLED
     # Preserve the signed document, its hash, locked PDF and original schedule.
     # The loan is excluded from current receivables by its terminal status.
-    if contract:
-        contract.status = "cancelled"
+    # Preserve the signed contract status and locked PDF identity. The loan's
+    # terminal CANCELLED status, not a rewrite of signature evidence, records
+    # termination of the undisbursed facility.
     linked_application = db.query(DirectLoanApplication).filter(
         DirectLoanApplication.company_id == context.company_id,
         DirectLoanApplication.loan_id == loan.id,
