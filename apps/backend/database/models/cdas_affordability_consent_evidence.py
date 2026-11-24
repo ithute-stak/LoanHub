@@ -22,6 +22,7 @@ class CdasAffordabilityConsentEvidence(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("loan_companies.id", ondelete="RESTRICT"), nullable=False)
     borrower_id = Column(UUID(as_uuid=True), ForeignKey("borrowers.id", ondelete="RESTRICT"), nullable=False)
     document_id = Column(UUID(as_uuid=True), ForeignKey("borrower_documents.id", ondelete="RESTRICT"), nullable=False)
+    managed_file_id = Column(UUID(as_uuid=True), ForeignKey("managed_files.id", ondelete="RESTRICT"), nullable=True)
     employee_number = Column(String(100), nullable=False)
     reference = Column(String(200), nullable=False)
     purpose = Column(String(100), nullable=False, default="cdas_government_employee_affordability")
