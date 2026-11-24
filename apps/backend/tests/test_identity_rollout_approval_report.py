@@ -195,9 +195,19 @@ def test_production_shaped_audit_identifies_specific_release_blockers():
             unlinked_needing_manual_review=17,
         ),
     )
-    assert report["report_version"] == 4
+    assert report["report_version"] == 5
     assert report["identity_index_migration_review_candidate"] is True
     assert report["operator_review_candidate"] is False
+    assert report["requires_manual_legacy_reconciliation"] is True
+    queue = report["manual_review_worklist"]
+    assert queue["historical_borrower_linkage"]["unresolved_identity_groups"] == 17
+    assert queue["historical_borrower_linkage"]["unlinked_legacy_rows"] == 17
+    assert queue["historical_borrower_linkage"]["potential_same_company_account_rows"] == 17
+    assert queue["historical_borrower_linkage"]["automatic_linking_allowed"] is False
+    assert queue["historical_passport_overlap"]["overlap_groups"] == 6
+    assert queue["historical_passport_overlap"]["automatic_merging_allowed"] is False
+    assert not any("national_id" in str(value) or "passport_number" in str(value)
+                   for value in queue.values())
     assert "unresolved_historical_borrower_links" in report["registration_release_blockers"]
     assert "historical_passport_overlap_requires_review" in report["registration_release_blockers"]
     assert "identity_indexes_missing_or_invalid" in report["registration_release_blockers"]
@@ -229,3 +239,27 @@ def test_duplicate_keys_block_even_technical_index_review():
     assert "normalized_identity_collisions" in report["registration_release_blockers"]
     assert "blank_identity_values" in report["registration_release_blockers"]
     assert report["registration_enabled"] is False
+
+
+def test_clean_review_queue_still_never_approves_production_writes():
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox",
+        legacy_audit=SimpleNamespace(
+            national_id_overlap_groups=0, passport_overlap_groups=0,
+            repeated_legacy_passport_groups=0,
+        ),
+        legacy_triage=SimpleNamespace(
+            matching_identity_groups=0, linked_only_groups=0,
+            mixed_linkage_groups=0, unlinked_only_groups=0,
+            unlinked_legacy_rows=0,
+            unlinked_with_single_borrower_and_company_account=0,
+            unlinked_needing_manual_review=0,
+        ),
+    )
+    assert report["manual_review_worklist"]["historical_borrower_linkage"]["review_required"] is False
+    assert report["manual_review_worklist"]["historical_passport_overlap"]["review_required"] is False
+    assert report["requires_manual_legacy_reconciliation"] is False
+    assert report["registration_enabled"] is False
+    assert report["production_approved"] is False
+    assert report["safe_to_execute"] is False
