@@ -29,7 +29,7 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { branchApi } from "@/api/branch";
 import { collectionsApi } from "@/api/collections";
@@ -62,6 +62,9 @@ import type {
 } from "@/types/collections";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 const PAGE_SIZES = [15, 30, 50, 100] as const;
 
@@ -222,6 +225,11 @@ function metadataText(action: CollectionAction | null) {
 }
 
 export default function CollectionsPage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<CollectionsWorkspace | null>(null);
   const [reports, setReports] = useState<CollectionDailyReport[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -253,6 +261,7 @@ export default function CollectionsPage() {
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
 
   const load = useCallback(async (showToast = false) => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const syncResult = await collectionsApi.sync();
@@ -261,24 +270,34 @@ export default function CollectionsPage() {
         collectionsApi.listDailyReports(),
         branchApi.getAll(),
       ]);
+      if (sequence !== requestSequence.current) return;
       setWorkspace(workspaceData);
       setReports(reportData);
       setBranches(branchResponse.data);
+      setLoadedScope(scopeKey);
       if (showToast) toast.success(syncResult.message);
     } catch (error: unknown) {
+      if (sequence !== requestSequence.current) return;
+      setWorkspace(null);
+      setReports([]);
+      setBranches([]);
+      setLoadedScope(scopeKey);
       toast.error(getErrorMessage(error, "Collections workspace could not be loaded."));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 50);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
 
   const branchById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch])), [branches]);
-  const cases = workspace?.cases ?? [];
+  const cases = loadedScope === scopeKey ? (workspace?.cases ?? []) : [];
 
   const optionSets = useMemo(() => ({
     statuses: uniqueStrings(cases.map((item) => item.status)),
@@ -557,6 +576,8 @@ export default function CollectionsPage() {
       </div>
     </div>
   );
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={8} />;
 
   return (
     <main className="flex min-h-[calc(100dvh-1.5rem)] flex-col gap-4 rounded-[1.75rem] border bg-gradient-to-b from-background via-background to-muted/10 p-4 shadow-sm sm:p-5">
