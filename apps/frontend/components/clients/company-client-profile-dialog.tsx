@@ -496,7 +496,7 @@ export function CompanyClientProfileDialog({
                     <Button size="sm" asChild variant="outline"><Link href={`/company/documents?client=${profile.client.id}`}><FileText className="h-4 w-4" />Client documents</Link></Button>
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Management links open LoanHub's existing CDAS screens. Any changes require the appropriate loan, permissions, consent and confirmation. No deduction is submitted from this profile panel.
+                    Management links open the existing LoanHub CDAS screens. Any changes require the appropriate loan, permissions, consent and confirmation. No deduction is submitted from this profile panel.
                     {affordabilityAmount <= 0 ? " A new deduction cannot be started while reported affordability is zero." : ""}
                   </p>
                 </div>
