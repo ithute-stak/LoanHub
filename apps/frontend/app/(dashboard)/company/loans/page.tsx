@@ -1858,51 +1858,121 @@ export default function CompanyLoansPage() {
                 </div>
             </CustomDialog>
 
-            <CustomDialog open={disburseOpen} onOpenChange={(open) => !disbursing && setDisburseOpen(open)}
-                          title="Confirm loan disbursement"
-                          description="Identify how the borrower receives the money. Non-cash channels require manually verified proof before posting."
-                          contentClassName="sm:max-w-lg">
-                <div className="space-y-5 p-5 sm:p-8">{selectedLoan && <div className="space-y-5">
-                    <div className="rounded-3xl border bg-gradient-to-br from-amber-500/10 to-primary/8 p-5">
-                        <div
-                            className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-700">
-                            <Banknote className="h-6 w-6"/></div>
-                        <p className="font-mono text-xs font-black text-primary">{selectedLoan.loan_reference}</p><p
-                        className="mt-3 text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">Principal
-                        to issue</p><p
-                        className="mt-1 text-3xl font-black">{formatMoney(selectedLoan.principal_amount)}</p><p
-                        className="mt-3 text-sm text-muted-foreground">The borrower will
-                        repay {formatMoney(selectedLoan.total_repayable)} in {selectedLoan.repayment_period} instalments
-                        of approximately {formatMoney(selectedLoan.installment_amount)}.</p></div>
-                    {disbursementIntegrity ? <Alert className={disbursementIntegrity.passed ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}>
-                        <ShieldCheck className="h-4 w-4"/>
-                        <AlertTitle>{disbursementIntegrity.passed ? "Post-approval integrity verified" : "Disbursement blocked by integrity guard"}</AlertTitle>
-                        <AlertDescription className="space-y-2">
-                            <p>{disbursementIntegrity.passed
-                                ? "Committee clearance, deal terms, affordability, contract integrity and liquidity are currently aligned."
-                                : "Resolve the following drift before money leaves LoanHub."}</p>
-                            {!disbursementIntegrity.passed && disbursementIntegrity.drift.length ? <ul className="list-disc space-y-1 pl-5">{disbursementIntegrity.drift.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-                            {disbursementIntegrity.liquidity ? <p className="text-xs">30-day post-disbursement minimum cash: <b>{formatMoney(Number(disbursementIntegrity.liquidity.post_disbursement_30d_minimum_cash))}</b> · Required buffer: <b>{formatMoney(Number(disbursementIntegrity.liquidity.minimum_liquidity_buffer))}</b></p> : null}
-                            <p className="text-xs text-muted-foreground">{disbursementIntegrity.policy_note}</p>
-                        </AlertDescription>
-                    </Alert> : null}
-                    <PaymentMethodFields methods={methods} value={evidence} onChange={setEvidence} showGatewayRailPicker={false}/>
-                    {ownerOverrideEligible ? <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3">
-                        <p className="text-sm font-black text-emerald-700 dark:text-emerald-300">Company owner detected</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                            Credit Committee clearance will be bypassed automatically for this cash payout. All other disbursement controls remain enforced and the action is audited.
-                        </p>
-                    </div> : null}</div>}<DialogFooter
-                    className="mx-0 mb-0"><Button variant="outline" onClick={() => setDisburseOpen(false)}
-                                                  disabled={disbursing}>Cancel</Button><LoadingButton
-                    loading={disbursing || integrityLoading} loadingText={integrityLoading ? "Verifying integrity..." : "Posting disbursement..."}
-                    disabled={Boolean(
-                        disbursementIntegrity
-                        && !disbursementIntegrity.passed
-                        && !ownerOverrideEligible
-                    )}
-                    onClick={() => void disburse()}><CheckCircle2 className="h-4 w-4"/>Confirm
-                    disbursement</LoadingButton></DialogFooter></div>
+            <CustomDialog
+                open={disburseOpen}
+                onOpenChange={(open) => !disbursing && setDisburseOpen(open)}
+                title="Confirm loan disbursement"
+                description="Review the loan and verify how the borrower will receive the funds before posting."
+                solidHeader
+                contentClassName="w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] sm:max-w-3xl lg:max-w-5xl xl:max-w-6xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(92dvh,900px)]"
+                bodyClassName="overscroll-contain"
+            >
+                <div className="flex min-h-full flex-col">
+                    <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-6 lg:p-8">
+                        {selectedLoan && (
+                            <>
+                                <section aria-label="Loan summary and disbursement controls" className="min-w-0 space-y-4">
+                                    <div className="rounded-2xl border border-border/70 bg-gradient-to-br from-amber-500/10 via-card to-primary/5 p-5 shadow-sm sm:p-6">
+                                        <div className="mb-4 flex items-center gap-3">
+                                            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                                                <Banknote className="size-5" aria-hidden="true" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Loan reference</p>
+                                                <p className="break-all font-mono text-sm font-bold text-primary">{selectedLoan.loan_reference}</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Principal to issue</p>
+                                        <p className="mt-1 text-3xl font-extrabold tracking-tight sm:text-4xl">{formatMoney(selectedLoan.principal_amount)}</p>
+                                        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border/60 pt-4">
+                                            <div>
+                                                <p className="text-xs text-muted-foreground">Total repayable</p>
+                                                <p className="mt-1 text-sm font-bold sm:text-base">{formatMoney(selectedLoan.total_repayable)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-muted-foreground">Instalments</p>
+                                                <p className="mt-1 text-sm font-bold sm:text-base">{selectedLoan.repayment_period}</p>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <p className="text-xs text-muted-foreground">Approximate amount per instalment</p>
+                                                <p className="mt-1 text-sm font-bold sm:text-base">{formatMoney(selectedLoan.installment_amount)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {disbursementIntegrity ? (
+                                        <Alert className={disbursementIntegrity.passed
+                                            ? "border-emerald-500/30 bg-emerald-500/5"
+                                            : "border-destructive/40 bg-destructive/5"}>
+                                            <ShieldCheck className="h-4 w-4" />
+                                            <AlertTitle>{disbursementIntegrity.passed ? "Post-approval integrity verified" : "Disbursement blocked by integrity guard"}</AlertTitle>
+                                            <AlertDescription className="space-y-2">
+                                                <p>{disbursementIntegrity.passed
+                                                    ? "Committee clearance, deal terms, affordability, contract integrity and liquidity are currently aligned."
+                                                    : "Resolve the following drift before money leaves LoanHub."}</p>
+                                                {!disbursementIntegrity.passed && disbursementIntegrity.drift.length ? (
+                                                    <ul className="list-disc space-y-1 pl-5">
+                                                        {disbursementIntegrity.drift.map((item) => <li key={item}>{item}</li>)}
+                                                    </ul>
+                                                ) : null}
+                                                {disbursementIntegrity.liquidity ? (
+                                                    <p className="text-xs">
+                                                        30-day post-disbursement minimum cash: <b>{formatMoney(Number(disbursementIntegrity.liquidity.post_disbursement_30d_minimum_cash))}</b>
+                                                        {" · "}Required buffer: <b>{formatMoney(Number(disbursementIntegrity.liquidity.minimum_liquidity_buffer))}</b>
+                                                    </p>
+                                                ) : null}
+                                                <p className="text-xs text-muted-foreground">{disbursementIntegrity.policy_note}</p>
+                                            </AlertDescription>
+                                        </Alert>
+                                    ) : null}
+                                </section>
+                                <section aria-label="Disbursement payment details" className="min-w-0 space-y-4">
+                                    <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-6">
+                                        <div className="mb-5">
+                                            <p className="text-base font-bold">Payment details</p>
+                                            <p className="mt-1 text-sm text-muted-foreground">
+                                                Select the payment method and record the required payout evidence.
+                                            </p>
+                                        </div>
+                                        <PaymentMethodFields
+                                            methods={methods}
+                                            value={evidence}
+                                            onChange={setEvidence}
+                                            showGatewayRailPicker={false}
+                                        />
+                                    </div>
+                                    {ownerOverrideEligible ? (
+                                        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                                            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">Company owner detected</p>
+                                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                                Credit Committee clearance will be bypassed automatically for this cash payout.
+                                                All other disbursement controls remain enforced and the action is audited.
+                                            </p>
+                                        </div>
+                                    ) : null}
+                                </section>
+                            </>
+                        )}
+                    </div>
+                    <DialogFooter className="sticky bottom-0 z-10 mt-auto flex-col gap-2 border-t border-border/70 bg-card/95 px-4 py-4 shadow-[0_-8px_20px_-18px_rgba(0,0,0,0.35)] backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-6 lg:px-8">
+                        <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDisburseOpen(false)} disabled={disbursing}>
+                            Cancel
+                        </Button>
+                        <LoadingButton
+                            className="w-full sm:w-auto"
+                            loading={disbursing || integrityLoading}
+                            loadingText={integrityLoading ? "Verifying integrity..." : "Posting disbursement..."}
+                            disabled={Boolean(
+                                disbursementIntegrity
+                                && !disbursementIntegrity.passed
+                                && !ownerOverrideEligible
+                            )}
+                            onClick={() => void disburse()}
+                        >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Confirm disbursement
+                        </LoadingButton>
+                    </DialogFooter>
+                </div>
             </CustomDialog>
         </main>
     );
