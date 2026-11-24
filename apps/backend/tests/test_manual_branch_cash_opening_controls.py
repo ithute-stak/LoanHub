@@ -169,7 +169,7 @@ def test_finance_desk_cash_session_is_projected_once_into_existing_treasury():
     expense_projection = service.split("def sync_paid_accounting_expense(")[1].split("def assert_branch_outflow_funded(")[0]
     assert "Cash movements were already posted" in counted
     assert "record_opening_source_accounting(" not in counted
-    assert "record_opening_source_accounting(" in float_projection  # only explanatory comment, never a call
+    assert "record_opening_source_accounting(" not in float_projection
     assert "record_treasury_entry_accounting(" not in expense_projection
     assert "assert_branch_outflow_funded(" in expense_projection
 
