@@ -235,7 +235,7 @@ export default function CompanyLoansPage() {
             });
             setSelectedLoan(result);
             setLoans(previous => previous.map(item => item.id === result.id ? result : item));
-            setContracts(previous => previous.map(item => item.loan_id === result.id ? {...item, status: "cancelled"} : item));
+            // The signed contract remains signed; the facility itself is cancelled.
             setCancelLoanOpen(false);
             setScheduleOpen(false);
             toast.success("Undisbursed loan cancelled. Original signed documents and audit history preserved.");
