@@ -1383,7 +1383,7 @@ export default function CompanyLoansPage() {
                     {signatureMethod === "wacom_preview" ? <div className="space-y-3 rounded-xl border p-3 sm:p-4" role="region" aria-label="Wacom test preview">
                         <p className="text-sm font-semibold">Wacom STU-540 — temporary test preview</p>
                         <p className="text-xs text-muted-foreground">Use only an unsigned test contract. This mode cannot mark the borrower or company as signed, and no Wacom pen strokes are transmitted to the server.</p>
-                        {!selectedContract.borrower_signed_at && selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?
+                        {!selectedContract.borrower_signed_at && !selectedContract.company_signed_at && selectedContract.status !== "signed" && selectedContract.status !== "cancelled" ?
                             <ContractPadPreflight key={`${selectedContract.id}:${selectedContract.contract_hash ?? ""}`} contractId={selectedContract.id}/> :
                             <p role="status" className="text-sm text-muted-foreground">This contract is already signed or closed. A new pad preview cannot be prepared.</p>}
                     </div> : null}
@@ -1395,7 +1395,7 @@ export default function CompanyLoansPage() {
                     <DialogFooter className="flex-wrap"><LoadingButton type="button" variant="outline"
                                                                        loading={contractWorking === selectedContract.id}
                                                                        onClick={() => void printContract(selectedContract)}><Download
-                        className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" ?
+                        className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?
                         <LoadingButton type="button" variant="outline" loading={contractWorking === selectedContract.id}
                                        onClick={() => void regenerateContractPdf()}><RefreshCcw className="h-4 w-4"/>Regenerate
                             PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && selectedContract.status !== "cancelled" && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
