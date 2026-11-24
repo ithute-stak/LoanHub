@@ -1096,6 +1096,10 @@ def borrower_sign_contract(
     )
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
+    linked_loan = db.get(ClientCompanyLoan, contract.loan_id)
+    if not linked_loan or linked_loan.company_id != context.company_id or linked_loan.status == LoanStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="A cancelled loan contract cannot accept new signatures")
+    assert_branch_scope(context, linked_loan.branch_id)
     if contract.locked_at:
         raise HTTPException(status_code=409, detail="The signed contract is locked")
     contract.borrower_signature_name = payload.signature_name.strip()
@@ -1129,6 +1133,10 @@ def company_sign_contract(
     )
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
+    linked_loan = db.get(ClientCompanyLoan, contract.loan_id)
+    if not linked_loan or linked_loan.company_id != context.company_id or linked_loan.status == LoanStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="A cancelled loan contract cannot accept new signatures")
+    assert_branch_scope(context, linked_loan.branch_id)
     if contract.locked_at:
         raise HTTPException(status_code=409, detail="The signed contract is locked")
     contract.company_signer_user_id = context.user.id
