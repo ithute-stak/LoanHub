@@ -89,9 +89,10 @@ def preflight_approved_letter_stamp(
     if root_transaction is None:
         raise PermissionError("Issuer row locks require an active SQL transaction")
     transaction_identity = read_issuer_transaction_identity(db=db)
-    # Lock the persisted letter version, not the caller's in-memory copy.
-    # This requires a narrowly permitted UPDATE row-lock capability for the
-    # isolated issuer; ordinary SELECT-only application sessions fail closed.
+    # Acquire the protected, tenant-bound SQL source lock before reading the
+    # persisted version. It holds FOR UPDATE within the SECURITY DEFINER
+    # function, without granting the issuer direct source-table UPDATE.
+    # The subsequent ORM source read also requires verified tenant RLS.
     locked_source = lock_current_letter_source(
         db=db, document=document, authenticated_tenant_id=authenticated_tenant_id,
     )
