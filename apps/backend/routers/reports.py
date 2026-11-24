@@ -235,6 +235,28 @@ def export_daily_issuance_csv(
         report["totals"]["expected_contractual_return"],
         report["totals"]["expected_return_above_principal"],
     ])
+    if report.get("details"):
+        writer.writerow([])
+        writer.writerow(["CLIENT-LEVEL DISBURSEMENT REGISTER"])
+        writer.writerow([
+            "Date", "Time", "Branch", "Client", "Loan reference", "Folio",
+            "Principal (M)", "Cash to borrower (M)", "Top-up settlement (M)",
+            "Expected return (M)", "Instalments", "Instalment (M)", "First due", "Disbursed by",
+        ])
+        for item in report["details"]:
+            # Protect spreadsheet applications from formula injection in
+            # borrower, branch and employee text opened from CSV.
+            def safe(value):
+                text = str(value or "")
+                return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
+            writer.writerow([
+                item["date"], item["time"], safe(item["branch"]), safe(item["client_name"]),
+                safe(item["loan_reference"]), safe(item["folio_number"]),
+                item["principal_issued"], item["cash_to_borrower"], item["top_up_settlement"],
+                item["expected_contractual_return"], item["installments"], item["installment_amount"],
+                item["first_payment_due"] or "", safe(item["disbursed_by"]),
+            ])
+        writer.writerow(["CASH TO BORROWERS", report.get("cash_to_borrowers", "0.00")])
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
@@ -348,6 +370,45 @@ def export_daily_issuance_pdf(
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(table)
+    if report.get("details"):
+        story.append(Spacer(1, 5 * mm))
+        story.extend(section("Individual loans issued", styles=styles))
+        story.append(Paragraph(
+            "Amounts paid out to borrowers are shown separately from principal. "
+            "For top-ups, cash to borrower excludes the recorded settlement of the previous loan.",
+            cell,
+        ))
+        story.append(Spacer(1, 3 * mm))
+        detail_header = ("Date / time", "Branch / client", "Loan reference / officer",
+                         "Principal", "Cash paid", "Repayment")
+        detail_rows = [[p(label, header) for label in detail_header]]
+        for item in report["details"]:
+            detail_rows.append([
+                p(item["date"] + " " + item["time"]),
+                p(item["branch"] + "\\n" + item["client_name"]),
+                p(item["loan_reference"] + "\\n" + item["disbursed_by"]),
+                p(f"M {Decimal(item['principal_issued']):,.2f}"),
+                p(f"M {Decimal(item['cash_to_borrower']):,.2f}"),
+                p(f"{item['installments']} x M {Decimal(item['installment_amount']):,.2f}"),
+            ])
+        detail_rows.append([
+            p("TOTAL"), p(str(len(report["details"])) + " disbursements"),
+            p(""), p(f"M {Decimal(totals['principal_issued']):,.2f}"),
+            p(f"M {Decimal(report['cash_to_borrowers']):,.2f}"), p(""),
+        ])
+        detailed_table = Table(detail_rows, colWidths=[27*mm, 39*mm, 39*mm, 22*mm, 22*mm, 25*mm],
+                               repeatRows=1, hAlign="LEFT")
+        detailed_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("BACKGROUND", (0, -1), (-1, -1), SOFT_SLATE),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, SOFT_SLATE]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(detailed_table)
     story.append(Spacer(1, 5 * mm))
     story.append(callout(
         "Reporting basis",
@@ -432,7 +493,35 @@ def export_daily_issuance_xlsx(
     for column, width in enumerate([22, 20, 23, 26, 25], start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     sheet.freeze_panes = "A7"
-    sheet.auto_filter.ref = f"A6:E{sheet.max_row}"
+    sheet.auto_filter.ref = f"A7:E{sheet.max_row}"
+    if report.get("details"):
+        detail_sheet = book.create_sheet("Individual Loans")
+        detail_sheet.append([
+            "Date", "Time", "Branch", "Client", "Loan reference", "Folio",
+            "Principal (M)", "Cash to borrower (M)", "Top-up settlement (M)",
+            "Expected return (M)", "Instalments", "Instalment (M)",
+            "First due", "Disbursed by",
+        ])
+        for item in report["details"]:
+            detail_sheet.append([
+                item["date"], item["time"], item["branch"], item["client_name"],
+                item["loan_reference"], item["folio_number"], Decimal(item["principal_issued"]),
+                Decimal(item["cash_to_borrower"]), Decimal(item["top_up_settlement"]),
+                Decimal(item["expected_contractual_return"]), item["installments"],
+                Decimal(item["installment_amount"]), item["first_payment_due"],
+                item["disbursed_by"],
+            ])
+        for cell in detail_sheet[1]:
+            cell.fill = PatternFill("solid", fgColor="17365D")
+            cell.font = Font(color="FFFFFF", bold=True)
+        for row in detail_sheet.iter_rows(min_row=2, min_col=7, max_col=12):
+            for cell in row:
+                if cell.column != 11:
+                    cell.number_format = '#,##0.00'
+        for index, width in enumerate([16, 10, 22, 28, 27, 18, 18, 22, 23, 22, 14, 20, 18, 25], start=1):
+            detail_sheet.column_dimensions[get_column_letter(index)].width = width
+        detail_sheet.freeze_panes = "D2"
+        detail_sheet.auto_filter.ref = f"A1:N{detail_sheet.max_row}"
     output = io.BytesIO()
     book.save(output)
     return Response(
