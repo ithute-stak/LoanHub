@@ -288,7 +288,7 @@ export default function CompanyLoansPage() {
     const loadedLoansRef = useRef(false);
     const loadedScopeRef = useRef<string | null>(null);
     const loadSequenceRef = useRef(0);
-    const load = useCallback(async () => {
+    const load = useCallback(async (forceRefresh = false) => {
         const sequence = ++loadSequenceRef.current;
         if (loadedScopeRef.current !== scopeKey) {
             loadedScopeRef.current = scopeKey;
@@ -303,7 +303,7 @@ export default function CompanyLoansPage() {
 
         const portfolioTask = (async () => {
             try {
-                const rows = await listLoans();
+                const rows = await listLoans({ refresh: forceRefresh });
                 if (sequence !== loadSequenceRef.current) return;
                 setLoans(rows);
                 loadedLoansRef.current = true;
@@ -324,7 +324,7 @@ export default function CompanyLoansPage() {
                 await Promise.allSettled([
                     canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
                     expenseManagementApi.paymentMethods(),
-                    listCompanyClients(),
+                    listCompanyClients(undefined, { refresh: forceRefresh }),
                     (canManageContracts || canDisburse) ? originationApi.getPolicy() : Promise.resolve(null),
                     activeRole === "company_owner" || activeRole === "branch_manager"
                         ? originationApi.listApplications()
@@ -976,7 +976,7 @@ export default function CompanyLoansPage() {
                     {canSearchBorrowers ?
                         <Button variant="outline" onClick={() => setBorrowerLookupOpen(true)}><UserSearch
                             className="h-4 w-4"/>Find borrower</Button> : null}
-                    <Button variant="outline" onClick={() => void load()}><RefreshCcw
+                    <Button variant="outline" onClick={() => void load(true)}><RefreshCcw
                         className="h-4 w-4"/>Refresh</Button>
                     <Button variant="outline" asChild><Link href="/company/loan-activity"><FileClock className="h-4 w-4"/>Activity log</Link></Button>
                     <Button asChild><Link href="/company/cashier"><Banknote className="h-4 w-4"/>Payment
