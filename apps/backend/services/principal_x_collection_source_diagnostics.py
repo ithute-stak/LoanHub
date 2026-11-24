@@ -31,6 +31,8 @@ class CollectionSourceDiagnostics:
     missing_cash_evidence_count: int = 0
     overallocated_payment_count: int = 0
     invalid_allocation_count: int = 0
+    cash_overapplied_count: int = 0
+    invalid_cash_amount_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -93,6 +95,26 @@ def inspect_principal_x_collection_sources(
         elif allocated > paid:
             # Monetary records use cents; even M0.01 overage is an issue.
             overallocated += 1
+    # Cash evidence is corroborating documentation, not an additional
+    # collection to sum. Flag records claiming more cash applied than the
+    # corresponding payment received, without requiring equality (change,
+    # forwarding and split handling may differ).
+    cash_overapplied = 0
+    invalid_cash = 0
+    for row in cash:
+        payment = payment_by_id.get(row.payment_id)
+        if payment is None:
+            continue
+        try:
+            applied = Decimal(str(row.applied_amount))
+            received = Decimal(str(payment.amount))
+        except (ValueError, TypeError, ArithmeticError):
+            invalid_cash += 1
+            continue
+        if not applied.is_finite() or not received.is_finite() or applied < 0 or received < 0:
+            invalid_cash += 1
+        elif applied > received:
+            cash_overapplied += 1
     treasury = (
         db.query(TreasuryEntry)
         .filter(TreasuryEntry.company_id == company_id,
@@ -115,6 +137,8 @@ def inspect_principal_x_collection_sources(
         complete=False,
         overallocated_payment_count=overallocated,
         invalid_allocation_count=invalid_allocations,
+        cash_overapplied_count=cash_overapplied,
+        invalid_cash_amount_count=invalid_cash,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
