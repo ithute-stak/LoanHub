@@ -69,3 +69,13 @@ def test_series_requires_continuity_and_same_account():
     assert not validate_nedbank_series([august, replace(september, account_number="999999999")])
     assert not validate_nedbank_series([august, replace(september, opening_balance=Decimal("1"))])
     assert not validate_nedbank_series([august, august])
+
+
+def test_internal_space_in_bank_reference_is_preserved():
+    text = _layout().replace(
+        "852POSP1234567    SHOP",
+        "507CRS2LSL 00001    SHOP",
+    )
+    statement = parse_nedbank_layout(text)
+    assert statement.rows[0].reference == "507CRS2LSL 00001"
+    assert statement.rows[0].description == "SHOP"
