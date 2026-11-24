@@ -526,7 +526,7 @@ def close_daily_cash_session(
         CompanyOperatingRecord.company_id == resolve_scope(context, None),
         CompanyOperatingRecord.module == "cash_control",
         CompanyOperatingRecord.record_type == "daily_cash_session",
-    ).with_for_update().first()
+    ).populate_existing().with_for_update().first()
     if record is None or record.status != "open":
         raise HTTPException(status_code=409, detail="The cash day has already been closed or removed")
     before = _cash_session_payload(record, db)
