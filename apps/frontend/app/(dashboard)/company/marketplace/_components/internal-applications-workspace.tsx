@@ -48,6 +48,7 @@ import {StickyFilterBar} from "@/components/ui/sticky-filter-bar";
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "@/components/ui/table";
 import {Tabs, TabsList, TabsTrigger} from "@/components/ui/tabs";
 import {Textarea} from "@/components/ui/textarea";
+import {applicationToAutoOpen, urlAfterClosingApplication} from "./internal-application-deeplink";
 import {formatDate, formatMoney, titleCase} from "@/lib/format";
 import {useTenant} from "@/provider/tenantProvider";
 import type {LoanCalculation} from "@/types/loan";
@@ -144,12 +145,16 @@ export function InternalApplicationsWorkspace() {
     useEffect(() => { void load(); }, [load]);
 
     useEffect(() => {
-        if (selected || applications.length === 0) return;
         const requestedApplicationId = new URLSearchParams(window.location.search).get("application");
-        // The deep link is consumed once. Closing a dialog must not cause
-        // the same URL parameter to repeatedly re-open it.
-        if (!requestedApplicationId || lastAutoOpenedApplicationId.current === requestedApplicationId) return;
-        const requested = applications.find((application) => application.id === requestedApplicationId);
+        // Consumed once, even if a refreshed list causes this effect to run again.
+        const autoOpenId = applicationToAutoOpen(
+            requestedApplicationId,
+            lastAutoOpenedApplicationId.current,
+            selected?.id ?? null,
+            applications.map((application) => application.id),
+        );
+        if (!autoOpenId) return;
+        const requested = applications.find((application) => application.id === autoOpenId);
         if (requested) {
             lastAutoOpenedApplicationId.current = requestedApplicationId;
             openApplication(requested);
@@ -158,10 +163,9 @@ export function InternalApplicationsWorkspace() {
 
     function closeApplication() {
         setSelected(null);
-        const url = new URL(window.location.href);
-        if (url.searchParams.has("application")) {
-            url.searchParams.delete("application");
-            window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+        const nextUrl = urlAfterClosingApplication(window.location.href);
+        if (nextUrl !== null) {
+            window.history.replaceState(window.history.state, "", nextUrl);
         }
     }
 
