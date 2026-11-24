@@ -268,3 +268,16 @@ def test_invalid_cash_applied_amounts_are_flagged(bad):
     )
     assert result.invalid_cash_amount_count == 1
     assert result.complete is False
+
+
+def test_missing_cash_applied_evidence_is_reported_not_crashed():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [SimpleNamespace(payment_id=payment_id)], [], [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_cash_amount_count == 1
+    assert result.complete is False
