@@ -6,6 +6,7 @@ linkage and surfaces unlinked entries without double-counting or certifying a
 complete lifetime ledger. Never use the result to authorize live posting.
 """
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ class CollectionSourceDiagnostics:
     unlinked_treasury_count: int
     complete: bool = False
     missing_cash_evidence_count: int = 0
+    overallocated_payment_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -57,6 +59,24 @@ def inspect_principal_x_collection_sources(
         .filter(RepaymentInstallment.loan_id == loan_id)
         .all()
     )
+    # Allocations can spread one payment over multiple installments. Count
+    # each payment only once and flag allocations larger than its recorded
+    # amount; never sum allocation totals as separate cash collections.
+    payment_by_id = {row.id: row for row in payments}
+    allocated_by_payment = {}
+    for allocation in allocations:
+        allocated_by_payment[allocation.payment_id] = (
+            allocated_by_payment.get(allocation.payment_id, Decimal("0"))
+            + Decimal(str(allocation.amount))
+        )
+    overallocated = sum(
+        1 for payment_id, allocated in allocated_by_payment.items()
+        if payment_id in payment_by_id and (
+            not allocated.is_finite()
+            or allocated < 0
+            or allocated > Decimal(str(payment_by_id[payment_id].amount)) + Decimal("0.01")
+        )
+    )
     treasury = (
         db.query(TreasuryEntry)
         .filter(TreasuryEntry.company_id == company_id,
@@ -77,6 +97,7 @@ def inspect_principal_x_collection_sources(
             if row.payment_transaction_id not in payment_ids
         ),
         complete=False,
+        overallocated_payment_count=overallocated,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
