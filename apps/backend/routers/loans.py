@@ -619,6 +619,10 @@ def principal_x_settlement_readiness(
         blockers.append("Cash transactions claim more applied cash than the linked payment.")
     if cross_sources.invalid_cash_amount_count:
         blockers.append("Cash transactions contain invalid monetary amounts.")
+    if cross_sources.treasury_amount_mismatch_count:
+        blockers.append("Treasury payment amounts disagree with linked payment records.")
+    if cross_sources.treasury_currency_mismatch_count:
+        blockers.append("Treasury currency disagrees with the linked payment.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -635,6 +639,8 @@ def principal_x_settlement_readiness(
         invalid_allocation_rows=cross_sources.invalid_allocation_count,
         cash_overapplied_rows=cross_sources.cash_overapplied_count,
         invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
+        treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
+        treasury_currency_mismatch_rows=cross_sources.treasury_currency_mismatch_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
     )
