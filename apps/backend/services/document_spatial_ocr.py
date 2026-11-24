@@ -67,7 +67,7 @@ STAMP_ANCHORS = (
 )
 DATE_TOKEN = re.compile(
     r"\b(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|"
-    r"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b", re.I,
+    r"\d{1,2}[-\s]+[A-Za-z]{3,9}[-\s]+\d{4})\b", re.I,
 )
 
 
