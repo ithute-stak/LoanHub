@@ -66,6 +66,7 @@ def make_ledger():
 
 def test_manual_opening_is_the_default_and_carry_is_opt_in():
     assert TreasurySettingsUpdate().carry_previous_closing_enabled is False
+    assert TreasurySettingsUpdate().enforce_branch_cash_controls_enabled is False
     assert TreasurySettingsUpdate(carry_previous_closing_enabled=True).carry_previous_closing_enabled is True
 
 
@@ -95,7 +96,7 @@ def test_cash_outflow_requires_confirmed_manual_opening_even_if_other_inflows_ex
     with pytest.raises(HTTPException, match="opening balance") as exc:
         treasury.assert_branch_outflow_funded(
             db, ledger=ledger, payment_method=PaymentMethod.CASH,
-            amount=Decimal("20"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
+            amount=Decimal("20"), settings=SimpleNamespace(carry_previous_closing_enabled=False, enforce_branch_cash_controls_enabled=True),
         )
     assert exc.value.status_code == 409
     assert len(db.queries) == 3
@@ -111,7 +112,7 @@ def test_cash_outflow_rejects_insufficient_funds_with_confirmed_opening():
     with pytest.raises(HTTPException, match="Insufficient branch funds") as exc:
         treasury.assert_branch_outflow_funded(
             db, ledger=ledger, payment_method=PaymentMethod.CASH,
-            amount=Decimal("25.01"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
+            amount=Decimal("25.01"), settings=SimpleNamespace(carry_previous_closing_enabled=False, enforce_branch_cash_controls_enabled=True),
         )
     assert exc.value.status_code == 409
 
@@ -125,7 +126,7 @@ def test_cash_outflow_accepts_exact_available_funds():
     )
     available = treasury.assert_branch_outflow_funded(
         db, ledger=ledger, payment_method=PaymentMethod.CASH,
-        amount=Decimal("25.00"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
+        amount=Decimal("25.00"), settings=SimpleNamespace(carry_previous_closing_enabled=False, enforce_branch_cash_controls_enabled=True),
     )
     assert available == Decimal("25.00")
 
@@ -195,7 +196,7 @@ def test_closed_cash_session_blocks_outflow_even_with_available_cash():
     with pytest.raises(HTTPException, match="cash session is closed") as exc:
         treasury.assert_branch_outflow_funded(
             db, ledger=ledger, payment_method=PaymentMethod.CASH,
-            amount=Decimal("10"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
+            amount=Decimal("10"), settings=SimpleNamespace(carry_previous_closing_enabled=False, enforce_branch_cash_controls_enabled=True),
         )
     assert exc.value.status_code == 409
     assert len(db.queries) == 2
@@ -216,3 +217,28 @@ def test_privileged_data_center_migration_gate_remains_fail_closed_after_treasur
     control = (Path(__file__).resolve().parents[1] / "scripts" / "data_center_pilot_control.py").read_text(encoding="utf-8")
     assert 'APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001"}' in control
     assert "len(versions) != 1 or versions[0] not in APPROVED_FORWARD_REVISIONS" in control
+
+
+def test_cash_control_enforcement_is_off_until_explicit_activation():
+    ledger = make_ledger()
+    db = FundsDB(ledger, manual_confirmed=False, opening=Decimal("0"), movements=[])
+    result = treasury.assert_branch_outflow_funded(
+        db, ledger=ledger, payment_method=PaymentMethod.CASH,
+        amount=Decimal("100"), settings=SimpleNamespace(
+            carry_previous_closing_enabled=False,
+            enforce_branch_cash_controls_enabled=False,
+        ),
+    )
+    assert result == Decimal("0.00")
+    assert db.queries == []
+
+
+def test_finance_desk_opening_bridge_is_gated_before_creating_treasury_records():
+    from pathlib import Path
+    svc = (Path(__file__).resolve().parents[1] / "services" / "treasury_service.py").read_text(encoding="utf-8")
+    for name, successor in (
+        ("sync_counted_cash_opening", "sync_recorded_cash_float"),
+        ("sync_recorded_cash_float", "sync_paid_accounting_expense"),
+    ):
+        section = svc.split(f"def {name}(")[1].split(f"def {successor}(")[0]
+        assert section.index("if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:") < section.index("get_or_create_daily_ledger(")
