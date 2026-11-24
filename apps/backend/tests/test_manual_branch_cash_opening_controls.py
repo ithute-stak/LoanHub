@@ -199,3 +199,13 @@ def test_closed_cash_session_blocks_outflow_even_with_available_cash():
         )
     assert exc.value.status_code == 409
     assert len(db.queries) == 2
+
+
+def test_daily_cash_closing_serializes_against_outgoing_branch_cash():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "routers" / "accounting.py").read_text(encoding="utf-8")
+    close = source.split("def close_daily_cash_session(")[1].split("def ", 1)[0]
+    assert "BranchDailyLedger.company_id == record.company_id" in close
+    assert "BranchDailyLedger.branch_id == record.branch_id" in close
+    assert ".with_for_update().first()" in close
+    assert close.index(".with_for_update().first()") < close.index("before = _cash_session_payload(record, db)")
