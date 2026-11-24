@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -24,6 +24,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function errorText(error: unknown) {
   if (typeof error === "object" && error && "response" in error) {
@@ -40,6 +43,11 @@ function riskVariant(value: string) {
 }
 
 export default function PredictiveIntelligencePage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [overview, setOverview] = useState<PredictiveOverview | null>(null);
   const [band, setBand] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -47,18 +55,28 @@ export default function PredictiveIntelligencePage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      setOverview(await getPredictiveOverview());
+      const nextOverview = await getPredictiveOverview();
+      if (sequence !== requestSequence.current) return;
+      setOverview(nextOverview);
+      setLoadedScope(scopeKey);
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setOverview(null);
+      setLoadedScope(scopeKey);
       setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
 
   const signals = useMemo(() => (
     (overview?.signals ?? []).filter((row) => band === "all" || row.risk_band === band)
@@ -79,6 +97,8 @@ export default function PredictiveIntelligencePage() {
 
   const latest = overview?.latest_run;
   const hasCollectionHistory = (overview?.cashflow?.[0]?.history_installment_count ?? 0) > 0;
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="space-y-6 pb-12">
