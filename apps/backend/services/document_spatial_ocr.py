@@ -7,7 +7,7 @@ figures are not automatically assigned to earnings/deductions without layout che
 from __future__ import annotations
 
 from dataclasses import dataclass
-from io import BytesIO
+from io import StringIO
 import csv
 import re
 from typing import Sequence
@@ -76,7 +76,7 @@ def parse_tesseract_tsv(tsv: str, *, width: int, height: int) -> tuple[OCRWord, 
     if width <= 0 or height <= 0:
         raise ValueError("invalid page dimensions")
     words = []
-    for row in csv.DictReader(BytesIO(tsv.encode("utf-8")), delimiter="\t"):
+    for row in csv.DictReader(StringIO(tsv), delimiter="\t"):
         try:
             content = (row["text"] or "").strip()
             confidence = float(row["conf"])
