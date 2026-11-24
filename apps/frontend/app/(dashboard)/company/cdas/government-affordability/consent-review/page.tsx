@@ -88,10 +88,10 @@ export default function GovernmentCdasConsentReviewPage() {
         setError(null);
         setReview(null);
         try {
-            // Authentication and tenant access are enforced by LoanHub's file API.
+            // Independent reviewer access is enforced by the company-scoped CDAS endpoint.
             // Do not use a raw storage URL, external link, or public share.
             const result = await api.get<Blob>(
-                "/files/" + encodeURIComponent(row.managed_file_id) + "/download",
+                ROOT + "/consent-evidence/" + encodeURIComponent(row.evidence_id) + "/review-document",
                 { responseType: "blob" },
             );
             const data = result.data;
