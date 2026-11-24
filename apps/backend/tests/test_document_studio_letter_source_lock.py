@@ -150,7 +150,7 @@ def test_readback_requires_prior_delegated_lock_without_direct_for_update():
     assert "lock_document_issuer_workspace_source" in str(query)
     assert parameters == {"document_id": candidate.id}
     assert db.query.call_count == 2
-    # Direct FOR UPDATE requires source-table UPDATE grants, which the issuer
-    # deliberately does not possess.
-    source_query = db.query.side_effect[0]
-    assert "with_for_update" not in str(source_query.filter)
+    # Source rows must be read without a direct FOR UPDATE grant.
+    import inspect
+    from services import document_studio_letter_source_lock as module
+    assert ".with_for_update(" not in inspect.getsource(module.lock_current_letter_source)
