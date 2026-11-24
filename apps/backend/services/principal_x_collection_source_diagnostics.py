@@ -33,6 +33,8 @@ class CollectionSourceDiagnostics:
     invalid_allocation_count: int = 0
     cash_overapplied_count: int = 0
     invalid_cash_amount_count: int = 0
+    treasury_amount_mismatch_count: int = 0
+    treasury_currency_mismatch_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -121,6 +123,38 @@ def inspect_principal_x_collection_sources(
                 TreasuryEntry.loan_id == loan_id)
         .all()
     )
+    # Treasury entries represent bookkeeping of a payment, NOT an extra
+    # collection. Compare linked, posted, non-voided entries for diagnostics
+    # only; refunds/reversals and external sources still need certification.
+    treasury_amount_mismatches = 0
+    treasury_currency_mismatches = 0
+    for entry in treasury:
+        payment = payment_by_id.get(entry.payment_transaction_id)
+        if payment is None or getattr(entry, "is_voided", False):
+            continue
+        approval = getattr(entry, "approval_status", None)
+        if approval is not None and getattr(approval, "value", approval) != "posted":
+            continue
+        treasury_currency = getattr(entry, "currency", None)
+        payment_currency = getattr(payment, "currency", None)
+        if treasury_currency is not None and payment_currency is not None:
+            if treasury_currency != payment_currency:
+                treasury_currency_mismatches += 1
+        try:
+            treasury_amount = Decimal(str(entry.amount))
+            payment_amount = Decimal(str(payment.amount))
+        except (ValueError, TypeError, ArithmeticError, AttributeError):
+            treasury_amount_mismatches += 1
+            continue
+        if (
+            not treasury_amount.is_finite()
+            or not payment_amount.is_finite()
+            or treasury_amount < 0
+            or payment_amount < 0
+            or treasury_amount != payment_amount
+        ):
+            treasury_amount_mismatches += 1
+
     return CollectionSourceDiagnostics(
         payment_count=len(payments),
         cash_link_count=len(cash),
@@ -139,6 +173,8 @@ def inspect_principal_x_collection_sources(
         invalid_allocation_count=invalid_allocations,
         cash_overapplied_count=cash_overapplied,
         invalid_cash_amount_count=invalid_cash,
+        treasury_amount_mismatch_count=treasury_amount_mismatches,
+        treasury_currency_mismatch_count=treasury_currency_mismatches,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
