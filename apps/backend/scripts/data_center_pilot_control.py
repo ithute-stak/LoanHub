@@ -32,7 +32,7 @@ RESOURCE_TABLES = {
 CAP = 500
 MAX_JS_CURSOR = 9007199254740991
 # Only the exact audited Data Center revision and no-DDL CDAS merge are accepted.
-EXPECTED_REVISIONS = frozenset({"dc20261122002", "f4a6c8e0d064"})
+EXPECTED_REVISIONS = frozenset({"dc20261122002", "f4a6c8e0d064", "f5b7d9a1e065"})
 
 
 class PilotControlBlocked(RuntimeError):
