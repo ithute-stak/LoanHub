@@ -668,7 +668,7 @@ def create_manual_entry(
             raise HTTPException(status_code=422, detail="Choose an active expense category from this company")
 
     requires_approval = _requires_expense_approval(settings, payload)
-    if payload.entry_type == TreasuryEntryType.EXPENSE and payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
+    if payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
         _assert_expense_funds_locked(db, ledger, payload.payment_method, money(payload.amount))
     entry = TreasuryEntry(
         company_id=company_id,
