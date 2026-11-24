@@ -774,6 +774,75 @@ def owner_branch_day_summary(
     }
 
 
+@router.get("/owner/branch-day-summary.pdf")
+def export_owner_branch_day_pdf(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    from io import BytesIO
+    from decimal import Decimal
+    from xml.sax.saxutils import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    report = owner_branch_day_summary(business_date, db, context)
+    output = BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=landscape(A4), leftMargin=36,
+                            rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    def money_text(value):
+        return "Not recorded" if value is None else f"M{Decimal(value):,.2f}"
+    story = [
+        Paragraph("LoanHub | Daily branch financial overview", styles["Title"]),
+        Paragraph(f"Business date: {business_date.isoformat()} | "
+                  + ("Complete recorded overview" if report["complete"] else "PROVISIONAL - reconciliation required"), styles["Normal"]),
+        Spacer(1, 12),
+    ]
+    summary = [["Financial measure", "Amount"]]
+    for label, key in [
+        ("Recorded opening", "opening_balance"),
+        ("Recorded money in", "money_in"),
+        ("Recorded money out", "money_out"),
+        ("Matched internal transfers", "matched_internal_transfers"),
+        ("Unmatched outgoing transfers", "unmatched_internal_outgoing"),
+        ("Unmatched receipts", "unmatched_internal_receipts"),
+        ("Opening excluding matched transfers", "net_external_opening_balance"),
+        ("Outflow excluding matched transfers", "net_external_money_out"),
+        ("Recorded expected closing", "expected_closing"),
+    ]:
+        summary.append([label, money_text(report[key])])
+    def styled_table(rows, widths):
+        table = Table(rows, colWidths=widths, repeatRows=1, hAlign="LEFT")
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        return table
+    story.extend([styled_table(summary, [310, 160]), Spacer(1, 12),
+        Paragraph(f"Missing branch ledgers: {report['missing_branch_count']}. "
+                  "Unmatched transfers are not eliminated. This report reflects recorded treasury balances.", styles["Normal"]),
+        Spacer(1, 12), Paragraph("Individual branches", styles["Heading2"])])
+    rows = [["Branch", "Status", "Opening", "Money in", "Money out", "Expected closing"]]
+    for row in report["branches"]:
+        rows.append([
+            Paragraph(escape(row["branch_name"]), styles["Normal"]),
+            Paragraph(escape(row["status"] or "Missing ledger"), styles["Normal"]),
+            *[money_text(row[key]) for key in ("opening_balance", "money_in", "money_out", "expected_closing")],
+        ])
+    story.append(styled_table(rows, [170, 105, 115, 115, 115, 125]))
+    doc.build(story)
+    return Response(content=output.getvalue(), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="loanhub-branch-day-{business_date.isoformat()}.pdf"'})
+
+
 @router.get("/owner/branch-day-summary.xlsx")
 def export_owner_branch_day_summary(
     business_date: date,
