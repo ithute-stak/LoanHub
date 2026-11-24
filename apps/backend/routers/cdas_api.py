@@ -2557,8 +2557,9 @@ async def issue_client_cdas_affordability_report(
     )
     if not profile or not str(profile.employee_number or "").strip():
         raise HTTPException(status_code=409, detail="The borrower has no CDAS employee number on file")
-    if str(getattr(account.borrower, "employment_type", "") or "").lower() != "government":
-        raise HTTPException(status_code=409, detail="The borrower is not recorded as a government employee")
+    # Legacy/imported government payroll accounts may predate the borrower
+    # employment-type field. The company- and borrower-scoped payroll profile
+    # is the authoritative link; CDAS itself is re-verified below before issue.
 
     employee_no = str(profile.employee_number).strip()
     client = get_company_cdas_client(db, context.company_id)
