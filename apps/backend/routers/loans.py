@@ -615,6 +615,10 @@ def principal_x_settlement_readiness(
         blockers.append("Instalment allocations exceed recorded payment amounts.")
     if cross_sources.invalid_allocation_count:
         blockers.append("Invalid installment allocation amounts require investigation.")
+    if cross_sources.cash_overapplied_count:
+        blockers.append("Cash transactions claim more applied cash than the linked payment.")
+    if cross_sources.invalid_cash_amount_count:
+        blockers.append("Cash transactions contain invalid monetary amounts.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -629,6 +633,8 @@ def principal_x_settlement_readiness(
         missing_cash_evidence_rows=cross_sources.missing_cash_evidence_count,
         overallocated_payment_rows=cross_sources.overallocated_payment_count,
         invalid_allocation_rows=cross_sources.invalid_allocation_count,
+        cash_overapplied_rows=cross_sources.cash_overapplied_count,
+        invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
     )
