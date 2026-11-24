@@ -1,6 +1,7 @@
 "use client";
 
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,7 +24,7 @@ import { StickyFilterBar } from "@/components/ui/sticky-filter-bar";
 export default function CompanyBranchesPage() {
     const {branches, currentCompany, companyStaff, refreshAllData} = useAppData();
     const {activeRole} = useTenant();
-    const [search, setSearch] = useState("");
+    const [search, setSearch] = useReduxTableField("company-branches", "search", "");
     const [showForm, setShowForm] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [form, setForm] = useState({name: "", district: "", town: "", address: "", phone: "", email: "", is_headquarters: false});
