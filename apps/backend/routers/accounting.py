@@ -458,6 +458,13 @@ def open_daily_cash_session(
     )
     db.add(record)
     try:
+        if branch is not None and company_id is not None:
+            from services.treasury_service import sync_counted_cash_opening
+            sync_counted_cash_opening(
+                db, company_id=company_id, branch_id=branch,
+                user_id=context.user.id, business_date=payload.business_date,
+                counted=payload.counted_opening, reference=ref,
+            )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
