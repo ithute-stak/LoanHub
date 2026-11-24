@@ -91,6 +91,7 @@ const navigationByMode: Record<AppMode, MobileNavItem[]> = {
         { label: "Control & assurance", shortLabel: "Controls", href: "/company/control-centre", icon: ShieldCheck, roles: TRANSPARENCY_ROLES },
         { label: "Collections & legal", href: "/company/collections", icon: Gavel, roles: COLLECTIONS_ROLES },
         { label: "Agreements & charges", href: "/company/finance", icon: Landmark, roles: ACCOUNTING_ROLES },
+        { label: "Daily Loan Issuance", shortLabel: "Issuance", href: "/company/reports/daily-issuance", icon: FileChartColumn, roles: REPORTING_ROLES },
         { label: "Reports", href: "/company/reports", icon: FileChartColumn, roles: REPORTING_ROLES },
         { label: "Documents", href: "/company/documents", icon: FilePenLine },
         { label: "Files", href: "/company/files", icon: FolderOpen },
