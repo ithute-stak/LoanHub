@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { api } from "@/lib/api";
@@ -34,16 +35,16 @@ export default function LegacyBankDeductionsPage() {
   const [records,setRecords] = useState<Entry[]>([]);
   const [form,setForm] = useState({...empty});
   const [editing,setEditing] = useState<string | null>(null);
-  const [filter,setFilter] = useState("");
-  const [groupFilter,setGroupFilter] = useState("");
-  const [branchFilter,setBranchFilter] = useState("");
-  const [employerFilter,setEmployerFilter] = useState("");
-  const [creatorFilter,setCreatorFilter] = useState("");
+  const [filter,setFilter] = useReduxTableField("legacy-bank-deductions", "filter", "");
+  const [groupFilter,setGroupFilter] = useReduxTableField("legacy-bank-deductions", "groupFilter", "");
+  const [branchFilter,setBranchFilter] = useReduxTableField("legacy-bank-deductions", "branchFilter", "");
+  const [employerFilter,setEmployerFilter] = useReduxTableField("legacy-bank-deductions", "employerFilter", "");
+  const [creatorFilter,setCreatorFilter] = useReduxTableField("legacy-bank-deductions", "creatorFilter", "");
   const [dateFrom,setDateFrom] = useState("");
   const [dateTo,setDateTo] = useState("");
-  const [sortBy,setSortBy] = useState("newest");
-  const [page,setPage] = useState(1);
-  const [pageSize,setPageSize] = useState(25);
+  const [sortBy,setSortBy] = useReduxTableField("legacy-bank-deductions", "sortBy", "newest");
+  const [page,setPage] = useReduxTableField("legacy-bank-deductions", "page", 1);
+  const [pageSize,setPageSize] = useReduxTableField("legacy-bank-deductions", "pageSize", 25);
   const [status,setStatus] = useState("");
   const [busy,setBusy] = useState(false);
   const [downloading,setDownloading] = useState(false);
@@ -52,8 +53,8 @@ export default function LegacyBankDeductionsPage() {
   const [bulkGroup,setBulkGroup] = useState("");
   const [removed,setRemoved] = useState<Removed[]>([]);
   const [showRemoved,setShowRemoved] = useState(false);
-  const [expandedTable,setExpandedTable] = useState(false);
-  const [showAdvancedFilters,setShowAdvancedFilters] = useState(false);
+  const [expandedTable,setExpandedTable] = useReduxTableField("legacy-bank-deductions", "expandedTable", false);
+  const [showAdvancedFilters,setShowAdvancedFilters] = useReduxTableField("legacy-bank-deductions", "showAdvancedFilters", false);
   const [captureOpen,setCaptureOpen] = useState(false);
   const [importOpen,setImportOpen] = useState(false);
   const [confirmAction,setConfirmAction] = useState<{label:string;description:string;action:()=>Promise<void>} | null>(null);

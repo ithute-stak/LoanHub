@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -43,10 +44,10 @@ export default function FolioBookPage() {
   const [exportingNext, setExportingNext] = useState(false);
   const [nextFromDate, setNextFromDate] = useState("");
   const [nextThroughDate, setNextThroughDate] = useState("");
-  const [search, setSearch] = useState("");
-  const [groupCode, setGroupCode] = useState(ALL);
+  const [search, setSearch] = useReduxTableField("folio-book", "search", "");
+  const [groupCode, setGroupCode] = useReduxTableField("folio-book", "groupCode", ALL);
   const [status, setStatus] = useState(ALL);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useReduxTableField("folio-book", "page", 1);
   const requestSequence = useRef(0);
 
   const query = useMemo(() => ({

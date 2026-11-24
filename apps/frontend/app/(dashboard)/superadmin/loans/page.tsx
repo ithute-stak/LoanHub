@@ -1,6 +1,7 @@
 "use client";
 
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SuggestionSearch } from "@/components/ui/suggestion-search";
@@ -33,12 +34,12 @@ export default function LoanRequestsDashboard() {
     const error = useSelector((state: RootState) => state.loanRequests.error);
 
     // Filter & Sorting State Variables
-    const [searchTerm, setSearchTerm] = useState("");
-    const [statusFilter, setStatusFilter] = useState("ALL");
+    const [searchTerm, setSearchTerm] = useReduxTableField("superadmin-loans", "searchTerm", "");
+    const [statusFilter, setStatusFilter] = useReduxTableField("superadmin-loans", "statusFilter", "ALL");
     const [minAmount, setMinAmount] = useState("");
     const [maxAmount, setMaxAmount] = useState("");
-    const [sortField, setSortField] = useState<"created_at" | "requested_amount">("created_at");
-    const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+    const [sortField, setSortField] = useReduxTableField<"created_at" | "requested_amount">("superadmin-loans", "sortField", "created_at");
+    const [sortDirection, setSortDirection] = useReduxTableField<"asc" | "desc">("superadmin-loans", "sortDirection", "desc");
 
     const syncDataGrid = useCallback(async () => {
         try {
