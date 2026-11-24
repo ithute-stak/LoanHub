@@ -40,7 +40,7 @@ def test_linked_sources_are_not_double_counted():
     payment_id = uuid4()
     db = SessionDouble(
         [SimpleNamespace(id=payment_id, amount=Decimal('100'))],
-        [SimpleNamespace(payment_id=payment_id)],
+        [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal('100.00'))],
         [SimpleNamespace(payment_id=payment_id, amount=Decimal("100.00"))],
         [SimpleNamespace(payment_transaction_id=payment_id)],
     )
@@ -140,7 +140,7 @@ def test_linked_cash_payment_does_not_raise_missing_evidence_flag():
     payment_id = uuid4()
     db = SessionDouble(
         [SimpleNamespace(id=payment_id, payment_method=PaymentMethod.CASH)],
-        [SimpleNamespace(payment_id=payment_id)], [], [],
+        [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal('100.00'))], [], [],
     )
     result = inspect_principal_x_collection_sources(
         db, company_id=uuid4(), loan_id=uuid4(),
@@ -224,4 +224,47 @@ def test_single_cent_overallocation_is_flagged():
         company_id=uuid4(), loan_id=uuid4(),
     )
     assert result.overallocated_payment_count == 1
+    assert result.complete is False
+
+
+def test_cash_applied_above_linked_payment_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal("100.01"))],
+            [], [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.cash_overapplied_count == 1
+    assert result.complete is False
+
+
+def test_cash_applied_below_linked_payment_is_not_assumed_invalid():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal("80.00"))],
+            [], [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.cash_overapplied_count == 0
+    assert result.invalid_cash_amount_count == 0
+
+
+@pytest.mark.parametrize("bad", [None, Decimal("NaN"), Decimal("-1")])
+def test_invalid_cash_applied_amounts_are_flagged(bad):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [SimpleNamespace(payment_id=payment_id, applied_amount=bad)],
+            [], [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_cash_amount_count == 1
     assert result.complete is False
