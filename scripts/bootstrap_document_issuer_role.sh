@@ -69,10 +69,12 @@ SELECT format('GRANT SELECT ON TABLE document_stamp_approvals, document_stamp_ap
 -- Issuance records are append-only.
 SELECT format('GRANT SELECT, INSERT ON TABLE document_issuances, document_issuance_events TO %I', :'issuer_user')
 \gexec
--- The approval preflight and registration lock authorization rows FOR SHARE
--- and the workspace document FOR UPDATE. PostgreSQL requires UPDATE rights
--- for those row-lock forms. Never grant INSERT or DELETE to the issuer.
-SELECT format('GRANT SELECT, UPDATE ON TABLE users, loan_companies, company_staff, workspace_documents TO %I', :'issuer_user')
+-- Read source tables only when tenant RLS has been verified. Never grant
+-- direct UPDATE to a privileged document issuer: the previous row-lock grant
+-- permitted mutation of documents and staff/user authorization fields.
+-- Source locking requires a separately reviewed SECURITY DEFINER function
+-- whose tenant identity comes from the protected login/company mapping.
+SELECT format('GRANT SELECT ON TABLE users, loan_companies, company_staff, workspace_documents TO %I', :'issuer_user')
 \gexec
 -- Signature read required to fail closed on signed source rows.
 SELECT format('GRANT SELECT ON TABLE workspace_document_signatures TO %I', :'issuer_user')
