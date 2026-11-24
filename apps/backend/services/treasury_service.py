@@ -302,11 +302,13 @@ def get_or_create_daily_ledger(
         )
         .first()
     )
+    settings = get_or_create_settings(db, company_id)
     if ledger:
-        # A submitted day is a frozen operational snapshot. Read paths must not
-        # silently rewrite its carried-forward opening composition. Reopened
-        # days can refresh because they are explicitly writable again.
-        if ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}:
+        # Historical opening sources are immutable evidence; do not rewrite
+        # or remove them when a company changes its policy. Carry-forward is
+        # opt-in, and only refreshes for writable ledgers when enabled.
+        if (settings.carry_previous_closing_enabled
+                and ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}):
             _ensure_previous_closing_source(db, ledger)
         return ledger
     branch = db.get(CompanyBranch, branch_id)
@@ -327,7 +329,10 @@ def get_or_create_daily_ledger(
     )
     db.add(ledger)
     db.flush()
-    _ensure_previous_closing_source(db, ledger)
+    if settings.carry_previous_closing_enabled:
+        _ensure_previous_closing_source(db, ledger)
+    # With the default manual opening policy there is no auto-opening source;
+    # users must explicitly record an authorised opening amount for each day.
     recalculate_daily_ledger(db, ledger)
     return ledger
 
