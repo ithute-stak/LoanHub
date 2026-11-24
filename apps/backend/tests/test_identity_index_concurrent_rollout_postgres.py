@@ -135,3 +135,64 @@ def test_failed_concurrent_build_invalid_index_cleanup_preserves_rows(
             f"SELECT {column} FROM {schema}.{table} ORDER BY id"
         )).scalars().all()
     assert rows == ["  SAME-ID ", "same-id"]
+
+
+def test_actual_postgres_index_audit_matches_registration_writer(rollout):
+    """Same real index metadata must satisfy both the read-only audit and writer.
+
+    This exercises actual pg_index state in disposable PostgreSQL, not mocked
+    index rows. No registration occurs; nothing reaches production.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from sqlalchemy.orm import Session
+    from services.atomic_new_client_registration import (
+        AtomicRegistrationUnavailable, require_normalized_identity_constraints,
+    )
+    from services.identity_index_readiness import inspect_identity_index_readiness
+
+    engine, schema = rollout
+    clean = SimpleNamespace(
+        person_national_id_groups=0, person_passport_groups=0,
+        user_phone_groups=0, user_email_groups=0,
+    )
+
+    def verify(*, expected_ready):
+        with engine.connect() as connection:
+            with connection.begin():
+                connection.execute(text("SET TRANSACTION READ ONLY"))
+                connection.execute(text(f"SET LOCAL search_path TO {schema}"))
+                with Session(bind=connection) as db:
+                    with db.begin():
+                        with patch(
+                            "services.identity_index_readiness.inspect_identity_collisions",
+                            return_value=clean,
+                        ):
+                            report = inspect_identity_index_readiness(db)
+                        if expected_ready:
+                            assert len(report.present_valid_indexes) == 4
+                            assert report.missing_or_invalid_indexes == ()
+                            require_normalized_identity_constraints(db)
+                        else:
+                            assert report.missing_or_invalid_indexes
+                            with pytest.raises(AtomicRegistrationUnavailable):
+                                require_normalized_identity_constraints(db)
+                        assert report.registration_enabled is False
+                        assert report.safe_to_apply_migration is False
+
+    verify(expected_ready=False)
+    for table, column, name in CASES:
+        _unique_index(engine, schema, table, column, name)
+    verify(expected_ready=True)
+
+    # A structurally valid index with the WRONG partial predicate must not
+    # be accepted, even though PostgreSQL marks it unique, valid and ready.
+    _drop_index(engine, schema, "uq_people_national_id_normalized")
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(
+            f"CREATE UNIQUE INDEX CONCURRENTLY "
+            f"uq_people_national_id_normalized ON {schema}.people "
+            f"(lower(btrim(national_id))) WHERE national_id IS NULL"
+        ))
+    verify(expected_ready=False)
