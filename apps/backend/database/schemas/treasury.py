@@ -85,7 +85,7 @@ class OpeningSourceCreate(BaseModel):
     business_date: date | None = None
     source_type: OpeningSourceType
     payment_method: PaymentMethod = PaymentMethod.CASH
-    amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+    amount: Decimal = Field(ge=0, max_digits=15, decimal_places=2)
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     description: str = Field(min_length=3, max_length=2000)
     source_reference: str | None = Field(default=None, max_length=180)
@@ -97,6 +97,10 @@ class OpeningSourceCreate(BaseModel):
     def forbid_system_previous_closing(self):
         if self.source_type == OpeningSourceType.PREVIOUS_CLOSING:
             raise ValueError("Previous closing is created automatically by LoanHub")
+        if self.amount == 0 and self.source_type not in {
+            OpeningSourceType.CASH_FLOAT, OpeningSourceType.BANK_FLOAT,
+        }:
+            raise ValueError("A zero opening confirmation is only allowed for cash or bank float")
         return self
 
 
