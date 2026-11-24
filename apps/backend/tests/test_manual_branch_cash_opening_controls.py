@@ -182,7 +182,10 @@ def test_treasury_policy_migration_preserves_existing_opening_history():
         / "bc20261124001_manual_branch_opening_policy.py"
     ).read_text(encoding="utf-8")
     assert 'down_revision = "dc20261122002"' in migration
+    assert 'server_default=sa.text("true")' in migration
     assert 'server_default=sa.text("false")' in migration
+    assert "op.alter_column(" in migration
+    assert "enforce_branch_cash_controls_enabled" in migration
     assert "UPDATE branch_daily_ledgers" not in migration
     assert "DELETE FROM branch_opening_sources" not in migration
 
@@ -242,3 +245,11 @@ def test_finance_desk_opening_bridge_is_gated_before_creating_treasury_records()
     ):
         section = svc.split(f"def {name}(")[1].split(f"def {successor}(")[0]
         assert section.index("if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:") < section.index("get_or_create_daily_ledger(")
+
+
+def test_routine_settings_cannot_activate_cash_enforcement():
+    from pathlib import Path
+    api = (Path(__file__).resolve().parents[1] / "routers" / "expense_management.py").read_text(encoding="utf-8")
+    segment = api.split("def update_settings(")[1].split('"/expense-categories"', 1)[0]
+    assert "certified cash-session reconciliation" in segment
+    assert "exclude_unset=True" in segment
