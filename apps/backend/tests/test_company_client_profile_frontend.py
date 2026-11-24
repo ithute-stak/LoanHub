@@ -80,3 +80,23 @@ def test_government_employee_registration_requires_successful_cdas_lookup():
     assert 'Checking employee number with CDAS...' in field
     assert 'aria-invalid={cdasEmployeeVerificationStatus === "invalid"}' in field
     assert 'invalidateCdasVerification()' in page
+
+
+def test_cdas_profile_management_reuses_existing_apis_and_gates_mutations():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    operations = (root / "frontend" / "app" / "(dashboard)" / "company" / "cdas" / "operations" / "page.tsx").read_text(encoding="utf-8")
+    for endpoint in (
+        "/cdas/employees/verify",
+        "/cdas/deductions/all",
+        "/cdas/deductions/own",
+        "/cdas/deductions/active-approved",
+    ):
+        assert endpoint in dialog
+    assert "affordabilityAmount > 0" in dialog
+    assert "canManageCdas && affordabilityAmount > 0" in dialog
+    assert "canManageCdas ?" in dialog
+    assert "No deduction is submitted from this profile panel." in dialog
+    assert 'employee_no: requestedEmployeeNo' in operations
+    assert "CDAS returned no matching records." in dialog
+    assert "cdasReadError" in dialog
