@@ -297,13 +297,14 @@ def list_companies(
             LoanCompany.is_active.is_(True),
         )
     else:
+        # Pass a SELECT to IN directly; wrapping it in a Subquery triggers
+        # SQLAlchemy's coercion warning on every authorised company listing.
         company_ids = (
             db.query(CompanyStaff.company_id)
             .filter(
                 CompanyStaff.user_id == current_user.id,
                 CompanyStaff.is_active.is_(True),
             )
-            .subquery()
         )
         query = query.filter(LoanCompany.id.in_(company_ids))
 
