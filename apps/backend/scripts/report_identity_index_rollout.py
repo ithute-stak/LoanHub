@@ -103,13 +103,47 @@ def render_approval_report(preflight, *, database_role: str, database_name: str,
         blockers.append("historical_linkage_triage_missing")
     elif triage_counts["unresolved_identity_groups"]:
         blockers.append("unresolved_historical_borrower_links")
+    # This is a counts-only reviewer queue, not a borrower-link repair plan.
+    # A historical overlap may be legitimate; an existing same-company
+    # account is evidence to check, NEVER permission to relink silently.
+    manual_review_worklist = {
+        "historical_borrower_linkage": {
+            "unresolved_identity_groups":
+                (triage_counts["unresolved_identity_groups"]
+                 if triage_counts is not None else None),
+            "unlinked_legacy_rows":
+                (triage_counts["unlinked_legacy_rows"]
+                 if triage_counts is not None else None),
+            "potential_same_company_account_rows":
+                (triage_counts["unlinked_with_existing_same_company_account"]
+                 if triage_counts is not None else None),
+            "review_required": (
+                triage_counts is None
+                or triage_counts["unresolved_identity_groups"] > 0
+            ),
+            "review_status": "pending_independent_manual_review",
+            "automatic_linking_allowed": False,
+        },
+        "historical_passport_overlap": {
+            "overlap_groups": (
+                legacy_counts["passport_overlap_groups"]
+                if legacy_counts is not None else None),
+            "review_required": (
+                legacy_counts is None
+                or legacy_counts["passport_overlap_groups"] > 0
+            ),
+            "review_status": "pending_independent_manual_review",
+            "automatic_merging_allowed": False,
+        },
+    }
     # Governance is never granted by evidence from a reporting database.
     blockers.append("four_manual_production_approvals_required")
     blockers.append("protected_registration_route_not_released")
     return {
-        "report_version": 4,
+        "report_version": 5,
         "identity_index_migration_review_candidate": migration_candidate,
         "registration_release_blockers": blockers,
+        "manual_review_worklist": manual_review_worklist,
         "checked_at": preflight.checked_at.isoformat(),
         "database_role": database_role,
         "database_name": database_name,
@@ -126,6 +160,8 @@ def render_approval_report(preflight, *, database_role: str, database_name: str,
         "legacy_linkage_review_complete": triage_counts is not None,
         "requires_manual_legacy_reconciliation": (
             preflight.requires_manual_legacy_reconciliation
+            or manual_review_worklist["historical_borrower_linkage"]["review_required"]
+            or manual_review_worklist["historical_passport_overlap"]["review_required"]
         ),
         "operator_review_candidate": bool(
             preflight.operator_review_candidate
