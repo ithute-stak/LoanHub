@@ -613,6 +613,8 @@ def principal_x_settlement_readiness(
         blockers.append("Cash payments are missing linked cash transaction evidence.")
     if cross_sources.overallocated_payment_count:
         blockers.append("Instalment allocations exceed recorded payment amounts.")
+    if cross_sources.invalid_allocation_count:
+        blockers.append("Invalid installment allocation amounts require investigation.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -626,6 +628,7 @@ def principal_x_settlement_readiness(
         unlinked_treasury_rows=cross_sources.unlinked_treasury_count,
         missing_cash_evidence_rows=cross_sources.missing_cash_evidence_count,
         overallocated_payment_rows=cross_sources.overallocated_payment_count,
+        invalid_allocation_rows=cross_sources.invalid_allocation_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
     )
