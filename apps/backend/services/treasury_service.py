@@ -102,6 +102,7 @@ def get_or_create_settings(db: Session, company_id: UUID) -> TreasurySettings:
         headquarters_branch_id=headquarters.id if headquarters else None,
         currency="LSL",
         timezone="Africa/Maseru",
+        carry_previous_closing_enabled=False,
         auto_open_enabled=True,
         auto_open_time=time(0, 1),
         auto_submit_enabled=True,
