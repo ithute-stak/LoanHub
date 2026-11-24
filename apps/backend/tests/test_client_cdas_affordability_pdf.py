@@ -61,3 +61,15 @@ def test_client_profile_issues_server_generated_pdf_and_refreshes_documents():
     assert '"/cdas/employees/affordability"' in dialog
     assert "/cdas/clients/" in api or "/clients/" in api
     assert "affordability-report" in api
+
+
+def test_legacy_payroll_identity_can_issue_report_without_employment_type_field():
+    """A tenant-linked payroll profile must work for older imported clients."""
+    root = Path(__file__).parents[1]
+    source = (root / "routers" / "cdas_api.py").read_text(encoding="utf-8")
+    endpoint = source.split('@router.post("/clients/{account_id}/affordability-report"')[1].split('@router.post("/employees/affordability")')[0]
+    assert "CDASPayrollProfile.company_id == context.company_id" in endpoint
+    assert "CDASPayrollProfile.borrower_id == account.borrower_id" in endpoint
+    assert "returned_no.casefold() != employee_no.casefold()" in endpoint
+    assert "account.borrower, \"employment_type\"" not in endpoint
+    assert "assert_branch_scope(context, account.branch_id)" in endpoint
