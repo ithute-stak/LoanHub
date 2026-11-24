@@ -640,6 +640,7 @@ def list_cdas_consent_review_queue(
                 "reference": item.reference,
                 "status": item.status,
                 "document_id": str(item.document_id),
+                "managed_file_id": str(item.managed_file_id) if item.managed_file_id else None,
                 "verified": item.status == "approved",
                 "cdas_request_authorized": False,
             }
