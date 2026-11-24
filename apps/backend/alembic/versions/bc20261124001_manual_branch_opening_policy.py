@@ -37,4 +37,5 @@ def upgrade():
 
 
 def downgrade():
+    op.drop_column("treasury_settings", "enforce_branch_cash_controls_enabled")
     op.drop_column("treasury_settings", "carry_previous_closing_enabled")
