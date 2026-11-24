@@ -1,6 +1,8 @@
 "use client";
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import Link from "next/link";
 import { ArrowLeft, History, RefreshCcw, Search } from "lucide-react";
 import {api} from "@/lib/api";
@@ -9,6 +11,11 @@ import {Input} from "@/components/ui/input";
 type Activity={id:string;loan_reference:string;action:string;actor_name:string|null;actor_role:string|null;occurred_at:string;status:string};
 type Result={items:Activity[];total:number};
 export default function LoanActivityPage(){
+  const {activeCompanyId, activeBranchId, activeRole} = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [reference,setReference]=useState("");
   const [actor,setActor]=useState("");
   const [action,setAction]=useState("");
@@ -20,6 +27,7 @@ export default function LoanActivityPage(){
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   async function load(){
+    const sequence = ++requestSequence.current;
     setBusy(true);setError("");
     try{
       const params=new URLSearchParams({page:String(page),page_size:"30"});
@@ -29,12 +37,28 @@ export default function LoanActivityPage(){
       if(startDate)params.set("start_date",startDate);
       if(endDate)params.set("end_date",endDate);
       const response=await api.get<Result>(`/loans/activity/company?${params.toString()}`);
+      // A request from another tenant/branch must never replace these rows.
+      if (requestSequence.current !== sequence) return;
       setItems(response.data.items);
       setTotal(response.data.total);
-    }catch{setError("Could not load loan activity. Company management access is required.");}
-    finally{setBusy(false);}
+      setLoadedScope(scopeKey);
+    }catch{
+      if (requestSequence.current === sequence) {
+        setLoadedScope(scopeKey);
+        setItems([]);
+        setTotal(0);
+        setError("Could not load loan activity. Company management access is required.");
+      }
+    }
+    finally{if (requestSequence.current === sequence) setBusy(false);}
   }
-  useEffect(()=>{void load();},[page]);
+  useEffect(()=>{
+    void load();
+    return () => { requestSequence.current += 1; };
+  },[page, scopeKey]);
+  // Never render the previous tenant's rows while the next scope is loading.
+  const visibleItems = loadedScope === scopeKey ? items : [];
+  const visibleTotal = loadedScope === scopeKey ? total : 0;
   return <main className="loanhub-page space-y-5 pb-10">
     <section className="loanhub-hero flex flex-col gap-4 rounded-3xl border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-background to-background p-5 shadow-sm sm:p-7 lg:flex-row lg:items-center lg:justify-between">
       <div className="max-w-3xl">
@@ -60,16 +84,16 @@ export default function LoanActivityPage(){
     </section>
     {error&&<p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</p>}
     <section className="loanhub-panel overflow-hidden rounded-2xl border bg-card shadow-sm" aria-label="Loan activity results">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-3 sm:px-5"><h2 className="font-bold">Recorded actions</h2><span className="text-xs font-medium text-muted-foreground" aria-live="polite">{total} activities</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-3 sm:px-5"><h2 className="font-bold">Recorded actions</h2><span className="text-xs font-medium text-muted-foreground" aria-live="polite">{visibleTotal} activities</span></div>
       <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm">
       <thead><tr>{["When","Loan","Action","Staff","Role","Status"].map(h=><th key={h} className="whitespace-nowrap bg-muted/10 px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-muted-foreground">{h}</th>)}</tr></thead>
-      <tbody>{items.map(x=><tr key={x.id} className="border-t transition-colors hover:bg-muted/30">
+      <tbody>{visibleItems.map(x=><tr key={x.id} className="border-t transition-colors hover:bg-muted/30">
         <td className="px-4 py-3">{new Date(x.occurred_at).toLocaleString()}</td>
         <td className="p-2">{x.loan_reference}</td><td className="p-2">{x.action}</td>
         <td className="p-2">{x.actor_name||"Not recorded"}</td><td className="p-2">{x.actor_role||"—"}</td><td className="p-2">{x.status}</td>
       </tr>)}</tbody></table></div>
-      {!busy&&!error&&items.length===0&&<div className="border-t px-5 py-10 text-center text-sm text-muted-foreground">No recorded loan actions found for these filters.</div>}
+      {!busy&&!error&&visibleItems.length===0&&<div className="border-t px-5 py-10 text-center text-sm text-muted-foreground">No recorded loan actions found for these filters.</div>}
     </section>
-    <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">{total} recorded activities</span><div className="flex gap-2"><Button variant="outline" disabled={busy||page<=1} onClick={()=>setPage(v=>v-1)}>Previous</Button><span className="self-center">Page {page}</span><Button variant="outline" disabled={busy||page*30>=total} onClick={()=>setPage(v=>v+1)}>Next</Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">{visibleTotal} recorded activities</span><div className="flex gap-2"><Button variant="outline" disabled={busy||page<=1} onClick={()=>setPage(v=>v-1)}>Previous</Button><span className="self-center">Page {page}</span><Button variant="outline" disabled={busy||page*30>=visibleTotal} onClick={()=>setPage(v=>v+1)}>Next</Button></div></div>
   </main>;
 }
