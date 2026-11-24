@@ -38,7 +38,8 @@ def test_money_movements_and_external_mandates_fail_closed():
 def test_audit_and_signatures_are_retained():
     section = _cancel_route()
     assert "loan.status = LoanStatus.CANCELLED" in section
-    assert 'contract.status = "cancelled"' in section
+    assert 'contract.status = "cancelled"' not in section
+    assert "previous_contract_status = contract.status" in section
     assert 'linked_application.status = "cancelled"' in section
     assert 'action="loan.approved_undisbursed_cancelled"' in section
     assert '"contract_hash": contract.contract_hash' in section
