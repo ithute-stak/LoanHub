@@ -78,6 +78,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
     calculate_micro_loan_totals,
@@ -593,12 +594,23 @@ def principal_x_settlement_readiness(
     audit = inspect_loanhub_payment_evidence(
         db, company_id=loan.company_id, loan_id=loan.id,
     )
+    cross_sources = inspect_principal_x_collection_sources(
+        db, company_id=loan.company_id, loan_id=loan.id,
+    )
     blockers = [
         "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
     if audit.unresolved_payment_ids:
         blockers.append("Payment rows require reconciliation before settlement posting.")
+    if cross_sources.orphan_cash_count:
+        blockers.append("Cash transaction links require reconciliation.")
+    if cross_sources.orphan_allocation_count:
+        blockers.append("Loan installment allocations include unlinked payments.")
+    if cross_sources.unlinked_treasury_count:
+        blockers.append("Treasury entries include unlinked payment references.")
+    if cross_sources.missing_cash_evidence_count:
+        blockers.append("Cash payments are missing linked cash transaction evidence.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -607,6 +619,11 @@ def principal_x_settlement_readiness(
         can_post_settlement=False,
         payment_rows_reviewed=audit.payment_count,
         unresolved_payment_rows=len(audit.unresolved_payment_ids),
+        orphan_cash_rows=cross_sources.orphan_cash_count,
+        orphan_allocation_rows=cross_sources.orphan_allocation_count,
+        unlinked_treasury_rows=cross_sources.unlinked_treasury_count,
+        missing_cash_evidence_rows=cross_sources.missing_cash_evidence_count,
+        cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
     )
 
