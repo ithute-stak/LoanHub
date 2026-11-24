@@ -347,7 +347,9 @@ def initiate_gateway_payment(
     # Reserve branch-channel funds under the same ledger lock used by cash
     # disbursements and expenses. The PROCESSING payment becomes durable on
     # commit; competing initiations then see it as a pending reservation.
-    if purpose == PaymentPurpose.LOAN_DISBURSEMENT and company_id and branch_id:
+    if purpose == PaymentPurpose.LOAN_DISBURSEMENT:
+        if not company_id or not branch_id:
+            raise HTTPException(status_code=409, detail="Loan disbursement requires a company and branch funding scope")
         from services.treasury_service import (
             _assert_expense_funds_locked,
             get_or_create_daily_ledger,
