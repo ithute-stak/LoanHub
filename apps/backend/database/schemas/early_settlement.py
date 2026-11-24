@@ -106,6 +106,11 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     can_post_settlement: Literal[False] = False
     payment_rows_reviewed: int
     unresolved_payment_rows: int
+    orphan_cash_rows: int
+    orphan_allocation_rows: int
+    unlinked_treasury_rows: int
+    missing_cash_evidence_rows: int
+    cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
 
 
