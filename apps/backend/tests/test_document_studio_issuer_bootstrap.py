@@ -19,7 +19,11 @@ def test_issuer_bootstrap_requires_out_of_band_secret_and_uses_separate_login():
 def test_issuer_cannot_write_approval_history_or_change_existing_issuance():
     assert 'GRANT SELECT ON TABLE document_stamp_approvals, document_stamp_approval_revocations' in ISSUER
     assert 'GRANT SELECT, INSERT ON TABLE document_issuances, document_issuance_events' in ISSUER
-    assert 'GRANT SELECT, UPDATE ON TABLE users, loan_companies, company_staff, workspace_documents' in ISSUER
+    assert 'GRANT SELECT ON TABLE users, loan_companies, company_staff, workspace_documents' in ISSUER
+    assert 'GRANT SELECT, UPDATE ON TABLE users, loan_companies, company_staff, workspace_documents' not in ISSUER
+    # Source locking is delegated to a tenant-bound SECURITY DEFINER function;
+    # even an authorized issuer must not edit source rows directly.
+    assert "GRANT UPDATE ON TABLE" not in ISSUER
     assert 'GRANT SELECT ON TABLE workspace_document_signatures' in ISSUER
     assert 'GRANT DELETE ON TABLE' not in ISSUER
 
