@@ -38,3 +38,5 @@ def test_frontend_keeps_signed_record_and_does_not_offer_regeneration():
     assert 'setContracts(previous => previous.map(item => item.loan_id === result.id ? {...item, status: "cancelled"}' not in FRONTEND
     assert 'selectedContract.status === "cancelled"' in FRONTEND
     assert "!selectedContract.borrower_signed_at && !selectedContract.company_signed_at" in FRONTEND
+    assert 'selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?' in FRONTEND
+    assert 'selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?' in FRONTEND.split("Open PDF</LoadingButton>", 1)[1]
