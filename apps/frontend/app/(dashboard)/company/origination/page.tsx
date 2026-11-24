@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   BadgeCheck,
   ClipboardList,
@@ -33,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import type { IntegrationConfiguration, OriginationApplication, OriginationPolicy, OriginationPolicyUpdate } from "@/types/origination";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
@@ -47,7 +48,11 @@ const providerNames: Record<string, string> = {
 };
 
 export default function OriginationDashboardPage() {
-  const { activeRole } = useTenant();
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const isCompanyOwner = activeRole === "company_owner";
   const [applications, setApplications] = useState<OriginationApplication[]>([]);
   const [policy, setPolicy] = useState<OriginationPolicy | null>(null);
@@ -66,6 +71,7 @@ export default function OriginationDashboardPage() {
   const [deleteTopUp, setDeleteTopUp] = useState<OriginationApplication | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const [applicationRows, policyRow, integrationRows] = await Promise.all([
@@ -73,20 +79,37 @@ export default function OriginationDashboardPage() {
         originationApi.getPolicy(),
         originationApi.listIntegrations(),
       ]);
+      if (sequence !== requestSequence.current) return;
       setApplications(applicationRows);
       setPolicy(policyRow);
       setPolicyForm(toOriginationPolicyUpdate(policyRow));
       setIntegrations(integrationRows);
+      setLoadedScope(scopeKey);
     } catch (error: unknown) {
+      if (sequence !== requestSequence.current) return;
+      setApplications([]);
+      setPolicy(null);
+      setPolicyForm(null);
+      setIntegrations([]);
+      setLoadedScope(scopeKey);
       toast.error(getErrorMessage(error, "Credit origination could not be loaded."));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
+    // The selected loan, policy and integration dialogs belong to the old scope.
+    setPolicyOpen(false);
+    setIntegrationOpen(false);
+    setExceptionApplication(null);
+    setDeleteTopUp(null);
+    setIntegrationCredentials("");
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
 
   const metrics = useMemo(() => ({
@@ -164,7 +187,7 @@ export default function OriginationDashboardPage() {
     } finally { setSaving(false); }
   }
 
-  if (loading) return <PageLoader rows={8} />;
+  if (loading || loadedScope !== scopeKey) return <PageLoader rows={8} />;
 
   return (
     <main className="loanhub-page space-y-6">
