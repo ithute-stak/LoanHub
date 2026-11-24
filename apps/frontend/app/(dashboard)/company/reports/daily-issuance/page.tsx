@@ -25,9 +25,10 @@ export default function DailyIssuancePage() {
     const { branches } = useAppData();
     const initial = useMemo(() => {
         const now = new Date();
-        return { start: dateInput(new Date(now.getFullYear(), now.getMonth(), 1)), end: dateInput(now) };
+        return { start: dateInput(now), end: dateInput(now) };
     }, []);
     const [start, setStart] = useState(initial.start);
+    const [showAll, setShowAll] = useState(true);
     const [end, setEnd] = useState(initial.end);
     const [branchId, setBranchId] = useState("");
     const [report, setReport] = useState<DailyIssuanceReport | null>(null);
@@ -44,8 +45,8 @@ export default function DailyIssuancePage() {
     const refresh = useCallback(async () => {
         const currentRequest = ++requestId.current;
         const rangeDays = start && end ? Math.round((Date.parse(end) - Date.parse(start)) / 86400000) : NaN;
-        if (!start || !end || !Number.isFinite(rangeDays) || rangeDays < 0 || rangeDays > 1095 || end === "9999-12-31") {
-            setError("Select a valid date range of no more than 1,096 calendar days.");
+        if (!start || !end || !Number.isFinite(rangeDays) || rangeDays < 0 || rangeDays > 92 || end === "9999-12-31") {
+            setError("Select a valid date range of no more than 93 calendar days.");
             setReport(null);
             return;
         }
@@ -81,12 +82,16 @@ export default function DailyIssuancePage() {
     return (
         <main className="space-y-6 p-4 md:p-6">
             <header>
-                <h1 className="text-2xl font-bold">Daily Loan Issuance & Expected Returns</h1>
+                <h1 className="text-2xl font-bold">Daily Loan Issuance Register</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                    Daily principal issued and current contractual repayment expectations.
+                    Individual loans, clients, cash paid out, and current contractual repayment expectations.
                 </p>
             </header>
             <section className="flex flex-wrap items-end gap-3 rounded-2xl border bg-card p-4">
+                <button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-muted"
+                    onClick={() => { const today = dateInput(new Date()); setStart(today); setEnd(today); }}>Today</button>
+                <button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-muted"
+                    onClick={() => { const today = new Date(); setStart(dateInput(new Date(today.getFullYear(), today.getMonth(), 1))); setEnd(dateInput(today)); }}>This month</button>
                 <label className="grid gap-1 text-sm">From
                     <input aria-label="From date" className="rounded-lg border bg-background p-2" type="date" value={start} onChange={e => setStart(e.target.value)} />
                 </label>
@@ -106,10 +111,11 @@ export default function DailyIssuancePage() {
             {error && <p role="alert" className="rounded-xl border border-destructive p-3 text-sm text-destructive">{error}</p>}
             {report && (
                 <>
-                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         {[
                             ["Loans issued", report.totals.loans_issued.toLocaleString("en-LS")],
                             ["Principal issued", money(report.totals.principal_issued)],
+                            ["Cash to borrowers", money(report.cash_to_borrowers ?? "0")],
                             ["Expected contractual return", money(report.totals.expected_contractual_return)],
                             ["Above principal", money(report.totals.expected_return_above_principal)],
                         ].map(([label, value]) => (
