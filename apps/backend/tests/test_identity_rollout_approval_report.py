@@ -173,3 +173,59 @@ def test_conflicting_cross_source_legacy_audits_fail_closed():
                 unlinked_with_single_borrower_and_company_account=0,
                 unlinked_needing_manual_review=0),
         )
+
+
+def test_production_shaped_audit_identifies_specific_release_blockers():
+    """Technical DDL candidacy must not masquerade as save-client approval."""
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox",
+        legacy_audit=SimpleNamespace(
+            national_id_overlap_groups=113,
+            passport_overlap_groups=6,
+            repeated_legacy_passport_groups=0,
+        ),
+        legacy_triage=SimpleNamespace(
+            matching_identity_groups=113,
+            linked_only_groups=96,
+            mixed_linkage_groups=15,
+            unlinked_only_groups=2,
+            unlinked_legacy_rows=17,
+            unlinked_with_single_borrower_and_company_account=17,
+            unlinked_needing_manual_review=17,
+        ),
+    )
+    assert report["report_version"] == 4
+    assert report["identity_index_migration_review_candidate"] is True
+    assert report["operator_review_candidate"] is False
+    assert "unresolved_historical_borrower_links" in report["registration_release_blockers"]
+    assert "historical_passport_overlap_requires_review" in report["registration_release_blockers"]
+    assert "identity_indexes_missing_or_invalid" in report["registration_release_blockers"]
+    assert "four_manual_production_approvals_required" in report["registration_release_blockers"]
+    assert "protected_registration_route_not_released" in report["registration_release_blockers"]
+    assert not report["safe_to_execute"]
+    assert not report["production_approved"]
+    assert not report["registration_enabled"]
+
+
+def test_missing_historical_evidence_is_an_explicit_release_blocker():
+    report = render_approval_report(
+        scan(), database_role="identity_audit_reader",
+        database_name="loanhub_sandbox",
+    )
+    assert report["identity_index_migration_review_candidate"]
+    assert "historical_identity_audit_missing" in report["registration_release_blockers"]
+    assert "historical_linkage_triage_missing" in report["registration_release_blockers"]
+    assert not report["operator_review_candidate"]
+
+
+def test_duplicate_keys_block_even_technical_index_review():
+    report = render_approval_report(
+        scan(collisions=(2, 0, 0, 0), blanks=(0, 1, 0, 0)),
+        database_role="identity_audit_reader",
+        database_name="loanhub_sandbox",
+    )
+    assert report["identity_index_migration_review_candidate"] is False
+    assert "normalized_identity_collisions" in report["registration_release_blockers"]
+    assert "blank_identity_values" in report["registration_release_blockers"]
+    assert report["registration_enabled"] is False
