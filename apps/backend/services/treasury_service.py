@@ -665,6 +665,9 @@ def sync_paid_accounting_expense(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
     )
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
+    )
     assert_branch_outflow_funded(
         db, ledger=ledger, payment_method=PaymentMethod.CASH,
         amount=amount, settings=settings,
