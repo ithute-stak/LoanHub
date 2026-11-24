@@ -82,6 +82,15 @@ def test_detailed_register_distinguishes_topup_cash_from_new_principal(monkeypat
     )
     assert report["totals"]["principal_issued"] == "3000.00"
     assert report["cash_to_borrowers"] == "1800.00"
+    assert report["breakdown"] == {
+        "new_loans_count": 1,
+        "new_loans_principal": "1000.00",
+        "new_loans_cash_to_borrowers": "1000.00",
+        "topups_count": 1,
+        "topups_principal": "2000.00",
+        "topups_cash_to_borrowers": "800.00",
+        "topups_settlements": "1200.00",
+    }
     assert report["details"][0]["client_name"] == "Test Borrower ONE"
     assert report["details"][0]["branch"] == "Maseru"
     assert report["details"][1]["cash_to_borrower"] == "800.00"

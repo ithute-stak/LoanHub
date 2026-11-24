@@ -125,6 +125,35 @@ export default function DailyIssuancePage() {
                             </article>
                         ))}
                     </section>
+                    {report.breakdown && (
+                        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+                            <div className="mb-4">
+                                <h2 className="text-lg font-bold">New loans versus top-ups</h2>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                    Compare new principal and net borrower payouts without counting settled previous loans as cash handed out.
+                                </p>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                {[
+                                    ["New loans", String(report.breakdown.new_loans_count), money(report.breakdown.new_loans_principal) + " principal"],
+                                    ["Top-ups", String(report.breakdown.topups_count), money(report.breakdown.topups_principal) + " principal"],
+                                    ["Previous loans settled", money(report.breakdown.topups_settlements), "Settlements through top-ups"],
+                                    ["Top-up cash to borrowers", money(report.breakdown.topups_cash_to_borrowers), "Net disbursement to clients"],
+                                ].map(([label, value, description]) => (
+                                    <div key={label} className="rounded-xl border bg-muted/20 p-4">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                                        <p className="mt-2 text-xl font-bold tabular-nums">{value}</p>
+                                        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="mt-4 text-xs text-muted-foreground">
+                                New-loan payouts: {money(report.breakdown.new_loans_cash_to_borrowers)}.
+                                Combined recorded payout: {money(report.cash_to_borrowers ?? "0")}.
+                                Settlement amounts are shown separately and do not represent a second payment to the borrower.
+                            </p>
+                        </section>
+                    )}
                     <div className="flex flex-wrap gap-2">
                         {(["csv", "pdf", "xlsx"] as const).map(format => (
                             <button key={format} type="button" disabled={downloading !== null} onClick={() => void download(format)}
