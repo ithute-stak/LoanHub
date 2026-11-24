@@ -52,7 +52,7 @@ type OwnerDaySummary = {
   expected_closing: string;
   unmatched_internal_outgoing: string;
   unmatched_internal_receipts: string;
-  branches: Array<{branch_id: string; branch_name: string; has_ledger: boolean; status: string | null; expected_closing: string | null}>;
+  branches: Array<{branch_id: string; branch_name: string; has_ledger: boolean; status: string | null; opening_balance: string | null; money_in: string | null; money_out: string | null; expected_closing: string | null}>;
 };
 
 function OwnerDayOverview({businessDate}: {businessDate: string}) {
@@ -83,7 +83,12 @@ function OwnerDayOverview({businessDate}: {businessDate: string}) {
         <div className="grid gap-3 sm:grid-cols-3">
           {([["Opening excluding matched transfers", summary.net_external_opening_balance], ["Outflow excluding matched transfers", summary.net_external_money_out], ["Recorded expected closing", summary.expected_closing]] as const).map(([label, value]) => <div key={label} className="rounded-xl border p-3"><p className="text-sm text-muted-foreground">{label}</p><p className="text-xl font-bold">{formatMoney(Number(value))}</p></div>)}
         </div>
-        <div className="space-y-2">{summary.branches.map(branch => <div key={branch.branch_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"><div><p className="font-semibold">{branch.branch_name}</p><p className="text-sm text-muted-foreground">{branch.has_ledger ? branch.status : "No recorded ledger"}</p></div><p className="font-semibold">{branch.expected_closing === null ? "—" : formatMoney(Number(branch.expected_closing))}</p></div>)}</div>
+        <div className="space-y-2">{summary.branches.map(branch => <details key={branch.branch_id} className="rounded-lg border p-3">
+          <summary className="cursor-pointer font-semibold"><span>{branch.branch_name}</span><span className="ml-3 text-sm font-normal text-muted-foreground">{branch.has_ledger ? branch.status : "No recorded ledger"}</span><span className="ml-3">{branch.expected_closing === null ? "—" : formatMoney(Number(branch.expected_closing))}</span></summary>
+          {branch.has_ledger && <div className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-4">
+            {([["Opening", branch.opening_balance], ["Money in", branch.money_in], ["Money out", branch.money_out], ["Expected closing", branch.expected_closing]] as const).map(([label, value]) => <div key={label}><p className="text-sm text-muted-foreground">{label}</p><p className="font-semibold">{value === null ? "—" : formatMoney(Number(value))}</p></div>)}
+          </div>}
+        </details>)}</div>
       </>}
     </CardContent>
   </Card>;
