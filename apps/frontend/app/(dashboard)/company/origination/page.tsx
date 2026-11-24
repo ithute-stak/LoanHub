@@ -99,13 +99,15 @@ export default function OriginationDashboardPage() {
   }, [scopeKey]);
 
   useEffect(() => {
-    // The selected loan, policy and integration dialogs belong to the old scope.
-    setPolicyOpen(false);
-    setIntegrationOpen(false);
-    setExceptionApplication(null);
-    setDeleteTopUp(null);
-    setIntegrationCredentials("");
-    const timer = window.setTimeout(() => void load(), 0);
+    const timer = window.setTimeout(() => {
+      // Previous-tenant dialogs and selected actions must not survive a scope switch.
+      setPolicyOpen(false);
+      setIntegrationOpen(false);
+      setExceptionApplication(null);
+      setDeleteTopUp(null);
+      setIntegrationCredentials("");
+      void load();
+    }, 0);
     return () => {
       window.clearTimeout(timer);
       requestSequence.current += 1;
