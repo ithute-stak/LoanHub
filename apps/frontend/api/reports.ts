@@ -63,6 +63,15 @@ export type DailyIssuanceReport = {
         expected_return_above_principal: string;
     };
     cash_to_borrowers: string | null;
+    breakdown: {
+        new_loans_count: number;
+        new_loans_principal: string;
+        new_loans_cash_to_borrowers: string;
+        topups_count: number;
+        topups_principal: string;
+        topups_cash_to_borrowers: string;
+        topups_settlements: string;
+    } | null;
     details: Array<{
         date: string;
         time: string;
