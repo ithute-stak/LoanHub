@@ -69,14 +69,15 @@ class NedbankStatement:
 
 
 def _field(text: str, name: str) -> str:
-    m = re.search(r"(?im)^\s*" + re.escape(name) + r":\s*(\S.*?)\s*(?:$|\s{3,}(?=[A-Z][a-z]+\s+[A-Z][a-z]+:))", text)
-    if not m:
+    """Extract either column of the Nedbank two-column statement header."""
+    pattern = (
+        r"(?im)(?:^|[ \\t]{3,})" + re.escape(name)
+        + r":[ \\t]*([^\\r\\n]*?)(?=[ \\t]{3,}[A-Za-z][A-Za-z ]+:|\\r?$)"
+    )
+    match = re.search(pattern, text)
+    if not match or not match.group(1).strip():
         raise NedbankStatementError("required statement header missing: " + name)
-    # Headers may be on the same physical line as an adjacent balance header.
-    value = re.split(r"\s{3,}(?=(?:Opening|Closing) Balance:)", m.group(1))[0].strip()
-    if not value:
-        raise NedbankStatementError("empty statement header: " + name)
-    return value
+    return match.group(1).strip()
 
 
 def parse_nedbank_layout(text: str) -> NedbankStatement:
