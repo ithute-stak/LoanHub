@@ -107,3 +107,19 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     payment_rows_reviewed: int
     unresolved_payment_rows: int
     blocking_reasons: list[str]
+
+
+class PrincipalXSettlementRevalidateRequest(BaseModel):
+    """Compare a prior non-payable preview against the current source snapshot."""
+    settlement_date: date
+    snapshot_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class PrincipalXSettlementRevalidateRead(BaseModel):
+    """Confirmation of an unchanged preview, NOT settlement authorization."""
+    loan_id: UUID
+    snapshot_revision: str
+    settlement_date: date
+    settlement_amount: Decimal
+    unchanged: Literal[True] = True
+    payment_enabled: Literal[False] = False
