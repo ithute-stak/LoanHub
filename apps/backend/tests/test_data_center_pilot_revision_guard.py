@@ -11,6 +11,7 @@ def test_exact_reviewed_heads_only():
     assert control.EXPECTED_REVISIONS == frozenset({
         "dc20261122002",
         "f4a6c8e0d064",
+        "f5b7d9a1e065",
     })
     assert "e3f5a7c9d063" not in control.EXPECTED_REVISIONS
     assert "unknown-head" not in control.EXPECTED_REVISIONS
