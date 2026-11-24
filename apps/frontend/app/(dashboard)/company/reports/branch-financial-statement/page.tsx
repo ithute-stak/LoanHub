@@ -57,7 +57,7 @@ export default function ConsolidatedBranchStatementPage() {
 
   if (!allowed) {
     return <div className="rounded-2xl border p-6"><h1 className="text-xl font-bold">Company-wide statement</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Only a company owner or administrator can view the combined statement. Use your branch's financial reports for branch-scoped information.</p></div>;
+      <p className="mt-2 text-sm text-muted-foreground">Only a company owner or administrator can view the combined statement. Use your branch&apos;s financial reports for branch-scoped information.</p></div>;
   }
 
   return <div className="space-y-6">
@@ -65,7 +65,7 @@ export default function ConsolidatedBranchStatementPage() {
       <div className="space-y-2">
         <Link href="/company/finance-desk" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary"><ArrowLeft className="size-4"/>Daily Finance Desk</Link>
         <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">Company-wide Branch Financial Statement</h1>
-        <p className="max-w-3xl text-sm text-muted-foreground">One view of all branches using LoanHub's existing treasury ledger. Channel balances, unresolved entries and counted cash differences remain visible.</p>
+        <p className="max-w-3xl text-sm text-muted-foreground">One view of all branches using LoanHub&apos;s existing treasury ledger. Channel balances, unresolved entries and counted cash differences remain visible.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" disabled={loading} onClick={() => void load()}><RefreshCw className="mr-2 size-4"/>Refresh</Button>
