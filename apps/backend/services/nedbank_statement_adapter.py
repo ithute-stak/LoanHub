@@ -72,7 +72,7 @@ def _field(text: str, name: str) -> str:
     """Extract either column of the Nedbank two-column statement header."""
     pattern = (
         r"(?im)(?:^|[ \\t]{3,})" + re.escape(name)
-        + r":[ \\t]*([^\\r\\n]*?)(?=[ \\t]{3,}[A-Za-z][A-Za-z ]+:|\\r?$)"
+        + r":[ \t]*(.*?)(?=[ \t]{3,}[A-Za-z][A-Za-z ]+:|$)"
     )
     match = re.search(pattern, text)
     if not match or not match.group(1).strip():
