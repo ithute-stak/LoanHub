@@ -79,3 +79,32 @@ def test_internal_space_in_bank_reference_is_preserved():
     statement = parse_nedbank_layout(text)
     assert statement.rows[0].reference == "507CRS2LSL 00001"
     assert statement.rows[0].description == "SHOP"
+
+
+def test_realistic_wide_header_spacing_and_multicolumn_values():
+    """Regression: right-hand opening/closing balances and left-hand IDs.
+
+    Mirrors native pdftotext -layout spacing without using any private data.
+    """
+    source = _layout()
+    source = source.replace(
+        "Account Number: 12345678901                           Opening Balance: 100.00",
+        "Account Number: 12345678901                                                          Opening Balance: 100.00",
+    ).replace(
+        "Currency: LSL                                         Closing Balance: 140.00",
+        "Currency: LSL                                                                        Closing Balance: 140.00",
+    ).replace("Customer Id: 123456", "Customer Id: 123456789")
+    result = parse_nedbank_layout(source)
+    assert result.customer_id == "123456789"
+    assert result.branch_code == "507"
+    assert result.opening_balance == Decimal("100.00")
+    assert result.closing_balance == Decimal("140.00")
+    assert result.reconciled
+
+
+def test_required_header_fields_cannot_be_silently_skipped():
+    for name in ("Account Number", "Customer Id", "Customer Name", "Branch Code",
+                 "Opening Balance", "Closing Balance", "Currency"):
+        corrupted = _layout().replace(name + ":", "Omitted Field:")
+        with pytest.raises(NedbankStatementError, match="required statement header"):
+            parse_nedbank_layout(corrupted)
