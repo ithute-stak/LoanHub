@@ -1008,6 +1008,8 @@ def issue_branch_funding(
     target_ledger = get_or_create_daily_ledger(db, company_id=company_id, branch_id=target.id, business_date=business_date)
     assert_ledger_writable(source_ledger)
     assert_ledger_writable(target_ledger)
+    # Internal transfers consume confirmed funds just like other outgoing payments.
+    _assert_expense_funds_locked(db, source_ledger, payment_method, amount_value)
     reference = f"BFT-{business_date:%Y%m%d}-{secrets.token_hex(4).upper()}"
     transfer = BranchFundingTransfer(
         company_id=company_id,
