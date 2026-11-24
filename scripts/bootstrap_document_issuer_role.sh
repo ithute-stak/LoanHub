@@ -34,6 +34,7 @@ BEGIN
     SELECT string_agg(name, ', ' ORDER BY name) INTO missing
     FROM unnest(ARRAY[
         'users', 'loan_companies', 'company_staff', 'workspace_documents',
+        'workspace_document_signatures',
         'document_stamp_approvals', 'document_stamp_approval_revocations',
         'document_issuances', 'document_issuance_events'
     ]) AS wanted(name)
