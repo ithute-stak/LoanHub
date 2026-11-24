@@ -139,7 +139,7 @@ def test_linked_cash_payment_does_not_raise_missing_evidence_flag():
 
     payment_id = uuid4()
     db = SessionDouble(
-        [SimpleNamespace(id=payment_id, payment_method=PaymentMethod.CASH)],
+        [SimpleNamespace(id=payment_id, amount=Decimal('100.00'), payment_method=PaymentMethod.CASH)],
         [SimpleNamespace(payment_id=payment_id, applied_amount=Decimal('100.00'))], [], [],
     )
     result = inspect_principal_x_collection_sources(
