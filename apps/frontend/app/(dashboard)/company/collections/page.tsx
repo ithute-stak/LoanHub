@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import {
   Banknote,
@@ -226,12 +227,12 @@ export default function CollectionsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<CollectionFilters>(DEFAULT_FILTERS);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(15);
+  const [search, setSearch] = useReduxTableField("collections", "search", "");
+  const [filters, setFilters] = useReduxTableField<CollectionFilters>("collections", "filters", DEFAULT_FILTERS);
+  const [page, setPage] = useReduxTableField("collections", "page", 1);
+  const [pageSize, setPageSize] = useReduxTableField<number>("collections", "pageSize", 15);
   const [queueFullscreen, setQueueFullscreen] = useState(false);
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [filtersCollapsed, setFiltersCollapsed] = useReduxTableField("collections", "filtersCollapsed", false);
 
   const [selectedCase, setSelectedCase] = useState<CollectionWorkspaceCase | null>(null);
   const [actions, setActions] = useState<CollectionAction[]>([]);
