@@ -7,6 +7,7 @@ concurrent migration or enable any registration endpoint.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -74,7 +75,9 @@ def inspect_identity_index_readiness(db: Session) -> IdentityIndexReadiness:
         # alone does not guarantee its expression/predicate is correct. Exact
         # index definitions must still be verified by an independent DBA.
         result = db.execute(text("""
-            SELECT i.indisvalid, i.indisunique, pg_get_indexdef(c.oid)
+            SELECT i.indisvalid, i.indisunique, i.indisready,
+                   pg_get_expr(i.indexprs, i.indrelid),
+                   pg_get_expr(i.indpred, i.indrelid)
             FROM pg_class AS c
             JOIN pg_namespace AS n ON n.oid = c.relnamespace
             JOIN pg_index AS i ON i.indexrelid = c.oid
@@ -83,12 +86,20 @@ def inspect_identity_index_readiness(db: Session) -> IdentityIndexReadiness:
               AND t.relname = :table_name
               AND c.relname = :index_name
         """), {"table_name": table, "index_name": index_name}).first()
+        expr = str(result[3]).lower() if result is not None else ""
+        normalized_expr = re.sub(r"\\s+", "", expr)
+        compact_expr = normalized_expr.replace("(", "").replace(")", "")
+        predicate = str(result[4]) if result is not None else ""
+        # Mirror the real atomic writer's index gate: uniqueness, validity,
+        # readiness, actual normalized expression, and non-null predicate.
         if (
-            result is not None and result[0] is True and result[1] is True
-            and isinstance(result[2], str)
-            and "lower" in result[2].lower()
-            and "btrim" in result[2].lower()
-            and column in result[2]
+            result is not None
+            and all(value is True for value in result[:3])
+            and normalized_expr.startswith("lower(btrim(")
+            and column in compact_expr
+            and "lower" in compact_expr and "btrim" in compact_expr
+            and column in predicate
+            and "IS NOT NULL" in predicate.upper()
         ):
             present.append(index_name)
         else:
