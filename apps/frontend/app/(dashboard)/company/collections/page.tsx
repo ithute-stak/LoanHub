@@ -289,7 +289,15 @@ export default function CollectionsPage() {
   }, [scopeKey]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 50);
+    const timer = window.setTimeout(() => {
+      // Close any selected collection case/action from the previous tenant.
+      setCaseOpen(false);
+      setActionOpen(false);
+      setSelectedCase(null);
+      setActions([]);
+      setEvidenceFiles([]);
+      void load();
+    }, 50);
     return () => {
       window.clearTimeout(timer);
       requestSequence.current += 1;

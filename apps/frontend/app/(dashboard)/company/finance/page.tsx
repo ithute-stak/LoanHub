@@ -78,7 +78,15 @@ export default function CompanyFinancePage() {
   }, [scopeKey]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
+    const timer = window.setTimeout(() => {
+      // A dialog selection is tied to the previous company and must never survive a scope switch.
+      setConfirmAgreement(false);
+      setDecisionAgreement(null);
+      setClaim(null);
+      setReason("");
+      setSettlementEvidence(EMPTY_PAYMENT_EVIDENCE);
+      void load();
+    }, 0);
     return () => {
       window.clearTimeout(timer);
       requestSequence.current += 1;
