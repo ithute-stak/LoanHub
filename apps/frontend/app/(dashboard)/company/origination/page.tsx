@@ -70,14 +70,14 @@ export default function OriginationDashboardPage() {
   const [exceptionReason, setExceptionReason] = useState("");
   const [deleteTopUp, setDeleteTopUp] = useState<OriginationApplication | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const [applicationRows, policyRow, integrationRows] = await Promise.all([
-        originationApi.listApplications(),
-        originationApi.getPolicy(),
-        originationApi.listIntegrations(),
+        originationApi.listApplications({ refresh }),
+        originationApi.getPolicy({ refresh }),
+        originationApi.listIntegrations({ refresh }),
       ]);
       if (sequence !== requestSequence.current) return;
       setApplications(applicationRows);
@@ -203,7 +203,7 @@ export default function OriginationDashboardPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
+            <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh</Button>
             <Button variant="outline" onClick={() => setPolicyOpen(true)}><Settings2 className="h-4 w-4" />Lending policy</Button>
             <Button variant="outline" onClick={() => setIntegrationOpen(true)}><PlugZap className="h-4 w-4" />Integrations</Button>
             <Button asChild><Link href="/company/clients"><UserRoundSearch className="h-4 w-4" />Select borrower</Link></Button>
