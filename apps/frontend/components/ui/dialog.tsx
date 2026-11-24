@@ -39,10 +39,10 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   );
 }
 
-function DialogBrand({ src = "/loanhub-horizontal-logo.png", alt = "LoanHub" }: { src?: string; alt?: string }) {
+function DialogBrand() {
   return (
     <div data-slot="dialog-brand" className="flex min-w-0 shrink-0 items-center justify-start px-4 py-3 pr-12">
-      <Image src={src} alt={alt} width={180} height={48} className="h-9 w-auto max-w-full object-contain object-left" />
+      <Image src="/loanhub-horizontal-logo.png" alt="LoanHub" width={180} height={48} className="h-9 w-auto max-w-full object-contain object-left" />
     </div>
   );
 }
@@ -51,10 +51,8 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
-  brandSrc,
-  brandAlt,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; brandSrc?: string; brandAlt?: string }) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean }) {
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -70,7 +68,7 @@ function DialogContent({
         {...props}
       >
         <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
-        <DialogBrand src={brandSrc} alt={brandAlt} />
+        <DialogBrand />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close asChild>
