@@ -391,9 +391,16 @@ def collect_metrics(
         if item.status == PaymentStatus.SUCCEEDED
     ]
 
+    # Cancelled and rejected facilities are historical records, not current
+    # principal commitments or borrower receivables. Keep their original values
+    # on the loan for audit without summing them into the live portfolio.
+    portfolio_loans = [
+        item for item in loans
+        if item.status not in {LoanStatus.CANCELLED, LoanStatus.REJECTED}
+    ]
     active_loans = [
         item
-        for item in loans
+        for item in portfolio_loans
         if item.status in {LoanStatus.ACTIVE, LoanStatus.APPROVED}
     ]
     completed_loans = [
@@ -431,15 +438,15 @@ def collect_metrics(
         "completed_loans": len(completed_loans),
         "overdue_loans": len(overdue_loans),
         "principal_portfolio": money(sum(
-            (item.principal_amount for item in loans),
+            (item.principal_amount for item in portfolio_loans),
             Decimal("0"),
         )),
         "outstanding_balance": money(sum(
-            (item.balance for item in loans),
+            (item.balance for item in portfolio_loans),
             Decimal("0"),
         )),
         "amount_paid": money(sum(
-            (item.amount_paid for item in loans),
+            (item.amount_paid for item in portfolio_loans),
             Decimal("0"),
         )),
         "successful_transactions": len(successful_payments),

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
 import {
     BadgeCheck,
     BookOpenCheck,
@@ -112,6 +112,7 @@ export function InternalApplicationsWorkspace() {
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<ApplicationFilter>("pending");
     const [selected, setSelected] = useState<DirectLoanApplication | null>(null);
+    const lastAutoOpenedApplicationId = useRef<string | null>(null);
     const [approval, setApproval] = useState<ApprovalForm>(emptyApproval);
     const [rejectReason, setRejectReason] = useState("");
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
@@ -143,14 +144,26 @@ export function InternalApplicationsWorkspace() {
     useEffect(() => { void load(); }, [load]);
 
     useEffect(() => {
-        if (selected || applications.length === 0 || products.length === 0) return;
-        const requestedApplicationId = typeof window !== "undefined"
-            ? new URLSearchParams(window.location.search).get("application")
-            : null;
-        if (!requestedApplicationId) return;
+        if (selected || applications.length === 0) return;
+        const requestedApplicationId = new URLSearchParams(window.location.search).get("application");
+        // The deep link is consumed once. Closing a dialog must not cause
+        // the same URL parameter to repeatedly re-open it.
+        if (!requestedApplicationId || lastAutoOpenedApplicationId.current === requestedApplicationId) return;
         const requested = applications.find((application) => application.id === requestedApplicationId);
-        if (requested) openApplication(requested);
+        if (requested) {
+            lastAutoOpenedApplicationId.current = requestedApplicationId;
+            openApplication(requested);
+        }
     }, [applications, products, selected]);
+
+    function closeApplication() {
+        setSelected(null);
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("application")) {
+            url.searchParams.delete("application");
+            window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+        }
+    }
 
     const caseByApplication = useMemo(
         () => new Map((committee?.cases ?? []).map((item) => [item.application_id, item])),
@@ -356,7 +369,7 @@ export function InternalApplicationsWorkspace() {
             </CardContent>
         </Card>
 
-        <CustomDialog open={Boolean(selected)} onOpenChange={(open) => !open && !working && setSelected(null)} title={selected ? `${selected.application_reference} — ${selected.borrower_name}` : "Process application"} description={selected ? `${formatMoney(selected.requested_amount)} requested for ${selected.term_count} months · ${titleCase(selected.status)}` : undefined}>
+        <CustomDialog open={Boolean(selected)} onOpenChange={(open) => !open && !working && closeApplication()} title={selected ? `${selected.application_reference} — ${selected.borrower_name}` : "Process application"} description={selected ? `${formatMoney(selected.requested_amount)} requested for ${selected.term_count} months · ${titleCase(selected.status)}` : undefined}>
             {selected ? <form onSubmit={approveApplication} className="space-y-6 p-6 sm:p-8">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Info label="Client number" value={selected.account_reference ?? "Not available"}/><Info label="Channel" value="Internal company application"/></div>
 
@@ -378,7 +391,7 @@ export function InternalApplicationsWorkspace() {
                     <MicroLoanPreview calculation={calculation} calculating={calculating}/>
                     {canApprove ? <div className="space-y-2"><Label>Rejection reason</Label><Textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Required only when rejecting the application"/></div> : null}
                     <DialogFooter className="mx-0 mb-0 flex-wrap">
-                        <Button type="button" variant="outline" onClick={() => setSelected(null)} disabled={working}>Close</Button>
+                        <Button type="button" variant="outline" onClick={closeApplication} disabled={working}>Close</Button>
                         {selected.status === "draft" ? <Button type="button" variant="outline" asChild><Link href={selected.application_type === "top_up" ? `/company/loans/top-up?application=${encodeURIComponent(selected.id)}` : `/company/origination/new?application=${encodeURIComponent(selected.id)}`}>Complete application and submit draft</Link></Button> : null}
                         {selected.status === "submitted" && canReview ? <LoadingButton type="button" variant="secondary" loading={working} loadingText="Starting review…" onClick={() => void startReview()}><BookOpenCheck className="h-4 w-4"/>Start review</LoadingButton> : null}
                         {canApprove && ["submitted", "under_review"].includes(selected.status) ? <LoadingButton type="button" variant="destructive" loading={working} loadingText="Rejecting…" disabled={rejectReason.trim().length < 3} onClick={() => void rejectApplication()}><XCircle className="h-4 w-4"/>Reject</LoadingButton> : null}

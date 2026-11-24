@@ -66,6 +66,49 @@ SELECT format(
 )
 \gexec
 
+-- CRITICAL: Broad legacy DML grants above must never grant the application
+-- access to privileged Data Center capture or operator audit tables.
+-- Re-apply restrictions on EVERY deployment, including later pulls, for
+-- whichever of these tables already exist at the current Alembic revision.
+SELECT format('REVOKE ALL ON TABLE public.%I FROM %I', tablename, :'runtime_user')
+FROM (VALUES
+    ('loanhub_dc_capture'),
+    ('loanhub_dc_clock'),
+    ('loanhub_dc_event'),
+    ('loanhub_dc_pilot_audit')
+) AS protected(tablename)
+WHERE to_regclass(format('public.%I', tablename)) IS NOT NULL
+\gexec
+
+-- Runtime can read only the three journal tables; RLS and API checks
+-- additionally limit this SELECT permission by active tenant membership.
+SELECT format('GRANT SELECT ON TABLE public.%I TO %I', tablename, :'runtime_user')
+FROM (VALUES
+    ('loanhub_dc_capture'),
+    ('loanhub_dc_clock'),
+    ('loanhub_dc_event')
+) AS protected(tablename)
+WHERE to_regclass(format('public.%I', tablename)) IS NOT NULL
+\gexec
+
+-- Fail closed rather than starting backend with a privileged runtime role.
+SELECT 1 / (CASE WHEN EXISTS (
+    SELECT 1 FROM (
+        VALUES ('loanhub_dc_capture'),
+               ('loanhub_dc_clock'),
+               ('loanhub_dc_event'),
+               ('loanhub_dc_pilot_audit')
+    ) AS protected(tablename)
+    WHERE to_regclass(format('public.%I', tablename)) IS NOT NULL
+      AND (
+        has_table_privilege(:'runtime_user', format('public.%I', tablename), 'INSERT')
+        OR has_table_privilege(:'runtime_user', format('public.%I', tablename), 'UPDATE')
+        OR has_table_privilege(:'runtime_user', format('public.%I', tablename), 'DELETE')
+        OR (tablename = 'loanhub_dc_pilot_audit' AND
+            has_table_privilege(:'runtime_user', format('public.%I', tablename), 'SELECT'))
+      )
+) THEN 0 ELSE 1 END) AS data_center_runtime_permission_guard;
+
 SELECT format(
     'ALTER ROLE %I SET search_path = public',
     :'runtime_user'

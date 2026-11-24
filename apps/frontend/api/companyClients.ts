@@ -36,8 +36,11 @@ export type CompanyClientDirectoryParams = {
   limit?: number;
 };
 
-export async function listCompanyClients(params?: CompanyClientDirectoryParams): Promise<CompanyClient[]> {
-  return (await api.get<CompanyClient[]>("/company-clients", { params })).data;
+export async function listCompanyClients(params?: CompanyClientDirectoryParams, options?: { refresh?: boolean }): Promise<CompanyClient[]> {
+  return (await api.get<CompanyClient[]>("/company-clients", {
+    params,
+    loanHubCache: options?.refresh ? { mode: "refresh" } : undefined,
+  })).data;
 }
 
 export async function getCompanyClientPortfolioInsights(
@@ -52,6 +55,24 @@ export async function getCompanyClientPortfolioInsights(
 export async function revealCompanyClientBankAccount(accountId: string): Promise<string> {
   const response = await api.get<{ account_number: string }>(`/company-clients/${accountId}/bank-account/reveal`);
   return response.data.account_number;
+}
+
+export type CdasAffordabilityPdfIssue = {
+  ok: boolean;
+  file_id: string;
+  reference: string;
+  filename: string;
+  assessed_at: string;
+  affordability: string;
+  deduction_count: number;
+};
+
+export async function issueCompanyClientCdasAffordabilityPdf(
+  accountId: string,
+): Promise<CdasAffordabilityPdfIssue> {
+  return (await api.post<CdasAffordabilityPdfIssue>(
+    `/cdas/clients/${encodeURIComponent(accountId)}/affordability-report`,
+  )).data;
 }
 
 export async function getCompanyClientProfile(accountId: string): Promise<CompanyClientProfile> {

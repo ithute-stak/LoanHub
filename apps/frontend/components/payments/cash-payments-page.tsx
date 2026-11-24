@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import { ArrowDownLeft, ArrowUpRight, Banknote, RefreshCcw, Search, WalletCards } from "lucide-react";
 
 import { listPayments } from "@/api/payments";
@@ -16,30 +19,48 @@ import type { PaymentTransaction } from "@/types/payment";
 import { toast } from "@/utils/toast";
 
 export function CashPaymentsPage({ title, description }: { title: string; description: string }) {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useReduxTableField("cash-payments", "search", "");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
-      setPayments(await listPayments());
+      const rows = await listPayments({ refresh: forceRefresh });
+      if (sequence !== requestSequence.current) return;
+      setPayments(rows);
+      setLoadedScope(scopeKey);
     } catch (error) {
+      if (sequence !== requestSequence.current) return;
+      setPayments([]);
+      setLoadedScope(scopeKey);
       toast.error(error, { description: "Payment transactions could not be loaded." });
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
+
+  // Neither payment rows nor monetary totals may carry over to another tenant.
+  const visiblePayments = loadedScope === scopeKey ? payments : [];
 
   const filtered = useMemo(() => {
     const value = search.trim().toLowerCase();
-    if (!value) return payments;
-    return payments.filter((payment) => [
+    if (!value) return visiblePayments;
+    return visiblePayments.filter((payment) => [
       payment.provider_reference,
       payment.cash_transaction?.cash_reference,
       payment.payment_method,
@@ -48,12 +69,12 @@ export function CashPaymentsPage({ title, description }: { title: string; descri
       payment.direction,
       payment.status,
     ].some((item) => String(item ?? "").toLowerCase().includes(value)));
-  }, [payments, search]);
+  }, [visiblePayments, search]);
 
-  const inbound = useMemo(() => payments.filter((item) => item.direction === "inbound" && item.status === "succeeded").reduce((sum, item) => sum + Number(item.amount), 0), [payments]);
-  const outbound = useMemo(() => payments.filter((item) => item.direction === "outbound" && item.status === "succeeded").reduce((sum, item) => sum + Number(item.amount), 0), [payments]);
+  const inbound = useMemo(() => visiblePayments.filter((item) => item.direction === "inbound" && item.status === "succeeded").reduce((sum, item) => sum + Number(item.amount), 0), [visiblePayments]);
+  const outbound = useMemo(() => visiblePayments.filter((item) => item.direction === "outbound" && item.status === "succeeded").reduce((sum, item) => sum + Number(item.amount), 0), [visiblePayments]);
 
-  if (loading) return <PageLoader rows={8} />;
+  if (loading || loadedScope !== scopeKey) return <PageLoader rows={8} />;
 
   return (
     <div className="loanhub-page pb-24 lg:pb-0">
@@ -63,13 +84,13 @@ export function CashPaymentsPage({ title, description }: { title: string; descri
           <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">{title}</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
-        <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh register</Button>
+        <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh register</Button>
       </section>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Metric icon={ArrowDownLeft} label="Money received" value={formatMoney(inbound)} hint="Successful inbound transactions" tone="emerald" />
         <Metric icon={ArrowUpRight} label="Money paid out" value={formatMoney(outbound)} hint="Successful outbound transactions" tone="amber" />
-        <Metric icon={WalletCards} label="Register entries" value={String(payments.length)} hint="Auditable payment records" tone="blue" />
+        <Metric icon={WalletCards} label="Register entries" value={String(visiblePayments.length)} hint="Auditable payment records" tone="blue" />
       </div>
 
       <Card className="loanhub-panel overflow-hidden">

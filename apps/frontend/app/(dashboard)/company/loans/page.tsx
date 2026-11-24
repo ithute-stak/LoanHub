@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
 import {
@@ -31,6 +32,7 @@ import {expenseManagementApi} from "@/api/expenseManagement";
 import {
     calculateLoan,
     disburseLoan,
+    cancelApprovedUndisbursedLoan,
     adjustInstallmentDueDate,
     getLoan,
     getDisbursementIntegrityPreview,
@@ -78,6 +80,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from "@/components/ui/tabs";
 import {createIdempotencyKey, formatDate, formatMoney, titleCase} from "@/lib/format";
 import {INTEREST_METHOD_OPTIONS, interestMethodLabel, interestMethodOption} from "@/lib/interest-methods";
 import {useTenant} from "@/provider/tenantProvider";
+import {useAppSelector} from "@/store/hooks";
 import {api} from "@/lib/api";
 import {CASHIER_ROLES, DIRECT_APPLICATION_ROLES, FINANCE_ROLES, LENDING_ROLES, hasRole} from "@/types/auth";
 import type {CompanyClient} from "@/types/companyClient";
@@ -141,7 +144,9 @@ type WorkspaceTab = "portfolio" | "contracts" | "calculator";
 
 export default function CompanyLoansPage() {
     const router = useRouter();
-    const {activeRole} = useTenant();
+    const {activeRole, activeCompanyId, activeBranchId} = useTenant();
+    const currentUserId = useAppSelector((state) => state.auth.user?.id ?? null);
+    const scopeKey = JSON.stringify([currentUserId, activeCompanyId, activeBranchId, activeRole]);
     const canManageContracts = hasRole(activeRole, DIRECT_APPLICATION_ROLES);
     const canSearchBorrowers = hasRole(activeRole, LENDING_ROLES);
     const canAdjustDueDates = hasRole(activeRole, LENDING_ROLES);
@@ -155,7 +160,8 @@ export default function CompanyLoansPage() {
     const [pendingTopUps, setPendingTopUps] = useState<OriginationApplication[]>([]);
     const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState<WorkspaceTab>("portfolio");
+    const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
+    const [tab, setTab] = useReduxTableField<WorkspaceTab>("loans-page", "tab", "portfolio");
     const [historyBorrowerId, setHistoryBorrowerId] = useState<string | null>(null);
     const [borrowerHistoryLoans, setBorrowerHistoryLoans] = useState<Loan[]>([]);
     const [borrowerHistoryLoading, setBorrowerHistoryLoading] = useState(false);
@@ -212,6 +218,34 @@ export default function CompanyLoansPage() {
     const [installmentPaymentAmount, setInstallmentPaymentAmount] = useState("");
     const [installmentPaymentEvidence, setInstallmentPaymentEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
     const [postingInstallmentPayment, setPostingInstallmentPayment] = useState(false);
+    const [cancelLoanOpen, setCancelLoanOpen] = useState(false);
+    const [cancelLoanReason, setCancelLoanReason] = useState("");
+    const [cancelLoanReference, setCancelLoanReference] = useState("");
+    const [cancelLoanConfirmed, setCancelLoanConfirmed] = useState(false);
+    const [cancellingLoan, setCancellingLoan] = useState(false);
+
+    async function cancelSignedUndisbursedLoan() {
+        if (!selectedLoan || selectedLoan.status !== "approved" || selectedLoan.disbursed_at || !cancelLoanConfirmed) return;
+        setCancellingLoan(true);
+        try {
+            const result = await cancelApprovedUndisbursedLoan(selectedLoan.id, {
+                reason: cancelLoanReason.trim(),
+                signed_termination_reference: cancelLoanReference.trim(),
+                confirm_no_disbursement: true,
+            });
+            setSelectedLoan(result);
+            setLoans(previous => previous.map(item => item.id === result.id ? result : item));
+            // The signed contract remains signed; the facility itself is cancelled.
+            setCancelLoanOpen(false);
+            setScheduleOpen(false);
+            toast.success("Undisbursed loan cancelled. Original signed documents and audit history preserved.");
+            void load();
+        } catch (error) {
+            toast.error(getErrorMessage(error, "Loan could not be cancelled. Review payout and mandate records."));
+        } finally {
+            setCancellingLoan(false);
+        }
+    }
     const [disburseOpen, setDisburseOpen] = useState(false);
     const [disbursing, setDisbursing] = useState(false);
     const [disbursementIntegrity, setDisbursementIntegrity] = useState<DisbursementIntegrityPreview | null>(null);
@@ -249,38 +283,68 @@ export default function CompanyLoansPage() {
     const [calculating, setCalculating] = useState(false);
     const [calculation, setCalculation] = useState<LoanCalculation | null>(null);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [loanRows, contractRows, methodRows, clientRows, policy] = await Promise.all([
-                listLoans(),
-                canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
-                expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-                listCompanyClients().catch(() => []),
-                (canManageContracts || canDisburse) ? originationApi.getPolicy().catch(() => null) : Promise.resolve(null),
-            ]);
-            setLoans(loanRows);
-            setContracts(contractRows);
-            setMethods(methodRows);
-            setClients(clientRows);
-            setOriginationPolicy(policy);
-            if (activeRole === "company_owner" || activeRole === "branch_manager") {
-                try {
-                    const applications = await originationApi.listApplications();
-                    setPendingTopUps(applications.filter((application) =>
-                        application.application_type === "top_up" &&
-                        ["draft", "submitted", "under_review"].includes(application.status)
-                    ));
-                } catch {
-                    setPendingTopUps([]);
-                }
-            }
-        } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Loans and contracts could not be loaded."));
-        } finally {
-            setLoading(false);
+    // Keep a populated portfolio visible during refresh. A new mount still
+    // waits for the authoritative loan list; optional endpoints cannot block it.
+    const loadedLoansRef = useRef(false);
+    const loadedScopeRef = useRef<string | null>(null);
+    const loadSequenceRef = useRef(0);
+    const load = useCallback(async (forceRefresh = false) => {
+        const sequence = ++loadSequenceRef.current;
+        if (loadedScopeRef.current !== scopeKey) {
+            loadedScopeRef.current = scopeKey;
+            loadedLoansRef.current = false;
+            setLoadedScopeKey(null);
+            setLoans([]);
+            setClients([]);
+            setContracts([]);
+            setPendingTopUps([]);
         }
-    }, [canDisburse, canManageContracts, activeRole]);
+        if (!loadedLoansRef.current) setLoading(true);
+
+        const portfolioTask = (async () => {
+            try {
+                const rows = await listLoans({ refresh: forceRefresh });
+                if (sequence !== loadSequenceRef.current) return;
+                setLoans(rows);
+                loadedLoansRef.current = true;
+                setLoadedScopeKey(scopeKey);
+            } catch (error: unknown) {
+                if (sequence === loadSequenceRef.current) {
+                    setLoadedScopeKey(scopeKey);
+                    toast.error(getErrorMessage(error, "Loan portfolio could not be loaded."));
+                }
+            } finally {
+                if (sequence === loadSequenceRef.current) setLoading(false);
+            }
+        })();
+
+        // These requests enrich the portfolio but must never block the list.
+        const enrichmentTask = (async () => {
+            const [contractsResult, methodsResult, clientsResult, policyResult, applicationsResult] =
+                await Promise.allSettled([
+                    canManageContracts ? originationApi.listContracts() : Promise.resolve([]),
+                    expenseManagementApi.paymentMethods(),
+                    listCompanyClients(undefined, { refresh: forceRefresh }),
+                    (canManageContracts || canDisburse) ? originationApi.getPolicy() : Promise.resolve(null),
+                    activeRole === "company_owner" || activeRole === "branch_manager"
+                        ? originationApi.listApplications()
+                        : Promise.resolve([]),
+                ]);
+            if (sequence !== loadSequenceRef.current) return;
+            if (contractsResult.status === "fulfilled") setContracts(contractsResult.value);
+            if (methodsResult.status === "fulfilled") setMethods(methodsResult.value);
+            if (clientsResult.status === "fulfilled") setClients(clientsResult.value);
+            if (policyResult.status === "fulfilled") setOriginationPolicy(policyResult.value);
+            if (applicationsResult.status === "fulfilled") {
+                setPendingTopUps(applicationsResult.value.filter((application) =>
+                    application.application_type === "top_up" &&
+                    ["draft", "submitted", "under_review"].includes(application.status)
+                ));
+            }
+        })();
+
+        await Promise.all([portfolioTask, enrichmentTask]);
+    }, [canDisburse, canManageContracts, activeRole, scopeKey]);
 
     // A deep-linked loan should open once, not reopen after the operator
     // closes its schedule and the portfolio refreshes in the background.
@@ -308,7 +372,11 @@ export default function CompanyLoansPage() {
         } else if (requestedTab === "calculator") {
             setTab("calculator");
         }
-        return () => window.clearTimeout(timer);
+        return () => {
+            window.clearTimeout(timer);
+            // Ignore responses from an old role, company, or unmounted page.
+            loadSequenceRef.current += 1;
+        };
     }, [canManageContracts, load]);
 
     useEffect(() => {
@@ -820,7 +888,7 @@ export default function CompanyLoansPage() {
     }
 
     async function regenerateContractPdf() {
-        if (!selectedContract || selectedContract.status === "signed") return;
+        if (!selectedContract || selectedContract.status === "signed" || selectedContract.status === "cancelled" || selectedContract.borrower_signed_at || selectedContract.company_signed_at) return;
         setContractWorking(selectedContract.id);
         try {
             const updated = await originationApi.regenerateContractPdf(selectedContract.id);
@@ -837,7 +905,7 @@ export default function CompanyLoansPage() {
         const locked = Boolean(
             contract.borrower_signed_at ||
             contract.company_signed_at ||
-            contract.status === "signed",
+            contract.status === "signed" || contract.status === "cancelled",
         );
 
         if (locked) {
@@ -891,7 +959,7 @@ export default function CompanyLoansPage() {
         .sort((left, right) => left.installment_number - right.installment_number)[0] ?? null
         : null;
 
-    if (loading) return <PageLoader rows={8}/>;
+    if (loading || loadedScopeKey !== scopeKey) return <PageLoader rows={8}/>;
 
     return (
         <main className="loanhub-page space-y-5 pb-10">
@@ -908,7 +976,7 @@ export default function CompanyLoansPage() {
                     {canSearchBorrowers ?
                         <Button variant="outline" onClick={() => setBorrowerLookupOpen(true)}><UserSearch
                             className="h-4 w-4"/>Find borrower</Button> : null}
-                    <Button variant="outline" onClick={() => void load()}><RefreshCcw
+                    <Button variant="outline" onClick={() => void load(true)}><RefreshCcw
                         className="h-4 w-4"/>Refresh</Button>
                     <Button variant="outline" asChild><Link href="/company/loan-activity"><FileClock className="h-4 w-4"/>Activity log</Link></Button>
                     <Button asChild><Link href="/company/cashier"><Banknote className="h-4 w-4"/>Payment
@@ -1315,7 +1383,7 @@ export default function CompanyLoansPage() {
                     {signatureMethod === "wacom_preview" ? <div className="space-y-3 rounded-xl border p-3 sm:p-4" role="region" aria-label="Wacom test preview">
                         <p className="text-sm font-semibold">Wacom STU-540 — temporary test preview</p>
                         <p className="text-xs text-muted-foreground">Use only an unsigned test contract. This mode cannot mark the borrower or company as signed, and no Wacom pen strokes are transmitted to the server.</p>
-                        {!selectedContract.borrower_signed_at && selectedContract.status !== "signed" ?
+                        {!selectedContract.borrower_signed_at && !selectedContract.company_signed_at && selectedContract.status !== "signed" && selectedContract.status !== "cancelled" ?
                             <ContractPadPreflight key={`${selectedContract.id}:${selectedContract.contract_hash ?? ""}`} contractId={selectedContract.id}/> :
                             <p role="status" className="text-sm text-muted-foreground">This contract is already signed or closed. A new pad preview cannot be prepared.</p>}
                     </div> : null}
@@ -1327,12 +1395,12 @@ export default function CompanyLoansPage() {
                     <DialogFooter className="flex-wrap"><LoadingButton type="button" variant="outline"
                                                                        loading={contractWorking === selectedContract.id}
                                                                        onClick={() => void printContract(selectedContract)}><Download
-                        className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" ?
+                        className="h-4 w-4"/>Open PDF</LoadingButton>{selectedContract.status !== "signed" && selectedContract.status !== "cancelled" && !selectedContract.borrower_signed_at && !selectedContract.company_signed_at ?
                         <LoadingButton type="button" variant="outline" loading={contractWorking === selectedContract.id}
                                        onClick={() => void regenerateContractPdf()}><RefreshCcw className="h-4 w-4"/>Regenerate
-                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
+                            PDF</LoadingButton> : null}{!selectedContract.borrower_signed_at && selectedContract.status !== "cancelled" && signatureMethod !== "email_otp" && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="submit" loading={contractWorking === selectedContract.id}>Borrower
-                            signed</LoadingButton> : null}{!selectedContract.company_signed_at && signatureMethod !== "wacom_preview" ?
+                            signed</LoadingButton> : null}{!selectedContract.company_signed_at && selectedContract.status !== "cancelled" && signatureMethod !== "wacom_preview" ?
                         <LoadingButton type="button" loading={contractWorking === selectedContract.id}
                                        onClick={() => void companySign()}>Company signed</LoadingButton> : null}
                     </DialogFooter></form> : null}
@@ -1562,6 +1630,14 @@ export default function CompanyLoansPage() {
                                 Print PDF
                             </Button>
                         ) : null}
+                        {selectedLoan && ["company_owner", "company_admin"].includes(activeRole ?? "") && selectedLoan.status === "approved" && !selectedLoan.disbursed_at ? (
+                            <Button type="button" variant="outline" className="border-destructive/40 text-destructive" onClick={() => {
+                                setCancelLoanReason("");
+                                setCancelLoanReference("");
+                                setCancelLoanConfirmed(false);
+                                setCancelLoanOpen(true);
+                            }}>Cancel approved undisbursed loan</Button>
+                        ) : null}
                         {selectedLoan && canSettleEarly && ["active", "defaulted"].includes(selectedLoan.status) ? (
                             <Button
                                 onClick={() => {
@@ -1749,6 +1825,35 @@ export default function CompanyLoansPage() {
                             <CalendarClock className="h-4 w-4"/>
                             Save adjusted date
                         </LoadingButton>
+                    </DialogFooter>
+                </div>
+            </CustomDialog>
+
+            <CustomDialog open={cancelLoanOpen} onOpenChange={(open) => !cancellingLoan && setCancelLoanOpen(open)}
+                          title="Cancel approved loan before disbursement"
+                          description={selectedLoan ? `${selectedLoan.loan_reference} · Owner/admin approval · Signed termination evidence required` : undefined}
+                          contentClassName="sm:max-w-xl">
+                <div className="space-y-4 p-5 sm:p-8">
+                    <Alert><ShieldCheck className="h-4 w-4"/><AlertTitle>Permanent pre-disbursement cancellation</AlertTitle>
+                        <AlertDescription>This is only allowed if no money was paid out, no payment transaction was initiated, and no active financial or CDAS obligations exist. The signed original contract and audit record are retained. Do not use this to reverse a payment.</AlertDescription>
+                    </Alert>
+                    <div className="space-y-2"><Label htmlFor="cancel-loan-reason">Cancellation reason</Label>
+                        <Textarea id="cancel-loan-reason" value={cancelLoanReason} onChange={event => setCancelLoanReason(event.target.value)}
+                                  placeholder="Explain the cancellation (minimum 12 characters)"/>
+                    </div>
+                    <div className="space-y-2"><Label htmlFor="cancel-loan-reference">Signed mutual termination reference</Label>
+                        <Input id="cancel-loan-reference" value={cancelLoanReference} onChange={event => setCancelLoanReference(event.target.value)}
+                               placeholder="Document/reference of signed cancellation agreement"/>
+                    </div>
+                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={cancelLoanConfirmed}
+                        onChange={event => setCancelLoanConfirmed(event.target.checked)}/>
+                        I confirm that neither the company nor any payment provider has paid out this loan, and that the signed termination evidence is held on file.
+                    </label>
+                    <DialogFooter className="flex-wrap">
+                        <Button variant="outline" disabled={cancellingLoan} onClick={() => setCancelLoanOpen(false)}>Keep loan</Button>
+                        <LoadingButton variant="destructive" loading={cancellingLoan}
+                            disabled={!cancelLoanConfirmed || cancelLoanReason.trim().length < 12 || cancelLoanReference.trim().length < 5}
+                            onClick={() => void cancelSignedUndisbursedLoan()}>Confirm loan cancellation</LoadingButton>
                     </DialogFooter>
                 </div>
             </CustomDialog>

@@ -53,13 +53,14 @@ function normalizeLoanCurrentState(loan: Loan): Loan {
 }
 
 /** Load every tenant-authorised loan rather than silently truncating the company portfolio. */
-export async function listLoans(): Promise<Loan[]> {
+export async function listLoans(options?: { refresh?: boolean }): Promise<Loan[]> {
   const pageSize = 500;
   const loans: Loan[] = [];
   const seen = new Set<string>();
   for (let skip = 0; ; skip += pageSize) {
     const {data} = await api.get<Loan[]>("/loans/", {
       params: {skip, limit: pageSize},
+      loanHubCache: options?.refresh ? { mode: "refresh" } : undefined,
     });
     if (!Array.isArray(data) || data.length > pageSize) {
       throw new Error("Loan portfolio returned an invalid page.");
@@ -99,6 +100,19 @@ export async function listBorrowerLoans(borrowerId: string): Promise<Loan[]> {
 
 export async function getLoan(loanId: string): Promise<Loan> {
   return normalizeLoanCurrentState((await api.get<Loan>(`/loans/${loanId}`)).data);
+}
+
+export async function cancelApprovedUndisbursedLoan(
+  loanId: string,
+  payload: {
+    reason: string;
+    signed_termination_reference: string;
+    confirm_no_disbursement: boolean;
+  },
+): Promise<Loan> {
+  return normalizeLoanCurrentState(
+    (await api.post<Loan>(`/loans/${loanId}/cancel-before-disbursement`, payload)).data,
+  );
 }
 
 export async function getLoanByReference(loanReference: string): Promise<Loan> {

@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from database.config.config import settings
 from database.models.branch import CompanyBranch
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.enums import LoanStatus
 from database.models.company import LoanCompany
 from database.models.file_management import ManagedFile
 from database.models.loan_product import LoanProduct
@@ -562,7 +563,8 @@ class _ContractCanvas(canvas.Canvas):
         self.line(18 * mm, 14 * mm, width - 18 * mm, 14 * mm)
         self.setFillColor(MUTED)
         self.setFont("Helvetica", 6.7)
-        confidentiality = "CONFIDENTIAL | " if self.contract.status == "signed" else "DRAFT | "
+        fully_signed = bool(self.contract.borrower_signed_at and self.contract.company_signed_at)
+        confidentiality = "CONFIDENTIAL | " if fully_signed else "DRAFT | "
         self.drawString(18 * mm, 9.5 * mm, f"{confidentiality}{self.contract.contract_number}"[:92])
         self.drawCentredString(
             width / 2,
@@ -573,7 +575,7 @@ class _ContractCanvas(canvas.Canvas):
 
         self.restoreState()
 
-        if self.contract.status != "signed":
+        if not fully_signed:
             self.saveState()
             self.setFillColor(colors.Color(0.7, 0.75, 0.8, alpha=0.11))
             self.setFont("Helvetica-Bold", 40)
@@ -1450,8 +1452,10 @@ def regenerate_contract_pdf(
     increment_version: bool = True,
     template_style: str | None = None,
 ) -> LoanContract:
-    if contract.locked_at and contract.status == "signed":
-        raise HTTPException(status_code=409, detail="A fully signed contract is locked and cannot be regenerated")
+    if contract.loan and contract.loan.status == LoanStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="Cancelled loan contracts are historical records and cannot be regenerated")
+    if contract.borrower_signed_at or contract.company_signed_at or contract.locked_at:
+        raise HTTPException(status_code=409, detail="A signed or locked contract is immutable and cannot be regenerated")
 
     if template_style is not None:
         requested_style = _normalize_contract_style(template_style)

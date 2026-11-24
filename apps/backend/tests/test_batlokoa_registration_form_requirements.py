@@ -1,0 +1,165 @@
+"""Phase 91: employee form metadata covers every field and never allows writes."""
+from collections import Counter
+from inspect import signature
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from fastapi import HTTPException
+
+from core.access_control import TenantContext
+from database.models.enums import CompanyStatus, UserRole
+from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
+from routers.batlokoa_registration_availability import (
+    get_registration_form_requirements,
+    registration_form_requirements_for_staff,
+    router,
+)
+
+
+def staff(*, role=UserRole.LOAN_OFFICER, active=True, branch=True):
+    actor, company, branch_id = uuid4(), uuid4(), uuid4()
+    return TenantContext(
+        user=SimpleNamespace(id=actor, is_active=True, role=role),
+        staff=SimpleNamespace(
+            user_id=actor, company_id=company, is_active=active,
+            role=role, branch_id=branch_id if branch else None,
+        ),
+        company=SimpleNamespace(id=company, status=CompanyStatus.APPROVED, is_active=True), company_id=company,
+        branch_id=branch_id if branch else None, is_platform_admin=False,
+    )
+
+
+def test_full_form_contract_has_exactly_one_field_in_each_section():
+    r = registration_form_requirements_for_staff(staff())
+    keys = [key for section in r.sections for key in section.fields]
+    counts = Counter(keys)
+    assert set(keys) == set(FullNewOnlyClientCapture.model_fields)
+    assert all(n == 1 for n in counts.values())
+    assert len({section.id for section in r.sections}) == len(r.sections)
+
+
+def test_deferred_fields_reflect_disabled_internal_full_writer():
+    r = registration_form_requirements_for_staff(staff())
+    deferred = set(key for section in r.sections for key in section.deferred_fields)
+    assert deferred == {
+        "email", "temporary_password", "cdas_employee_number",
+        "employer_group_id", "new_employer_group",
+    }
+    assert all(
+        set(section.deferred_fields).issubset(section.fields)
+        for section in r.sections
+    )
+
+
+def test_information_is_constant_without_customer_values_or_submit_permission():
+    r = registration_form_requirements_for_staff(staff())
+    assert r.schema_version == 2
+    assert r.registration_available is False
+    assert r.submit_allowed is False
+    assert r.client_data_requested is False
+    assert r == registration_form_requirements_for_staff(staff())
+    assert "password_hash" not in r.model_dump_json()
+    assert "national_id_normalized" not in r.model_dump_json()
+
+
+@pytest.mark.parametrize("context", [
+    staff(role=UserRole.BORROWER),
+    staff(role=UserRole.AUDITOR),
+    staff(active=False),
+    staff(branch=False),
+])
+def test_unauthorized_employee_cannot_read_requirements(context):
+    with pytest.raises(HTTPException) as error:
+        registration_form_requirements_for_staff(context)
+    assert error.value.status_code == 403
+
+
+def test_requirements_api_is_read_only_and_accepts_no_client_body():
+    route = next(
+        entry for entry in router.routes
+        if getattr(entry, "path", "") == "/batlokoa/registration/form-requirements"
+    )
+    assert route.methods == {"GET"}
+    assert list(signature(get_registration_form_requirements).parameters) == ["context"]
+    assert route.body_field is None
+
+
+def test_typed_metadata_matches_complete_schema_without_customer_values():
+    requirements = registration_form_requirements_for_staff(staff())
+    fields = {field.key: field for field in requirements.field_details}
+    assert set(fields) == set(FullNewOnlyClientCapture.model_fields)
+    assert len(requirements.field_details) == len(fields)
+    assert fields["date_of_birth"].kind == "date"
+    assert fields["monthly_income"].kind == "currency"
+    assert fields["bank_account"].kind == "bank_account"
+    assert fields["external_debts"].kind == "debt_list"
+    assert fields["consent_to_credit_checks"].kind == "boolean"
+    assert fields["national_id"].sensitive is True
+    assert fields["passport_number"].sensitive is True
+    assert fields["bank_account"].sensitive is True
+    assert fields["branch_id"].required is True
+    assert fields["phone"].required is True
+    assert fields["consent_to_share_profile"].required is True
+    assert fields["consent_to_credit_checks"].required is True
+    assert requirements.identity_alternatives == ("national_id", "passport_number")
+    assert fields["national_id"].required is False
+    assert fields["passport_number"].required is False
+    assert not any(
+        field.deferred and field.required for field in requirements.field_details
+    )
+    assert all(
+        field.deferred == any(
+            field.key in section.deferred_fields
+            for section in requirements.sections
+        )
+        for field in requirements.field_details
+    )
+    assert requirements.registration_available is False
+    assert requirements.submit_allowed is False
+
+
+def test_metadata_inventory_fails_closed_if_schema_gains_unreviewed_field(monkeypatch):
+    from routers import batlokoa_registration_availability as module
+
+    original = module._FORM_SECTIONS
+    monkeypatch.setattr(module, "_FORM_SECTIONS", original[:-1])
+    with pytest.raises(RuntimeError, match="inventory"):
+        registration_form_requirements_for_staff(staff())
+
+
+@pytest.mark.parametrize("condition", [
+    "company_pending", "company_inactive", "different_tenant",
+    "revoked_membership", "different_branch", "inactive_user",
+])
+def test_form_metadata_requires_exact_active_tenant_and_staff(condition):
+    ctx = staff()
+    if condition == "company_pending":
+        ctx.company.status = CompanyStatus.PENDING
+    elif condition == "company_inactive":
+        ctx.company.is_active = False
+    elif condition == "different_tenant":
+        ctx.company.id = uuid4()
+    elif condition == "revoked_membership":
+        ctx.staff.is_active = False
+    elif condition == "different_branch":
+        ctx.staff.branch_id = uuid4()
+    elif condition == "inactive_user":
+        ctx.user.is_active = False
+    with pytest.raises(HTTPException) as error:
+        registration_form_requirements_for_staff(ctx)
+    assert error.value.status_code == 403
+
+
+def test_both_registration_preview_routes_are_get_only_and_never_accept_pii():
+    actual = [
+        route for route in router.routes
+        if getattr(route, "path", "").startswith("/batlokoa/registration/")
+    ]
+    assert {route.path for route in actual} == {
+        "/batlokoa/registration/availability",
+        "/batlokoa/registration/form-requirements",
+    }
+    for route in actual:
+        assert route.methods == {"GET"}
+        assert route.body_field is None

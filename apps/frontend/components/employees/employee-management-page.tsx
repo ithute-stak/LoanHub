@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { SuggestionSearch } from "@/components/ui/suggestion-search";
 import { Textarea } from "@/components/ui/textarea";
@@ -147,9 +148,9 @@ export function EmployeeManagementPage({ embedded = false }: { embedded?: boolea
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [search, setSearch] = useState("");
-    const [branchFilter, setBranchFilter] = useState("all");
-    const [statusFilter, setStatusFilter] = useState("all");
+    const [search, setSearch] = useReduxTableField("employee-management", "search", "");
+    const [branchFilter, setBranchFilter] = useReduxTableField("employee-management", "branchFilter", "all");
+    const [statusFilter, setStatusFilter] = useReduxTableField("employee-management", "statusFilter", "all");
     const [selected, setSelected] = useState<Employee | null>(null);
     const [dialogMode, setDialogMode] = useState<"profile" | "goal" | "review" | null>(null);
 

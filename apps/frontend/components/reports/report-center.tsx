@@ -1,6 +1,7 @@
 "use client";
 
 
+import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
@@ -169,6 +170,17 @@ export function ReportCenter({
                     <div className="flex items-center gap-3"><IthutePoweredBy /><button type="button" onClick={() => void load()} className="rounded-xl border p-2.5" title="Refresh"><RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button></div>
                 </div>
             </section>
+            )}
+
+            {mode === "company" && (
+                <Link href="/company/reports/daily-issuance" className="flex items-center justify-between gap-4 rounded-2xl border bg-card p-5 shadow-sm transition-colors hover:bg-muted/40">
+                    <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-primary">Financial reporting</p>
+                        <h2 className="mt-1 text-lg font-bold">Daily Loan Issuance & Expected Returns</h2>
+                        <p className="mt-1 text-sm text-muted-foreground">View daily issued principal, contractual return totals, and download CSV, PDF or Excel.</p>
+                    </div>
+                    <FileChartColumn className="h-6 w-6 shrink-0 text-primary" />
+                </Link>
             )}
 
             {summary && (

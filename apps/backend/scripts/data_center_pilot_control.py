@@ -31,9 +31,7 @@ RESOURCE_TABLES = {
 }
 CAP = 500
 MAX_JS_CURSOR = 9007199254740991
-# Only explicitly reviewed schema revisions are accepted.
-# f4a6c8e0d064 merges the existing Data Center pilot audit branch
-# with the CDAS consent branch without changing Data Center tables.
+# Only the exact audited Data Center revision and no-DDL CDAS merge are accepted.
 EXPECTED_REVISIONS = frozenset({"dc20261122002", "f4a6c8e0d064"})
 
 

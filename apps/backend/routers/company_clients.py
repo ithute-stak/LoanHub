@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only
 
 from core.access_control import (
     COMPANY_MANAGEMENT_ROLES,
@@ -34,6 +34,7 @@ from database.models.company_client_case import CompanyClientCaseEntry
 from database.models.company_client_identity_change import CompanyClientIdentityChangeRequest
 from database.models.file_management import ManagedFile
 from database.models.loan_product import LoanProduct
+from database.models.lending_operations import CDASPayrollProfile
 from database.models.enums import InstallmentStatus, LoanStatus, PaymentProvider, PaymentPurpose, PaymentStatus, UserRole
 from database.models.person import Person
 from database.models.legacy_loan_capture import LegacyLoanCapture
@@ -114,6 +115,7 @@ PROFILE_DOCUMENT_CATEGORIES = {
     "proof_of_residence": "borrower_proof_of_residence",
     "employment_letter": "borrower_employment_letter",
     "loan_agreement": "borrower_loan_agreement",
+    "cdas_affordability": "borrower_cdas_affordability",
     "other": "borrower_other",
 }
 PROFILE_CATEGORY_DOCUMENT_TYPES = {
@@ -536,22 +538,12 @@ def _directory_summaries(
     *,
     context: TenantContext,
     accounts: list[CompanyBorrowerAccount],
+    include_summaries: bool = True,
 ) -> tuple[dict, list[ClientCompanyLoan], list[RepaymentInstallment]]:
     borrower_ids = [account.borrower_id for account in accounts]
     if not borrower_ids:
         return {}, [], []
 
-    banks = (
-        db.query(BorrowerBankAccount)
-        .filter(
-            BorrowerBankAccount.borrower_id.in_(borrower_ids),
-        )
-        .order_by(
-            BorrowerBankAccount.salary_account.asc(),
-            BorrowerBankAccount.updated_at.asc(),
-        )
-        .all()
-    )
     loans = (
         db.query(ClientCompanyLoan)
         .filter(
@@ -569,9 +561,38 @@ def _directory_summaries(
         if loan_ids
         else []
     )
+    # The portfolio side rail only uses loans and installments. Avoid loading
+    # bank details, case entries, and building per-client summaries for it.
+    if not include_summaries:
+        return {}, loans, installments
+
+    banks = (
+        db.query(BorrowerBankAccount)
+        .filter(
+            BorrowerBankAccount.borrower_id.in_(borrower_ids),
+        )
+        .order_by(
+            BorrowerBankAccount.salary_account.asc(),
+            BorrowerBankAccount.updated_at.asc(),
+        )
+        .all()
+    )
+
     account_ids = [account.id for account in accounts]
     case_entries = (
         db.query(CompanyClientCaseEntry)
+        # Directory summaries only read these fields. Do not transfer the
+        # potentially large private note body/title or action details for every
+        # case entry; full records remain available from case-detail endpoints.
+        .options(
+            load_only(
+                CompanyClientCaseEntry.id,
+                CompanyClientCaseEntry.company_borrower_account_id,
+                CompanyClientCaseEntry.entry_type,
+                CompanyClientCaseEntry.status,
+                CompanyClientCaseEntry.created_at,
+            )
+        )
         .filter(
             CompanyClientCaseEntry.company_id == context.company_id,
             CompanyClientCaseEntry.company_borrower_account_id.in_(account_ids),
@@ -740,7 +761,27 @@ def list_company_clients(
                 )
             )
 
-    accounts = query.order_by(CompanyBorrowerAccount.created_at.desc()).all()
+    # Summary-dependent filters must inspect every candidate to preserve
+    # existing search semantics. Without such filters, bound the SQL query
+    # before constructing potentially expensive portfolio summaries.
+    needs_summary_filter = any((
+        loan_status is not None,
+        employment_status is not None,
+        bool(str(employer or "").strip()),
+        opening_fee_status is not None,
+        has_bank_account is not None,
+        has_loan is not None,
+        bool(str(bank_last4 or "").strip()),
+        overdue_only,
+        due_within_days is not None,
+        salary_due_within_days is not None,
+    ))
+    ordered_query = query.order_by(CompanyBorrowerAccount.created_at.desc())
+    accounts = (
+        ordered_query.all()
+        if needs_summary_filter
+        else ordered_query.limit(limit).all()
+    )
     summaries, _, _ = _directory_summaries(db, context=context, accounts=accounts)
     today = date.today()
     employer_filter = str(employer or "").strip().casefold()
@@ -796,7 +837,9 @@ def company_client_portfolio_insights(
     """Small side-rail feed for the full-screen client directory."""
     require_tenant_roles(context, LENDING_ROLES)
     accounts = _client_query(db, context).all()
-    _, loans, installments = _directory_summaries(db, context=context, accounts=accounts)
+    _, loans, installments = _directory_summaries(
+        db, context=context, accounts=accounts, include_summaries=False,
+    )
     client_by_borrower = {account.borrower_id: account for account in accounts}
     loan_by_id = {loan.id: loan for loan in loans}
     open_statuses = OPEN_INSTALLMENT_STATUSES
@@ -1126,14 +1169,19 @@ def review_assisted_registration(
     exposure = borrower_existing_loan_exposure(
         db, borrower=borrower, company_id=context.company_id,
     )
-    legacy_count = (
-        db.query(func.count(LegacyLoanCapture.id))
+    # Registration screening must detect an existing historical identity in
+    # ANY LoanHub company. Return only existence, never another company's
+    # loan count, borrower, branch, company identifier, or financial data.
+    # This is specific to the protected, always-read-only review endpoint;
+    # the tenant-scoped loan exposure endpoint above remains unchanged.
+    legacy_match = (
+        db.query(LegacyLoanCapture.id)
         .filter(
-            LegacyLoanCapture.company_id == context.company_id,
             func.lower(func.trim(LegacyLoanCapture.national_id)) == cleaned_id.lower(),
         )
-        .scalar()
-    ) or 0
+        .first()
+    )
+    legacy_count = int(legacy_match is not None)
     result = decide_registration_review(
         identity_match_found=person is not None,
         legacy_capture_count=int(legacy_count),
@@ -1561,8 +1609,23 @@ def get_company_client_profile(
         account_id=account.id,
     )
 
+    payroll_profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == account.borrower_id,
+        )
+        .first()
+    )
+    is_government_employee = (
+        str(getattr(account.borrower, "employment_type", "") or "").lower() == "government"
+        or payroll_profile is not None
+    )
+
     return CompanyClientProfileRead(
         client=_client_read(account, summary),
+        is_government_employee=is_government_employee,
+        cdas_employee_number=(payroll_profile.employee_number if payroll_profile else None),
         stats=stats,
         payment_rating=payment_rating,
         permissions=_profile_permissions(context),

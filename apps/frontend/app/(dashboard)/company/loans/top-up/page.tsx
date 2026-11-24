@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import { getLoan } from "@/api/loans";
 import { originationApi } from "@/api/origination";
 import { CompactTopUpDialog } from "@/components/loans/compact-top-up-dialog";
@@ -85,8 +85,30 @@ function TopUpWorkspace() {
     } finally { setSaving(false); }
   }
 
+  const parentEligible = loan != null && ["active", "defaulted"].includes(loan.status) && Number(loan.balance) > 0;
+  const canReject = application != null && ["draft", "submitted", "under_review"].includes(application.status) && !application.loan_id;
+
+  async function rejectTopUp() {
+    if (!application || !canManage || !canReject) return;
+    const defaultReason = !parentEligible ? "Parent loan settled before the top-up was processed." : "";
+    const reason = window.prompt("Reason for rejecting this top-up (minimum 10 characters):", defaultReason);
+    if (!reason || reason.trim().length < 10) {
+      if (reason !== null) toast.error("Enter at least 10 characters for the rejection reason.");
+      return;
+    }
+    if (!window.confirm("Reject this top-up application? The parent loan and payments will remain unchanged.")) return;
+    setSaving(true);
+    try {
+      const result = await originationApi.rejectTopUp(application.id, reason.trim());
+      setApplication(result);
+      toast.success("Top-up rejected. Original loan history is unchanged.");
+    } catch (cause: unknown) {
+      toast.error(getErrorMessage(cause, "Could not reject this top-up."));
+    } finally { setSaving(false); }
+  }
+
   async function submitForApproval() {
-    if (!application || application.status !== "draft") return;
+    if (!application || application.status !== "draft" || !parentEligible) return;
     setSaving(true);
     try {
       const result = await originationApi.submit(application.id);
@@ -130,7 +152,8 @@ function TopUpWorkspace() {
             <div><p className="text-xs text-muted-foreground">Repayment period</p><p className="font-semibold">{application.term_count} months</p></div>
           </div>
           <p className="text-xs text-muted-foreground">Replacement principal is based on the settlement quote plus additional cash, not necessarily the displayed scheduled outstanding balance.</p>
-          {application.top_up_exception_requested && !application.top_up_exception_approved ? (
+          {!parentEligible && canReject ? <div role="alert" className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm font-medium">The original loan is settled or no longer eligible. This unprocessed top-up cannot be submitted or approved. Reject it below to keep an accurate audit trail.</div> : null}
+          {parentEligible && application.top_up_exception_requested && !application.top_up_exception_approved ? (
             <div className="space-y-2 rounded-xl border border-amber-500/40 p-4">
               <p className="font-semibold">Company-owner top-up exception required</p>
               <p className="text-sm">Repayment threshold exception must be authorised separately; it is not an affordability assessment.</p>
@@ -139,7 +162,8 @@ function TopUpWorkspace() {
           ) : null}
           <p className="text-sm text-muted-foreground">KYC verification is optional when submitting a top-up for management review. Company policy, verified CDAS payroll requirements when selected, management approval, contract and disbursement controls still apply.</p>
           <div className="flex flex-wrap gap-3">
-            {application.status === "draft" ? <Button disabled={saving || (application.top_up_exception_requested && !application.top_up_exception_approved)} onClick={() => void submitForApproval()}><CheckCircle2 className="mr-2 h-4 w-4" />Submit for management approval</Button> : null}
+            {application.status === "draft" ? <Button disabled={saving || !parentEligible || (application.top_up_exception_requested && !application.top_up_exception_approved)} onClick={() => void submitForApproval()}><CheckCircle2 className="mr-2 h-4 w-4" />Submit for management approval</Button> : null}
+            {canReject ? <Button type="button" variant="destructive" disabled={saving} onClick={() => void rejectTopUp()}><XCircle className="mr-2 h-4 w-4" />Reject top-up application</Button> : null}
             <Button variant="outline" asChild><Link href={`/company/marketplace?workspace=applications&application=${encodeURIComponent(application.id)}`}>Open approval workspace</Link></Button>
           </div>
         </section>

@@ -887,10 +887,25 @@ def reverse_early_settlement(
     db: Session,
     payment: PaymentTransaction,
 ) -> bool:
-    quote = _quote_from_payment(db, payment)
+    referenced_quote = _quote_from_payment(db, payment)
+    if not referenced_quote:
+        return False
+    # Serialize reversals with settlement finalization on the same quote row.
+    # Recheck status under the lock to make repeated reversals idempotent.
+    quote = (
+        db.query(LoanEarlySettlement)
+        .filter(LoanEarlySettlement.id == referenced_quote.id)
+        .with_for_update()
+        .first()
+    )
     if not quote or quote.status != "settled":
         return False
-    loan = db.get(ClientCompanyLoan, quote.loan_id)
+    loan = (
+        db.query(ClientCompanyLoan)
+        .filter(ClientCompanyLoan.id == quote.loan_id)
+        .with_for_update()
+        .first()
+    )
     if not loan:
         return False
     snapshot = (quote.calculation_snapshot or {}).get("loan_snapshot", {})

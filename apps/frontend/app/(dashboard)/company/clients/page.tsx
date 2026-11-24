@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
+  useRef,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -42,6 +44,8 @@ import {
 } from "lucide-react";
 
 import { branchApi } from "@/api/branch";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 import { expenseManagementApi } from "@/api/expenseManagement";
 import {
   checkCompanyClientExistingLoans,
@@ -53,6 +57,7 @@ import {
 } from "@/api/companyClients";
 import { listLoanProducts } from "@/api/loanProducts";
 import { calculateLoan } from "@/api/loans";
+import { api } from "@/lib/api";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { CompanyClientDirectoryWorkspace } from "@/components/clients/company-client-directory-workspace";
 import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";
@@ -101,6 +106,7 @@ import type { MicroLoanCalculation } from "@/types/loan";
 import type { LoanProduct } from "@/types/loanProduct";
 import { getErrorMessage } from "@/utils/apiError";
 import { toast } from "@/utils/toast";
+import { bankAccountValidationMessage } from "@/lib/banking";
 import {
   GLOBAL_BORROWER_LOOKUP_EVENT,
   type GlobalBorrowerLookupDetail,
@@ -242,17 +248,21 @@ function withinWindow(value: string | null | undefined, windowValue: string): bo
 
 export default function CompanyClientsPage() {
   const router = useRouter();
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const currentUserId = useAppSelector((state) => state.auth.user?.id ?? null);
+  const scopeKey = JSON.stringify([currentUserId, activeCompanyId, activeBranchId, activeRole]);
   const [clients, setClients] = useState<CompanyClient[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<LoanProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState("");
-  const [directoryFilters, setDirectoryFilters] = useState<DirectoryFilters>(EMPTY_DIRECTORY_FILTERS);
+  const [search, setSearch] = useReduxTableField("clients-page", "search", "");
+  const [directoryFilters, setDirectoryFilters] = useReduxTableField<DirectoryFilters>("clients-page", "filters", EMPTY_DIRECTORY_FILTERS);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [directoryInitialSearch, setDirectoryInitialSearch] = useState("");
-  const [directoryPage, setDirectoryPage] = useState(1);
-  const [directoryPageSize, setDirectoryPageSize] = useState(15);
+  const [directoryPage, setDirectoryPage] = useReduxTableField("clients-page", "page", 1);
+  const [directoryPageSize, setDirectoryPageSize] = useReduxTableField("clients-page", "pageSize", 15);
   const [portfolioInsights, setPortfolioInsights] = useState<CompanyClientPortfolioInsights | null>(null);
   const [clientDialog, setClientDialog] = useState(false);
   const [loanDialog, setLoanDialog] = useState(false);
@@ -279,6 +289,41 @@ export default function CompanyClientsPage() {
   const [existingLoanCheckNonce, setExistingLoanCheckNonce] = useState(0);
   const [clientStep, setClientStep] = useState<ClientStep>(0);
   const [clientStepErrors, setClientStepErrors] = useState<string[]>([]);
+  const [cdasVerification, setCdasVerification] = useState<{number: string; status: "idle" | "checking" | "verified" | "invalid"; message: string | null}>({number: "", status: "idle", message: null});
+  const cdasVerificationSequence = useRef(0);
+  const governmentEmployeeNumber = String(clientForm.cdas_employee_number ?? "").trim();
+  const needsCdasVerification = clientForm.employment_status === "employed" && clientForm.employment_type === "government";
+  const cdasVerificationBlocked = needsCdasVerification && !(governmentEmployeeNumber && cdasVerification.status === "verified" && cdasVerification.number === governmentEmployeeNumber);
+
+  function invalidateCdasVerification() {
+    cdasVerificationSequence.current += 1;
+    setCdasVerification({number: "", status: "idle", message: null});
+  }
+
+  async function verifyEmployeeOnBlur() {
+    const number = String(clientForm.cdas_employee_number ?? "").trim();
+    if (!needsCdasVerification) return;
+    const sequence = ++cdasVerificationSequence.current;
+    if (!number) {
+      setCdasVerification({number, status: "invalid", message: "Enter a government employee number."});
+      return;
+    }
+    setCdasVerification({number, status: "checking", message: null});
+    try {
+      const response = await api.post<{ok: boolean; employee: {EmployeeNo?: string | null}}>("/cdas/employees/verify", {employee_no: number});
+      if (sequence !== cdasVerificationSequence.current) return;
+      const returned = String(response.data.employee?.EmployeeNo ?? "").trim();
+      if (!response.data.ok || !returned || returned.toLowerCase() !== number.toLowerCase()) {
+        setCdasVerification({number, status: "invalid", message: "Employee number not confirmed by CDAS. Check it and retry."});
+        return;
+      }
+      setCdasVerification({number, status: "verified", message: "Employee number verified by CDAS."});
+    } catch (error: unknown) {
+      if (sequence !== cdasVerificationSequence.current) return;
+      setCdasVerification({number, status: "invalid", message: getErrorMessage(error, "CDAS verification failed. Please retry.")});
+    }
+  }
+
 
   const applyGlobalBorrowerLookup = useCallback((detail: GlobalBorrowerLookupDetail) => {
     const nationalId = detail.nationalId.trim();
@@ -299,6 +344,8 @@ export default function CompanyClientsPage() {
     setExistingLoanCheckNonce(0);
     setClientStep(0);
     setClientStepErrors([]);
+    cdasVerificationSequence.current += 1;
+    setCdasVerification({number: "", status: "idle", message: null});
     setClientDialog(true);
   }, []);
 
@@ -332,31 +379,68 @@ export default function CompanyClientsPage() {
     return () => window.removeEventListener(GLOBAL_BORROWER_LOOKUP_EVENT, handleGlobalLookup);
   }, [applyGlobalBorrowerLookup]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [clientRows, branchResponse, productRows, methodRows, insightRows] = await Promise.all([
-        listCompanyClients({ limit: 1000 }),
-        branchApi.getAll(),
-        listLoanProducts(),
-        expenseManagementApi.paymentMethods().catch(() => DEFAULT_PAYMENT_METHOD_OPTIONS),
-        getCompanyClientPortfolioInsights(14).catch(() => null),
-      ]);
-      setClients(clientRows);
-      setPortfolioInsights(insightRows);
-      setBranches(branchResponse.data.filter((item) => item.is_active));
-      setProducts(productRows.filter((item) => item.is_active));
-      setPaymentMethods(methodRows);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Company clients could not be loaded."));
-    } finally {
-      setLoading(false);
+  const loadedClientsRef = useRef(false);
+  const loadedScopeRef = useRef<string | null>(null);
+  const loadSequenceRef = useRef(0);
+  const load = useCallback(async (forceRefresh = false) => {
+    const sequence = ++loadSequenceRef.current;
+    if (loadedScopeRef.current !== scopeKey) {
+      loadedScopeRef.current = scopeKey;
+      loadedClientsRef.current = false;
+      setLoadedScopeKey(null);
+      setClients([]);
+      setBranches([]);
+      setProducts([]);
+      setPortfolioInsights(null);
     }
-  }, []);
+    if (!loadedClientsRef.current) setLoading(true);
+
+    const directoryTask = (async () => {
+      try {
+        const rows = await listCompanyClients({ limit: 1000 }, { refresh: forceRefresh });
+        if (sequence !== loadSequenceRef.current) return;
+        setClients(rows);
+        loadedClientsRef.current = true;
+        setLoadedScopeKey(scopeKey);
+      } catch (error: unknown) {
+        if (sequence === loadSequenceRef.current) {
+          setLoadedScopeKey(scopeKey);
+          toast.error(getErrorMessage(error, "Company clients could not be loaded."));
+        }
+      } finally {
+        if (sequence === loadSequenceRef.current) setLoading(false);
+      }
+    })();
+
+    // Loading additional configuration and insights must not delay the directory.
+    const enrichmentTask = (async () => {
+      const [branchesResult, productsResult, methodsResult, insightsResult] =
+        await Promise.allSettled([
+          branchApi.getAll(),
+          listLoanProducts(),
+          expenseManagementApi.paymentMethods(),
+          getCompanyClientPortfolioInsights(14),
+        ]);
+      if (sequence !== loadSequenceRef.current) return;
+      if (branchesResult.status === "fulfilled") {
+        setBranches(branchesResult.value.data.filter((item) => item.is_active));
+      }
+      if (productsResult.status === "fulfilled") {
+        setProducts(productsResult.value.filter((item) => item.is_active));
+      }
+      if (methodsResult.status === "fulfilled") setPaymentMethods(methodsResult.value);
+      if (insightsResult.status === "fulfilled") setPortfolioInsights(insightsResult.value);
+    })();
+
+    await Promise.all([directoryTask, enrichmentTask]);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadSequenceRef.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -589,6 +673,7 @@ export default function CompanyClientsPage() {
   const clientProgress = ((clientStep + 1) / CLIENT_STEPS.length) * 100;
 
   function resetClientDialog() {
+    invalidateCdasVerification();
     setClientForm(emptyClient);
     setExistingLoanCheck(null);
     setExistingLoanCheckStatus("idle");
@@ -677,6 +762,11 @@ export default function CompanyClientsPage() {
     }
 
     if (step === 2) {
+      if (cdasVerificationBlocked) {
+        errors.push(cdasVerification.status === "invalid" && cdasVerification.number === governmentEmployeeNumber
+          ? cdasVerification.message || "CDAS employee verification failed."
+          : "Verify the government employee number with CDAS before continuing.");
+      }
       if (Number(clientForm.monthly_income ?? 0) < 0) errors.push("Monthly income cannot be negative.");
       const needsIncomeDay = ["employed", "self_employed", "pensioner"].includes(clientForm.employment_status);
       if (clientForm.employment_status === "employed" && !clientForm.employment_type) {
@@ -708,23 +798,16 @@ export default function CompanyClientsPage() {
       const bank = clientForm.bank_account;
       if (bank) {
         const accountNumber = String(bank.account_number ?? "").replace(/[\s/-]+/g, "");
-        const bankPrefixes: Record<string, string[]> = {
-          FNB: ["6"],
-          PB: ["10"],
-          STD: ["90"],
-          NB: ["11", "12"],
-        };
+        const supportedBanks = ["FNB", "PB", "STD", "NB"];
+        const accountError = bankAccountValidationMessage(bank.bank_name, accountNumber);
         if (bank.account_holder.trim().length < 2) errors.push("Enter the bank account holder.");
-        if (!bank.bank_name.trim() || !bankPrefixes[bank.bank_name]) errors.push("Select a supported borrower bank.");
+        if (!bank.bank_name.trim() || !supportedBanks.includes(bank.bank_name)) errors.push("Select a supported borrower bank.");
         if (accountNumber.length < 4) {
           errors.push("Enter a valid bank account number.");
         } else if (!/^\d+$/.test(accountNumber)) {
           errors.push("The bank account number must contain digits only.");
-        } else {
-          const prefixes = bankPrefixes[bank.bank_name] ?? [];
-          if (prefixes.length > 0 && !prefixes.some((prefix) => accountNumber.startsWith(prefix))) {
-            errors.push(`${bank.bank_name} account number must start with ${prefixes.join(" or ")}.`);
-          }
+        } else if (accountError) {
+          errors.push(accountError);
         }
       }
     }
@@ -1024,7 +1107,7 @@ export default function CompanyClientsPage() {
       : client));
   }
 
-  if (loading) return <PageLoader rows={7} />;
+  if (loading || loadedScopeKey !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="loanhub-page space-y-6">
@@ -1037,7 +1120,7 @@ export default function CompanyClientsPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
+          <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh</Button>
           <Button variant="outline" asChild><Link href="/company/marketplace?workspace=applications"><BookOpenCheck className="h-4 w-4" />Process applications</Link></Button>
           <Button onClick={() => { resetClientDialog(); setClientDialog(true); }}><UserRoundPlus className="h-4 w-4" />Open borrower account</Button>
         </div>
@@ -1495,6 +1578,7 @@ export default function CompanyClientsPage() {
                           <Select value={clientForm.employment_status} onValueChange={(value) => {
                             const employmentStatus = value as AssistedCompanyClientCreate["employment_status"];
                             setClientStepErrors([]);
+                            invalidateCdasVerification();
                             setClientForm((current) => ({
                               ...current,
                               employment_status: employmentStatus,
@@ -1521,8 +1605,12 @@ export default function CompanyClientsPage() {
                             employerName={clientForm.employer_name}
                             newEmployerGroup={clientForm.new_employer_group}
                             required={clientForm.employment_status === "employed"}
+                            onCdasEmployeeNumberBlur={() => void verifyEmployeeOnBlur()}
+                            cdasEmployeeVerificationStatus={cdasVerification.number === governmentEmployeeNumber ? cdasVerification.status : "idle"}
+                            cdasEmployeeVerificationMessage={cdasVerification.number === governmentEmployeeNumber ? cdasVerification.message : null}
                             onChange={(selection) => {
                               setClientStepErrors([]);
+                              if (Object.prototype.hasOwnProperty.call(selection, "cdas_employee_number") || Object.prototype.hasOwnProperty.call(selection, "employment_type")) invalidateCdasVerification();
                               setClientForm((current) => ({ ...current, ...selection }));
                             }}
                           />
@@ -1678,7 +1766,7 @@ export default function CompanyClientsPage() {
                 </Button>
               )}
               {clientStep < LAST_CLIENT_STEP ? (
-                <Button type="button" onClick={nextClientStep} disabled={saving || borrowerAlreadyLinked || existingLoanCheckStatus === "checking"}>
+                <Button type="button" onClick={nextClientStep} disabled={saving || borrowerAlreadyLinked || existingLoanCheckStatus === "checking" || (clientStep === 2 && cdasVerificationBlocked)}>
                   Continue
                   <ChevronRight className="h-4 w-4" />
                 </Button>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileCheck2, Plus, RefreshCcw, Scale, WalletCards } from "lucide-react";
 
 import {
@@ -16,6 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function monthStart() {
   const now = new Date();
@@ -35,6 +38,11 @@ function errorText(error: unknown) {
 }
 
 export default function ReconciliationPage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [data, setData] = useState<ReconciliationDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -50,18 +58,28 @@ export default function ReconciliationPage() {
   });
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      setData(await getReconciliationDashboard());
+      const nextData = await getReconciliationDashboard();
+      if (sequence !== requestSequence.current) return;
+      setData(nextData);
+      setLoadedScope(scopeKey);
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setData(null);
+      setLoadedScope(scopeKey);
       setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
 
   async function createBatch() {
     setBusy(true);
@@ -76,7 +94,9 @@ export default function ReconciliationPage() {
     }
   }
 
-  const summary = data?.summary;
+  const summary = loadedScope === scopeKey ? data?.summary : null;
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="loanhub-page min-w-0 space-y-6 pb-12">

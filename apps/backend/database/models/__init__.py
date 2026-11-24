@@ -1,6 +1,7 @@
 from database.base import Base
 
 from database.models.audit_log import AuditLog
+from database.models.document_issuance import DocumentIssuance, DocumentIssuanceEvent
 from database.models.borrower import Borrower
 from database.models.borrower_contact import BorrowerContact
 from database.models.borrower_service_request import BorrowerServiceRequest
@@ -8,6 +9,8 @@ from database.models.cash import CashTransaction
 from database.models.branch import CompanyBranch
 from database.models.client_loan_company import ClientCompanyLoan
 from database.models.company import LoanCompany
+from database.models.company_payment_model_settings import CompanyPaymentModelSettings
+from database.models.loan_payment_model_assignment import LoanPaymentModelAssignmentRecord
 from database.models.call_management import (
     CallManagementPolicy,
     EmployeeCallDevice,
@@ -117,6 +120,8 @@ from database.models.cdas_official import (
 __all__ = [
     "Base",
     "AuditLog",
+    "DocumentIssuance",
+    "DocumentIssuanceEvent",
     "Borrower",
     "BorrowerContact",
     "BorrowerServiceRequest",
@@ -124,6 +129,8 @@ __all__ = [
     "CompanyBranch",
     "ClientCompanyLoan",
     "LoanCompany",
+    "CompanyPaymentModelSettings",
+    "LoanPaymentModelAssignmentRecord",
     "CallManagementPolicy",
     "EmployeeCallDevice",
     "ClientCall",
@@ -331,7 +338,5 @@ from database.models.wacom_execution_receipt import WacomExecutionReceipt
 from database.models.wacom_execution_ceremony_challenge import WacomExecutionCeremonyChallenge
 
 from database.models.cdas_affordability_batch import CdasAffordabilityBatch, CdasAffordabilityBatchItem
-
 from database.models.cdas_affordability_attempt import CdasAffordabilityAttempt
-
 from database.models.cdas_affordability_consent_evidence import CdasAffordabilityConsentEvidence

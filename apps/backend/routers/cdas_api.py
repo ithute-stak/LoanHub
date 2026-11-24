@@ -26,6 +26,10 @@ from core.access_control import (
 )
 from database.models.audit_log import AuditLog
 from database.models.company_staff import CompanyStaff
+from database.models.company_client import CompanyBorrowerAccount
+from services.company_client_service import company_client_or_404
+from services.client_cdas_affordability_pdf import build_client_cdas_affordability_pdf
+from services.file_service import store_bytes
 from database.models.person import Person
 from database.models.cdas_official import (
     CdasOfficialMandateEvent,
@@ -2524,6 +2528,121 @@ async def verify_cdas_employee_for_application(
             "verified_at": profile.verified_at,
             "department": profile.ministry_department,
         },
+    }
+
+
+@router.post("/clients/{account_id}/affordability-report", status_code=201)
+async def issue_client_cdas_affordability_report(
+    account_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Fetch current CDAS data and store an immutable, confidential borrower PDF.
+
+    Never accept the employee number or affordability amount from the browser.
+    All reads use the selected company profile and existing CDAS billing gates.
+    """
+    _require_lending_user(context)
+    account = company_client_or_404(
+        db, account_id=account_id, company_id=context.company_id,
+    )
+    assert_branch_scope(context, account.branch_id)
+    profile = (
+        db.query(CDASPayrollProfile)
+        .filter(
+            CDASPayrollProfile.company_id == context.company_id,
+            CDASPayrollProfile.borrower_id == account.borrower_id,
+        )
+        .first()
+    )
+    if not profile or not str(profile.employee_number or "").strip():
+        raise HTTPException(status_code=409, detail="The borrower has no CDAS employee number on file")
+    # Legacy/imported government payroll accounts may predate the borrower
+    # employment-type field. The company- and borrower-scoped payroll profile
+    # is the authoritative link; CDAS itself is re-verified below before issue.
+
+    employee_no = str(profile.employee_number).strip()
+    client = get_company_cdas_client(db, context.company_id)
+    environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="employee_verification",
+    )
+    try:
+        employee = await client.get_employee_details(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    returned_no = str(employee.get("EmployeeNo") or "").strip()
+    if not returned_no or returned_no.casefold() != employee_no.casefold():
+        raise HTTPException(status_code=502, detail="CDAS employee identity did not match the stored borrower payroll number")
+    _record_cdas_business_operation(
+        db, context=context, environment=environment,
+        operation_type="employee_verification", source_reference=employee_no,
+    )
+
+    affordability_environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="affordability",
+    )
+    try:
+        affordability = Decimal(str(await client.check_affordability(employee_no)))
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    if not affordability.is_finite() or affordability < 0:
+        raise HTTPException(status_code=502, detail="CDAS returned invalid affordability")
+    _record_cdas_business_operation(
+        db, context=context, environment=affordability_environment,
+        operation_type="affordability", source_reference=employee_no,
+    )
+
+    deduction_environment = _prepare_cdas_business_operation(
+        db, company_id=context.company_id, operation_type="deduction_lookup",
+    )
+    try:
+        deductions = await client.view_all_deductions(employee_no)
+    except CdasError as exc:
+        raise _cdas_http_error(exc) from exc
+    _record_cdas_business_operation(
+        db, context=context, environment=deduction_environment,
+        operation_type="deduction_lookup", source_reference=employee_no,
+    )
+    if not isinstance(deductions, list):
+        raise HTTPException(status_code=502, detail="CDAS returned an unexpected deduction response")
+
+    person = account.borrower.user.person
+    name = " ".join(part for part in (
+        person.first_name, person.middle_name, person.last_name,
+    ) if part)
+    assessed_at = datetime.now(timezone.utc)
+    report_ref = f"CDAS-AFF-{assessed_at:%Y%m%d}-{uuid4().hex[:10].upper()}"
+    content = build_client_cdas_affordability_pdf(
+        db=db, company=account.company, client_name=name,
+        client_reference=account.account_reference,
+        employee_no=employee_no, employee=employee,
+        affordability=affordability, deductions=deductions,
+        assessed_at=assessed_at, reference=report_ref, environment=environment,
+    )
+    record = store_bytes(
+        db, content=content,
+        original_name=f"{report_ref}.pdf",
+        mime_type="application/pdf",
+        owner_user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=account.branch_id,
+        category="borrower_cdas_affordability",
+        visibility="private",
+        description=f"CDAS affordability assessment {report_ref}; assessed {assessed_at.isoformat()}",
+        linked_entity_type="company_borrower_account",
+        linked_entity_id=str(account.id),
+        is_confidential=True,
+    )
+    db.commit()
+    db.refresh(record)
+    return {
+        "ok": True,
+        "file_id": str(record.id),
+        "reference": report_ref,
+        "filename": record.original_name,
+        "assessed_at": assessed_at.isoformat(),
+        "affordability": str(affordability),
+        "deduction_count": len(deductions),
     }
 
 

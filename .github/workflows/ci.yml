@@ -55,6 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Audit Principal x Alembic revision graph (required)
+        run: python3 apps/backend/scripts/audit_principal_x_alembic_graph.py
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -107,6 +110,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir apps/frontend install --frozen-lockfile
 
+      - name: Certify Data Center Redux scoped recovery
+        run: |
+          set -euo pipefail
+          cd apps/frontend
+          node --test tests/data-center-reducer.test.mjs
+          node --test tests/data-center-replay-validation.test.mjs
+          node --test tests/data-center-two-session-replay.test.mjs
+
+      - name: Check isolated Data Center staging safety preflight
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_data_center_cert_preflight.py' -v
+
       - name: Compile polyglot workers
         run: |
           set -euo pipefail
@@ -150,6 +166,15 @@ jobs:
           set -euo pipefail
           bash ./scripts/validate_project.sh
 
+      - name: Verify Principal x refund and payment evidence safeguards
+        working-directory: apps/backend
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_principal_x_refund_reversal_preview.py \
+            tests/test_principal_x_payment_evidence_adapter.py \
+            tests/test_principal_x_collection_source_diagnostics.py
+
       - name: Report Alembic heads for rollover migration review
         working-directory: apps/backend
         run: |
@@ -165,6 +190,16 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -q tests/test_rollover_alembic_migrated_schema_postgres.py
+          python -m pytest -q tests/test_data_center_transactional_journal_postgres.py
+          python -m pytest -q tests/test_data_center_pilot_control.py
+
+      - name: Verify early-settlement cent retention against disposable PostgreSQL
+        working-directory: apps/backend
+        env:
+          LOANHUB_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rs tests/test_early_settlement_postgres_transaction_probe.py tests/test_early_settlement_postgres_concurrent_lock.py tests/test_early_settlement_postgres_service_reversal.py
 
       - name: Certify CDAS affordability reservations and recovery in disposable PostgreSQL
         working-directory: apps/backend
@@ -208,7 +243,7 @@ jobs:
           # This ephemeral database is separate from the CI migration target.
           # Apply all production DDL here with ZERO real customer records.
           python -m alembic upgrade head
-          python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py tests/test_legacy_identity_cross_reference_postgres.py
+          python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py tests/test_legacy_identity_cross_reference_postgres.py tests/test_legacy_link_triage_postgres.py tests/test_legacy_link_triage.py tests/test_identity_rollout_approval_report.py
 
       - name: Rehearse concurrent identity index migration and failure cleanup in PostgreSQL
         working-directory: apps/backend

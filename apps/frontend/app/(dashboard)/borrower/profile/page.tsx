@@ -46,10 +46,9 @@ import {
   Save,
   ShieldCheck,
   Trash2,
-  UserRound,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 const steps = [
   { label: "Application", icon: ReceiptText },
@@ -190,15 +189,21 @@ export default function BorrowerProfilePage() {
       payslip_count: Number(row.employment.payslip_count),
       bank_statement_months: Number(row.employment.bank_statement_months),
     } : emptyEmployment);
-    setIncomeSources(row.income_sources.map(({ id: _id, ...item }) => ({
-      ...item,
-      declared_amount: Number(item.declared_amount),
-      verified_amount: Number(item.verified_amount),
-    })));
-    setExpenses(row.expenses.length ? row.expenses.map(({ id: _id, ...item }) => ({
-      ...item,
-      monthly_amount: Number(item.monthly_amount),
-    })) : [emptyExpense()]);
+    setIncomeSources(row.income_sources.map(({ id: _id, ...item }) => {
+      void _id;
+      return {
+        ...item,
+        declared_amount: Number(item.declared_amount),
+        verified_amount: Number(item.verified_amount),
+      };
+    }));
+    setExpenses(row.expenses.length ? row.expenses.map(({ id: _id, ...item }) => {
+      void _id;
+      return {
+        ...item,
+        monthly_amount: Number(item.monthly_amount),
+      };
+    }) : [emptyExpense()]);
     setDebts(row.debts.map((item) => ({
       ...item,
       original_amount: Number(item.original_amount),

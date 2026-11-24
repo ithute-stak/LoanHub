@@ -1,6 +1,7 @@
 "use client";
 
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { SuggestionSearch } from "@/components/ui/suggestion-search";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,8 +54,8 @@ export function FileCenter({
     const [files, setFiles] = useState<ManagedFile[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
-    const [search, setSearch] = useState("");
-    const [folderFilter, setFolderFilter] = useState(initialCategory);
+    const [search, setSearch] = useReduxTableField("file-center", "search", "");
+    const [folderFilter, setFolderFilter] = useReduxTableField("file-center", "folderFilter", initialCategory);
     const [uploadCategory, setUploadCategory] = useState("general");
     const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
     const [description, setDescription] = useState("");

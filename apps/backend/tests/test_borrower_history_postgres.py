@@ -64,7 +64,7 @@ def test_borrower_history_paginates_and_enforces_company_branch_scope(monkeypatc
                 ]
                 conn.execute(LoanRow.__table__.insert(), rows)
                 monkeypatch.setattr(loans_router, "ClientCompanyLoan", LoanRow)
-                monkeypatch.setattr(loans_router, "loan_query", lambda db: db.query(LoanRow))
+                monkeypatch.setattr(loans_router, "loan_list_query", lambda db: db.query(LoanRow))
                 role = UserRole.COMPANY_OWNER
                 monkeypatch.setattr(
                     loans_router, "resolve_tenant_context",

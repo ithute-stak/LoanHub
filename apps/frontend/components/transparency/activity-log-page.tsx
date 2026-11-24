@@ -1,6 +1,7 @@
 "use client";
 
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SuggestionSearch } from "@/components/ui/suggestion-search";
@@ -59,12 +60,12 @@ export function ActivityLogPage({
 }) {
     const [events, setEvents] = useState<AuditLog[]>([]);
     const [total, setTotal] = useState(0);
-    const [page, setPage] = useState(1);
+    const [page, setPage] = useReduxTableField("activity-log", "page", 1);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [search, setSearch] = useState("");
-    const [action, setAction] = useState("all");
-    const [entity, setEntity] = useState("all");
+    const [search, setSearch] = useReduxTableField("activity-log", "search", "");
+    const [action, setAction] = useReduxTableField("activity-log", "action", "all");
+    const [entity, setEntity] = useReduxTableField("activity-log", "entity", "all");
     const [selected, setSelected] =
         useState<AuditLog | null>(null);
 

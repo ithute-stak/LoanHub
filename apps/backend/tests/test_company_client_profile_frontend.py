@@ -29,3 +29,74 @@ def test_profile_dialog_contains_rating_profile_image_documents_and_history():
     assert "uploadCompanyClientProfileImage" in text
     assert "uploadCompanyClientDocument" in text
     assert "downloadCompanyClientFile" in text
+
+
+def test_government_employee_number_appears_in_client_profile_only_when_applicable():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    cards = (root / "frontend" / "components" / "clients" / "company-client-profile-editor-cards.tsx").read_text(encoding="utf-8")
+    router = (root / "backend" / "routers" / "company_clients.py").read_text(encoding="utf-8")
+    schema = (root / "backend" / "database" / "schemas" / "company_clients.py").read_text(encoding="utf-8")
+
+    assert "profile?.is_government_employee" in dialog
+    assert "Employee no:" in dialog
+    assert "profile.is_government_employee" in cards
+    assert "Government employee no." in cards
+    assert "profile.cdas_employee_number" in cards
+    assert "CDASPayrollProfile.company_id == context.company_id" in router
+    assert "CDASPayrollProfile.borrower_id == account.borrower_id" in router
+    assert "cdas_employee_number: str | None = None" in schema
+
+
+def test_government_employee_number_click_uses_existing_cdas_affordability_api():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    cards = (root / "frontend" / "components" / "clients" / "company-client-profile-editor-cards.tsx").read_text(encoding="utf-8")
+
+    assert 'api.post<{ ok: boolean; affordability: number }>("/cdas/employees/affordability"' in dialog
+    assert 'employee_no: employeeNo' in dialog
+    assert 'onClick={() => void showEmployeeAffordability()}' in dialog
+    assert 'profile?.is_government_employee' in dialog
+    assert 'affordabilityAmount !== null' in dialog
+    assert 'affordabilityError ?' in dialog
+    assert 'onViewEmployeeAffordability={(' in dialog
+    assert 'onClick={onViewEmployeeAffordability}' in cards
+    assert 'profile.is_government_employee' in cards
+
+
+def test_government_employee_registration_requires_successful_cdas_lookup():
+    root = Path(__file__).parents[2]
+    page = (root / "frontend" / "app" / "(dashboard)" / "company" / "clients" / "page.tsx").read_text(encoding="utf-8")
+    field = (root / "frontend" / "components" / "clients" / "employer-group-registration-field.tsx").read_text(encoding="utf-8")
+
+    assert '"/cdas/employees/verify"' in page
+    assert 'employee_no: number' in page
+    assert 'returned.toLowerCase() !== number.toLowerCase()' in page
+    assert 'cdasVerificationBlocked' in page
+    assert 'clientStep === 2 && cdasVerificationBlocked' in page
+    assert 'if (cdasVerificationBlocked)' in page
+    assert 'onCdasEmployeeNumberBlur={() => void verifyEmployeeOnBlur()}' in page
+    assert 'onBlur={onCdasEmployeeNumberBlur}' in field
+    assert 'Checking employee number with CDAS...' in field
+    assert 'aria-invalid={cdasEmployeeVerificationStatus === "invalid"}' in field
+    assert 'invalidateCdasVerification()' in page
+
+
+def test_cdas_profile_management_reuses_existing_apis_and_gates_mutations():
+    root = Path(__file__).parents[2]
+    dialog = (root / "frontend" / "components" / "clients" / "company-client-profile-dialog.tsx").read_text(encoding="utf-8")
+    operations = (root / "frontend" / "app" / "(dashboard)" / "company" / "cdas" / "operations" / "page.tsx").read_text(encoding="utf-8")
+    for endpoint in (
+        "/cdas/employees/verify",
+        "/cdas/deductions/all",
+        "/cdas/deductions/own",
+        "/cdas/deductions/active-approved",
+    ):
+        assert endpoint in dialog
+    assert "affordabilityAmount > 0" in dialog
+    assert "canManageCdas && affordabilityAmount > 0" in dialog
+    assert "canManageCdas ?" in dialog
+    assert "No deduction is submitted from this profile panel." in dialog
+    assert 'employee_no: requestedEmployeeNo' in operations
+    assert "CDAS returned no matching records." in dialog
+    assert "cdasReadError" in dialog

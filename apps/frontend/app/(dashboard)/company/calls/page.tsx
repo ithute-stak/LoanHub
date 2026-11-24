@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {
   Activity,
   BadgeCheck,
@@ -122,9 +123,9 @@ export default function CallsAndQAPage() {
   const [policy, setPolicy] = useState<CallManagementPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useReduxTableField("company-calls", "search", "");
   const [direction, setDirection] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useReduxTableField("company-calls", "statusFilter", "all");
   const [selectedCall, setSelectedCall] = useState<ClientCall | null>(null);
   const [reviewScore, setReviewScore] = useState("80");
   const [complianceStatus, setComplianceStatus] = useState("pass");
