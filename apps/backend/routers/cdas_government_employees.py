@@ -501,6 +501,60 @@ def submit_pending_cdas_consent_evidence(
     }
 
 
+@router.get("/consent-evidence/{evidence_id}/review-document")
+def download_cdas_consent_review_document(
+    evidence_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Download the *specific* consent source under independent-review scope.
+
+    This endpoint does not use the general-purpose file owner/share policy:
+    the reviewer must be a company manager, not the submitter, and the
+    managed file must pass the tenant, borrower, and byte-integrity checks.
+    It is not a public storage URL or an approval operation.
+    """
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+
+    _require_company_manager(context)
+    assert context.company_id is not None
+    record = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.id == evidence_id,
+        CdasAffordabilityConsentEvidence.company_id == context.company_id,
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Consent evidence not found")
+    if record.status != "pending":
+        raise HTTPException(status_code=409, detail="Only pending evidence may be reviewed")
+    if record.submitted_by_user_id is None or context.user.id == record.submitted_by_user_id:
+        raise HTTPException(status_code=403, detail="Submitting user cannot perform independent review")
+    if not record.managed_file_id:
+        raise HTTPException(status_code=409, detail="No managed consent source document")
+    file = db.query(ManagedFile).filter(
+        ManagedFile.id == record.managed_file_id,
+        ManagedFile.company_id == context.company_id,
+    ).first()
+    verify_managed_cdas_consent_bytes(
+        file=file, company_id=context.company_id, borrower_id=record.borrower_id,
+    )
+    # This read is independently checksum-checked by LoanHub storage. Avoid
+    # external URLs, content sniffing or any write to the borrower file.
+    from services.file_service import read_file_bytes
+    content = read_file_bytes(file)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type=file.mime_type,
+        headers={
+            "Content-Disposition": 'attachment; filename="cdas-consent-evidence"',
+            "Cache-Control": "private, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Length": str(len(content)),
+        },
+    )
+
+
 class CdasConsentApprovalRequest(BaseModel):
     """A human reviewer attests to the *exact* borrower, purpose and bytes."""
     reviewed_document_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
