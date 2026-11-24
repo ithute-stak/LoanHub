@@ -25,7 +25,7 @@ DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
 AMOUNT_PATTERN = r"[\d,]+\.\d{2}"
 TRANSACTION = re.compile(
     rf"^\s*(?P<txdate>{DATE_PATTERN})\s+(?P<valuedate>{DATE_PATTERN})"
-    rf"\s+(?P<reference>\S+(?:\s+\S+)?)(?:\s{{2,}})"
+    rf"\s+(?P<reference>\S+(?:[ ]\S+)?)(?:\s{{2,}})"
     rf"(?P<description>.+?)\s{{2,}}(?P<amount>{AMOUNT_PATTERN})"
     rf"\s+(?P<balance>{AMOUNT_PATTERN})\s*$"
 )
