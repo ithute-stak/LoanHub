@@ -192,3 +192,36 @@ def test_partial_allocations_are_not_falsely_flagged():
     )
     assert result.overallocated_payment_count == 0
     assert result.complete is False
+
+
+@pytest.mark.parametrize("bad_amount", [
+    Decimal("0"), Decimal("-1.00"), Decimal("NaN"), None,
+])
+def test_invalid_allocation_amount_is_a_readiness_blocker(bad_amount):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [],
+            [SimpleNamespace(payment_id=payment_id, amount=bad_amount)],
+            [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_allocation_count == 1
+    assert result.complete is False
+
+
+def test_single_cent_overallocation_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+            [],
+            [SimpleNamespace(payment_id=payment_id, amount=Decimal("100.01"))],
+            [],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.overallocated_payment_count == 1
+    assert result.complete is False
