@@ -73,3 +73,112 @@ def test_legacy_payroll_identity_can_issue_report_without_employment_type_field(
     assert "returned_no.casefold() != employee_no.casefold()" in endpoint
     assert "account.borrower, \"employment_type\"" not in endpoint
     assert "assert_branch_scope(context, account.branch_id)" in endpoint
+
+
+def _report_runtime_fixture(monkeypatch):
+    """Use no real CDAS credentials, client data, object storage, or database."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+
+    from routers import cdas_api
+
+    company_id, branch_id, account_id, borrower_id, user_id = (uuid4() for _ in range(5))
+    person = SimpleNamespace(first_name="Test", middle_name=None, last_name="Borrower")
+    borrower = SimpleNamespace(id=borrower_id, user=SimpleNamespace(person=person))
+    account = SimpleNamespace(
+        id=account_id, borrower_id=borrower_id, borrower=borrower,
+        branch_id=branch_id, account_reference="CLIENT-TEST", company_id=company_id,
+        company=SimpleNamespace(id=company_id),
+    )
+    context = SimpleNamespace(company_id=company_id, user=SimpleNamespace(id=user_id))
+    profile = SimpleNamespace(employee_number="EMP-876")
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = profile
+    provider = SimpleNamespace(
+        get_employee_details=AsyncMock(return_value={"EmployeeNo": "EMP-876", "Name": "Test"}),
+        check_affordability=AsyncMock(return_value="2450.00"),
+        view_all_deductions=AsyncMock(return_value=[{"AgencyName": "Example", "Amount": "250.00"}]),
+    )
+    monkeypatch.setattr(cdas_api, "_require_lending_user", lambda ctx: None)
+    monkeypatch.setattr(cdas_api, "assert_branch_scope", lambda *args: None)
+    monkeypatch.setattr(cdas_api, "company_client_or_404", lambda *args, **kwargs: account)
+    monkeypatch.setattr(cdas_api, "get_company_cdas_client", lambda *args: provider)
+    monkeypatch.setattr(cdas_api, "_prepare_cdas_business_operation", lambda *args, **kwargs: "test")
+    operations = []
+    monkeypatch.setattr(
+        cdas_api, "_record_cdas_business_operation",
+        lambda *args, **kwargs: operations.append(kwargs["operation_type"]),
+    )
+    pdf = b"%PDF-1.4\n%%EOF"
+    monkeypatch.setattr(cdas_api, "build_client_cdas_affordability_pdf", lambda **kwargs: pdf)
+    stored = []
+    record = SimpleNamespace(id=uuid4(), original_name="stored.pdf")
+    def save(*args, **kwargs):
+        stored.append(kwargs)
+        return record
+    monkeypatch.setattr(cdas_api, "store_bytes", save)
+    return SimpleNamespace(
+        api=cdas_api, db=db, context=context, account=account, profile=profile,
+        provider=provider, operations=operations, stored=stored, pdf=pdf,
+    )
+
+
+def test_cdas_pdf_issuance_saves_tenant_scoped_confidential_document(monkeypatch):
+    import asyncio
+    from decimal import Decimal
+
+    env = _report_runtime_fixture(monkeypatch)
+    response = asyncio.run(env.api.issue_client_cdas_affordability_report(
+        account_id=env.account.id, context=env.context, db=env.db,
+    ))
+    assert response["ok"] is True
+    assert response["affordability"] == "2450.00"
+    assert response["deduction_count"] == 1
+    assert env.operations == ["employee_verification", "affordability", "deduction_lookup"]
+    assert len(env.stored) == 1
+    saved = env.stored[0]
+    assert saved["content"] == env.pdf
+    assert saved["company_id"] == env.context.company_id
+    assert saved["branch_id"] == env.account.branch_id
+    assert saved["linked_entity_type"] == "company_borrower_account"
+    assert saved["linked_entity_id"] == str(env.account.id)
+    assert saved["category"] == "borrower_cdas_affordability"
+    assert saved["visibility"] == "private"
+    assert saved["is_confidential"] is True
+    env.db.commit.assert_called_once()
+
+
+def test_cdas_pdf_rejects_employee_identity_mismatch_before_affordability_or_storage(monkeypatch):
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+
+    env = _report_runtime_fixture(monkeypatch)
+    env.provider.get_employee_details.return_value = {"EmployeeNo": "OTHER-EMPLOYEE"}
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(env.api.issue_client_cdas_affordability_report(
+            account_id=env.account.id, context=env.context, db=env.db,
+        ))
+    assert err.value.status_code == 502
+    env.provider.check_affordability.assert_not_awaited()
+    env.provider.view_all_deductions.assert_not_awaited()
+    assert env.stored == []
+    env.db.commit.assert_not_called()
+
+
+def test_cdas_pdf_missing_payroll_identity_does_not_contact_provider(monkeypatch):
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+
+    env = _report_runtime_fixture(monkeypatch)
+    env.db.query.return_value.filter.return_value.first.return_value = None
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(env.api.issue_client_cdas_affordability_report(
+            account_id=env.account.id, context=env.context, db=env.db,
+        ))
+    assert err.value.status_code == 409
+    env.provider.get_employee_details.assert_not_awaited()
+    assert env.stored == []
+    env.db.commit.assert_not_called()
