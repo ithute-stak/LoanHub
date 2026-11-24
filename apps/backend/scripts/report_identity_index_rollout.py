@@ -76,8 +76,40 @@ def render_approval_report(preflight, *, database_role: str, database_name: str,
                 triage_counts["matching_identity_groups"]
                 != legacy_audit.national_id_overlap_groups):
             raise IndexRolloutPreflightError("Legacy overlap and triage disagree")
+    # Separate a technical index-DDL review candidate from end-to-end
+    # registration authorization. Linked historical matches are not proof
+    # of duplicates, but unresolved links and passport overlaps still need
+    # documented human review before a release.
+    migration_candidate = bool(
+        preflight.operator_review_candidate
+        and not any(counts)
+        and not any(blanks)
+    )
+    blockers = []
+    if any(counts):
+        blockers.append("normalized_identity_collisions")
+    if any(blanks):
+        blockers.append("blank_identity_values")
+    if preflight.invalid_existing_index_names:
+        blockers.append("identity_indexes_missing_or_invalid")
+    if legacy_counts is None:
+        blockers.append("historical_identity_audit_missing")
+    else:
+        if legacy_counts["passport_overlap_groups"]:
+            blockers.append("historical_passport_overlap_requires_review")
+        if legacy_counts["repeated_legacy_passport_groups"]:
+            blockers.append("repeated_legacy_passport_requires_review")
+    if triage_counts is None:
+        blockers.append("historical_linkage_triage_missing")
+    elif triage_counts["unresolved_identity_groups"]:
+        blockers.append("unresolved_historical_borrower_links")
+    # Governance is never granted by evidence from a reporting database.
+    blockers.append("four_manual_production_approvals_required")
+    blockers.append("protected_registration_route_not_released")
     return {
-        "report_version": 3,
+        "report_version": 4,
+        "identity_index_migration_review_candidate": migration_candidate,
+        "registration_release_blockers": blockers,
         "checked_at": preflight.checked_at.isoformat(),
         "database_role": database_role,
         "database_name": database_name,
