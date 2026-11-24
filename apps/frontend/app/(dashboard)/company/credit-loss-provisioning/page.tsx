@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Calculator, CheckCircle2, RefreshCcw, ShieldCheck } from "lucide-react";
 
 import {
@@ -18,6 +18,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function errorText(error: unknown) {
@@ -29,6 +32,11 @@ function errorText(error: unknown) {
 }
 
 export default function CreditLossProvisioningPage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [overview, setOverview] = useState<CreditLossProvisionOverview | null>(null);
   const [selected, setSelected] = useState<CreditLossProvisionRun | null>(null);
   const [asOfDate, setAsOfDate] = useState(today());
@@ -39,17 +47,31 @@ export default function CreditLossProvisioningPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
       const data = await getCreditLossProvisionOverview();
+      const latest = data.latest ? await getCreditLossProvisionRun(data.latest.id) : null;
+      if (sequence !== requestSequence.current) return;
       setOverview(data);
-      if (data.latest) setSelected(await getCreditLossProvisionRun(data.latest.id));
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setLoading(false); }
-  }, []);
+      setSelected(latest);
+      setLoadedScope(scopeKey);
+    } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setOverview(null);
+      setSelected(null);
+      setLoadedScope(scopeKey);
+      setError(errorText(nextError));
+    } finally {
+      if (sequence === requestSequence.current) setLoading(false);
+    }
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
 
   const writeOffCandidates = useMemo(() => selected?.lines?.filter((row) => row.write_off_candidate) ?? [], [selected]);
 
@@ -83,6 +105,8 @@ export default function CreditLossProvisioningPage() {
     catch (nextError) { setError(errorText(nextError)); }
     finally { setBusy(null); }
   }
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="space-y-6 pb-12">
