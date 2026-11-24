@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import inspect
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -48,6 +49,7 @@ from database.config.config import settings
 from database.models.company import LoanCompany
 from database.models.workspace_document import WorkspaceDocument, WorkspaceDocumentAsset, WorkspaceDocumentSignature
 from services.document_branding_service import get_company_branding_logos
+from services.document_studio_letter_stamp_preview import (letter_stamp_preview_story, PREVIEW_LETTER_TEMPLATE_KEYS)
 from services.workspace_document_asset_service import active_signatures, asset_image_bytes, resolved_brand_asset
 
 
@@ -1073,11 +1075,13 @@ def _header_right_logo_bytes(
     document: WorkspaceDocument,
     company: LoanCompany | None,
     brand_asset: WorkspaceDocumentAsset | None,
+    *,
+    branding_logos=None,
 ) -> bytes | None:
     # A logo chosen for this document is explicit and takes precedence.
     if document.brand_logo_asset_id and brand_asset:
         return asset_image_bytes(brand_asset)
-    logos = get_company_branding_logos(db, company)
+    logos = branding_logos if branding_logos is not None else get_company_branding_logos(db, company)
     if logos.right_logo:
         return logos.right_logo
     if brand_asset:
@@ -1093,6 +1097,8 @@ def _draw_workspace_page(
     document: WorkspaceDocument,
     company: LoanCompany | None,
     brand_asset: WorkspaceDocumentAsset | None,
+    branding_logos=None,
+    resolved_right_logo=None,
 ) -> None:
     page_width, page_height = _workspace_page_size(document)
     is_cover = bool(getattr(document, "cover_page_enabled", False) and doc.page == 1)
@@ -1101,7 +1107,7 @@ def _draw_workspace_page(
     canvas.saveState()
 
     if not is_cover and getattr(document, "include_brand_header", True):
-        logos = get_company_branding_logos(db, company)
+        logos = branding_logos if branding_logos is not None else get_company_branding_logos(db, company)
         top_y = page_height - 23 * mm
         if logos.left_logo:
             _draw_fitted_canvas_image(canvas, logos.left_logo, 18 * mm, top_y, 38 * mm, 12 * mm, align="left")
@@ -1110,7 +1116,11 @@ def _draw_workspace_page(
             canvas.setFont("Helvetica-Bold", 13)
             canvas.drawString(18 * mm, page_height - 16 * mm, settings.PRODUCT_NAME)
 
-        right_logo = _header_right_logo_bytes(db, document, company, brand_asset)
+        # A resolved explicit or company logo is held constant for every page.
+        right_logo = (
+            resolved_right_logo if branding_logos is not None
+            else _header_right_logo_bytes(db, document, company, brand_asset)
+        )
         if right_logo:
             _draw_fitted_canvas_image(canvas, right_logo, page_width - 62 * mm, top_y, 44 * mm, 12 * mm, align="right")
 
@@ -1149,7 +1159,10 @@ def _draw_workspace_page(
     canvas.restoreState()
 
 
-def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | None) -> bytes:
+def export_pdf(
+    db: Session, document: WorkspaceDocument, company: LoanCompany | None,
+    *, _branding_evidence_out: list | None = None,
+) -> bytes:
     page_size = _workspace_page_size(document)
     buffer = BytesIO()
     document_pdf = SimpleDocTemplate(
@@ -1165,9 +1178,40 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
         creator=f"{settings.PRODUCT_NAME} by {settings.DEVELOPER_NAME}",
     )
     brand_asset = resolved_brand_asset(db, document)
+    # Freeze actual company logo bytes for all pages of this PDF export;
+    # do not refetch different image versions inside per-page callbacks.
+    branding_logos = (
+        get_company_branding_logos(db, company)
+        if getattr(document, "include_brand_header", True)
+        else None
+    )
+    # The selected right logo can come from an explicit workspace asset;
+    # resolve its decrypted bytes once too, not once per page.
+    resolved_right_logo = (
+        _header_right_logo_bytes(
+            db, document, company, brand_asset, branding_logos=branding_logos,
+        )
+        if branding_logos is not None else None
+    )
     document_id = getattr(document, "id", None)
     signatures = active_signatures(db, document_id) if document_id is not None else {}
+
+    # Check preview authorization BEFORE rendering body, signatures or cover.
+    # Never enable preview for non-letter PDFs or for production documents.
+    preview_requested = (
+        os.getenv("LOANHUB_LETTER_STAMP_PREVIEW_ENABLED") == "1"
+        and getattr(document, "template_key", None) in PREVIEW_LETTER_TEMPLATE_KEYS
+    )
+    preview_story = []
+    if preview_requested:
+        if os.getenv("ENVIRONMENT", "").strip().lower() not in {"test", "testing", "development", "dev", "local"}:
+            raise PermissionError("Company stamp preview is unavailable outside development or test")
+        if signatures:
+            raise PermissionError("Cannot stamp a letter after document signatures")
+        preview_story = letter_stamp_preview_story(document=document, company=company)
+
     story = _cover_story(document, brand_asset) + _pdf_story_from_html(document, signatures)
+    story.extend(preview_story)
 
     def draw(canvas, doc):
         _draw_workspace_page(
@@ -1177,9 +1221,26 @@ def export_pdf(db: Session, document: WorkspaceDocument, company: LoanCompany | 
             document=document,
             company=company,
             brand_asset=brand_asset,
+            branding_logos=branding_logos,
+            resolved_right_logo=resolved_right_logo,
         )
 
+    # Only the non-routed issuance candidate adapter supplies this collector.
+    # Observe the actual resolved logo bytes that the page callbacks reused;
+    # never independently re-read mutable assets after rendering.
+    captured_branding = None
+    if _branding_evidence_out is not None:
+        from services.document_studio_letter_branding_evidence import (
+            capture_letter_branding_evidence,
+        )
+        captured_branding = capture_letter_branding_evidence(
+            document=document, company=company,
+            left_logo=branding_logos.left_logo if branding_logos is not None else None,
+            right_logo=resolved_right_logo,
+        )
     document_pdf.build(story, onFirstPage=draw, onLaterPages=draw)
+    if _branding_evidence_out is not None:
+        _branding_evidence_out.append(captured_branding)
     return buffer.getvalue()
 
 def _set_cell_text(cell, text: str, *, bold: bool = False, size: float = 9) -> None:

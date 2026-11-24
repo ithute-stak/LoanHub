@@ -1,4 +1,10 @@
 import sys
+from io import BytesIO
+from unittest.mock import patch
+from uuid import uuid4
+
+import pytest
+from pypdf import PdfReader
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +77,7 @@ def sample_document():
         margin_bottom_mm=24,
         margin_left_mm=22,
         include_brand_header=False,
+        brand_logo_asset_id=None,
         include_footer=True,
         style_key="modern_blue",
         default_font_family="Arial",
@@ -141,3 +148,280 @@ def test_word_style_schema_repair_migration_is_present():
         "default_line_height_percent",
     ):
         assert expected in migration
+
+
+def _company_letter():
+    document = sample_document()
+    company_id = uuid4()
+    document.company_id = company_id
+    document.template_key = "client_confirmation_letter"
+    company = SimpleNamespace(
+        id=company_id,
+        legal_name="Example Financial Services (Pty) Ltd",
+        name="Example Financial Services",
+        registration_number="REG-0001",
+        license_number="LIC-0001",
+        address="Maseru, Lesotho",
+        phone="+266 50000000",
+        email="contact@example.test",
+        website=None,
+        district=None,
+    )
+    return document, company
+
+
+def _pdf_text(payload):
+    return "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(payload)).pages)
+
+
+def test_company_letter_preview_stamp_is_disabled_by_default():
+    document, company = _company_letter()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "0"}):
+        pdf = export_pdf(DummyDb(), document, company)
+    text = _pdf_text(pdf)
+    assert "RE: TEST LETTER" in text
+    assert "COMPANY STAMP" not in text
+
+
+def test_opt_in_unsigned_company_letter_has_non_authoritative_stamp_after_body():
+    document, company = _company_letter()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
+        pdf = export_pdf(DummyDb(), document, company)
+    text = _pdf_text(pdf)
+    assert "RE: TEST LETTER" in text
+    assert "Example Financial Services (Pty) Ltd" in text
+    assert "COMPANY STAMP" in text
+    assert "NOT APPROVED OR VERIFIED" in text
+    assert text.index("RE: TEST LETTER") < text.index("COMPANY STAMP")
+
+
+def test_cross_tenant_company_cannot_render_letter_stamp_preview():
+    document, company = _company_letter()
+    company.id = uuid4()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
+        with pytest.raises(PermissionError, match="document tenant"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_non_letter_document_never_receives_preview_stamp():
+    document, company = _company_letter()
+    document.template_key = "contract"
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "COMPANY STAMP" not in text
+
+
+def test_existing_signatures_block_preview_stamp_mutation():
+    document, company = _company_letter()
+    document.id = uuid4()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test"}), patch(
+        "services.workspace_document_service.active_signatures",
+        return_value={"field-1": object()},
+    ):
+        with pytest.raises(PermissionError, match="after document signatures"):
+            export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("template_key", ["formal_letter", "business_letter"])
+def test_ordinary_company_letter_preview_supported(template_key):
+    document, company = _company_letter()
+    document.template_key = template_key
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": "test",
+    }):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "COMPANY STAMP" in text
+    assert "NOT APPROVED OR VERIFIED" in text
+
+
+@pytest.mark.parametrize("change", [
+    {"status": "published"},
+    {"status": "finalized"},
+    {"finalized_at": "2026-11-21T12:00:00Z"},
+])
+def test_published_or_finalized_letter_cannot_be_preview_stamped(change):
+    document, company = _company_letter()
+    for attribute, value in change.items():
+        setattr(document, attribute, value)
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(PermissionError, match="unsigned draft"):
+            export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("environment", ["production", "staging", "", "PRODUCTION"])
+def test_preview_stamp_denied_outside_development_and_test(environment):
+    document, company = _company_letter()
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1",
+        "ENVIRONMENT": environment,
+    }):
+        with pytest.raises(PermissionError, match="outside development or test"):
+            export_pdf(DummyDb(), document, company)
+
+
+@pytest.mark.parametrize("tenant_field", [None, "not-a-uuid"])
+def test_stamp_preview_rejects_missing_or_invalid_tenant(tenant_field):
+    document, company = _company_letter()
+    document.company_id = tenant_field
+    company.id = tenant_field
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(PermissionError, match="document tenant"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_stamp_preview_rejects_unconfigured_legal_identity():
+    document, company = _company_letter()
+    company.email = None
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "test",
+    }):
+        with pytest.raises(ValueError, match="Invalid company email"):
+            export_pdf(DummyDb(), document, company)
+
+
+def test_nonletter_pdf_not_blocked_by_preview_environment_guard():
+    document, company = _company_letter()
+    document.template_key = "contract"
+    with patch.dict("os.environ", {
+        "LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1", "ENVIRONMENT": "production",
+    }):
+        text = _pdf_text(export_pdf(DummyDb(), document, company))
+    assert "RE: TEST LETTER" in text
+    assert "COMPANY STAMP" not in text
+
+
+def test_multipage_pdf_freezes_resolved_company_logo_bytes():
+    document, company = _company_letter()
+    document.content_html = "<p>Long multi-page letter</p>" + (
+        "<p>Repeated paragraph for long PDF export.</p>" * 280
+    )
+    document.include_brand_header = True
+    logos = SimpleNamespace(left_logo=None, right_logo=None)
+    with patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve:
+        pdf = export_pdf(DummyDb(), document, company)
+    assert len(PdfReader(BytesIO(pdf)).pages) > 1
+    assert resolve.call_count == 1
+    assert resolve.call_args.args[1] is company
+
+
+def test_no_company_logo_lookup_for_headerless_pdf():
+    document, company = _company_letter()
+    document.include_brand_header = False
+    with patch(
+        "services.workspace_document_service.get_company_branding_logos",
+    ) as resolve:
+        export_pdf(DummyDb(), document, company)
+    resolve.assert_not_called()
+
+
+def test_multipage_pdf_freezes_explicit_right_logo_asset_bytes():
+    document, company = _company_letter()
+    document.content_html = "<p>Long multi-page letter</p>" + (
+        "<p>Repeated paragraph for long PDF export.</p>" * 280
+    )
+    document.include_brand_header = True
+    document.brand_logo_asset_id = uuid4()
+    selected_asset = SimpleNamespace(id=document.brand_logo_asset_id)
+    logos = SimpleNamespace(left_logo=None, right_logo=b"fallback-logo")
+    with patch(
+        "services.workspace_document_service.resolved_brand_asset",
+        return_value=selected_asset,
+    ), patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve, patch(
+        "services.workspace_document_service.asset_image_bytes",
+        return_value=b"frozen-selected-logo",
+    ) as load_selected, patch(
+        "services.workspace_document_service._draw_fitted_canvas_image",
+    ) as draw_image:
+        pdf = export_pdf(DummyDb(), document, company)
+    assert len(PdfReader(BytesIO(pdf)).pages) > 1
+    assert resolve.call_count == 1
+    load_selected.assert_called_once_with(selected_asset)
+    assert draw_image.call_count > 1
+    assert all(
+        call.args[1] == b"frozen-selected-logo"
+        for call in draw_image.call_args_list
+    )
+
+
+def test_letter_render_candidate_captures_actual_header_branding_and_pdf_bytes():
+    from hashlib import sha256
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    document.include_brand_header = True
+    document.brand_logo_asset_id = uuid4()
+    selected_asset = SimpleNamespace(id=document.brand_logo_asset_id)
+    logos = SimpleNamespace(left_logo=b"left-logo-bytes", right_logo=b"fallback-right")
+    db = DummyDb()
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "0"}), patch(
+        "services.workspace_document_service.resolved_brand_asset",
+        return_value=selected_asset,
+    ), patch(
+        "services.workspace_document_service.get_company_branding_logos",
+        return_value=logos,
+    ) as resolve, patch(
+        "services.workspace_document_service.asset_image_bytes",
+        return_value=b"selected-right-logo",
+    ) as selected, patch(
+        "services.workspace_document_service._draw_fitted_canvas_image",
+    ):
+        candidate = render_letter_pdf_with_header_evidence(
+            db=db, document=document, company=company,
+            authenticated_tenant_id=document.company_id,
+        )
+    assert candidate.pdf_bytes.startswith(b"%PDF-")
+    assert candidate.pdf_sha256 == sha256(candidate.pdf_bytes).hexdigest()
+    assert candidate.header_branding.tenant_id == document.company_id
+    assert candidate.header_branding.left_logo_sha256 == sha256(b"left-logo-bytes").hexdigest()
+    assert candidate.header_branding.right_logo_sha256 == sha256(b"selected-right-logo").hexdigest()
+    resolve.assert_called_once_with(db, company)
+    selected.assert_called_once_with(selected_asset)
+
+
+def test_letter_render_candidate_rejects_preview_stamp_mode():
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    with patch.dict("os.environ", {"LOANHUB_LETTER_STAMP_PREVIEW_ENABLED": "1"}), patch(
+        "services.document_studio_letter_render_evidence.export_pdf",
+    ) as renderer, pytest.raises(PermissionError, match="Preview-marked"):
+        render_letter_pdf_with_header_evidence(
+            db=DummyDb(), document=document, company=company,
+            authenticated_tenant_id=document.company_id,
+        )
+    renderer.assert_not_called()
+
+
+def test_letter_render_candidate_rejects_cross_tenant_before_renderer():
+    from services.document_studio_letter_render_evidence import (
+        render_letter_pdf_with_header_evidence,
+    )
+    document, company = _company_letter()
+    document.status = "draft"
+    document.finalized_at = None
+    with patch(
+        "services.document_studio_letter_render_evidence.export_pdf",
+    ) as renderer, pytest.raises(PermissionError, match="tenant mismatch"):
+        render_letter_pdf_with_header_evidence(
+            db=DummyDb(), document=document, company=company,
+            authenticated_tenant_id=uuid4(),
+        )
+    renderer.assert_not_called()

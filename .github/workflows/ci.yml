@@ -3,7 +3,7 @@ name: LoanHub CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feature/document-studio-letter-stamp-preview]
 
 concurrency:
   # Release images require a successful CI run for the exact main commit.
@@ -166,6 +166,12 @@ jobs:
           set -euo pipefail
           bash ./scripts/validate_project.sh
 
+      - name: Verify Document Studio PDF letter stamp preview isolation
+        working-directory: apps/backend
+        run: |
+          set -euo pipefail
+          ENVIRONMENT=test python -m pytest -q -ra tests/test_workspace_document_export.py tests/test_document_studio_letter_stamp_authorization.py tests/test_document_studio_letter_source_lock.py tests/test_document_studio_letter_pdf_binding.py tests/test_document_studio_letter_render_snapshot.py tests/test_document_studio_letter_branding_evidence.py tests/test_document_studio_letter_transaction_render.py tests/test_document_studio_letter_issuance_pipeline.py tests/test_document_studio_issuer_bootstrap.py
+
       - name: Verify Principal x refund and payment evidence safeguards
         working-directory: apps/backend
         run: |
@@ -317,6 +323,36 @@ jobs:
           PY
           python -m pytest -q -ra --maxfail=1 tests/test_wacom_real_clamav.py
 
+      - name: Validate isolated issuer Object Lock Compose
+        env:
+          LOANHUB_ISSUER_MINIO_IMAGE: quay.io/minio/minio:ci-placeholder
+          LOANHUB_ISSUER_MC_IMAGE: quay.io/minio/mc:ci-placeholder
+          LOANHUB_ISSUER_STORAGE_ROOT_USER: ci-isolated-issuer
+          LOANHUB_ISSUER_STORAGE_ROOT_PASSWORD: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          # Validate both the default and opt-in setup profile; no deployment.
+          docker compose -f compose.issuer-storage.yml config --quiet
+          docker compose --profile configure -f compose.issuer-storage.yml config --quiet
+          docker compose --profile configure -f compose.issuer-storage.yml config --format json | python -c '
+          import json,re,sys
+          c=json.load(sys.stdin)
+          assert c["networks"]["issuer_storage"]["internal"] is True
+          store=c["services"]["object-store"]
+          assert not store.get("ports"), "Object Store must not publish a port"
+          setup=c["services"]["configure-locked-bucket"]
+          # A Compose command may be reformatted into a list of tokens.
+          # Test the actual resolved containment/isolation contract here,
+          # and validate immutable bucket commands from the raw source below.
+          assert setup.get("profiles") == ["configure"], "Bucket setup must remain opt-in"
+          assert not setup.get("ports"), "Bucket setup must not publish host ports"
+          '
+          # Read the source without ever expanding or logging credentials.
+          grep -Fq 'mc mb --with-lock issuer/official-loanhub-pdfs' compose.issuer-storage.yml
+          grep -Fq 'mc retention set --default COMPLIANCE 3650d issuer/official-loanhub-pdfs' compose.issuer-storage.yml
+          grep -Fq '$$MINIO_ROOT_USER' compose.issuer-storage.yml
+          grep -Fq '$$MINIO_ROOT_PASSWORD' compose.issuer-storage.yml
+          
       - name: Verify fully resolved Wacom staging Compose isolation
         env:
           COMPOSE_PROJECT_NAME: loanhub-wacom-stage-ci
