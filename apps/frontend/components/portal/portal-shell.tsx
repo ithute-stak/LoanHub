@@ -166,7 +166,7 @@ const companyNavigation: NavItem[] = [
         label: "Document centre",
         href: "/company/documents",
         icon: FilePenLine,
-        activePaths: ["/company/files", "/company/reports"],
+        activePaths: ["/company/files"],
         children: [
             { label: "Documents & library", href: "/company/documents", icon: FolderOpen },
             { label: "Report library", href: "/company/documents?tab=reports", icon: FileChartColumn, roles: REPORTING_ROLES },
@@ -215,6 +215,7 @@ const companyNavigation: NavItem[] = [
         icon: ShieldCheck,
         activePaths: ["/company/reports", "/company/activity", "/company/queries"],
         children: [
+            { label: "Daily Loan Issuance", href: "/company/reports/daily-issuance", icon: FileChartColumn, roles: REPORTING_ROLES },
             { label: "Control & assurance", href: "/company/control-centre", icon: ShieldCheck, roles: TRANSPARENCY_ROLES },
             { label: "Activity log", href: "/company/activity", icon: History, roles: TRANSPARENCY_ROLES },
             { label: "Support queries", href: "/company/queries", icon: MessageSquarePlus },
