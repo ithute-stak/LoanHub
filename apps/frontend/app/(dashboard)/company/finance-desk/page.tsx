@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, BookOpen, CalendarDays, HandCoins, ReceiptText, RefreshCcw, Wallet } from "lucide-react";
 import { listJournalEntries } from "@/api/accounting";
+import { expenseManagementApi } from "@/api/expenseManagement";
 import { branchApi } from "@/api/branch";
 import { useTenant } from "@/provider/tenantProvider";
 import { PlusCircle } from "lucide-react";
@@ -53,6 +54,15 @@ export default function FinanceDeskPage() {
   const [asOf, setAsOf] = useState(() => localDate(new Date()));
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
+  const [carryPreviousClosing, setCarryPreviousClosing] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!activeCompanyId) { setCarryPreviousClosing(null); return; }
+    let active = true;
+    void expenseManagementApi.settings().then(settings => {
+      if (active) setCarryPreviousClosing(settings.carry_previous_closing_enabled);
+    }).catch(() => { if (active) setCarryPreviousClosing(null); });
+    return () => { active = false; };
+  }, [activeCompanyId]);
   const [opening, setOpening] = useState("");
   const [closing, setClosing] = useState("");
   const [cashNote, setCashNote] = useState("");
@@ -212,7 +222,7 @@ export default function FinanceDeskPage() {
         <TabsTrigger value="reports" className="min-h-11 w-full min-w-0 rounded-lg px-2 text-xs font-semibold sm:px-4 sm:text-sm"><HandCoins className="mr-2 h-4 w-4"/>Reports & links</TabsTrigger>
       </TabsList>
       <TabsContent value="cash" className="space-y-4">
-        <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session is separate from the accounting journal. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+        <Card className="rounded-2xl"><CardHeader><CardTitle>Daily cash opening & closing</CardTitle><p className="text-sm text-muted-foreground">A counted, auditable cash session supplies the branch opening amount for treasury cash controls. Only posted cash-ledger movements are included in the expected figure.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
       <div className="space-y-3 rounded-xl bg-muted/30 p-4">
         <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Today&apos;s cash session</p>
         <p className="text-xl font-bold">{cashSession ? (cashSession.status === "closed" ? "Closed" : "Open") : "Not opened yet"}</p>
@@ -223,6 +233,14 @@ export default function FinanceDeskPage() {
           {cashSession.counted_closing !== null ? <><div className="flex justify-between text-sm"><span>Physical closing count</span><strong>{formatMoney(Number(cashSession.counted_closing))}</strong></div><div className="flex justify-between text-sm"><span>Variance</span><strong>{formatMoney(Number(cashSession.variance))}</strong></div></> : null}
         </> : null}
         <p className="text-xs text-muted-foreground">{cashSession?.coverage_note ?? "One session is allowed for the current branch and business date."}</p>
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
+          <p className="font-bold">Opening balance policy</p>
+          <p className="mt-1 text-muted-foreground">{carryPreviousClosing === null
+            ? "Treasury policy is unavailable. Record and confirm today's cash opening before disbursing funds."
+            : carryPreviousClosing
+              ? "Previous-day carry-forward is enabled by company policy. Reconcile before recording a separate counted opening."
+              : "Manual opening required every day. Yesterday's closing cash does not automatically become today's opening balance."}</p>
+        </div>
       </div>
       <form onSubmit={submitCashSession} className="space-y-3">
         {cashSession?.status === "closed" ? <p className="rounded-xl border p-4 text-sm">This cash session is closed. A new opening count can be entered on the next business day. Any missing cash movements require separate accounting reconciliation.</p> : <>
