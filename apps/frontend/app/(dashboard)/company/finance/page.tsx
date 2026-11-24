@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BadgePercent, Banknote, CheckCircle2, FileWarning, ReceiptText, RefreshCcw, Scale } from "lucide-react";
 
 import {
@@ -30,8 +30,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { createIdempotencyKey, formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/format";
 import { toast } from "@/utils/toast";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
 
 export default function CompanyFinancePage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [agreements, setAgreements] = useState<TransactionAgreement[]>([]);
   const [ledger, setLedger] = useState<ChargeLedgerEntry[]>([]);
   const [claims, setClaims] = useState<ChargeClaim[]>([]);
@@ -45,6 +52,7 @@ export default function CompanyFinancePage() {
   const [confirmAgreement, setConfirmAgreement] = useState(false);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const [agreementRows, ledgerRows, claimRows] = await Promise.all([
@@ -52,19 +60,29 @@ export default function CompanyFinancePage() {
         listCompanyChargeLedger(),
         listCompanyChargeClaims(),
       ]);
+      if (sequence !== requestSequence.current) return;
       setAgreements(agreementRows);
       setLedger(ledgerRows);
       setClaims(claimRows);
+      setLoadedScope(scopeKey);
     } catch (error) {
+      if (sequence !== requestSequence.current) return;
+      setAgreements([]);
+      setLedger([]);
+      setClaims([]);
+      setLoadedScope(scopeKey);
       toast.error(error, { description: "Company charge bookkeeping could not be loaded." });
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
 
   const accrued = useMemo(() => ledger.filter((item) => item.status === "accrued" || item.status === "claimed").reduce((sum, item) => sum + Number(item.charge_amount), 0), [ledger]);
@@ -114,7 +132,7 @@ export default function CompanyFinancePage() {
     } catch (error) { toast.error(error); } finally { setWorking(false); }
   }
 
-  if (loading) return <PageLoader rows={7} />;
+  if (loading || loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="loanhub-page">
