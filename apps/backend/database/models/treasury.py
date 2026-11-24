@@ -36,6 +36,7 @@ class TreasurySettings(Base):
     currency = Column(String(3), nullable=False, default="LSL")
     timezone = Column(String(80), nullable=False, default="Africa/Maseru")
     carry_previous_closing_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    enforce_branch_cash_controls_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     auto_open_enabled = Column(Boolean, nullable=False, default=True)
     auto_open_time = Column(Time, nullable=False)
     auto_submit_enabled = Column(Boolean, nullable=False, default=True)
