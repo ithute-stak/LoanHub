@@ -157,8 +157,8 @@ export const originationApi = {
       template_style: templateStyle ?? null,
     })).data,
 
-  listIntegrations: async (): Promise<IntegrationConfiguration[]> =>
-    (await api.get<IntegrationConfiguration[]>("/origination/integrations")).data,
+  listIntegrations: async (options?: { refresh?: boolean }): Promise<IntegrationConfiguration[]> =>
+    (await api.get<IntegrationConfiguration[]>("/origination/integrations", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data,
 
   updateIntegration: async (
     provider: string,
