@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
@@ -20,7 +21,7 @@ export default function CdasHistoricalReviewPage() {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [selected, setSelected] = useState<string | null>(null);
     const [rows, setRows] = useState<RowPage | null>(null);
-    const [page, setPage] = useState(1);
+    const [page, setPage] = useReduxTableField("cdas-imports", "page", 1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [uploadFile, setUploadFile] = useState<File | null>(null);

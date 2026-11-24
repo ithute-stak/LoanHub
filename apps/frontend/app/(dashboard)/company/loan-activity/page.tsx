@@ -1,4 +1,5 @@
 "use client";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {useEffect,useState} from "react";
 import Link from "next/link";
 import { ArrowLeft, History, RefreshCcw, Search } from "lucide-react";
@@ -13,7 +14,7 @@ export default function LoanActivityPage(){
   const [action,setAction]=useState("");
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
-  const [page,setPage]=useState(1);
+  const [page,setPage]=useReduxTableField("loan-activity", "page", 1);
   const [total,setTotal]=useState(0);
   const [items,setItems]=useState<Activity[]>([]);
   const [error,setError]=useState("");

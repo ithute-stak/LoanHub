@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import {
@@ -250,7 +251,7 @@ function deductionReference(record: ProviderRecord): string {
 
 function DeductionResultsTable({ records }: { records: ProviderRecord[] }) {
     const [query, setQuery] = useState("");
-    const [sortBy, setSortBy] = useState<"name" | "amount" | "status">("name");
+    const [sortBy, setSortBy] = useReduxTableField<"name" | "amount" | "status">("cdas-client-list", "sortBy", "name");
     const normalizedQuery = query.trim().toLowerCase();
 
     const has = (reader: (record: ProviderRecord) => string) => records.some((record) => Boolean(reader(record)));
