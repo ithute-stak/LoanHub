@@ -42,6 +42,53 @@ function periodStart(period: Period, today: Date) {
   if (period === "year") { first.setMonth(0); first.setDate(1); }
   return localDate(first);
 }
+type OwnerDaySummary = {
+  business_date: string;
+  complete: boolean;
+  transfers_reconciled: boolean;
+  missing_branch_count: number;
+  net_external_opening_balance: string;
+  net_external_money_out: string;
+  expected_closing: string;
+  unmatched_internal_outgoing: string;
+  unmatched_internal_receipts: string;
+  branches: Array<{branch_id: string; branch_name: string; has_ledger: boolean; status: string | null; expected_closing: string | null}>;
+};
+
+function OwnerDayOverview({businessDate}: {businessDate: string}) {
+  const [summary, setSummary] = useState<OwnerDaySummary | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [request, setRequest] = useState(0);
+  useEffect(() => {
+    if (!request) return;
+    let cancelled = false;
+    setBusy(true);
+    setSummary(null);
+    setError("");
+    void api.get<OwnerDaySummary>("/expense-management/owner/branch-day-summary", {
+      params: {business_date: businessDate},
+    }).then(res => { if (!cancelled) setSummary(res.data); })
+      .catch((err: unknown) => { if (!cancelled) setError(getErrorMessage(err, "Could not load branch overview")); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [businessDate, request]);
+  return <Card>
+    <CardHeader><CardTitle>Company-wide daily branch overview</CardTitle></CardHeader>
+    <CardContent className="space-y-4">
+      <Button onClick={() => setRequest(value => value + 1)} disabled={busy || !businessDate}>{busy ? "Loading…" : "Load all branches"}</Button>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {summary && summary.business_date === businessDate && <>
+        {!summary.complete && <p role="status" className="rounded-lg border p-3 text-sm">Provisional overview: {summary.missing_branch_count} missing branch ledgers. Transfers {summary.transfers_reconciled ? "reconciled" : "require reconciliation"}.</p>}
+        <div className="grid gap-3 sm:grid-cols-3">
+          {([["Opening excluding matched transfers", summary.net_external_opening_balance], ["Outflow excluding matched transfers", summary.net_external_money_out], ["Recorded expected closing", summary.expected_closing]] as const).map(([label, value]) => <div key={label} className="rounded-xl border p-3"><p className="text-sm text-muted-foreground">{label}</p><p className="text-xl font-bold">{formatMoney(Number(value))}</p></div>)}
+        </div>
+        <div className="space-y-2">{summary.branches.map(branch => <div key={branch.branch_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"><div><p className="font-semibold">{branch.branch_name}</p><p className="text-sm text-muted-foreground">{branch.has_ledger ? branch.status : "No recorded ledger"}</p></div><p className="font-semibold">{branch.expected_closing === null ? "—" : formatMoney(Number(branch.expected_closing))}</p></div>)}</div>
+      </>}
+    </CardContent>
+  </Card>;
+}
+
 export default function FinanceDeskPage() {
   const {activeCompanyId, activeBranchId, activeRole} = useTenant();
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -184,6 +231,7 @@ export default function FinanceDeskPage() {
     } finally { setSaving(false); }
   }
   return <div className="mx-auto w-full max-w-[1600px] space-y-6 pb-10">
+    {activeRole === "company_owner" && activeCompanyId && <OwnerDayOverview key={activeCompanyId} businessDate={asOf} />}
     <div className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div><p className="text-xs font-bold uppercase tracking-widest text-primary">Payments & Finance</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Daily Finance Desk</h1><p className="mt-2 text-sm text-muted-foreground">A focused workspace for daily cash control, expenses, borrower collections and financial reporting.</p></div>
