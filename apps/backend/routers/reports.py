@@ -257,6 +257,13 @@ def export_daily_issuance_csv(
         report["totals"]["expected_contractual_return"],
         report["totals"]["expected_return_above_principal"],
     ])
+    if report.get("breakdown") is not None:
+        split = report["breakdown"]
+        writer.writerow([])
+        writer.writerow(["ISSUANCE CLASSIFICATION", "Count", "Principal (M)", "Net payout (M)", "Settled previous loans (M)"])
+        writer.writerow(["New loans", split["new_loans_count"], split["new_loans_principal"], split["new_loans_cash_to_borrowers"], "0.00"])
+        writer.writerow(["Top-ups", split["topups_count"], split["topups_principal"], split["topups_cash_to_borrowers"], split["topups_settlements"]])
+        writer.writerow(["Combined", report["totals"]["loans_issued"], report["totals"]["principal_issued"], report["cash_to_borrowers"], split["topups_settlements"]])
     if report.get("details"):
         writer.writerow([])
         writer.writerow(["CLIENT-LEVEL DISBURSEMENT REGISTER"])
@@ -346,6 +353,16 @@ def export_daily_issuance_pdf(
         ("Expected contractual return", f"M {Decimal(totals['expected_contractual_return']):,.2f}", "Current contractual snapshot", "green"),
         ("Above principal", f"M {Decimal(totals['expected_return_above_principal']):,.2f}", "Difference, not collected income", "slate"),
     ], styles=styles))
+    if report.get("breakdown") is not None:
+        split = report["breakdown"]
+        story.extend(section("New loans versus top-ups", styles=styles))
+        story.append(metric_grid([
+            ("New loans", str(split["new_loans_count"]), f"M {Decimal(split['new_loans_principal']):,.2f} principal", "blue"),
+            ("Top-ups", str(split["topups_count"]), f"M {Decimal(split['topups_principal']):,.2f} principal", "teal"),
+            ("Top-up settlement", f"M {Decimal(split['topups_settlements']):,.2f}", "Settled previous loan balances", "slate"),
+            ("Net payout", f"M {Decimal(report['cash_to_borrowers']):,.2f}", "Recorded amount to borrowers", "green"),
+        ], styles=styles))
+        story.append(Spacer(1, 4 * mm))
     story.extend(section("Daily breakdown", styles=styles))
     cell = ParagraphStyle(
         "DailyIssuanceCell", fontName="Helvetica", fontSize=7.3,
@@ -516,6 +533,24 @@ def export_daily_issuance_xlsx(
         sheet.column_dimensions[get_column_letter(column)].width = width
     sheet.freeze_panes = "A7"
     sheet.auto_filter.ref = f"A7:E{sheet.max_row}"
+    if report.get("breakdown") is not None:
+        split = report["breakdown"]
+        summary = book.create_sheet("New Loans vs Top-ups")
+        summary.append(["Type", "Loans", "Principal (M)", "Net payout (M)", "Previous loan settlement (M)"])
+        summary.append(["New loans", split["new_loans_count"], Decimal(split["new_loans_principal"]), Decimal(split["new_loans_cash_to_borrowers"]), Decimal("0.00")])
+        summary.append(["Top-ups", split["topups_count"], Decimal(split["topups_principal"]), Decimal(split["topups_cash_to_borrowers"]), Decimal(split["topups_settlements"])])
+        summary.append(["TOTAL", report["totals"]["loans_issued"], Decimal(report["totals"]["principal_issued"]), Decimal(report["cash_to_borrowers"]), Decimal(split["topups_settlements"])])
+        for cell in summary[1]:
+            cell.fill = PatternFill("solid", fgColor="17365D")
+            cell.font = Font(color="FFFFFF", bold=True)
+        for cell in summary[4]:
+            cell.font = Font(bold=True)
+        for row in summary.iter_rows(min_row=2, min_col=3, max_col=5):
+            for cell in row:
+                cell.number_format = '#,##0.00'
+        for index, width in enumerate([20, 14, 23, 24, 33], start=1):
+            summary.column_dimensions[get_column_letter(index)].width = width
+        summary.freeze_panes = "A2"
     if report.get("details"):
         detail_sheet = book.create_sheet("Individual Loans")
         detail_sheet.append([
