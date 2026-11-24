@@ -333,3 +333,31 @@ def test_voided_treasury_entry_is_not_compared_to_a_live_payment():
     )
     assert result.treasury_amount_mismatch_count == 0
     assert result.treasury_currency_mismatch_count == 0
+
+
+@pytest.mark.parametrize("treasury_currency,payment_currency", [
+    (None, "LSL"), ("LSL", None), ("", "LSL"), ("LSL", ""),
+])
+def test_missing_linked_treasury_currency_is_a_reconciliation_blocker(
+    treasury_currency, payment_currency,
+):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency=payment_currency,
+            )],
+            [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id,
+                amount=Decimal("100.00"),
+                currency=treasury_currency,
+                approval_status="posted",
+                is_voided=False,
+            )],
+        ),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_currency_mismatch_count == 1
+    assert result.treasury_amount_mismatch_count == 0
+    assert result.complete is False
