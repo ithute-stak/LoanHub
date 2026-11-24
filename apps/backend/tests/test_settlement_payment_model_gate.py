@@ -193,7 +193,9 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
         PrincipalXSettlementReadinessRead(
             loan_id=uuid4(), payment_model="principal_x",
             can_post_settlement=True, payment_rows_reviewed=0,
-            unresolved_payment_rows=0, blocking_reasons=[],
+            unresolved_payment_rows=0, orphan_cash_rows=0,
+            orphan_allocation_rows=0, unlinked_treasury_rows=0,
+            missing_cash_evidence_rows=0, blocking_reasons=[],
         )
 
 
@@ -254,4 +256,60 @@ def test_revalidation_response_cannot_enable_payment():
             settlement_date=date(2026, 11, 21),
             settlement_amount=Decimal("1324.80"),
             payment_enabled=True,
+        )
+
+
+def test_readiness_endpoint_queries_real_cross_source_diagnostics():
+    source = (
+        Path(__file__).resolve().parents[1] / "routers" / "loans.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    fn = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "principal_x_settlement_readiness"
+    )
+    calls = [
+        node.func.id for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert calls.count("inspect_principal_x_collection_sources") == 1
+    response = next(
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "PrincipalXSettlementReadinessRead"
+    )
+    values = {kw.arg: kw.value for kw in response.keywords}
+    for field in (
+        "orphan_cash_rows", "orphan_allocation_rows",
+        "unlinked_treasury_rows", "missing_cash_evidence_rows",
+    ):
+        assert field in values
+    for field in ("can_post_settlement", "cross_source_reconciliation_complete"):
+        assert isinstance(values[field], ast.Constant)
+        assert values[field].value is False
+
+
+def test_readiness_schema_cannot_certify_reconciliation_or_posting():
+    from pydantic import ValidationError
+    from database.schemas.early_settlement import PrincipalXSettlementReadinessRead
+
+    data = dict(
+        loan_id=uuid4(), payment_model="principal_x",
+        payment_rows_reviewed=1, unresolved_payment_rows=0,
+        orphan_cash_rows=0, orphan_allocation_rows=0,
+        unlinked_treasury_rows=0, missing_cash_evidence_rows=0,
+        blocking_reasons=["Authoritative external reconciliation missing"],
+    )
+    report = PrincipalXSettlementReadinessRead(**data)
+    assert report.can_post_settlement is False
+    assert report.cross_source_reconciliation_complete is False
+    with pytest.raises(ValidationError):
+        PrincipalXSettlementReadinessRead(
+            **data, cross_source_reconciliation_complete=True,
+        )
+    with pytest.raises(ValidationError):
+        PrincipalXSettlementReadinessRead(
+            **data, can_post_settlement=True,
         )
