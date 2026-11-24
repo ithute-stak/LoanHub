@@ -154,7 +154,7 @@ def update_settings(
     require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
     settings = get_or_create_settings(db, company_id_from(context))
     set_headquarters_branch(db, settings, payload.headquarters_branch_id)
-    for field, value in payload.model_dump(exclude={"headquarters_branch_id"}).items():
+    for field, value in payload.model_dump(exclude={"headquarters_branch_id"}, exclude_unset=True).items():
         setattr(settings, field, value)
     db.commit()
     db.refresh(settings)
