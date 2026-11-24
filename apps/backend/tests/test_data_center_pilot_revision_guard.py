@@ -34,10 +34,12 @@ class _Connection:
     def execute(self, statement, params=None):
         self.calls += 1
         query = str(statement)
-        if "current_user" in query:
-            return _Row(None)
+        # Privilege SQL also contains current_user; match the specific
+        # privilege probe first so it does not masquerade as the role probe.
         if "has_table_privilege" in query:
             return self
+        if "current_user" in query:
+            return _Row(None)
         if "alembic_version" in query:
             return _Row(self.versions)
         raise AssertionError("Pilot guard must stop before company access")
