@@ -504,12 +504,14 @@ def export_daily_issuance_xlsx(
         ])
         for item in report["details"]:
             detail_sheet.append([
-                item["date"], item["time"], item["branch"], item["client_name"],
-                item["loan_reference"], item["folio_number"], Decimal(item["principal_issued"]),
+                item["date"], item["time"], *[
+                    "'" + str(item[key]) if str(item[key]).lstrip().startswith(("=", "+", "-", "@")) else item[key]
+                    for key in ("branch", "client_name", "loan_reference", "folio_number")
+                ], Decimal(item["principal_issued"]),
                 Decimal(item["cash_to_borrower"]), Decimal(item["top_up_settlement"]),
                 Decimal(item["expected_contractual_return"]), item["installments"],
                 Decimal(item["installment_amount"]), item["first_payment_due"],
-                item["disbursed_by"],
+                ("'" + item["disbursed_by"] if item["disbursed_by"].lstrip().startswith(("=", "+", "-", "@")) else item["disbursed_by"]),
             ])
         for cell in detail_sheet[1]:
             cell.fill = PatternFill("solid", fgColor="17365D")
