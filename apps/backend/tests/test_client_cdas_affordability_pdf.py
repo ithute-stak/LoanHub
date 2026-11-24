@@ -24,7 +24,7 @@ def test_cdas_affordability_pdf_contains_provider_snapshot(monkeypatch):
         reference="CDAS-AFF-TEST-001", environment="test",
     )
     assert data.startswith(b"%PDF-")
-    extracted = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(data)).pages)
+    extracted = " ".join(" ".join(page.extract_text() or "" for page in PdfReader(BytesIO(data)).pages).split())
     for expected in ("Test Borrower", "EMP-876", "2,450.00",
                      "Example lender", "250.00", "CDAS-AFF-TEST-001",
                      "not a loan approval"):
