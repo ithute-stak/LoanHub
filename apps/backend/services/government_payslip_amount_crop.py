@@ -9,10 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
-from collections import Counter
 import re
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance
 
 from services.document_intelligence_foundation import money
 from services.document_intelligence_reader import DocumentReadError, _run
