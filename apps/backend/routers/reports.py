@@ -177,6 +177,27 @@ def daily_issuance_expected_returns(
                 or sum((Decimal(item["principal_issued"]) for item in details), Decimal("0.00")) != principal):
             raise HTTPException(status_code=409, detail="Issuance changed while preparing the register. Refresh the report.")
 
+    # Report new facilities and top-ups separately without treating a
+    # refinanced balance as fresh cash handed to a borrower.
+    breakdown = None
+    if include_details:
+        ordinary = [item for item in details if not item["is_top_up"]]
+        topups = [item for item in details if item["is_top_up"]]
+        def sum_amount(rows, field):
+            return sum((Decimal(item[field]) for item in rows), Decimal("0.00"))
+        breakdown = {
+            "new_loans_count": len(ordinary),
+            "new_loans_principal": str(sum_amount(ordinary, "principal_issued")),
+            "new_loans_cash_to_borrowers": str(sum_amount(ordinary, "cash_to_borrower")),
+            "topups_count": len(topups),
+            "topups_principal": str(sum_amount(topups, "principal_issued")),
+            "topups_cash_to_borrowers": str(sum_amount(topups, "cash_to_borrower")),
+            "topups_settlements": str(sum_amount(topups, "top_up_settlement")),
+        }
+        if (len(ordinary) + len(topups) != len(details)
+                or sum_amount(ordinary, "principal_issued") + sum_amount(topups, "principal_issued") != principal):
+            raise HTTPException(status_code=409, detail="Issuance classification did not reconcile. Refresh the report.")
+
     return {
         "company_id": str(company_id),
         "branch_id": str(branch_id) if branch_id else None,
@@ -191,6 +212,7 @@ def daily_issuance_expected_returns(
             "expected_return_above_principal": str(expected - principal),
         },
         "daily": daily,
+        "breakdown": breakdown,
         "details": details,
         "cash_to_borrowers": str(sum((Decimal(item["cash_to_borrower"]) for item in details), Decimal("0.00"))) if include_details else None,
     }
