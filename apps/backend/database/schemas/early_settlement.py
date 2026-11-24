@@ -112,6 +112,8 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     missing_cash_evidence_rows: int
     overallocated_payment_rows: int
     invalid_allocation_rows: int
+    cash_overapplied_rows: int
+    invalid_cash_amount_rows: int
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
 
