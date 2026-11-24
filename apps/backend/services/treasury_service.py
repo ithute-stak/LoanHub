@@ -550,6 +550,131 @@ def void_opening_source(db: Session, source: BranchOpeningSource, *, user_id: UU
     return source
 
 
+def sync_counted_cash_opening(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    session_id: UUID,
+    amount: Decimal,
+    user_id: UUID,
+) -> BranchOpeningSource:
+    """Bridge the existing Daily Finance Desk to the treasury opening ledger.
+
+    A counted cash opening is a stocktake, not a fresh capital contribution.
+    Never journal the snapshot a second time. The finance session is the
+    authoritative source and the linked treasury row is its audit projection.
+    """
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    assert_ledger_writable(ledger)
+    existing = (
+        db.query(BranchOpeningSource)
+        .filter(
+            BranchOpeningSource.daily_ledger_id == ledger.id,
+            BranchOpeningSource.payment_method == PaymentMethod.CASH,
+            BranchOpeningSource.is_voided.is_(False),
+            BranchOpeningSource.is_confirmed.is_(True),
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="An opening cash source already exists for this branch day; reconcile it before opening the Daily Finance Desk",
+        )
+    source = BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, source_type=OpeningSourceType.CASH_FLOAT,
+        payment_method=PaymentMethod.CASH, amount=money(amount),
+        currency="LSL", description="Counted opening cash from Daily Finance Desk",
+        source_reference=f"DAILY-CASH-OPEN:{session_id}",
+        is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc),
+        confirmed_by_user_id=user_id, recorded_by_user_id=user_id,
+    )
+    db.add(source)
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+    return source
+
+
+def sync_recorded_cash_float(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    journal_id: UUID,
+    amount: Decimal,
+    user_id: UUID,
+) -> BranchOpeningSource:
+    """Record an already-journaled Finance Desk cash float exactly once in treasury."""
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    assert_ledger_writable(ledger)
+    source = BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, source_type=OpeningSourceType.OTHER,
+        payment_method=PaymentMethod.CASH, amount=money(amount),
+        currency="LSL", description="Additional cash float recorded in Daily Finance Desk",
+        source_reference=f"DAILY-CASH-FLOAT:{journal_id}",
+        is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc),
+        confirmed_by_user_id=user_id, recorded_by_user_id=user_id,
+    )
+    db.add(source)
+    db.flush()
+    # Do not call record_opening_source_accounting: the accounting journal
+    # was already posted by the Finance Desk before this projection.
+    recalculate_daily_ledger(db, ledger)
+    return source
+
+
+def sync_paid_accounting_expense(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    journal_id: UUID,
+    amount: Decimal,
+    description: str,
+    user_id: UUID,
+) -> TreasuryEntry:
+    """Mirror an already-journaled cash expense to the operational treasury.
+
+    Call after locking/validating the same branch day, in the same transaction.
+    No second accounting posting is created.
+    """
+    settings = get_or_create_settings(db, company_id)
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    assert_branch_outflow_funded(
+        db, ledger=ledger, payment_method=PaymentMethod.CASH,
+        amount=amount, settings=settings,
+    )
+    entry = TreasuryEntry(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, direction=TreasuryDirection.MONEY_OUT,
+        entry_type=TreasuryEntryType.EXPENSE, payment_method=PaymentMethod.CASH,
+        approval_status=TreasuryEntryApprovalStatus.POSTED,
+        requires_approval=False, amount=money(amount), currency="LSL",
+        description=description, occurred_at=datetime.now(timezone.utc),
+        external_reference=str(journal_id),
+        idempotency_key=f"accounting-expense:{journal_id}",
+        recorded_by_user_id=user_id,
+    )
+    db.add(entry)
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+    return entry
+
+
 def assert_branch_outflow_funded(
     db: Session, *,
     ledger: BranchDailyLedger,
