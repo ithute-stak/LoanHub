@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ChartNoAxesCombined,
@@ -29,6 +29,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function errorText(error: unknown) {
   if (typeof error === "object" && error && "response" in error) {
@@ -68,6 +71,11 @@ function GroupTable({ title, description, rows }: { title: string; description: 
 }
 
 export default function PortfolioRiskPage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [overview, setOverview] = useState<PortfolioRiskOverview | null>(null);
   const [history, setHistory] = useState<PortfolioRiskHistory>([]);
   const [earlyWarning, setEarlyWarning] = useState<EnterpriseEarlyWarning | null>(null);
@@ -77,6 +85,7 @@ export default function PortfolioRiskPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
@@ -85,17 +94,27 @@ export default function PortfolioRiskPage() {
         getPortfolioRiskHistory(),
         getEnterpriseEarlyWarning(),
       ]);
+      if (sequence !== requestSequence.current) return;
       setOverview(nextOverview);
       setHistory(nextHistory);
       setEarlyWarning(nextEarlyWarning);
+      setLoadedScope(scopeKey);
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setOverview(null);
+      setHistory([]);
+      setEarlyWarning(null);
+      setLoadedScope(scopeKey);
       setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
 
   async function refreshSnapshot() {
     setBusy(true);
@@ -118,6 +137,8 @@ export default function PortfolioRiskPage() {
     const current = history[history.length - 1];
     return { par30: current.par_30 - previous.par_30, exposure: current.active_exposure - previous.active_exposure };
   }, [history]);
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="space-y-6 pb-12">
