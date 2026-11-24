@@ -65,6 +65,10 @@ def inspect_principal_x_collection_sources(
     payment_by_id = {row.id: row for row in payments}
     allocated_by_payment = {}
     for allocation in allocations:
+        # Unknown payment IDs are recorded as orphan allocations below.
+        # They cannot be compared to a verified payment amount.
+        if allocation.payment_id not in payment_by_id:
+            continue
         allocated_by_payment[allocation.payment_id] = (
             allocated_by_payment.get(allocation.payment_id, Decimal("0"))
             + Decimal(str(allocation.amount))
