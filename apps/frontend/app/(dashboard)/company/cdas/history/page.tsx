@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -93,20 +94,20 @@ export default function CdasHistoryPage() {
     const { activeRole } = useTenant();
     const canManage = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
     const initialTab = searchParams.get("tab") === "deductions" ? "deductions" : "transactions";
-    const [tab, setTab] = useState<"transactions" | "deductions">(initialTab);
+    const [tab, setTab] = useReduxTableField<"transactions" | "deductions">("cdas-history", "tab", initialTab);
     const [transactions, setTransactions] = useState<TransactionItem[]>([]);
     const [deductions, setDeductions] = useState<DeductionHistoryItem[]>([]);
     const [environment, setEnvironment] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState("");
-    const [stateFilter, setStateFilter] = useState("all");
+    const [stateFilter, setStateFilter] = useReduxTableField("cdas-history", "stateFilter", "all");
     const [financialOnly, setFinancialOnly] = useState(true);
-    const [typeFilter, setTypeFilter] = useState("all");
-    const [userFilter, setUserFilter] = useState("");
+    const [typeFilter, setTypeFilter] = useReduxTableField("cdas-history", "typeFilter", "all");
+    const [userFilter, setUserFilter] = useReduxTableField("cdas-history", "userFilter", "");
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
-    const [page, setPage] = useState(1);
+    const [page, setPage] = useReduxTableField("cdas-history", "page", 1);
     const pageSize = 25;
     const [selected, setSelected] = useState<{ title: string; request: Record<string, unknown>; response: Record<string, unknown> } | null>(null);
 
