@@ -44,14 +44,14 @@ def test_no_collisions_still_does_not_approve_migration():
 
 def test_detects_existing_valid_indexes_without_enabling_registration():
     index_data = [
-        (True, True, "CREATE UNIQUE INDEX uq_people_national_id_normalized "
-                     "ON people USING btree (lower(btrim(national_id)))"),
-        (True, True, "CREATE UNIQUE INDEX uq_people_passport_normalized "
-                     "ON people USING btree (lower(btrim(passport_number)))"),
-        (True, True, "CREATE UNIQUE INDEX uq_users_phone_normalized "
-                     "ON users USING btree (lower(btrim(phone)))"),
-        (True, True, "CREATE UNIQUE INDEX uq_users_email_normalized "
-                     "ON users USING btree (lower(btrim(email)))"),
+        (True, True, True, "lower(btrim(national_id))",
+         "national_id IS NOT NULL"),
+        (True, True, True, "lower(btrim(passport_number))",
+         "passport_number IS NOT NULL"),
+        (True, True, True, "lower(btrim(phone))",
+         "phone IS NOT NULL"),
+        (True, True, True, "lower(btrim(email))",
+         "email IS NOT NULL"),
     ]
     db = db_with_indexes(index_data)
     with patch("services.identity_index_readiness.inspect_identity_collisions",
@@ -64,9 +64,12 @@ def test_detects_existing_valid_indexes_without_enabling_registration():
 
 def test_invalid_and_nonunique_indexes_rejected():
     db = db_with_indexes([
-        (False, True, "lower(btrim(national_id))"),
-        (True, False, "lower(btrim(passport_number))"),
-        (True, True, "raw unnormalized phone"),
+        (False, True, True, "lower(btrim(national_id))",
+         "national_id IS NOT NULL"),
+        (True, False, True, "lower(btrim(passport_number))",
+         "passport_number IS NOT NULL"),
+        (True, True, False, "lower(btrim(phone))",
+         "phone IS NOT NULL"),
         None,
     ])
     with patch("services.identity_index_readiness.inspect_identity_collisions",
@@ -94,3 +97,30 @@ def test_proposed_ddl_is_never_run_by_readiness_check():
         inspect_identity_index_readiness(db)
     assert all("CREATE" not in str(call.args[0]).upper()
                for call in db.execute.call_args_list)
+
+
+@pytest.mark.parametrize("bad_index", [
+    (True, True, False, "lower(btrim(national_id))",
+     "national_id IS NOT NULL"),
+    (True, True, True, "lower(btrim(national_id))", None),
+    (True, True, True, "lower(btrim(national_id))",
+     "national_id IS NULL"),
+    (True, True, True, "lower(btrim(other_column))",
+     "national_id IS NOT NULL"),
+    (True, True, True, None, "national_id IS NOT NULL"),
+    (True, True, True, "raw_national_id", "national_id IS NOT NULL"),
+])
+def test_index_that_writer_would_refuse_is_never_reported_ready(bad_index):
+    db = db_with_indexes([
+        bad_index,
+        (True, True, True, "lower(btrim(passport_number))",
+         "passport_number IS NOT NULL"),
+        (True, True, True, "lower(btrim(phone))", "phone IS NOT NULL"),
+        (True, True, True, "lower(btrim(email))", "email IS NOT NULL"),
+    ])
+    with patch("services.identity_index_readiness.inspect_identity_collisions",
+               return_value=collisions(0, 0, 0, 0)):
+        report = inspect_identity_index_readiness(db)
+    assert "uq_people_national_id_normalized" in report.missing_or_invalid_indexes
+    assert report.registration_enabled is False
+    assert report.safe_to_apply_migration is False
