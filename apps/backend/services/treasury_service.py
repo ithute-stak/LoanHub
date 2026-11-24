@@ -537,6 +537,42 @@ def create_opening_source(
     return source
 
 
+
+def sync_counted_cash_opening(db: Session, *, company_id: UUID, branch_id: UUID,
+                              user_id: UUID, business_date: date, counted: Decimal,
+                              reference: str) -> None:
+    """A physical cash count confirms availability, not a new journal inflow."""
+    ledger = get_or_create_daily_ledger(db, company_id=company_id,
+                                        branch_id=branch_id, business_date=business_date)
+    ledger = db.query(BranchDailyLedger).filter(
+        BranchDailyLedger.id == ledger.id
+    ).with_for_update().one()
+    assert_ledger_writable(ledger)
+    value = money(counted)
+    if value < 0:
+        raise HTTPException(status_code=422, detail="Opening cash cannot be negative")
+    sources = db.query(BranchOpeningSource).filter(
+        BranchOpeningSource.daily_ledger_id == ledger.id,
+        BranchOpeningSource.payment_method == PaymentMethod.CASH,
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).all()
+    if sources:
+        if sum((money(source.amount) for source in sources), Decimal("0.00")) != value:
+            raise HTTPException(status_code=409, detail="Counted cash differs from confirmed treasury opening")
+        return
+    db.add(BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id, daily_ledger_id=ledger.id,
+        source_type=OpeningSourceType.CASH_FLOAT, payment_method=PaymentMethod.CASH,
+        amount=value, currency="LSL", description="Confirmed daily cash count",
+        source_reference=reference, is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc), confirmed_by_user_id=user_id,
+        recorded_by_user_id=user_id,
+    ))
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+
+
 def void_opening_source(db: Session, source: BranchOpeningSource, *, user_id: UUID, reason: str) -> BranchOpeningSource:
     if source.source_type == OpeningSourceType.PREVIOUS_CLOSING or source.is_system_generated:
         raise HTTPException(status_code=409, detail="System-generated previous closing cannot be voided")
