@@ -195,3 +195,63 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
             can_post_settlement=True, payment_rows_reviewed=0,
             unresolved_payment_rows=0, blocking_reasons=[],
         )
+
+
+def test_revalidation_endpoint_is_scoped_to_principal_x_and_never_posts():
+    source = (
+        Path(__file__).resolve().parents[1] / "routers" / "loans.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    fn = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "revalidate_principal_x_settlement"
+    )
+    calls = {
+        node.func.id for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {
+        "require_tenant_roles", "_tenant_loan_or_404",
+        "read_loan_payment_model",
+        "quote_principal_x_for_loan_with_revision",
+        "require_unchanged_preview_snapshot",
+    } <= calls
+    assert "initiate_early_settlement_payment" not in calls
+    assert "coordinate_principal_x_collection" not in calls
+    assert any(
+        isinstance(node, ast.keyword)
+        and node.arg == "payment_enabled"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is False
+        for node in ast.walk(fn)
+    )
+
+
+def test_revalidation_response_cannot_enable_payment():
+    from datetime import date
+    from decimal import Decimal
+    from pydantic import ValidationError
+    from database.schemas.early_settlement import (
+        PrincipalXSettlementRevalidateRequest,
+        PrincipalXSettlementRevalidateRead,
+    )
+
+    payload = PrincipalXSettlementRevalidateRequest(
+        settlement_date=date(2026, 11, 21),
+        snapshot_revision="a" * 64,
+    )
+    assert payload.snapshot_revision == "a" * 64
+    with pytest.raises(ValidationError):
+        PrincipalXSettlementRevalidateRequest(
+            settlement_date=date(2026, 11, 21),
+            snapshot_revision="invalid",
+        )
+    with pytest.raises(ValidationError):
+        PrincipalXSettlementRevalidateRead(
+            loan_id=uuid4(),
+            snapshot_revision="a" * 64,
+            settlement_date=date(2026, 11, 21),
+            settlement_amount=Decimal("1324.80"),
+            payment_enabled=True,
+        )
