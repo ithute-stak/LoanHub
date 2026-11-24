@@ -774,6 +774,65 @@ def owner_branch_day_summary(
     }
 
 
+@router.get("/owner/branch-day-summary.xlsx")
+def export_owner_branch_day_summary(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    from io import BytesIO
+    from decimal import Decimal
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    report = owner_branch_day_summary(business_date, db, context)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Daily overview"
+    sheet.append(["LoanHub daily branch financial overview", business_date.isoformat()])
+    sheet.append(["Status", "Complete" if report["complete"] else "PROVISIONAL"])
+    for label, key in [
+        ("Recorded opening", "opening_balance"),
+        ("Recorded money in", "money_in"),
+        ("Recorded money out", "money_out"),
+        ("Recorded expected closing", "expected_closing"),
+        ("Matched internal transfers", "matched_internal_transfers"),
+        ("Unmatched outgoing", "unmatched_internal_outgoing"),
+        ("Unmatched receipts", "unmatched_internal_receipts"),
+        ("Opening excluding matched transfers", "net_external_opening_balance"),
+        ("Outflow excluding matched transfers", "net_external_money_out"),
+    ]:
+        sheet.append([label, Decimal(report[key])])
+        sheet.cell(sheet.max_row, 2).number_format = '#,##0.00'
+    sheet.append(["Missing branch ledgers", report["missing_branch_count"]])
+    sheet.column_dimensions["A"].width = 46
+    sheet.column_dimensions["B"].width = 24
+    branches = workbook.create_sheet("Branches")
+    branches.append(["Branch", "Status", "Opening", "Money in", "Money out", "Expected closing"])
+    for row in report["branches"]:
+        values = [Decimal(row[key]) if row[key] is not None else None for key in (
+            "opening_balance", "money_in", "money_out", "expected_closing"
+        )]
+        branches.append([row["branch_name"], row["status"] or "Missing ledger", *values])
+        branches.cell(branches.max_row, 1).data_type = "s"
+        for cell in branches[branches.max_row][2:]:
+            cell.number_format = '#,##0.00'
+    for column in "ABCDEF":
+        branches.column_dimensions[column].width = 24
+    branches.freeze_panes = "C2"
+    for tab in (sheet, branches):
+        for cell in tab[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="17365D")
+    output = BytesIO()
+    workbook.save(output)
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="loanhub-branch-day-{business_date.isoformat()}.xlsx"'},
+    )
+
+
 @router.get("/statements", response_model=TreasuryStatementRead)
 def statement(
     date_from: date,
