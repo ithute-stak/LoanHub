@@ -566,6 +566,8 @@ def sync_counted_cash_opening(
     Never journal the snapshot a second time. The finance session is the
     authoritative source and the linked treasury row is its audit projection.
     """
+    if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:
+        return None
     ledger = get_or_create_daily_ledger(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
@@ -627,6 +629,8 @@ def sync_recorded_cash_float(
     user_id: UUID,
 ) -> BranchOpeningSource:
     """Record an already-journaled Finance Desk cash float exactly once in treasury."""
+    if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:
+        return None
     ledger = get_or_create_daily_ledger(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
@@ -670,6 +674,8 @@ def sync_paid_accounting_expense(
     No second accounting posting is created.
     """
     settings = get_or_create_settings(db, company_id)
+    if not settings.enforce_branch_cash_controls_enabled:
+        return None
     ledger = get_or_create_daily_ledger(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
@@ -712,6 +718,8 @@ def assert_branch_outflow_funded(
     This helper is called before creating a cash payout or posting expenses,
     in the same database transaction as the financial event.
     """
+    if not settings.enforce_branch_cash_controls_enabled:
+        return Decimal("0.00")
     if not getattr(ledger, "id", None):
         raise HTTPException(status_code=409, detail="Branch business day has not been initialized")
     locked = (
