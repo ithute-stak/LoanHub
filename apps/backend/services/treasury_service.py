@@ -103,6 +103,7 @@ def get_or_create_settings(db: Session, company_id: UUID) -> TreasurySettings:
         currency="LSL",
         timezone="Africa/Maseru",
         carry_previous_closing_enabled=False,
+        enforce_branch_cash_controls_enabled=False,
         auto_open_enabled=True,
         auto_open_time=time(0, 1),
         auto_submit_enabled=True,
