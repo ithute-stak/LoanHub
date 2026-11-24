@@ -111,6 +111,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     unlinked_treasury_rows: int
     missing_cash_evidence_rows: int
     overallocated_payment_rows: int
+    invalid_allocation_rows: int
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
 
