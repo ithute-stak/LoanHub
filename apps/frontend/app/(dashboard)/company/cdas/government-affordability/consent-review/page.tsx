@@ -53,6 +53,9 @@ export default function GovernmentCdasConsentReviewPage() {
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const [review, setReview] = useState<Review | null>(null);
+    const [decisionEvidenceId, setDecisionEvidenceId] = useState<string | null>(null);
+    const [decisionReason, setDecisionReason] = useState("");
+
     const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
@@ -123,7 +126,11 @@ export default function GovernmentCdasConsentReviewPage() {
         }
     }
 
-    async function submitDecision(row: ConsentRow, decision: "approve" | "reject") {
+    async function submitDecision(row: ConsentRow, decision: "approve" | "reject" | "revoke") {
+        if (decision !== "approve" && (decisionEvidenceId !== row.evidence_id || decisionReason.trim().length < 8)) {
+            setError("A reason of at least 8 characters is required for this decision.");
+            return;
+        }
         setBusy("decision");
         setError(null);
         setNotice(null);
@@ -148,14 +155,15 @@ export default function GovernmentCdasConsentReviewPage() {
                 });
                 setNotice("Consent evidence approved and audited. This did not contact CDAS.");
             } else {
-                const reason = window.prompt("Reason for rejecting this consent evidence (minimum 8 characters):");
-                if (reason === null) return;
-                if (reason.trim().length < 8) throw new Error("Provide a rejection reason of at least 8 characters.");
                 await api.post(ROOT + "/consent-evidence/" + encodeURIComponent(row.evidence_id) + "/decision", {
-                    decision: "reject", reason: reason.trim(),
+                    decision, reason: decisionReason.trim(),
                 });
-                setNotice("Consent evidence rejected. No CDAS request was made.");
+                setNotice(decision === "revoke"
+                    ? "Consent evidence revoked. Subsequent CDAS lookups require a new valid consent review."
+                    : "Consent evidence rejected. No CDAS request was made.");
             }
+            setDecisionEvidenceId(null);
+            setDecisionReason("");
             setReview(null);
             await refresh();
         } catch (cause) {
@@ -200,8 +208,31 @@ export default function GovernmentCdasConsentReviewPage() {
                         <Button size="sm" variant="outline" disabled={busy !== null || !row.managed_file_id} onClick={() => void downloadForReview(row)}>
                             <Download className="mr-2 h-4 w-4" />Download evidence
                         </Button>
-                        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void submitDecision(row, "reject")}>Reject with reason</Button>
+                        <Button size="sm" variant="outline" disabled={busy !== null}
+                            onClick={() => { setDecisionEvidenceId(row.evidence_id); setDecisionReason(""); setReview(null); setError(null); }}>Reject consent</Button>
                     </div>}
+                    {row.status === "approved" && <Button size="sm" variant="destructive" disabled={busy !== null}
+                        onClick={() => { setDecisionEvidenceId(row.evidence_id); setDecisionReason(""); setReview(null); setError(null); }}>
+                        Revoke consent
+                    </Button>}
+                    {(row.status === "pending" || row.status === "approved") && decisionEvidenceId === row.evidence_id &&
+                        <div className="space-y-3 rounded-lg border p-3">
+                            <p className="text-sm font-medium">{row.status === "approved" ? "Revoke approved consent" : "Reject pending evidence"}</p>
+                            <p className="text-xs text-muted-foreground">This decision is audited. A revoked or rejected record cannot authorise further CDAS requests.</p>
+                            <Label htmlFor={"decision-reason-" + row.evidence_id}>Decision reason</Label>
+                            <Input id={"decision-reason-" + row.evidence_id} value={decisionReason} maxLength={400}
+                                onChange={event => setDecisionReason(event.target.value)}
+                                placeholder={row.status === "approved" ? "Why is consent being revoked?" : "Why is this evidence rejected?"} />
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant={row.status === "approved" ? "destructive" : "default"} size="sm"
+                                    disabled={busy !== null || decisionReason.trim().length < 8}
+                                    onClick={() => void submitDecision(row, row.status === "approved" ? "revoke" : "reject")}>
+                                    Confirm {row.status === "approved" ? "revocation" : "rejection"}
+                                </Button>
+                                <Button size="sm" variant="outline" disabled={busy !== null}
+                                    onClick={() => { setDecisionEvidenceId(null); setDecisionReason(""); }}>Cancel</Button>
+                            </div>
+                        </div>}
                     {row.status === "pending" && review?.evidenceId === row.evidence_id && <div className="space-y-3 rounded-lg border p-3">
                         <p className="text-sm font-medium">Reviewing downloaded document</p>
                         <p className="break-all font-mono text-xs">SHA-256: {review.digest}</p>
