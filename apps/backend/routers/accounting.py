@@ -464,7 +464,9 @@ def open_daily_cash_session(
             "note": payload.note,
         },
     )
-    if branch is None:
+    from services.treasury_service import get_or_create_settings
+    cash_controls_active = get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled
+    if branch is None and cash_controls_active:
         raise HTTPException(status_code=409, detail="Select an active branch before opening the daily cash session")
     db.add(record)
     try:
@@ -472,12 +474,13 @@ def open_daily_cash_session(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="A cash session already exists for this branch and date") from exc
-    from services.treasury_service import sync_counted_cash_opening
-    sync_counted_cash_opening(
-        db, company_id=company_id, branch_id=branch,
-        business_date=payload.business_date, session_id=record.id,
-        amount=payload.counted_opening, user_id=context.user.id,
-    )
+    if cash_controls_active:
+        from services.treasury_service import sync_counted_cash_opening
+        sync_counted_cash_opening(
+            db, company_id=company_id, branch_id=branch,
+            business_date=payload.business_date, session_id=record.id,
+            amount=payload.counted_opening, user_id=context.user.id,
+        )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -509,18 +512,18 @@ def close_daily_cash_session(
     resolve_branch_scope(db, context, record.company_id, record.branch_id)
     if record.status != "open":
         raise HTTPException(status_code=409, detail="The cash day has already been closed")
-    # Serialize physical closing with concurrent loan/expense cash outflows.
-    # Both paths lock the same branch-day treasury row before final posting.
-    from database.models.treasury import BranchDailyLedger
-    day = db.query(BranchDailyLedger).filter(
-        BranchDailyLedger.company_id == record.company_id,
-        BranchDailyLedger.branch_id == record.branch_id,
-        BranchDailyLedger.business_date == date.fromisoformat(record.data["business_date"]),
-    ).with_for_update().first()
-    if day is None:
-        raise HTTPException(status_code=409, detail="Branch treasury day must exist before closing cash")
-    # Use the same lock order as outgoing cash: treasury day, then cash
-    # session. This prevents closing and posting from deadlocking each other.
+    from services.treasury_service import get_or_create_settings
+    controls_active = get_or_create_settings(db, record.company_id).enforce_branch_cash_controls_enabled
+    if controls_active:
+        # Cash outflows and closing lock the same branch-day row first.
+        from database.models.treasury import BranchDailyLedger
+        day = db.query(BranchDailyLedger).filter(
+            BranchDailyLedger.company_id == record.company_id,
+            BranchDailyLedger.branch_id == record.branch_id,
+            BranchDailyLedger.business_date == date.fromisoformat(record.data["business_date"]),
+        ).with_for_update().first()
+        if day is None:
+            raise HTTPException(status_code=409, detail="Branch treasury day must exist before closing cash")
     record = db.query(CompanyOperatingRecord).filter(
         CompanyOperatingRecord.id == session_id,
         CompanyOperatingRecord.company_id == resolve_scope(context, None),
