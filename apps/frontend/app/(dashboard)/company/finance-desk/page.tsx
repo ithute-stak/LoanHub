@@ -61,16 +61,16 @@ function OwnerDayOverview({businessDate}: {businessDate: string}) {
   const [error, setError] = useState("");
   const [request, setRequest] = useState(0);
   const [exporting, setExporting] = useState(false);
-  async function downloadExcel() {
+  async function downloadStatement(format: "xlsx" | "pdf") {
     setExporting(true);
     try {
-      const response = await api.get<Blob>("/expense-management/owner/branch-day-summary.xlsx", {
+      const response = await api.get<Blob>(`/expense-management/owner/branch-day-summary.${format}`, {
         params: {business_date: businessDate}, responseType: "blob",
       });
       const url = URL.createObjectURL(response.data);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `loanhub-branch-day-${businessDate}.xlsx`;
+      link.download = `loanhub-branch-day-${businessDate}.${format}`;
       document.body.appendChild(link);
       try { link.click(); } finally {
         link.remove();
@@ -97,7 +97,7 @@ function OwnerDayOverview({businessDate}: {businessDate: string}) {
   return <Card>
     <CardHeader><CardTitle>Company-wide daily branch overview</CardTitle></CardHeader>
     <CardContent className="space-y-4">
-      <div className="flex flex-wrap gap-2"><Button onClick={() => setRequest(value => value + 1)} disabled={busy || !businessDate}>{busy ? "Loading…" : "Load all branches"}</Button><Button variant="outline" onClick={() => void downloadExcel()} disabled={exporting || busy || !summary || summary.business_date !== businessDate}>{exporting ? "Exporting…" : "Download Excel"}</Button></div>
+      <div className="flex flex-wrap gap-2"><Button onClick={() => setRequest(value => value + 1)} disabled={busy || !businessDate}>{busy ? "Loading…" : "Load all branches"}</Button><Button variant="outline" onClick={() => void downloadStatement("xlsx")} disabled={exporting || busy || !summary || summary.business_date !== businessDate}>{exporting ? "Exporting…" : "Download Excel"}</Button><Button variant="outline" onClick={() => void downloadStatement("pdf")} disabled={exporting || busy || !summary || summary.business_date !== businessDate}>Download PDF</Button></div>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {summary && summary.business_date === businessDate && <>
         {!summary.complete && <p role="status" className="rounded-lg border p-3 text-sm">Provisional overview: {summary.missing_branch_count} missing branch ledgers. Transfers {summary.transfers_reconciled ? "reconciled" : "require reconciliation"}.</p>}
