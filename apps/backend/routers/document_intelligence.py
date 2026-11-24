@@ -6,6 +6,8 @@ must explicitly enable this experimental endpoint after acceptance testing.
 from __future__ import annotations
 
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +23,7 @@ from services.document_intelligence_reader import (
     MAX_INPUT_BYTES,
     read_document,
 )
+from services.government_payslip_stamp_preview import preview_payslip_stamp
 from services.nedbank_statement_adapter import (
     NedbankStatementError, parse_nedbank_native_pdf,
 )
@@ -100,5 +103,18 @@ def review_managed_document(
             response["checks"]["financial_transaction_count"] = len(statement.rows)
     if record.category == "borrower_payslip":
         response["checks"]["payslip_financials"] = "manual_review"
-        response["checks"]["stamp"] = "manual_review"
+        response["checks"]["payslip_financial_reason"] = "itemised_scan_reconciliation_pending"
+        try:
+            local_today = datetime.now(ZoneInfo("Africa/Maseru")).date()
+            preview = preview_payslip_stamp(
+                contents, record.original_name, assessed_at=local_today,
+            )
+        except (DocumentReadError, ValueError):
+            response["checks"]["stamp"] = "manual_review"
+            response["checks"]["stamp_review_reasons"] = ["stamp_evidence_processing_failed"]
+        else:
+            response["checks"]["stamp"] = preview.status
+            response["checks"]["stamp_date"] = preview.detected_stamp_date
+            response["checks"]["stamp_candidates"] = preview.candidate_region_count
+            response["checks"]["stamp_review_reasons"] = list(preview.review_reasons)
     return response
