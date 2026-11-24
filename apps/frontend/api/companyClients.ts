@@ -54,6 +54,24 @@ export async function revealCompanyClientBankAccount(accountId: string): Promise
   return response.data.account_number;
 }
 
+export type CdasAffordabilityPdfIssue = {
+  ok: boolean;
+  file_id: string;
+  reference: string;
+  filename: string;
+  assessed_at: string;
+  affordability: string;
+  deduction_count: number;
+};
+
+export async function issueCompanyClientCdasAffordabilityPdf(
+  accountId: string,
+): Promise<CdasAffordabilityPdfIssue> {
+  return (await api.post<CdasAffordabilityPdfIssue>(
+    `/cdas/clients/${encodeURIComponent(accountId)}/affordability-report`,
+  )).data;
+}
+
 export async function getCompanyClientProfile(accountId: string): Promise<CompanyClientProfile> {
   return (await api.get<CompanyClientProfile>(`/company-clients/${accountId}/profile`)).data;
 }
