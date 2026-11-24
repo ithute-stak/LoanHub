@@ -137,9 +137,17 @@ def inspect_principal_x_collection_sources(
             continue
         treasury_currency = getattr(entry, "currency", None)
         payment_currency = getattr(payment, "currency", None)
-        if treasury_currency is not None and payment_currency is not None:
-            if treasury_currency != payment_currency:
-                treasury_currency_mismatches += 1
+        # Missing currency evidence is a mismatch too. A linked treasury
+        # record is not corroborated unless both currency values exist and
+        # agree; this diagnostic never authorizes a collection.
+        if (
+            not isinstance(treasury_currency, str)
+            or not treasury_currency.strip()
+            or not isinstance(payment_currency, str)
+            or not payment_currency.strip()
+            or treasury_currency != payment_currency
+        ):
+            treasury_currency_mismatches += 1
         try:
             treasury_amount = Decimal(str(entry.amount))
             payment_amount = Decimal(str(payment.amount))
