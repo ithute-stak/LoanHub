@@ -85,3 +85,24 @@ def test_daily_issuance_report_visible_in_desktop_and_mobile_navigation() -> Non
     )
     assert 'activePaths: ["/company/files", "/company/reports"]' not in desktop
     assert 'activePaths: ["/company/reports", "/company/activity", "/company/queries"]' in desktop
+
+
+def test_owner_consolidated_statement_uses_existing_tenant_scoped_treasury_api() -> None:
+    source = (
+        ROOT / "apps" / "frontend" / "app" / "(dashboard)"
+        / "company" / "reports" / "branch-financial-statement" / "page.tsx"
+    ).read_text(encoding="utf-8")
+    mobile = (
+        ROOT / "apps" / "frontend" / "components" / "navigation"
+        / "mobile-app-navigation.tsx"
+    ).read_text(encoding="utf-8")
+    assert 'href: "/company/reports/branch-financial-statement"' in PORTAL_SHELL.read_text(encoding="utf-8")
+    assert 'roles: COMPANY_MANAGEMENT_ROLES' in PORTAL_SHELL.read_text(encoding="utf-8").split(
+        'href: "/company/reports/branch-financial-statement"'
+    )[1].split("}", 1)[0]
+    assert 'href: "/company/reports/branch-financial-statement"' in mobile
+    assert 'expenseManagementApi.dashboard(businessDate)' in source
+    assert 'activeRole === "company_owner" || activeRole === "company_admin"' in source
+    assert "expenseManagementApi.dashboard(businessDate, " not in source
+    assert "declared_closing_balance === null" in source
+    assert "window.print()" in source

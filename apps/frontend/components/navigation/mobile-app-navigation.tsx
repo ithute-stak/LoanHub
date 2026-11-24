@@ -92,6 +92,7 @@ const navigationByMode: Record<AppMode, MobileNavItem[]> = {
         { label: "Collections & legal", href: "/company/collections", icon: Gavel, roles: COLLECTIONS_ROLES },
         { label: "Agreements & charges", href: "/company/finance", icon: Landmark, roles: ACCOUNTING_ROLES },
         { label: "Daily Loan Issuance", shortLabel: "Issuance", href: "/company/reports/daily-issuance", icon: FileChartColumn, roles: REPORTING_ROLES },
+        { label: "Company Branch Statement", shortLabel: "Branches", href: "/company/reports/branch-financial-statement", icon: Building2, roles: COMPANY_MANAGEMENT_ROLES },
         { label: "Reports", href: "/company/reports", icon: FileChartColumn, roles: REPORTING_ROLES },
         { label: "Documents", href: "/company/documents", icon: FilePenLine },
         { label: "Files", href: "/company/files", icon: FolderOpen },

@@ -216,6 +216,7 @@ const companyNavigation: NavItem[] = [
         activePaths: ["/company/reports", "/company/activity", "/company/queries"],
         children: [
             { label: "Daily Loan Issuance", href: "/company/reports/daily-issuance", icon: FileChartColumn, roles: REPORTING_ROLES },
+            { label: "Company Branch Statement", href: "/company/reports/branch-financial-statement", icon: Building2, roles: COMPANY_MANAGEMENT_ROLES },
             { label: "Control & assurance", href: "/company/control-centre", icon: ShieldCheck, roles: TRANSPARENCY_ROLES },
             { label: "Activity log", href: "/company/activity", icon: History, roles: TRANSPARENCY_ROLES },
             { label: "Support queries", href: "/company/queries", icon: MessageSquarePlus },
