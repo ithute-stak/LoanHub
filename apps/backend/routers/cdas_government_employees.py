@@ -501,6 +501,112 @@ def submit_pending_cdas_consent_evidence(
     }
 
 
+class CdasConsentApprovalRequest(BaseModel):
+    """A human reviewer attests to the *exact* borrower, purpose and bytes."""
+    reviewed_document_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_reviewed: bool
+    borrower_identity_checked: bool
+    borrower_consent_checked: bool
+    purpose_confirmed: bool
+    reason: str = Field(min_length=12, max_length=400)
+    expires_at: datetime
+
+
+@router.post("/consent-evidence/{evidence_id}/approve")
+def approve_cdas_consent_evidence(
+    evidence_id: UUID,
+    payload: CdasConsentApprovalRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Require independent explicit approval with verified stored source bytes.
+
+    No CDAS contact occurs here; approved evidence is still verified again
+    immediately before each permitted individual provider operation.
+    """
+    from datetime import timedelta
+
+    _require_company_manager(context)
+    assert context.company_id is not None
+    if not all((
+        payload.document_reviewed, payload.borrower_identity_checked,
+        payload.borrower_consent_checked, payload.purpose_confirmed,
+    )):
+        raise HTTPException(status_code=409, detail="All independent consent review checks must be confirmed")
+    now = datetime.now(timezone.utc)
+    expiry = payload.expires_at
+    if expiry.tzinfo is None or expiry.utcoffset() is None:
+        raise HTTPException(status_code=422, detail="Consent expiry must include a timezone")
+    expiry = expiry.astimezone(timezone.utc)
+    if not now < expiry <= now + timedelta(days=90):
+        raise HTTPException(status_code=409, detail="Consent must expire within 90 days")
+    record = db.query(CdasAffordabilityConsentEvidence).filter(
+        CdasAffordabilityConsentEvidence.id == evidence_id,
+        CdasAffordabilityConsentEvidence.company_id == context.company_id,
+    ).with_for_update().first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Consent evidence not found")
+    if record.status != "pending":
+        raise HTTPException(status_code=409, detail="Consent evidence is no longer awaiting review")
+    if record.submitted_by_user_id is None or context.user.id == record.submitted_by_user_id:
+        raise HTTPException(status_code=403, detail="An independent reviewer is required")
+    if not record.borrower_authorization_confirmed or record.purpose != PURPOSE:
+        raise HTTPException(status_code=409, detail="Purpose-bound borrower consent is not confirmed")
+    document = db.query(BorrowerDocument).filter(
+        BorrowerDocument.id == record.document_id,
+        BorrowerDocument.borrower_id == record.borrower_id,
+    ).first()
+    if document is None or not record.managed_file_id:
+        raise HTTPException(status_code=409, detail="Consent source document is missing")
+    file = db.query(ManagedFile).filter(
+        ManagedFile.id == record.managed_file_id,
+        ManagedFile.company_id == context.company_id,
+    ).first()
+    digest = verify_managed_cdas_consent_bytes(
+        file=file, company_id=context.company_id, borrower_id=record.borrower_id,
+        expected_digest=payload.reviewed_document_sha256,
+    )
+    record.status = "approved"
+    record.document_sha256 = digest
+    record.verified_by_user_id = context.user.id
+    record.verified_at = now
+    record.expires_at = expiry
+    db.add(AuditLog(
+        user_id=context.user.id,
+        company_id=context.company_id,
+        branch_id=getattr(context, "branch_id", None),
+        action="cdas_affordability_consent_approved",
+        table_name="cdas_affordability_consent_evidence",
+        entity_type="consent_evidence",
+        record_id=record.id,
+        description="Independent approval of purpose-specific CDAS consent evidence",
+        actor_role=getattr(getattr(context, "role", None), "value", "company_manager"),
+        severity="info",
+        status="success",
+        event_data={
+            "reason": payload.reason.strip(),
+            "borrower_id": str(record.borrower_id),
+            "employee_number": record.employee_number,
+            "document_id": str(record.document_id),
+            "managed_file_id": str(record.managed_file_id),
+            "document_sha256": digest,
+            "consent_reference": record.reference,
+            "purpose": PURPOSE,
+            "expires_at": expiry.isoformat(),
+            "reviewed_document": True,
+            "identity_checked": True,
+            "borrower_consent_checked": True,
+        },
+    ))
+    db.commit()
+    return {
+        "evidence_id": str(record.id), "status": "approved",
+        "document_sha256": digest, "expires_at": expiry.isoformat(),
+        "cdas_request_sent": False,
+        "note": "Approved consent evidence still requires fresh live-file and policy checks",
+    }
+
+
 class CdasConsentReviewDecision(BaseModel):
     decision: str = Field(pattern=r"^(reject|revoke)$")
     reason: str = Field(min_length=8, max_length=400)
