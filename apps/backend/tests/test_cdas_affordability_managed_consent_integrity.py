@@ -54,7 +54,7 @@ def test_cross_company_and_cross_borrower_rejected_before_read(monkeypatch):
     file, data, company, borrower, digest = evidence()
     monkeypatch.setattr(integrity, "read_file_bytes",
                         lambda row: (_ for _ in ()).throw(AssertionError("No I/O on scope failure")))
-    for identity in (dict(company_id=uuid4(), borrower_id=borrow),
+    for identity in (dict(company_id=uuid4(), borrower_id=borrower),
                      dict(company_id=company, borrower_id=uuid4())):
         with pytest.raises(HTTPException) as denied:
             integrity.verify_managed_cdas_consent_bytes(file=file, **identity)
