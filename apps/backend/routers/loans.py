@@ -53,6 +53,8 @@ from database.schemas.early_settlement import (
     EarlySettlementRead,
     PrincipalXSettlementPreviewRead,
     PrincipalXSettlementReadinessRead,
+    PrincipalXSettlementRevalidateRequest,
+    PrincipalXSettlementRevalidateRead,
 )
 from database.schemas.loan import InstallmentDueDateAdjustmentCreate, LoanPaymentSlipRead, LoanRead
 from database.config.config import settings
@@ -71,7 +73,10 @@ from services.installment_service import adjust_installment_due_date
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.loan_payment_model_assignment_service import read_loan_payment_model
-from services.principal_x_settlement_preview_service import quote_principal_x_for_loan_with_revision
+from services.principal_x_settlement_preview_service import (
+    quote_principal_x_for_loan_with_revision,
+    require_unchanged_preview_snapshot,
+)
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
@@ -521,6 +526,48 @@ def collect_cash_repayment(
     }
 
 
+
+
+@router.post(
+    "/{loan_id}/principal-x-settlements/revalidate",
+    response_model=PrincipalXSettlementRevalidateRead,
+)
+def revalidate_principal_x_settlement(
+    loan_id: UUID,
+    payload: PrincipalXSettlementRevalidateRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only stale-preview check. Not consent, posting, or certification."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Invalid loan payment-model assignment") from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(status_code=409, detail="Loan is not assigned Principal x%")
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        raise HTTPException(status_code=409, detail="Only active or defaulted loans can be revalidated")
+    try:
+        current = quote_principal_x_for_loan_with_revision(
+            db, loan=loan, settlement_date=payload.settlement_date,
+        )
+        require_unchanged_preview_snapshot(
+            expected_revision=payload.snapshot_revision, current=current,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PrincipalXSettlementRevalidateRead(
+        loan_id=loan.id,
+        snapshot_revision=current.snapshot_revision,
+        settlement_date=payload.settlement_date,
+        settlement_amount=current.quote.collectible_due,
+        unchanged=True,
+        payment_enabled=False,
+    )
 
 
 @router.get(
