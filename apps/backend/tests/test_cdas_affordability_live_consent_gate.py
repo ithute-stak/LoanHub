@@ -19,13 +19,15 @@ class Query:
 
 
 class DB:
-    def __init__(self, evidence=None, document=None):
-        self.evidence, self.document = evidence, document
+    def __init__(self, evidence=None, document=None, managed_file=None):
+        self.evidence, self.document, self.managed_file = evidence, document, managed_file
     def query(self, model):
         if model is module.CdasAffordabilityConsentEvidence:
             return Query(self.evidence)
         if model is module.BorrowerDocument:
             return Query(self.document)
+        if model is module.ManagedFile:
+            return Query(self.managed_file)
         raise AssertionError("Unexpected query before CDAS consent check")
 
 
@@ -38,7 +40,7 @@ def approved(*, company, borrower, reviewer, reference="CONSENT-001"):
     return SimpleNamespace(
         company_id=company, borrower_id=borrower, employee_number="EMP-100",
         reference=reference, purpose=PURPOSE, status="approved",
-        document_id=uuid4(), document_sha256="a" * 64,
+        document_id=uuid4(), managed_file_id=uuid4(), document_sha256="a" * 64,
         verified_at=now - timedelta(hours=1),
         expires_at=now + timedelta(days=1),
         verified_by_user_id=reviewer,
@@ -89,7 +91,7 @@ async def test_unreviewed_live_preview_blocks_before_provider(monkeypatch):
     assert blocked.value.status_code == 409
 
 
-def test_approved_consent_must_still_have_borrower_linked_document():
+def test_approved_consent_must_still_have_borrower_linked_document(monkeypatch):
     company, borrower, reviewer, operator = (uuid4() for _ in range(4))
     evidence = approved(company=company, borrower=borrower, reviewer=reviewer)
     with pytest.raises(HTTPException) as blocked:
@@ -99,8 +101,10 @@ def test_approved_consent_must_still_have_borrower_linked_document():
             reference="CONSENT-001", operator_user_id=operator,
         )
     assert blocked.value.status_code == 409
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes", lambda **kw: "a" * 64)
     good = module._require_approved_affordability_consent(
-        DB(evidence=evidence, document=SimpleNamespace(id=evidence.document_id)),
+        DB(evidence=evidence, document=SimpleNamespace(id=evidence.document_id),
+           managed_file=SimpleNamespace(id=evidence.managed_file_id)),
         company_id=company, borrower_id=borrower, employee_number="EMP-100",
         reference="CONSENT-001", operator_user_id=operator,
     )
@@ -132,3 +136,36 @@ def test_expired_approved_evidence_fails_closed():
             operator_user_id=operator,
         )
     assert "consent_expired" in blocked.value.detail["reason_codes"]
+
+
+def test_approved_consent_without_managed_file_fails_before_provider(monkeypatch):
+    company, borrower, reviewer, operator = (uuid4() for _ in range(4))
+    evidence = approved(company=company, borrower=borrower, reviewer=reviewer)
+    evidence.managed_file_id = None
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("No managed-file read")))
+    with pytest.raises(HTTPException) as blocked:
+        module._require_approved_affordability_consent(
+            DB(evidence=evidence, document=SimpleNamespace(id=evidence.document_id)),
+            company_id=company, borrower_id=borrower, employee_number="EMP-100",
+            reference="CONSENT-001", operator_user_id=operator,
+        )
+    assert blocked.value.status_code == 409
+    assert "managed-file binding" in str(blocked.value.detail)
+
+
+def test_approved_consent_file_content_digest_rechecked(monkeypatch):
+    company, borrower, reviewer, operator = (uuid4() for _ in range(4))
+    evidence = approved(company=company, borrower=borrower, reviewer=reviewer)
+    def stale_document(**kwargs):
+        assert kwargs["expected_digest"] == evidence.document_sha256
+        raise HTTPException(status_code=409, detail="Content checksum changed")
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes", stale_document)
+    with pytest.raises(HTTPException) as blocked:
+        module._require_approved_affordability_consent(
+            DB(evidence=evidence, document=SimpleNamespace(id=evidence.document_id),
+               managed_file=SimpleNamespace(id=evidence.managed_file_id)),
+            company_id=company, borrower_id=borrower, employee_number="EMP-100",
+            reference="CONSENT-001", operator_user_id=operator,
+        )
+    assert blocked.value.status_code == 409
