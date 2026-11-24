@@ -21,10 +21,10 @@ export function CashPaymentsPage({ title, description }: { title: string; descri
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useReduxTableField("cash-payments", "search", "");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
-      setPayments(await listPayments());
+      setPayments(await listPayments({ refresh: forceRefresh }));
     } catch (error) {
       toast.error(error, { description: "Payment transactions could not be loaded." });
     } finally {
@@ -64,7 +64,7 @@ export function CashPaymentsPage({ title, description }: { title: string; descri
           <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">{title}</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
-        <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh register</Button>
+        <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh register</Button>
       </section>
 
       <div className="grid gap-4 md:grid-cols-3">

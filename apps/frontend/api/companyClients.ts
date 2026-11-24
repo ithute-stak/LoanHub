@@ -36,8 +36,11 @@ export type CompanyClientDirectoryParams = {
   limit?: number;
 };
 
-export async function listCompanyClients(params?: CompanyClientDirectoryParams): Promise<CompanyClient[]> {
-  return (await api.get<CompanyClient[]>("/company-clients", { params })).data;
+export async function listCompanyClients(params?: CompanyClientDirectoryParams, options?: { refresh?: boolean }): Promise<CompanyClient[]> {
+  return (await api.get<CompanyClient[]>("/company-clients", {
+    params,
+    loanHubCache: options?.refresh ? { mode: "refresh" } : undefined,
+  })).data;
 }
 
 export async function getCompanyClientPortfolioInsights(
