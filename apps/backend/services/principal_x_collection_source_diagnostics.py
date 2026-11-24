@@ -30,6 +30,7 @@ class CollectionSourceDiagnostics:
     complete: bool = False
     missing_cash_evidence_count: int = 0
     overallocated_payment_count: int = 0
+    invalid_allocation_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -64,23 +65,34 @@ def inspect_principal_x_collection_sources(
     # amount; never sum allocation totals as separate cash collections.
     payment_by_id = {row.id: row for row in payments}
     allocated_by_payment = {}
+    invalid_allocations = 0
     for allocation in allocations:
-        # Unknown payment IDs are recorded as orphan allocations below.
-        # They cannot be compared to a verified payment amount.
+        # Orphans are reported separately; never assume a payment amount.
         if allocation.payment_id not in payment_by_id:
             continue
+        try:
+            amount = Decimal(str(allocation.amount))
+        except (ValueError, TypeError, ArithmeticError):
+            invalid_allocations += 1
+            continue
+        if not amount.is_finite() or amount <= 0:
+            invalid_allocations += 1
+            continue
         allocated_by_payment[allocation.payment_id] = (
-            allocated_by_payment.get(allocation.payment_id, Decimal("0"))
-            + Decimal(str(allocation.amount))
+            allocated_by_payment.get(allocation.payment_id, Decimal("0")) + amount
         )
-    overallocated = sum(
-        1 for payment_id, allocated in allocated_by_payment.items()
-        if payment_id in payment_by_id and (
-            not allocated.is_finite()
-            or allocated < 0
-            or allocated > Decimal(str(payment_by_id[payment_id].amount)) + Decimal("0.01")
-        )
-    )
+    overallocated = 0
+    for payment_id, allocated in allocated_by_payment.items():
+        try:
+            paid = Decimal(str(payment_by_id[payment_id].amount))
+        except (ValueError, TypeError, ArithmeticError):
+            invalid_allocations += 1
+            continue
+        if not paid.is_finite() or paid < 0:
+            invalid_allocations += 1
+        elif allocated > paid:
+            # Monetary records use cents; even M0.01 overage is an issue.
+            overallocated += 1
     treasury = (
         db.query(TreasuryEntry)
         .filter(TreasuryEntry.company_id == company_id,
@@ -102,6 +114,7 @@ def inspect_principal_x_collection_sources(
         ),
         complete=False,
         overallocated_payment_count=overallocated,
+        invalid_allocation_count=invalid_allocations,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
