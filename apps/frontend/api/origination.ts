@@ -55,14 +55,14 @@ export function toOriginationPolicyUpdate(policy: OriginationPolicy): Originatio
 }
 
 export const originationApi = {
-  getPolicy: async (): Promise<OriginationPolicy> =>
-    (await api.get<OriginationPolicy>("/origination/policy")).data,
+  getPolicy: async (options?: { refresh?: boolean }): Promise<OriginationPolicy> =>
+    (await api.get<OriginationPolicy>("/origination/policy", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data,
 
   updatePolicy: async (payload: OriginationPolicyUpdate): Promise<OriginationPolicy> =>
     (await api.put<OriginationPolicy>("/origination/policy", payload)).data,
 
-  listApplications: async (): Promise<OriginationApplication[]> =>
-    (await api.get<OriginationApplication[]>("/origination/applications")).data,
+  listApplications: async (options?: { refresh?: boolean }): Promise<OriginationApplication[]> =>
+    (await api.get<OriginationApplication[]>("/origination/applications", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data,
 
   rejectTopUp: async (applicationId: string, reason: string): Promise<OriginationApplication> =>
     (await api.post<OriginationApplication>(`/origination/applications/${applicationId}/reject-top-up`, { reason })).data,
@@ -157,8 +157,8 @@ export const originationApi = {
       template_style: templateStyle ?? null,
     })).data,
 
-  listIntegrations: async (): Promise<IntegrationConfiguration[]> =>
-    (await api.get<IntegrationConfiguration[]>("/origination/integrations")).data,
+  listIntegrations: async (options?: { refresh?: boolean }): Promise<IntegrationConfiguration[]> =>
+    (await api.get<IntegrationConfiguration[]>("/origination/integrations", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data,
 
   updateIntegration: async (
     provider: string,
