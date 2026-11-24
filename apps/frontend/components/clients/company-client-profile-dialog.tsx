@@ -31,6 +31,7 @@ import {
 import {
   downloadCompanyClientFile,
   getCompanyClientProfile,
+  issueCompanyClientCdasAffordabilityPdf,
   loadCompanyClientFileObjectUrl,
   uploadCompanyClientDocument,
   uploadCompanyClientProfileImage,
@@ -176,6 +177,9 @@ export function CompanyClientProfileDialog({
   const [affordabilityLoading, setAffordabilityLoading] = useState(false);
   const [affordabilityAmount, setAffordabilityAmount] = useState<number | null>(null);
   const [affordabilityError, setAffordabilityError] = useState<string | null>(null);
+  const [pdfIssuing, setPdfIssuing] = useState(false);
+  const [pdfIssueError, setPdfIssueError] = useState<string | null>(null);
+  const [pdfIssuedReference, setPdfIssuedReference] = useState<string | null>(null);
   const { activeRole } = useTenant();
   const canManageCdas = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
   const [cdasReadAction, setCdasReadAction] = useState<"details" | "all" | "own" | "active" | null>(null);
@@ -191,6 +195,8 @@ export function CompanyClientProfileDialog({
     setAffordabilityLoading(false);
     setAffordabilityAmount(null);
     setAffordabilityError(null);
+    setPdfIssueError(null);
+    setPdfIssuedReference(null);
     setCdasReadAction(null);
     setCdasReadTitle(null);
     setCdasReadRecords(null);
@@ -205,6 +211,8 @@ export function CompanyClientProfileDialog({
     setAffordabilityLoading(true);
     setAffordabilityError(null);
     setAffordabilityAmount(null);
+    setPdfIssueError(null);
+    setPdfIssuedReference(null);
     setCdasReadRecords(null);
     setCdasReadError(null);
     setCdasReadTitle(null);
@@ -224,6 +232,32 @@ export function CompanyClientProfileDialog({
       }
     } finally {
       if (requestId === affordabilityRequest.current) setAffordabilityLoading(false);
+    }
+  }
+
+  async function issueCdasAffordabilityPdf() {
+    if (!profile?.is_government_employee || !profile.cdas_employee_number || pdfIssuing) return;
+    const clientId = profile.client.id;
+    setPdfIssuing(true);
+    setPdfIssueError(null);
+    setPdfIssuedReference(null);
+    try {
+      // The server rechecks live CDAS data before issuing a managed borrower document.
+      const issued = await issueCompanyClientCdasAffordabilityPdf(clientId);
+      setPdfIssuedReference(issued.reference);
+      const updated = await getCompanyClientProfile(clientId);
+      if (profile.client.id === clientId) setProfile(updated);
+      toast.success("CDAS affordability report saved to client documents.");
+      await downloadCompanyClientFile(clientId, {
+        id: issued.file_id,
+        original_name: issued.filename,
+      } as CompanyClientProfileDocument);
+    } catch (requestError: unknown) {
+      const message = getErrorMessage(requestError, "CDAS affordability report could not be issued.");
+      setPdfIssueError(message);
+      toast.error(message);
+    } finally {
+      setPdfIssuing(false);
     }
   }
 
@@ -478,6 +512,17 @@ export function CompanyClientProfileDialog({
                     </div>
                   </div>
                 ) : null}
+                <div className="border-t pt-3">
+                  <p className="mb-2 text-xs font-bold">Affordability report</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" size="sm" variant="outline" disabled={pdfIssuing || affordabilityLoading} onClick={() => void issueCdasAffordabilityPdf()}>
+                      <FileText className="h-4 w-4" />{pdfIssuing ? "Generating CDAS PDF..." : "Generate and save PDF"}
+                    </Button>
+                    {pdfIssuedReference ? <span role="status" className="text-xs text-emerald-700 dark:text-emerald-300">Saved as {pdfIssuedReference}</span> : null}
+                  </div>
+                  {pdfIssueError ? <Alert variant="destructive" className="mt-2"><AlertTriangle className="h-4 w-4" /><AlertTitle>PDF issuance failed</AlertTitle><AlertDescription>{pdfIssueError}</AlertDescription></Alert> : null}
+                  <p className="mt-1 text-xs text-muted-foreground">Issuing a report performs fresh metered CDAS checks and stores a confidential, dated snapshot under client documents.</p>
+                </div>
                 <div className="border-t pt-3">
                   <p className="mb-2 text-xs font-bold">Deduction management</p>
                   <div className="flex flex-wrap gap-2">
