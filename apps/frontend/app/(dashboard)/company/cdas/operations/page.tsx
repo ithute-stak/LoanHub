@@ -195,7 +195,7 @@ export default function CdasOperationsPage() {
     });
 
     const [modify, setModify] = useState({
-        employee_no: "",
+        employee_no: requestedEmployeeNo,
         item_code: "",
         total_installment: 1,
         deduction_amount: 0,
@@ -209,7 +209,7 @@ export default function CdasOperationsPage() {
         item_code: "",
         deduction_id: 0,
         effective_date: "",
-        employee_no: "",
+        employee_no: requestedEmployeeNo,
         settlement_reason: 2,
         confirmed: false,
     });

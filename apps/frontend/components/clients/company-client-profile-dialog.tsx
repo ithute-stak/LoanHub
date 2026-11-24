@@ -6,6 +6,12 @@ import {
   AlertTriangle,
   Banknote,
   BookOpenCheck,
+  BriefcaseBusiness,
+  ListChecks,
+  Pencil,
+  CircleX,
+  CirclePlus,
+  Search,
   Camera,
   CheckCircle2,
   Clock3,
@@ -55,6 +61,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { api } from "@/lib/api";
+import { useTenant } from "@/provider/tenantProvider";
+import { COMPANY_MANAGEMENT_ROLES, hasRole } from "@/types/auth";
 import type {
   CompanyClient,
   CompanyClientProfile,
@@ -168,6 +176,13 @@ export function CompanyClientProfileDialog({
   const [affordabilityLoading, setAffordabilityLoading] = useState(false);
   const [affordabilityAmount, setAffordabilityAmount] = useState<number | null>(null);
   const [affordabilityError, setAffordabilityError] = useState<string | null>(null);
+  const { activeRole } = useTenant();
+  const canManageCdas = hasRole(activeRole, COMPANY_MANAGEMENT_ROLES);
+  const [cdasReadAction, setCdasReadAction] = useState<"details" | "all" | "own" | "active" | null>(null);
+  const [cdasReadTitle, setCdasReadTitle] = useState<string | null>(null);
+  const [cdasReadRecords, setCdasReadRecords] = useState<Record<string, unknown>[] | null>(null);
+  const [cdasReadError, setCdasReadError] = useState<string | null>(null);
+  const [ownDeductionStatus, setOwnDeductionStatus] = useState(5);
   const affordabilityRequest = useRef(0);
 
   useEffect(() => {
@@ -176,6 +191,10 @@ export function CompanyClientProfileDialog({
     setAffordabilityLoading(false);
     setAffordabilityAmount(null);
     setAffordabilityError(null);
+    setCdasReadAction(null);
+    setCdasReadTitle(null);
+    setCdasReadRecords(null);
+    setCdasReadError(null);
   }, [client?.id, open]);
 
   async function showEmployeeAffordability() {
@@ -186,6 +205,9 @@ export function CompanyClientProfileDialog({
     setAffordabilityLoading(true);
     setAffordabilityError(null);
     setAffordabilityAmount(null);
+    setCdasReadRecords(null);
+    setCdasReadError(null);
+    setCdasReadTitle(null);
     try {
       // Use LoanHub's existing authenticated CDAS affordability endpoint.
       const response = await api.post<{ ok: boolean; affordability: number }>("/cdas/employees/affordability", {
@@ -202,6 +224,44 @@ export function CompanyClientProfileDialog({
       }
     } finally {
       if (requestId === affordabilityRequest.current) setAffordabilityLoading(false);
+    }
+  }
+
+  async function loadCdasInformation(action: "details" | "all" | "own" | "active") {
+    const employeeNo = profile?.cdas_employee_number?.trim();
+    if (!affordabilityOpen || !employeeNo || !profile?.is_government_employee || cdasReadAction) return;
+    const requestId = affordabilityRequest.current;
+    setCdasReadAction(action);
+    setCdasReadError(null);
+    setCdasReadRecords(null);
+    const labels = { details: "Employee details", all: "All third-party deductions", own: "Company deductions", active: "Active / approved deduction" };
+    setCdasReadTitle(labels[action]);
+    try {
+      const endpoint = action === "details" ? "/cdas/employees/verify"
+        : action === "all" ? "/cdas/deductions/all"
+        : action === "own" ? "/cdas/deductions/own"
+        : "/cdas/deductions/active-approved";
+      const payload = action === "own" ? { employee_no: employeeNo, deduction_status: ownDeductionStatus } : { employee_no: employeeNo };
+      const response = await api.post<{
+        ok: boolean;
+        employee?: Record<string, unknown>;
+        deductions?: Record<string, unknown>[];
+        deduction?: Record<string, unknown>;
+      }>(endpoint, payload);
+      if (requestId !== affordabilityRequest.current) return;
+      if (!response.data.ok) throw new Error("CDAS did not return a successful response.");
+      const records = action === "details"
+        ? (response.data.employee ? [response.data.employee] : [])
+        : action === "active"
+          ? (response.data.deduction ? [response.data.deduction] : [])
+          : (response.data.deductions ?? []);
+      setCdasReadRecords(records);
+    } catch (requestError: unknown) {
+      if (requestId === affordabilityRequest.current) {
+        setCdasReadError(getErrorMessage(requestError, "CDAS information is unavailable. Please retry."));
+      }
+    } finally {
+      if (requestId === affordabilityRequest.current) setCdasReadAction(null);
     }
   }
 
@@ -375,11 +435,73 @@ export function CompanyClientProfileDialog({
           <section className="shrink-0 border-b bg-background px-4 py-3 sm:px-6" aria-label="CDAS employee affordability" aria-live="polite">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-bold">CDAS affordability · Employee {profile.cdas_employee_number}</p>
-              <Button variant="ghost" size="sm" onClick={() => { affordabilityRequest.current += 1; setAffordabilityOpen(false); setAffordabilityLoading(false); }}>Close</Button>
+              <Button variant="ghost" size="sm" onClick={() => { affordabilityRequest.current += 1; setAffordabilityOpen(false); setAffordabilityLoading(false); setCdasReadAction(null); }}>Close</Button>
             </div>
             {affordabilityLoading ? <p className="mt-2 text-sm text-muted-foreground" role="status">Checking current CDAS affordability...</p> : null}
             {affordabilityError ? <Alert variant="destructive" className="mt-2"><AlertTriangle className="h-4 w-4" /><AlertTitle>Affordability unavailable</AlertTitle><AlertDescription>{affordabilityError}</AlertDescription></Alert> : null}
-            {affordabilityAmount !== null ? <div className="mt-2"><p className="text-xl font-black text-primary">{formatMoney(affordabilityAmount)}</p><p className="text-xs text-muted-foreground">Provider-reported available affordability. This is not an approved loan amount or authorisation to disburse. Existing CDAS deductions must not be subtracted a second time.</p></div> : null}
+            {affordabilityAmount !== null ? (
+              <div className="mt-2 max-h-[55dvh] space-y-3 overflow-y-auto pr-1">
+                <p className="text-xl font-black text-primary">{formatMoney(affordabilityAmount)}</p>
+                <p className="text-xs text-muted-foreground">Current provider-reported affordability; not a loan approval. Existing CDAS deductions must not be subtracted again.</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={cdasReadAction !== null} onClick={() => void loadCdasInformation("details")}><BriefcaseBusiness className="h-4 w-4" />Employee details</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={cdasReadAction !== null} onClick={() => void loadCdasInformation("all")}><ListChecks className="h-4 w-4" />All deductions</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={cdasReadAction !== null} onClick={() => void loadCdasInformation("active")}><Search className="h-4 w-4" />Active deduction</Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select value={String(ownDeductionStatus)} onValueChange={value => setOwnDeductionStatus(Number(value))}>
+                      <SelectTrigger className="h-9 w-[145px]" aria-label="Own deduction status"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Registered</SelectItem>
+                        <SelectItem value="3">Reviewed</SelectItem>
+                        <SelectItem value="4">Approved</SelectItem>
+                        <SelectItem value="5">Active</SelectItem>
+                        <SelectItem value="6">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button type="button" size="sm" variant="outline" disabled={cdasReadAction !== null} onClick={() => void loadCdasInformation("own")}>Own deductions</Button>
+                  </div>
+                </div>
+                {cdasReadAction ? <p role="status" className="text-xs text-muted-foreground">Loading CDAS {cdasReadAction} records...</p> : null}
+                {cdasReadError ? <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>CDAS request unsuccessful</AlertTitle><AlertDescription>{cdasReadError}</AlertDescription></Alert> : null}
+                {cdasReadRecords ? (
+                  <div className="rounded-xl border p-3">
+                    <p className="mb-2 text-sm font-bold">{cdasReadTitle} · {cdasReadRecords.length} record{cdasReadRecords.length === 1 ? "" : "s"}</p>
+                    {cdasReadRecords.length === 0 ? <p className="text-xs text-muted-foreground">CDAS returned no matching records.</p> : null}
+                    <div className="max-h-52 space-y-2 overflow-y-auto">
+                      {cdasReadRecords.map((record, index) => (
+                        <div key={index} className="grid gap-x-4 gap-y-1 rounded-lg bg-muted/30 p-3 sm:grid-cols-2">
+                          {Object.entries(record).filter(([, value]) => value !== null && value !== undefined && typeof value !== "object").map(([key, value]) => (
+                            <div key={key} className="min-w-0 text-xs"><span className="font-semibold text-muted-foreground">{key}: </span><span className="break-all">{String(value)}</span></div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="border-t pt-3">
+                  <p className="mb-2 text-xs font-bold">Deduction management</p>
+                  <div className="flex flex-wrap gap-2">
+                    {canManageCdas && affordabilityAmount > 0 ? (
+                      <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/operations?action=register&employee=${encodeURIComponent(profile.cdas_employee_number || "")}#lifecycle`}><CirclePlus className="h-4 w-4" />Register deduction</Link></Button>
+                    ) : null}
+                    {canManageCdas ? (
+                      <>
+                        <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/operations?action=modify&employee=${encodeURIComponent(profile.cdas_employee_number || "")}#modify-active`}><Pencil className="h-4 w-4" />Modify deduction</Link></Button>
+                        <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/operations?action=cancel&employee=${encodeURIComponent(profile.cdas_employee_number || "")}#lifecycle`}><CircleX className="h-4 w-4" />Cancel deduction</Link></Button>
+                        <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/operations?action=review&employee=${encodeURIComponent(profile.cdas_employee_number || "")}#lifecycle`}>Review</Link></Button>
+                        <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/operations?action=approve&employee=${encodeURIComponent(profile.cdas_employee_number || "")}#lifecycle`}>Approve</Link></Button>
+                      </>
+                    ) : null}
+                    <Button size="sm" asChild variant="outline"><Link href={`/company/cdas/history?employee=${encodeURIComponent(profile.cdas_employee_number || "")}`}>CDAS history</Link></Button>
+                    <Button size="sm" asChild variant="outline"><Link href={`/company/documents?client=${profile.client.id}`}><FileText className="h-4 w-4" />Client documents</Link></Button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Management links open the existing LoanHub CDAS screens. Any changes require the appropriate loan, permissions, consent and confirmation. No deduction is submitted from this profile panel.
+                    {affordabilityAmount <= 0 ? " A new deduction cannot be started while reported affordability is zero." : ""}
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
