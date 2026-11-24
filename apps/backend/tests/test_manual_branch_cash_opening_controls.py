@@ -36,11 +36,12 @@ class Query:
 
 
 class FundsDB:
-    def __init__(self, ledger, manual_confirmed, opening, movements):
+    def __init__(self, ledger, manual_confirmed, opening, movements, cash_session=None):
         self.ledger = ledger
         self.manual_confirmed = manual_confirmed
         self.opening = opening
         self.movements = movements
+        self.cash_session = cash_session
         self.queries = []
 
     def query(self, *columns):
@@ -48,9 +49,10 @@ class FundsDB:
         call = len(self.queries)
         result = {
             1: self.ledger,
-            2: SimpleNamespace(id=uuid4()) if self.manual_confirmed else None,
-            3: self.opening,
-            4: self.movements,
+            2: self.cash_session,
+            3: SimpleNamespace(id=uuid4()) if self.manual_confirmed else None,
+            4: self.opening,
+            5: self.movements,
         }.get(call)
         return Query(result)
 
@@ -96,7 +98,7 @@ def test_cash_outflow_requires_confirmed_manual_opening_even_if_other_inflows_ex
             amount=Decimal("20"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
         )
     assert exc.value.status_code == 409
-    assert len(db.queries) == 2
+    assert len(db.queries) == 3
 
 
 def test_cash_outflow_rejects_insufficient_funds_with_confirmed_opening():
@@ -182,3 +184,18 @@ def test_treasury_policy_migration_preserves_existing_opening_history():
     assert 'server_default=sa.text("false")' in migration
     assert "UPDATE branch_daily_ledgers" not in migration
     assert "DELETE FROM branch_opening_sources" not in migration
+
+
+def test_closed_cash_session_blocks_outflow_even_with_available_cash():
+    ledger = make_ledger()
+    db = FundsDB(
+        ledger, manual_confirmed=True, opening=Decimal("500"),
+        movements=[], cash_session=SimpleNamespace(status="closed"),
+    )
+    with pytest.raises(HTTPException, match="cash session is closed") as exc:
+        treasury.assert_branch_outflow_funded(
+            db, ledger=ledger, payment_method=PaymentMethod.CASH,
+            amount=Decimal("10"), settings=SimpleNamespace(carry_previous_closing_enabled=False),
+        )
+    assert exc.value.status_code == 409
+    assert len(db.queries) == 2
