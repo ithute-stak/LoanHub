@@ -509,6 +509,14 @@ def close_daily_cash_session(
     resolve_branch_scope(db, context, record.company_id, record.branch_id)
     if record.status != "open":
         raise HTTPException(status_code=409, detail="The cash day has already been closed")
+    # Serialize physical closing with concurrent loan/expense cash outflows.
+    # Both paths lock the same branch-day treasury row before final posting.
+    from database.models.treasury import BranchDailyLedger
+    db.query(BranchDailyLedger).filter(
+        BranchDailyLedger.company_id == record.company_id,
+        BranchDailyLedger.branch_id == record.branch_id,
+        BranchDailyLedger.business_date == date.fromisoformat(record.data["business_date"]),
+    ).with_for_update().first()
     before = _cash_session_payload(record, db)
     now = datetime.now(timezone.utc)
     record.status = "closed"
