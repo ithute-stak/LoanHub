@@ -665,3 +665,249 @@ def test_debt_failure_after_encrypted_bank_insert_rolls_back_bank_and_identity(
         assert conn.execute(text(f"""
             SELECT count(*) FROM {schema}.borrower_debt_obligations
         """)).scalar_one() == 1
+
+
+def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
+    real_models_sandbox,
+):
+    """Real, disposable PostgreSQL test: client survives a new connection."""
+    from contextlib import contextmanager
+    from services.batlokoa_new_only_registration_command import (
+        BatlokoaRegistrationNotReleased, submit_new_only_client,
+    )
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+        """), {"branch": branch, "company": company})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (
+                id, phone, password_hash, role, is_active, is_verified,
+                must_change_password
+            ) VALUES (
+                :actor, '69998888', 'synthetic-staff-hash-not-credential',
+                'LOAN_OFFICER', TRUE, TRUE, FALSE
+            )
+        """), {"actor": employee})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active
+            ) VALUES (
+                :actor, :actor, :company, :branch,
+                'LOAN_OFFICER', TRUE, TRUE
+            )
+        """), {"actor": employee, "company": company, "branch": branch})
+
+    # Exercise the complete Batlokoa capture, including employment details
+    # and an external debt, not just the minimal borrower identity fields.
+    request = full_capture(
+        branch, national_id="SYN-BATLOKOA-001", phone="59008881")
+    @contextmanager
+    def fresh_session():
+        with sandbox_session(engine, schema) as connection:
+            with Session(bind=connection, expire_on_commit=False) as db:
+                yield db
+
+    kwargs = dict(
+        context=context, payload=request,
+        idempotency_key="batlokoa-full-registration-001",
+        fingerprint_secret=b"ci-only-registration-hmac-key-64-characters-long",
+        session_factory=fresh_session,
+    )
+    with pytest.raises(BatlokoaRegistrationNotReleased):
+        submit_new_only_client(**kwargs)
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+
+    created = submit_new_only_client(
+        **kwargs, independently_approved_release=True,
+    )
+    assert created.replayed is False
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    replay = submit_new_only_client(
+        **kwargs, independently_approved_release=True,
+    )
+    assert replay.client_account_id == created.client_account_id
+    assert replay.replayed is True
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+    with engine.connect() as conn:
+        persisted = conn.execute(text(f"""
+            SELECT company_id, branch_id, opened_by_user_id
+            FROM {schema}.company_borrower_accounts
+            WHERE id = :account
+        """), {"account": created.client_account_id}).one()
+        assert persisted == (company, branch, employee)
+        # Fresh database connection proves committed details survive the
+        # original request/session and the idempotent replay.
+        person = conn.execute(text(f"""
+            SELECT p.first_name, p.middle_name, p.last_name, p.national_id,
+                   b.employer_name, b.monthly_income
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrowers b ON b.id = a.borrower_id
+            JOIN {schema}.people p ON p.user_id = b.user_id
+            WHERE a.id = :account
+        """), {"account": created.client_account_id}).one()
+        assert person == (
+            "Palesa", "K", "Mokoena", "SYN-BATLOKOA-001",
+            "Synthetic Employer", Decimal("6000.00"),
+        )
+        debt = conn.execute(text(f"""
+            SELECT d.creditor, d.current_balance, d.installment_amount
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrower_debt_obligations d
+              ON d.borrower_id = a.borrower_id
+            WHERE a.id = :account
+        """), {"account": created.client_account_id}).one()
+        assert debt == (
+            "Synthetic historical external creditor",
+            Decimal("550.00"), Decimal("55.00"),
+        )
+
+
+def test_isolated_http_save_then_readback_and_retry_uses_actual_postgres(
+    real_models_sandbox,
+):
+    """Synthetic HTTP boundary -> real LoanHub writer -> committed SQL readback.
+
+    This app exists ONLY inside a disposable PostgreSQL CI test. It is not
+    LoanHub's public API router and cannot activate production registration.
+    """
+    from fastapi import FastAPI, Header, HTTPException
+    from fastapi.testclient import TestClient
+
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    captured = full_capture(
+        branch, national_id="SYN-HTTP-PERSIST-001", phone="59008771")
+    app = FastAPI()
+
+    def authenticate(authorization, tenant):
+        if (authorization != "Bearer synthetic-ci-staff"
+                or tenant != str(company)):
+            raise HTTPException(401, "Unauthorized")
+
+    @app.post("/isolated-test-only/registration/clients", status_code=201)
+    def save(
+        payload: FullNewOnlyClientCapture,
+        authorization: str = Header(default=""),
+        x_company_id: str = Header(default=""),
+        idempotency_key: str = Header(default=""),
+    ):
+        authenticate(authorization, x_company_id)
+        # Same synthetic staff and branch provisioning used by existing
+        # disposable PostgreSQL tests; no production customer exists here.
+        result = invoke_full(engine, schema, context, payload, idempotency_key)
+        return {
+            "client_account_id": str(result.client_account_id),
+            "replayed": result.existing,
+        }
+
+    @app.get("/isolated-test-only/company-clients/{account_id}")
+    def readback(
+        account_id: str,
+        authorization: str = Header(default=""),
+        x_company_id: str = Header(default=""),
+    ):
+        authenticate(authorization, x_company_id)
+        with engine.connect() as connection:
+            row = connection.execute(text(f"""
+                SELECT a.id, a.company_id, a.branch_id, a.opened_by_user_id,
+                       a.source, p.first_name, p.last_name
+                FROM {schema}.company_borrower_accounts a
+                JOIN {schema}.borrowers b ON b.id = a.borrower_id
+                JOIN {schema}.people p ON p.user_id = b.user_id
+                WHERE a.id = :account AND a.company_id = :company
+            """), {"account": account_id, "company": company}).one_or_none()
+        if row is None:
+            raise HTTPException(404, "Client not found")
+        return {
+            "id": str(row[0]), "company_id": str(row[1]),
+            "branch_id": str(row[2]),
+            "opened_by_user_id": str(row[3]),
+            "source": row[4], "first_name": row[5], "last_name": row[6],
+        }
+
+    headers = {
+        "Authorization": "Bearer synthetic-ci-staff",
+        "X-Company-ID": str(company),
+        "Idempotency-Key": "synthetic-http-save-unique-001",
+    }
+    with TestClient(app) as http:
+        invalid = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"),
+            headers={**headers, "X-Company-ID": str(uuid4())},
+        )
+        assert invalid.status_code == 401
+        assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+
+        first = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"), headers=headers)
+        assert first.status_code == 201
+        created = first.json()
+        assert created["replayed"] is False
+        assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+        retrieved = http.get(
+            "/isolated-test-only/company-clients/"
+            + created["client_account_id"], headers=headers)
+        assert retrieved.status_code == 200
+        assert retrieved.json() == {
+            "id": created["client_account_id"],
+            "company_id": str(company),
+            "branch_id": str(branch),
+            "opened_by_user_id": str(employee),
+            "source": "new_only_registration",
+            "first_name": "Palesa",
+            "last_name": "Mokoena",
+        }
+        replay = http.post(
+            "/isolated-test-only/registration/clients",
+            json=captured.model_dump(mode="json"), headers=headers)
+        assert replay.status_code == 201
+        assert replay.json() == {
+            "client_account_id": created["client_account_id"],
+            "replayed": True,
+        }
+        assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("missing_index", [
+    "uq_people_national_id_normalized",
+    "uq_people_passport_normalized",
+    "uq_users_phone_normalized",
+    "uq_users_email_normalized",
+])
+def test_registration_refuses_missing_identity_index_before_writes(
+    real_models_sandbox, missing_index,
+):
+    """Reproduce production's missing-index blocker in an isolated schema.
+
+    Each required normalized uniqueness index is independently fail-closed.
+    No client, user, borrower, debt, audit or idempotency rows may survive.
+    """
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    with engine.begin() as conn:
+        # An explicit, fixed set of CI-only index names; never interpolate
+        # externally supplied SQL identifiers or touch public schema.
+        conn.execute(text(f"DROP INDEX {schema}.{missing_index}"))
+    with pytest.raises(
+        AtomicRegistrationUnavailable,
+        match="Verified normalized identity constraints required",
+    ):
+        invoke_full(
+            engine, schema, staff(company, branch, employee),
+            full_capture(branch, national_id="SYN-MISSING-IDX-001",
+                         phone="59008441"),
+            "synthetic-index-gate-registration-001",
+        )
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+    with engine.connect() as conn:
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 0

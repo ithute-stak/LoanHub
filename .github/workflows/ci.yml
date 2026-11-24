@@ -234,7 +234,7 @@ jobs:
           # This ephemeral database is separate from the CI migration target.
           # Apply all production DDL here with ZERO real customer records.
           python -m alembic upgrade head
-          python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py tests/test_legacy_identity_cross_reference_postgres.py
+          python -m pytest -q -ra --maxfail=1 tests/test_atomic_new_client_real_models_postgres.py tests/test_legacy_identity_cross_reference_postgres.py tests/test_legacy_link_triage_postgres.py
 
       - name: Rehearse concurrent identity index migration and failure cleanup in PostgreSQL
         working-directory: apps/backend
