@@ -585,6 +585,17 @@ def sync_counted_cash_opening(
             status_code=409,
             detail="An opening cash source already exists for this branch day; reconcile it before opening the Daily Finance Desk",
         )
+    already_posted = db.query(TreasuryEntry.id).filter(
+        TreasuryEntry.daily_ledger_id == ledger.id,
+        TreasuryEntry.payment_method == PaymentMethod.CASH,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).first()
+    if already_posted:
+        raise HTTPException(
+            status_code=409,
+            detail="Cash movements were already posted for this branch day. Reconcile before declaring an opening count",
+        )
     source = BranchOpeningSource(
         company_id=company_id, branch_id=branch_id,
         daily_ledger_id=ledger.id, source_type=OpeningSourceType.CASH_FLOAT,
