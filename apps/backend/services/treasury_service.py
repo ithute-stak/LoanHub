@@ -520,8 +520,9 @@ def create_opening_source(
     )
     db.add(source)
     db.flush()
-    from services.accounting_service import record_opening_source_accounting
-    record_opening_source_accounting(db, source)
+    if money(source.amount) > 0:
+        from services.accounting_service import record_opening_source_accounting
+        record_opening_source_accounting(db, source)
     recalculate_daily_ledger(db, ledger)
     return source
 
