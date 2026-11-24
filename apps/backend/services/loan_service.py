@@ -701,7 +701,10 @@ def disburse_cash_loan(
         )
 
     from services.treasury_service import (
+        assert_branch_outflow_funded,
+        get_or_create_daily_ledger,
         get_or_create_settings,
+        local_business_date,
         record_payment_treasury_entry,
         validate_manual_proof,
     )
@@ -711,8 +714,18 @@ def disburse_cash_loan(
     disbursement_amount = money(loan.top_up_cash_amount if loan.is_top_up else loan.principal_amount)
     if disbursement_amount <= 0:
         raise HTTPException(status_code=409, detail="The loan does not have a positive amount to disburse")
+    if loan.branch_id is None:
+        raise HTTPException(status_code=409, detail="A branch assignment is required before cash disbursement")
 
     now = datetime.now(timezone.utc)
+    branch_day = get_or_create_daily_ledger(
+        db, company_id=loan.company_id, branch_id=loan.branch_id,
+        business_date=local_business_date(settings, now),
+    )
+    assert_branch_outflow_funded(
+        db, ledger=branch_day, payment_method=payment_method,
+        amount=disbursement_amount, settings=settings,
+    )
     reference = _recorded_payment_reference(payment_method, PaymentDirection.OUTBOUND, proof_reference)
     payment = PaymentTransaction(
         company_id=loan.company_id,
