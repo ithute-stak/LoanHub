@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
@@ -344,8 +345,8 @@ export function LegacyCashoutRegister() {
   const [calculatorSnapshot, setCalculatorSnapshot] = useState<Record<string, unknown>>({});
   const [activeView, setActiveView] = useState<ViewMode>("capture");
   const [currentStep, setCurrentStep] = useState(0);
-  const [registerPage, setRegisterPage] = useState(1);
-  const [registerSearch, setRegisterSearch] = useState("");
+  const [registerPage, setRegisterPage] = useReduxTableField("legacy-cashout", "registerPage", 1);
+  const [registerSearch, setRegisterSearch] = useReduxTableField("legacy-cashout", "registerSearch", "");
   const [registerStatus, setRegisterStatus] = useState("all");
   const latestIdentity = useRef("");
   const [identityChecking, setIdentityChecking] = useState(false);

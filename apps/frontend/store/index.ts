@@ -13,6 +13,7 @@ import loanOffersReducer from "./features/slices/loanOfferSlice";
 import financialOperationsReducer from "./features/slices/financialOperationsSlice";
 import httpCacheReducer from "./features/slices/httpCacheSlice";
 import dataCenterReducer from "./slices/dataCenterSlice";
+import tableViewsReducer from "./slices/tableViewsSlice";
 
 export const store = configureStore({
     reducer: {
@@ -33,6 +34,7 @@ export const store = configureStore({
         financialOperations: financialOperationsReducer,
         httpCache: httpCacheReducer,
         dataCenter: dataCenterReducer,
+        tableViews: tableViewsReducer,
     },
 });
 

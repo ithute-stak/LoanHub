@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -142,7 +143,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
 }
 
 export function CompanyOperatingSystemCentre() {
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTab] = useReduxTableField<TabKey>("company-operating-system", "tab", "overview");
   const [dashboard, setDashboard] = useState<CompanyCommandDashboard | null>(null);
   const [capabilities, setCapabilities] = useState<CompanyCapability[]>([]);
   const [loading, setLoading] = useState(true);

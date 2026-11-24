@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -255,12 +256,12 @@ export default function CompanyClientsPage() {
   const [loading, setLoading] = useState(true);
   const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState("");
-  const [directoryFilters, setDirectoryFilters] = useState<DirectoryFilters>(EMPTY_DIRECTORY_FILTERS);
+  const [search, setSearch] = useReduxTableField("clients-page", "search", "");
+  const [directoryFilters, setDirectoryFilters] = useReduxTableField<DirectoryFilters>("clients-page", "filters", EMPTY_DIRECTORY_FILTERS);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [directoryInitialSearch, setDirectoryInitialSearch] = useState("");
-  const [directoryPage, setDirectoryPage] = useState(1);
-  const [directoryPageSize, setDirectoryPageSize] = useState(15);
+  const [directoryPage, setDirectoryPage] = useReduxTableField("clients-page", "page", 1);
+  const [directoryPageSize, setDirectoryPageSize] = useReduxTableField("clients-page", "pageSize", 15);
   const [portfolioInsights, setPortfolioInsights] = useState<CompanyClientPortfolioInsights | null>(null);
   const [clientDialog, setClientDialog] = useState(false);
   const [loanDialog, setLoanDialog] = useState(false);

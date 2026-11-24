@@ -1,5 +1,6 @@
 "use client";
 
+import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenCheck, CalendarCheck2, Download, FileSpreadsheet, RefreshCcw, Scale, Upload } from "lucide-react";
 
@@ -40,9 +41,9 @@ function yearEnd() {
 
 export function FinancialBooksWorkspace() {
   const { currentCompany, currentBranch, branches } = useAppData();
-  const [fromDate, setFromDate] = useState(yearStart());
-  const [toDate, setToDate] = useState(isoToday());
-  const [branchId, setBranchId] = useState(currentBranch?.id ?? "all");
+  const [fromDate, setFromDate] = useReduxTableField("financial-books", "fromDate", yearStart());
+  const [toDate, setToDate] = useReduxTableField("financial-books", "toDate", isoToday());
+  const [branchId, setBranchId] = useReduxTableField("financial-books", "branchId", currentBranch?.id ?? "all");
   const [books, setBooks] = useState<FinancialBooksPack | null>(null);
   const [preparedSnapshot, setPreparedSnapshot] = useState<{ preparedAt?: string | null; scopeName?: string | null } | null>(null);
   const [periods, setPeriods] = useState<ControlRecord[]>([]);
