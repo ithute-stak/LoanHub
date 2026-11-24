@@ -68,3 +68,20 @@ def test_company_workspace_navigation_keeps_every_legacy_workflow_reachable() ->
         "/company/queries",
     ):
         assert path in source
+
+
+
+def test_daily_issuance_report_visible_in_desktop_and_mobile_navigation() -> None:
+    desktop = PORTAL_SHELL.read_text(encoding="utf-8")
+    mobile = (
+        ROOT / "apps" / "frontend" / "components" / "navigation"
+        / "mobile-app-navigation.tsx"
+    ).read_text(encoding="utf-8")
+    entry = 'href: "/company/reports/daily-issuance", icon: FileChartColumn, roles: REPORTING_ROLES'
+    assert entry in desktop
+    assert entry in mobile
+    assert desktop.index('label: "Governance & reporting"') < desktop.index(
+        'label: "Daily Loan Issuance"'
+    )
+    assert 'activePaths: ["/company/files", "/company/reports"]' not in desktop
+    assert 'activePaths: ["/company/reports", "/company/activity", "/company/queries"]' in desktop
