@@ -14,6 +14,11 @@ def report(**updates):
             "passport_overlap_groups": 0,
             "repeated_legacy_passport_groups": 0,
         },
+        "legacy_linkage_review_complete": True,
+        "legacy_linkage_review": {
+            "matching_identity_groups": 0,
+            "unresolved_identity_groups": 0,
+        },
         "operator_review_candidate": True,
         "safe_to_execute": False,
         "production_approved": False,
@@ -93,3 +98,27 @@ def test_boolean_and_malformed_historical_counts_not_trusted():
         result = assess(audit)
         assert result.reviewable is False
         assert result.pending_data_review is True
+
+
+def test_unverified_linkage_triage_cannot_be_bypassed_by_approvals():
+    for audit in (
+        report(legacy_linkage_review_complete=False),
+        report(legacy_linkage_review=None),
+        report(legacy_linkage_review={
+            "matching_identity_groups": 0,
+            "unresolved_identity_groups": 1,
+        }),
+        report(legacy_linkage_review={
+            "matching_identity_groups": True,
+            "unresolved_identity_groups": 0,
+        }),
+        report(legacy_linkage_review={
+            "matching_identity_groups": 1,
+            "unresolved_identity_groups": 0,
+        }),
+    ):
+        outcome = assess(audit)
+        assert outcome.reviewable is False
+        assert outcome.pending_data_review is True
+        assert outcome.registration_enabled is False
+        assert outcome.authorization_to_deploy is False
