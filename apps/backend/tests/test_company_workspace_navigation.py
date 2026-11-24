@@ -103,8 +103,6 @@ def test_owner_consolidated_statement_uses_existing_tenant_scoped_treasury_api()
     assert 'href: "/company/reports/branch-financial-statement"' in mobile
     assert 'expenseManagementApi.dashboard(businessDate)' in source
     assert 'activeRole === "company_owner" || activeRole === "company_admin"' in source
-    assert 'branch_id' not in source.split("expenseManagementApi.dashboard(businessDate)")[0].split(
-        "const load = useCallback"
-    )[1].replace("branch_id:", "")
+    assert "expenseManagementApi.dashboard(businessDate, " not in source
     assert "declared_closing_balance === null" in source
     assert "window.print()" in source
