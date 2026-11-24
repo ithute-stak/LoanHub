@@ -707,7 +707,52 @@ def owner_branch_day_summary(
             "expected_closing": str(ledger.expected_closing_balance) if ledger else None,
         })
     from decimal import Decimal
-    recorded = [ledger for ledger in ledgers if ledger.branch_id in {branch.id for branch in branches}]
+    from services.treasury_service import _posted_entry_filter
+
+    active_ids = {branch.id for branch in branches}
+    recorded = [ledger for ledger in ledgers if ledger.branch_id in active_ids]
+    ledger_ids = [ledger.id for ledger in recorded]
+    # Only matched, confirmed internal receipts may offset outgoing transfers.
+    outgoing = db.query(TreasuryEntry).filter(
+        TreasuryEntry.company_id == company_id,
+        TreasuryEntry.daily_ledger_id.in_(ledger_ids),
+        TreasuryEntry.entry_type == TreasuryEntryType.BRANCH_FUNDING,
+        TreasuryEntry.direction == TreasuryDirection.MONEY_OUT,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).all()
+    receipts = db.query(BranchOpeningSource).filter(
+        BranchOpeningSource.company_id == company_id,
+        BranchOpeningSource.daily_ledger_id.in_(ledger_ids),
+        BranchOpeningSource.transfer_id.isnot(None),
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).all()
+    receipt_by_transfer = {}
+    for receipt in receipts:
+        receipt_by_transfer.setdefault(receipt.transfer_id, []).append(receipt)
+    matched = Decimal("0.00")
+    unmatched = Decimal("0.00")
+    matched_ids = set()
+    for entry in outgoing:
+        candidates = receipt_by_transfer.get(entry.transfer_id, [])
+        if (
+            entry.transfer_id is not None
+            and entry.transfer_id not in matched_ids
+            and len(candidates) == 1
+            and candidates[0].branch_id != entry.branch_id
+            and candidates[0].payment_method == entry.payment_method
+            and candidates[0].currency == entry.currency
+            and candidates[0].amount == entry.amount
+        ):
+            matched += entry.amount
+            matched_ids.add(entry.transfer_id)
+        else:
+            unmatched += entry.amount
+    unmatched_receipts = sum(
+        (receipt.amount for receipt in receipts if receipt.transfer_id not in matched_ids),
+        Decimal("0.00"),
+    )
     return {
         "business_date": business_date.isoformat(),
         "branch_count": len(branches),
@@ -718,7 +763,13 @@ def owner_branch_day_summary(
         "money_out": str(sum((Decimal(str(row.total_money_out)) for row in recorded), Decimal("0"))),
         "expected_closing": str(sum((Decimal(str(row.expected_closing_balance)) for row in recorded), Decimal("0"))),
         "includes_internal_transfers": True,
-        "complete": len(recorded) == len(branches),
+        "matched_internal_transfers": str(matched),
+        "unmatched_internal_outgoing": str(unmatched),
+        "unmatched_internal_receipts": str(unmatched_receipts),
+        "net_external_opening_balance": str(sum((row.opening_balance for row in recorded), Decimal("0.00")) - matched),
+        "net_external_money_out": str(sum((row.total_money_out for row in recorded), Decimal("0.00")) - matched),
+        "transfers_reconciled": unmatched == 0 and unmatched_receipts == 0,
+        "complete": len(recorded) == len(branches) and unmatched == 0 and unmatched_receipts == 0,
         "branches": rows,
     }
 
