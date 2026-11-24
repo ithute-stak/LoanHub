@@ -569,6 +569,10 @@ def sync_counted_cash_opening(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
     )
+    settings = get_or_create_settings(db, company_id)
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
+    )
     assert_ledger_writable(ledger)
     existing = (
         db.query(BranchOpeningSource)
@@ -625,6 +629,10 @@ def sync_recorded_cash_float(
     ledger = get_or_create_daily_ledger(
         db, company_id=company_id, branch_id=branch_id,
         business_date=business_date,
+    )
+    settings = get_or_create_settings(db, company_id)
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
     )
     assert_ledger_writable(ledger)
     source = BranchOpeningSource(
