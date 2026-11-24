@@ -467,7 +467,11 @@ def open_daily_cash_session(
     if branch is None:
         raise HTTPException(status_code=409, detail="Select an active branch before opening the daily cash session")
     db.add(record)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A cash session already exists for this branch and date") from exc
     from services.treasury_service import sync_counted_cash_opening
     sync_counted_cash_opening(
         db, company_id=company_id, branch_id=branch,
