@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, BriefcaseBusiness, Gavel, MessageSquareWarning, RefreshCcw, ShieldCheck, UsersRound } from "lucide-react";
 
 import {
@@ -17,6 +17,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function text(value: unknown, fallback = "—") {
   return typeof value === "string" && value.trim() ? value : fallback;
@@ -48,6 +51,11 @@ function OperationsTable({ rows, columns }: { rows: CompanyOperationRecord[]; co
 }
 
 export default function CompanyOperationsPage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [overview, setOverview] = useState<CompanyOperationsOverview | null>(null);
   const [crm, setCrm] = useState<CompanyOperationRecord[]>([]);
   const [collateral, setCollateral] = useState<CompanyOperationRecord[]>([]);
@@ -57,21 +65,32 @@ export default function CompanyOperationsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
       const [summary, crmRows, collateralRows, legalRows, complaintRows] = await Promise.all([
         getCompanyOperationsOverview(), getCrmCases(), getCollateralAssets(), getLegalRecoveryMatters(), getComplaintCases(),
       ]);
+      if (sequence !== requestSequence.current) return;
       setOverview(summary); setCrm(crmRows); setCollateral(collateralRows); setLegal(legalRows); setComplaints(complaintRows);
+      setLoadedScope(scopeKey);
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setOverview(null); setCrm([]); setCollateral([]); setLegal([]); setComplaints([]);
+      setLoadedScope(scopeKey);
       setError(nextError instanceof Error ? nextError.message : "Unable to load company operations.");
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="space-y-6 pb-12">
