@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session, joinedload
 from core.access_control import PERFORMANCE_ROLES, TRANSPARENCY_ROLES, TenantContext, get_user_context, require_tenant_roles
 from database.models.enums import UserRole, LoanStatus
 from database.models.client_loan_company import ClientCompanyLoan
+from database.models.borrower import Borrower
+from database.models.user import User
+from database.models.branch import CompanyBranch
 from database.models.reporting import GeneratedReport, ReportSchedule
 from database.schemas.reporting import (
     GeneratedReportRead,
@@ -56,10 +59,11 @@ def daily_issuance_expected_returns(
     period_end: date = Query(...),
     company_id: UUID | None = None,
     branch_id: UUID | None = None,
+    include_details: bool = False,
     db: Session = Depends(get_db),
     context: TenantContext = Depends(get_user_context),
 ):
-    """Read-only daily disbursement and CURRENT contractual repayment snapshot."""
+    """Tenant-scoped disbursement snapshot; optional borrower-level register."""
     require_reports(context)
     if (period_end < period_start or (period_end - period_start).days > 1095
             or period_end == date.max):
@@ -118,6 +122,61 @@ def daily_issuance_expected_returns(
     ]
     principal = sum((Decimal(item["principal_issued"]) for item in daily), Decimal("0.00"))
     expected = sum((Decimal(item["expected_contractual_return"]) for item in daily), Decimal("0.00"))
+    details = []
+    if include_details:
+        # The same tenant, branch, disbursement-time and status filters used
+        # for the aggregate govern the confidential borrower-level register.
+        # Limit expanded reporting to a quarter to bound response size.
+        if (period_end - period_start).days > 92:
+            raise HTTPException(status_code=400, detail="Detailed loan register supports up to 93 calendar days. Narrow the date range.")
+        detail_query = (
+            db.query(ClientCompanyLoan)
+            .options(
+                joinedload(ClientCompanyLoan.borrower)
+                    .joinedload(Borrower.user).joinedload(User.person),
+                joinedload(ClientCompanyLoan.branch),
+                joinedload(ClientCompanyLoan.disbursed_by).joinedload(User.person),
+            )
+            .filter(
+                loan.company_id == company_id,
+                loan.disbursed_at >= datetime.combine(period_start, time.min),
+                loan.disbursed_at < datetime.combine(period_end + timedelta(days=1), time.min),
+                loan.status.notin_([LoanStatus.CANCELLED, LoanStatus.REJECTED]),
+            )
+        )
+        if branch_id is not None:
+            detail_query = detail_query.filter(loan.branch_id == branch_id)
+        loans = detail_query.order_by(loan.disbursed_at.asc(), loan.id.asc()).all()
+        for item in loans:
+            borrower_person = getattr(getattr(item.borrower, "user", None), "person", None)
+            officer_person = getattr(item.disbursed_by, "person", None) if item.disbursed_by else None
+            principal_value = money(item.principal_amount)
+            # Top-ups use net cash to borrower, not the larger new principal.
+            # Cash settlement/paid-out totals are recorded separately for review.
+            cash_value = money(item.top_up_cash_amount if item.is_top_up else item.principal_amount)
+            details.append({
+                "date": item.disbursed_at.date().isoformat(),
+                "time": item.disbursed_at.strftime("%H:%M"),
+                "loan_reference": item.loan_reference,
+                "folio_number": item.folio_number,
+                "client_name": borrower_person.full_name if borrower_person else "Name unavailable",
+                "branch": item.branch.name if item.branch else "Unassigned",
+                "disbursed_by": officer_person.full_name if officer_person else "Not recorded",
+                "is_top_up": bool(item.is_top_up),
+                "principal_issued": str(principal_value),
+                "cash_to_borrower": str(cash_value),
+                "top_up_settlement": str(money(item.top_up_settlement_amount if item.is_top_up else 0)),
+                "expected_contractual_return": str(money(item.total_repayable)),
+                "installments": item.repayment_period,
+                "installment_amount": str(money(item.installment_amount)),
+                "first_payment_due": item.first_payment_due.isoformat() if item.first_payment_due else None,
+            })
+        # If the detailed and aggregate queries disagree due to a concurrent
+        # disbursement, do not silently publish an unreconciled report.
+        if (len(details) != sum(row["loans_issued"] for row in daily)
+                or sum((Decimal(item["principal_issued"]) for item in details), Decimal("0.00")) != principal):
+            raise HTTPException(status_code=409, detail="Issuance changed while preparing the register. Refresh the report.")
+
     return {
         "company_id": str(company_id),
         "branch_id": str(branch_id) if branch_id else None,
@@ -132,6 +191,8 @@ def daily_issuance_expected_returns(
             "expected_return_above_principal": str(expected - principal),
         },
         "daily": daily,
+        "details": details,
+        "cash_to_borrowers": str(sum((Decimal(item["cash_to_borrower"]) for item in details), Decimal("0.00"))) if include_details else None,
     }
 
 
@@ -152,6 +213,7 @@ def export_daily_issuance_csv(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
@@ -214,6 +276,7 @@ def export_daily_issuance_pdf(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
@@ -332,6 +395,7 @@ def export_daily_issuance_xlsx(
         period_end=period_end,
         company_id=company_id,
         branch_id=branch_id,
+        include_details=True,
         db=db,
         context=context,
     )
