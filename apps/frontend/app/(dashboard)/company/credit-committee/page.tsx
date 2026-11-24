@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   ClipboardCheck,
@@ -25,6 +25,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, formatMoney, titleCase } from "@/lib/format";
+import { useTenant } from "@/provider/tenantProvider";
+import { useAppSelector } from "@/store/hooks";
+import { PageLoader } from "@/components/ui/page-loader";
 
 function errorText(error: unknown) {
   if (typeof error === "object" && error && "response" in error) {
@@ -41,24 +44,39 @@ function tone(status: string) {
 }
 
 export default function CreditCommitteePage() {
+  const { activeCompanyId, activeBranchId, activeRole } = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id ?? null);
+  const scopeKey = [userId, activeCompanyId, activeBranchId, activeRole].join(":");
+  const requestSequence = useRef(0);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<CommitteeDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      setDashboard(await getCommitteeDashboard());
+      const result = await getCommitteeDashboard();
+      if (sequence !== requestSequence.current) return;
+      setDashboard(result);
+      setLoadedScope(scopeKey);
     } catch (nextError) {
+      if (sequence !== requestSequence.current) return;
+      setDashboard(null);
+      setLoadedScope(scopeKey);
       setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestSequence.current += 1; };
+  }, [load]);
 
   async function intake(applicationId: string) {
     setBusy(applicationId);
@@ -71,6 +89,8 @@ export default function CreditCommitteePage() {
       setBusy(null);
     }
   }
+
+  if (loadedScope !== scopeKey) return <PageLoader rows={7} />;
 
   return (
     <div className="space-y-6 pb-12">
