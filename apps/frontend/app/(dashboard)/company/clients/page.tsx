@@ -382,7 +382,7 @@ export default function CompanyClientsPage() {
   const loadedClientsRef = useRef(false);
   const loadedScopeRef = useRef<string | null>(null);
   const loadSequenceRef = useRef(0);
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     const sequence = ++loadSequenceRef.current;
     if (loadedScopeRef.current !== scopeKey) {
       loadedScopeRef.current = scopeKey;
@@ -397,7 +397,7 @@ export default function CompanyClientsPage() {
 
     const directoryTask = (async () => {
       try {
-        const rows = await listCompanyClients({ limit: 1000 });
+        const rows = await listCompanyClients({ limit: 1000 }, { refresh: forceRefresh });
         if (sequence !== loadSequenceRef.current) return;
         setClients(rows);
         loadedClientsRef.current = true;
@@ -1120,7 +1120,7 @@ export default function CompanyClientsPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh</Button>
+          <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh</Button>
           <Button variant="outline" asChild><Link href="/company/marketplace?workspace=applications"><BookOpenCheck className="h-4 w-4" />Process applications</Link></Button>
           <Button onClick={() => { resetClientDialog(); setClientDialog(true); }}><UserRoundPlus className="h-4 w-4" />Open borrower account</Button>
         </div>
