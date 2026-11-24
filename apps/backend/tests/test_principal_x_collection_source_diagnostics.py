@@ -1,3 +1,4 @@
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -38,7 +39,7 @@ class SessionDouble:
 def test_linked_sources_are_not_double_counted():
     payment_id = uuid4()
     db = SessionDouble(
-        [SimpleNamespace(id=payment_id)],
+        [SimpleNamespace(id=payment_id, amount=Decimal('100'))],
         [SimpleNamespace(payment_id=payment_id)],
         [SimpleNamespace(payment_id=payment_id)],
         [SimpleNamespace(payment_transaction_id=payment_id)],
@@ -90,7 +91,7 @@ def test_treasury_link_to_another_payment_is_not_treated_as_verified():
     selected_payment_id = uuid4()
     unrelated_payment_id = uuid4()
     db = SessionDouble(
-        [SimpleNamespace(id=selected_payment_id)],
+        [SimpleNamespace(id=selected_payment_id, amount=Decimal('100'))],
         [], [],
         [SimpleNamespace(payment_transaction_id=unrelated_payment_id)],
     )
@@ -105,7 +106,7 @@ def test_allocation_linked_to_another_loan_payment_is_flagged():
     selected_payment_id = uuid4()
     other_loan_payment_id = uuid4()
     db = SessionDouble(
-        [SimpleNamespace(id=selected_payment_id)],
+        [SimpleNamespace(id=selected_payment_id, amount=Decimal('100'))],
         [],
         [SimpleNamespace(payment_id=other_loan_payment_id)],
         [],
@@ -158,3 +159,36 @@ def test_non_cash_payment_does_not_require_cash_transaction():
         db, company_id=uuid4(), loan_id=uuid4(),
     )
     assert result.missing_cash_evidence_count == 0
+
+
+def test_allocation_overage_across_installments_is_flagged_without_double_counting():
+    payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+        [],
+        [
+            SimpleNamespace(payment_id=payment_id, amount=Decimal("70.00")),
+            SimpleNamespace(payment_id=payment_id, amount=Decimal("30.02")),
+        ],
+        [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.payment_count == 1
+    assert result.allocation_count == 2
+    assert result.overallocated_payment_count == 1
+    assert result.complete is False
+
+
+def test_partial_allocations_are_not_falsely_flagged():
+    payment_id = uuid4()
+    db = SessionDouble(
+        [SimpleNamespace(id=payment_id, amount=Decimal("100.00"))],
+        [], [SimpleNamespace(payment_id=payment_id, amount=Decimal("80.00"))], [],
+    )
+    result = inspect_principal_x_collection_sources(
+        db, company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.overallocated_payment_count == 0
+    assert result.complete is False
