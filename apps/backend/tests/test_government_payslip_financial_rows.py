@@ -63,7 +63,7 @@ def test_unpaired_amount_must_fail():
     unexpected = word("20.00", 350, 185, 19)
     extra_line = OCRLine("20.00", (unexpected,), 350, 185, unexpected.right, unexpected.bottom)
     from dataclasses import replace
-    with pytest.raises(AmbiguousPayslipLayout, match="unpaired"):
+    with pytest.raises(AmbiguousPayslipLayout, match="missing or has multiple amounts"):
         reconstruct_payslip_financials(
             replace(cols, earnings=cols.earnings + (extra_line,)), printed_net="900.00"
         )
