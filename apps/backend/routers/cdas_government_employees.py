@@ -535,13 +535,17 @@ def download_cdas_consent_review_document(
         ManagedFile.id == record.managed_file_id,
         ManagedFile.company_id == context.company_id,
     ).first()
-    verify_managed_cdas_consent_bytes(
+    verified_digest = verify_managed_cdas_consent_bytes(
         file=file, company_id=context.company_id, borrower_id=record.borrower_id,
     )
-    # This read is independently checksum-checked by LoanHub storage. Avoid
-    # external URLs, content sniffing or any write to the borrower file.
+    # Read again for the actual response and bind it to the same verified
+    # digest: never serve a different version after the integrity check.
     from services.file_service import read_file_bytes
+    import hashlib
+    import hmac
     content = read_file_bytes(file)
+    if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), verified_digest):
+        raise HTTPException(status_code=409, detail="Consent source changed during review download")
     return StreamingResponse(
         BytesIO(content),
         media_type=file.mime_type,
