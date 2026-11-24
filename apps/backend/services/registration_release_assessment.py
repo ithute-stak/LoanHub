@@ -78,8 +78,25 @@ def assess_registration_release(
             "repeated_legacy_passport_groups",
         ))
     )
+    # A top-level "candidate" flag is not independent proof that the
+    # historical linkage worklist has been examined. Require the current
+    # aggregate triage evidence and reconcile it with the overlap count.
+    triage = report.get("legacy_linkage_review")
+    triage_complete = (
+        report.get("legacy_linkage_review_complete") is True
+        and isinstance(triage, Mapping)
+        and all(
+            type(triage.get(key)) is int and triage[key] >= 0
+            for key in ("matching_identity_groups", "unresolved_identity_groups")
+        )
+        and complete
+        and triage["matching_identity_groups"]
+            == counts["national_id_overlap_groups"]
+        and triage["unresolved_identity_groups"] == 0
+    )
     report_ready = (
-        complete
+        triage_complete
+        and complete
         and report.get("operator_review_candidate") is True
         and report.get("safe_to_execute") is False
         and report.get("production_approved") is False
