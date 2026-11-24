@@ -195,7 +195,8 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
             can_post_settlement=True, payment_rows_reviewed=0,
             unresolved_payment_rows=0, orphan_cash_rows=0,
             orphan_allocation_rows=0, unlinked_treasury_rows=0,
-            missing_cash_evidence_rows=0, overallocated_payment_rows=0, invalid_allocation_rows=0, blocking_reasons=[],
+            missing_cash_evidence_rows=0, overallocated_payment_rows=0, invalid_allocation_rows=0, cash_overapplied_rows=0,
+            invalid_cash_amount_rows=0, blocking_reasons=[],
         )
 
 
@@ -285,6 +286,7 @@ def test_readiness_endpoint_queries_real_cross_source_diagnostics():
         "orphan_cash_rows", "orphan_allocation_rows",
         "unlinked_treasury_rows", "missing_cash_evidence_rows",
         "overallocated_payment_rows", "invalid_allocation_rows",
+        "cash_overapplied_rows", "invalid_cash_amount_rows",
     ):
         assert field in values
     for field in ("can_post_settlement", "cross_source_reconciliation_complete"):
@@ -301,7 +303,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
         payment_rows_reviewed=1, unresolved_payment_rows=0,
         orphan_cash_rows=0, orphan_allocation_rows=0,
         unlinked_treasury_rows=0, missing_cash_evidence_rows=0,
-        overallocated_payment_rows=0, invalid_allocation_rows=0, blocking_reasons=["Authoritative external reconciliation missing"],
+        overallocated_payment_rows=0, invalid_allocation_rows=0, cash_overapplied_rows=0,
+        invalid_cash_amount_rows=0, blocking_reasons=["Authoritative external reconciliation missing"],
     )
     report = PrincipalXSettlementReadinessRead(**data)
     assert report.can_post_settlement is False
