@@ -31,6 +31,7 @@ class TreasurySettingsUpdate(BaseModel):
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     timezone: str = Field(default="Africa/Maseru", min_length=3, max_length=80)
     carry_previous_closing_enabled: bool = False
+    enforce_branch_cash_controls_enabled: bool = False
     auto_open_enabled: bool = True
     auto_open_time: time = time(0, 1)
     auto_submit_enabled: bool = True
