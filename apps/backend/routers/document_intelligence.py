@@ -24,6 +24,7 @@ from services.document_intelligence_reader import (
     read_document,
 )
 from services.government_payslip_stamp_preview import preview_payslip_stamp
+from services.government_payslip_net_pay_preview import preview_net_pay_amount
 from services.nedbank_statement_adapter import (
     NedbankStatementError, parse_nedbank_native_pdf,
 )
@@ -104,6 +105,17 @@ def review_managed_document(
     if record.category == "borrower_payslip":
         response["checks"]["payslip_financials"] = "manual_review"
         response["checks"]["payslip_financial_reason"] = "itemised_scan_reconciliation_pending"
+        try:
+            net_candidate = preview_net_pay_amount(contents, record.original_name)
+        except (DocumentReadError, ValueError):
+            response["checks"]["net_pay"] = "manual_review"
+            response["checks"]["net_pay_review_reasons"] = ["net_pay_crop_processing_failed"]
+        else:
+            response["checks"]["net_pay"] = net_candidate.status
+            response["checks"]["net_pay_candidate"] = (
+                str(net_candidate.candidate) if net_candidate.candidate is not None else None
+            )
+            response["checks"]["net_pay_review_reasons"] = list(net_candidate.review_reasons)
         try:
             local_today = datetime.now(ZoneInfo("Africa/Maseru")).date()
             preview = preview_payslip_stamp(
