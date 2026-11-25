@@ -65,7 +65,10 @@ def _ocr_table(image: Image.Image) -> str:
     ).decode("utf-8", errors="replace")
 
 
-def _parse_table(text: str, *, section: str, allow_missing_heading: bool = False) -> tuple[tuple[ScannedPayItem, ...], Decimal]:
+def _parse_table(
+    text: str, *, section: str, allow_missing_heading: bool = False,
+    corroborated_total: Decimal | None = None,
+) -> tuple[tuple[ScannedPayItem, ...], Decimal]:
     required_header = "earnings" if section == "earnings" else "deductions"
     expected_total = _EARNINGS_TOTAL if section == "earnings" else _DEDUCTIONS_TOTAL
     rows: list[ScannedPayItem] = []
@@ -85,6 +88,17 @@ def _parse_table(text: str, *, section: str, allow_missing_heading: bool = False
         if match:
             totals.append(money(match.group(1)))
             break
+        if (
+            section == "earnings"
+            and corroborated_total is not None
+            and re.match(r"^Total Earnings\s*:", line, re.I)
+        ):
+            # Only a corrupted *printed* total may be recovered by a tightly
+            # located separate OCR crop; never silently override a valid number.
+            if re.fullmatch(r"Total Earnings\s*:\s*[0-9,.OCoc]+", line, re.I):
+                totals.append(money(corroborated_total))
+                break
+            raise AmbiguousPayslipLayout("unreadable printed earnings total")
         entry = _ENTRY.fullmatch(line)
         if not entry:
             # No unrecognised line can silently disappear from a financial table.
@@ -103,6 +117,7 @@ def _parse_table(text: str, *, section: str, allow_missing_heading: bool = False
 def read_scanned_payslip_financials(
     image: Image.Image, words: tuple[OCRWord, ...], *,
     net_pay_candidate: Decimal | None = None,
+    gross_crop_candidate: Decimal | None = None,
 ) -> ScannedPayslipFinancials:
     """Use located EARNINGS/DEDUCTIONS headings; no pixel coordinates hard-coded.
 
@@ -141,11 +156,16 @@ def read_scanned_payslip_financials(
     earnings, printed_gross = _parse_table(
         _ocr_table(left_crop), section="earnings",
         allow_missing_heading=missing_left_heading,
+        corroborated_total=gross_crop_candidate,
     )
     deductions, printed_deductions = _parse_table(_ocr_table(right_crop), section="deductions")
     reasons: list[str] = ["issuer_and_original_document_unverified"]
     if missing_left_heading:
         reasons.append("earnings_heading_not_recognised")
+    if gross_crop_candidate is not None:
+        if printed_gross != gross_crop_candidate:
+            raise AmbiguousPayslipLayout("gross crop conflicts with printed table total")
+        reasons.append("gross_total_crop_candidate_requires_confirmation")
     reconciled = False
     if net_pay_candidate is None:
         reasons.append("printed_net_pay_unconfirmed")
