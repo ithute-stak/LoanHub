@@ -42,6 +42,7 @@ class CollectionSourceDiagnostics:
     treasury_direction_mismatch_count: int = 0
     voided_linked_treasury_count: int = 0
     unposted_linked_treasury_count: int = 0
+    missing_posted_treasury_evidence_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -216,6 +217,26 @@ def inspect_principal_x_collection_sources(
         ):
             treasury_amount_mismatches += 1
 
+    # A successful inbound loan repayment with no posted, non-voided
+    # treasury link is a gap for review. Historical collections may use
+    # different accounting paths; this is NOT proof of a missing payment.
+    posted_treasury_payment_ids = {
+        entry.payment_transaction_id for entry in treasury
+        if entry.payment_transaction_id in payment_ids
+        and not getattr(entry, "is_voided", False)
+        and getattr(getattr(entry, "approval_status", None), "value",
+                    getattr(entry, "approval_status", None)) == "posted"
+    }
+    missing_posted_treasury = sum(
+        1 for row in payments
+        if (
+            getattr(row, "status", None) == PaymentStatus.SUCCEEDED
+            and getattr(row, "purpose", None) == PaymentPurpose.LOAN_REPAYMENT
+            and getattr(row, "direction", None) == PaymentDirection.INBOUND
+            and row.id not in posted_treasury_payment_ids
+        )
+    )
+
     return CollectionSourceDiagnostics(
         payment_count=len(payments),
         cash_link_count=len(cash),
@@ -241,6 +262,7 @@ def inspect_principal_x_collection_sources(
         treasury_direction_mismatch_count=treasury_direction_mismatches,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
+        missing_posted_treasury_evidence_count=missing_posted_treasury,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
