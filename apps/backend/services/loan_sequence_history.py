@@ -59,3 +59,25 @@ def recorded_loan_changes(before_data, after_data):
         changes.append({"field": field, "before_recorded": old_present,
                         "after_recorded": new_present, "before": old, "after": new})
     return changes
+
+
+def recorded_balance_impact(before_data, after_data, status):
+    """Compare recorded loan-row balance snapshots, not cash or ledger postings."""
+    unavailable = {"evidence": "not_recorded", "before": None, "after": None, "delta": None}
+    if status != "success":
+        return {**unavailable, "evidence": "not_confirmed"}
+    if not isinstance(before_data, dict) or not isinstance(after_data, dict):
+        return unavailable
+    amounts = []
+    for snapshot in (before_data, after_data):
+        valid, value = _safe_value("balance", snapshot.get("balance"))
+        if not valid or value is None:
+            return unavailable
+        number = Decimal(value)
+        if number != number.quantize(Decimal("0.01")) or abs(number) >= Decimal("10000000000000"):
+            return unavailable
+        amounts.append(number)
+    before, after = amounts
+    return {"evidence": "recorded_loan_balance",
+            "before": format(before, ".2f"), "after": format(after, ".2f"),
+            "delta": format(after - before, ".2f")}
