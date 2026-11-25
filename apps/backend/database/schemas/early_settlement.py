@@ -135,6 +135,8 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     voided_linked_treasury_rows: int
     unposted_linked_treasury_rows: int
     missing_posted_treasury_evidence_rows: int
+    missing_posted_refund_treasury_rows: int
+    refund_treasury_type_mismatch_rows: int
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
     source_coverage: list[PrincipalXSourceCoverageRead]
