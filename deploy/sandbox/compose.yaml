@@ -22,6 +22,7 @@ services:
     env_file: ./sandbox.env
     environment: &backend_env
       SANDBOX_MODE: "true"
+      BOOTSTRAP_SUPERADMIN_ENABLED: "false"
       TREASURY_AUTO_SUBMIT_ENABLED: "false"
       MIDNIGHT_REPORTS_ENABLED: "false"
       COLLECTION_AUTOMATION_ENABLED: "false"
@@ -87,7 +88,7 @@ services:
     image: ${SANDBOX_BACKEND_IMAGE:?required}
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12
