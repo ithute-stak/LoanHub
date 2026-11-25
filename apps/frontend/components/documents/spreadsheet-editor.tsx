@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import {confirmAppDialog, promptAppDialog} from "@/lib/app-dialog";
+
 import {
     useCallback,
     useEffect,
@@ -717,9 +719,9 @@ export function SpreadsheetEditor({
         setSelectionEnd("A1");
     }
 
-    function renameSheet() {
+    async function renameSheet() {
         if (!activeSheet || !workbook) return;
-        const requested = window.prompt("Sheet name", activeSheet.name)?.trim();
+        const requested = await promptAppDialog("Sheet name", activeSheet.name)?.trim();
         if (!requested || requested === activeSheet.name) return;
         const cleaned = requested.replace(/[\\/*?:\[\]]/g, " ").trim().slice(0, 31);
         if (
@@ -736,9 +738,9 @@ export function SpreadsheetEditor({
         });
     }
 
-    function deleteSheet() {
+    async function deleteSheet() {
         if (!activeSheet || !workbook || workbook.sheets.length <= 1) return;
-        if (!window.confirm(`Delete ${activeSheet.name}?`)) return;
+        if (!await confirmAppDialog(`Delete ${activeSheet.name}?`, {destructive: true, confirmLabel: "Delete sheet"})) return;
         updateWorkbook((draft) => {
             const index = draft.sheets.findIndex(
                 (sheet) => sheet.name === draft.active_sheet,
