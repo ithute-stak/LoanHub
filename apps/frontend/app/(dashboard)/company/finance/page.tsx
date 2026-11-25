@@ -51,14 +51,14 @@ export default function CompanyFinancePage() {
   const [settlementEvidence, setSettlementEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
   const [confirmAgreement, setConfirmAgreement] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const [agreementRows, ledgerRows, claimRows] = await Promise.all([
-        listCompanyAgreements(),
-        listCompanyChargeLedger(),
-        listCompanyChargeClaims(),
+        listCompanyAgreements({ refresh }),
+        listCompanyChargeLedger({ refresh }),
+        listCompanyChargeClaims({ refresh }),
       ]);
       if (sequence !== requestSequence.current) return;
       setAgreements(agreementRows);
@@ -146,7 +146,7 @@ export default function CompanyFinancePage() {
     <div className="loanhub-page">
       <section className="loanhub-hero flex flex-col justify-between gap-5 p-6 lg:flex-row lg:items-end">
         <div><p className="text-xs font-black uppercase tracking-[0.24em] text-primary">Joint bookkeeping</p><h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Platform agreements and transaction charges</h1><p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">Review the company’s agreed money-in and money-out rates, every automatically accrued charge, and period claims issued by the platform owner.</p></div>
-        <Button variant="outline" onClick={() => void load()}><RefreshCcw className="h-4 w-4" />Refresh records</Button>
+        <Button variant="outline" onClick={() => void load(true)}><RefreshCcw className="h-4 w-4" />Refresh records</Button>
       </section>
 
       <div className="grid gap-4 md:grid-cols-3"><Metric icon={Scale} label="Active agreement" value={activeAgreement?.agreement_number ?? "None"} /><Metric icon={BadgePercent} label="Accrued charges" value={formatMoney(accrued)} /><Metric icon={ReceiptText} label="Open claims" value={formatMoney(openClaims)} /></div>
