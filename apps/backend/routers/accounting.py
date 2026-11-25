@@ -229,12 +229,32 @@ def top_up_daily_cash(
         CompanyOperatingRecord.company_id == resolve_scope(context, None),
         CompanyOperatingRecord.module == "cash_control",
         CompanyOperatingRecord.record_type == "daily_cash_session",
-    ).with_for_update().first()
+    ).first()
     if record is None:
         raise HTTPException(status_code=404, detail="Cash session not found")
     if context.branch_id and context.role == UserRole.BRANCH_MANAGER and record.branch_id != context.branch_id:
         raise HTTPException(status_code=403, detail="This cash session belongs to another branch")
-    if record.status != "open":
+    from services.treasury_service import get_or_create_settings
+    controls_active = get_or_create_settings(db, record.company_id).enforce_branch_cash_controls_enabled
+    if controls_active:
+        if record.branch_id is None:
+            raise HTTPException(status_code=409, detail="Assign a branch before recording additional cash float")
+        from database.models.treasury import BranchDailyLedger
+        day = db.query(BranchDailyLedger).filter(
+            BranchDailyLedger.company_id == record.company_id,
+            BranchDailyLedger.branch_id == record.branch_id,
+            BranchDailyLedger.business_date == date.fromisoformat(record.data["business_date"]),
+        ).with_for_update().first()
+        if day is None:
+            raise HTTPException(status_code=409, detail="Branch treasury day must exist before adding cash float")
+    # Same treasury-first lock order as cash closing and disbursements.
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == session_id,
+        CompanyOperatingRecord.company_id == resolve_scope(context, None),
+        CompanyOperatingRecord.module == "cash_control",
+        CompanyOperatingRecord.record_type == "daily_cash_session",
+    ).populate_existing().with_for_update().first()
+    if record is None or record.status != "open":
         raise HTTPException(status_code=409, detail="Cash cannot be topped up after closing")
     if record.data.get("business_date") != accounting_business_date(db, record.company_id).isoformat():
         raise HTTPException(status_code=409, detail="Only today's open cash session can receive float")
@@ -256,6 +276,13 @@ def top_up_daily_cash(
         user_id=context.user.id,
     )
     db.flush()
+    if controls_active:
+        from services.treasury_service import sync_recorded_cash_float
+        sync_recorded_cash_float(
+            db, company_id=record.company_id, branch_id=record.branch_id,
+            business_date=date.fromisoformat(record.data["business_date"]),
+            journal_id=entry.id, amount=payload.amount, user_id=context.user.id,
+        )
     record.data = {**record.data, "float_topups": [
         *(record.data.get("float_topups") or []),
         {"amount": str(payload.amount), "source": payload.source,
@@ -456,7 +483,23 @@ def open_daily_cash_session(
             "note": payload.note,
         },
     )
+    from services.treasury_service import get_or_create_settings
+    cash_controls_active = get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled
+    if branch is None and cash_controls_active:
+        raise HTTPException(status_code=409, detail="Select an active branch before opening the daily cash session")
     db.add(record)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A cash session already exists for this branch and date") from exc
+    if cash_controls_active:
+        from services.treasury_service import sync_counted_cash_opening
+        sync_counted_cash_opening(
+            db, company_id=company_id, branch_id=branch,
+            business_date=payload.business_date, session_id=record.id,
+            amount=payload.counted_opening, user_id=context.user.id,
+        )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -480,7 +523,7 @@ def close_daily_cash_session(
         CompanyOperatingRecord.company_id == resolve_scope(context, None),
         CompanyOperatingRecord.module == "cash_control",
         CompanyOperatingRecord.record_type == "daily_cash_session",
-    ).with_for_update().first()
+    ).first()
     if record is None:
         raise HTTPException(status_code=404, detail="Cash session not found")
     if context.branch_id and context.role not in COMPANY_MANAGEMENT_ROLES and record.branch_id != context.branch_id:
@@ -488,6 +531,26 @@ def close_daily_cash_session(
     resolve_branch_scope(db, context, record.company_id, record.branch_id)
     if record.status != "open":
         raise HTTPException(status_code=409, detail="The cash day has already been closed")
+    from services.treasury_service import get_or_create_settings
+    controls_active = get_or_create_settings(db, record.company_id).enforce_branch_cash_controls_enabled
+    if controls_active:
+        # Cash outflows and closing lock the same branch-day row first.
+        from database.models.treasury import BranchDailyLedger
+        day = db.query(BranchDailyLedger).filter(
+            BranchDailyLedger.company_id == record.company_id,
+            BranchDailyLedger.branch_id == record.branch_id,
+            BranchDailyLedger.business_date == date.fromisoformat(record.data["business_date"]),
+        ).with_for_update().first()
+        if day is None:
+            raise HTTPException(status_code=409, detail="Branch treasury day must exist before closing cash")
+    record = db.query(CompanyOperatingRecord).filter(
+        CompanyOperatingRecord.id == session_id,
+        CompanyOperatingRecord.company_id == resolve_scope(context, None),
+        CompanyOperatingRecord.module == "cash_control",
+        CompanyOperatingRecord.record_type == "daily_cash_session",
+    ).populate_existing().with_for_update().first()
+    if record is None or record.status != "open":
+        raise HTTPException(status_code=409, detail="The cash day has already been closed or removed")
     before = _cash_session_payload(record, db)
     now = datetime.now(timezone.utc)
     record.status = "closed"
@@ -786,6 +849,8 @@ def record_expense(
         raise HTTPException(status_code=422, detail="Select a company for company expenses")
     selected_branch_id = resolve_branch_scope(db, context, selected_company_id, payload.branch_id)
     reference = payload.external_reference or str(uuid4())
+    if payload.paid_now and selected_branch_id is None:
+        raise HTTPException(status_code=409, detail="Select a branch before recording a cash expense")
     entry = post_expense(
         db,
         company_id=selected_company_id,
@@ -798,6 +863,14 @@ def record_expense(
         paid_now=payload.paid_now,
         entry_date=payload.entry_date,
     )
+    if payload.paid_now:
+        from services.treasury_service import sync_paid_accounting_expense
+        sync_paid_accounting_expense(
+            db, company_id=selected_company_id, branch_id=selected_branch_id,
+            business_date=payload.entry_date or accounting_business_date(db, selected_company_id),
+            journal_id=entry.id, amount=payload.amount,
+            description=payload.description, user_id=context.user.id,
+        )
     db.commit()
     return entry_query(db, entry.scope_key).filter(JournalEntry.id == entry.id).first()
 

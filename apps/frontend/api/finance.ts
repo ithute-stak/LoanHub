@@ -196,16 +196,16 @@ export async function createChargeClaim(payload: {
   return (await api.post<ChargeClaim>("/finance-config/claims", payload)).data;
 }
 
-export async function listCompanyAgreements(): Promise<TransactionAgreement[]> {
-  return (await api.get<TransactionAgreement[]>("/finance-config/company/agreements")).data;
+export async function listCompanyAgreements(options?: { refresh?: boolean }): Promise<TransactionAgreement[]> {
+  return (await api.get<TransactionAgreement[]>("/finance-config/company/agreements", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data;
 }
 
-export async function listCompanyChargeLedger(): Promise<ChargeLedgerEntry[]> {
-  return (await api.get<ChargeLedgerEntry[]>("/finance-config/company/charge-ledger")).data;
+export async function listCompanyChargeLedger(options?: { refresh?: boolean }): Promise<ChargeLedgerEntry[]> {
+  return (await api.get<ChargeLedgerEntry[]>("/finance-config/company/charge-ledger", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data;
 }
 
-export async function listCompanyChargeClaims(): Promise<ChargeClaim[]> {
-  return (await api.get<ChargeClaim[]>("/finance-config/company/claims")).data;
+export async function listCompanyChargeClaims(options?: { refresh?: boolean }): Promise<ChargeClaim[]> {
+  return (await api.get<ChargeClaim[]>("/finance-config/company/claims", { loanHubCache: options?.refresh ? { mode: "refresh" } : undefined })).data;
 }
 
 export async function decideCompanyClaim(id: string, action: "acknowledge" | "dispute", reason?: string): Promise<ChargeClaim> {

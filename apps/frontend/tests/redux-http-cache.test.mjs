@@ -263,4 +263,15 @@ test("forced manual refresh bypasses a valid cached GET without affecting other 
   assert.equal(Object.keys(store.getState().httpCache.entries).length, 2);
 });
 
+test("company Finance manual Refresh bypasses cached agreements, ledger and claims", () => {
+  const apiSource = readFileSync(new URL("../api/finance.ts", import.meta.url), "utf8");
+  const pageSource = readFileSync(new URL("../app/(dashboard)/company/finance/page.tsx", import.meta.url), "utf8");
+  for (const name of ["listCompanyAgreements", "listCompanyChargeLedger", "listCompanyChargeClaims"]) {
+    assert.match(apiSource, new RegExp(`export async function ${name}\\(options\\?: \\{ refresh\\?: boolean \\}\\)`));
+    assert.match(pageSource, new RegExp(`${name}\\(\\{ refresh \\}\\)`));
+  }
+  assert.equal(apiSource.split('loanHubCache: options?.refresh ? { mode: "refresh" }').length - 1, 3);
+  assert.ok(pageSource.includes('onClick={() => void load(true)}><RefreshCcw'));
+});
+
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));

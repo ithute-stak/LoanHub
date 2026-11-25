@@ -371,8 +371,11 @@ export function LoanPortfolioWorkspace({
     onStartCall: (loan: Loan) => void;
 }) {
     const searchParams = useSearchParams();
-    const folioFromUrl = searchParams.get("folio")?.trim() ?? "";
-    const [search, setSearch] = useReduxTableField("loan-portfolio", "search", folioFromUrl);
+    const borrowerFromUrl = searchParams.get("borrower")?.trim() ?? "";
+    // Borrower history must never inherit the company portfolio's saved filters.
+    const tableKey = borrowerFromUrl ? "loan-portfolio-borrower-history" : "loan-portfolio";
+    const folioFromUrl = borrowerFromUrl ? "" : searchParams.get("folio")?.trim() ?? "";
+    const [search, setSearch] = useReduxTableField(tableKey, "search", folioFromUrl);
     const [expanded, setExpanded] = useState(false);
     const [exportingBankZip, setExportingBankZip] = useState(false);
     const [exportingOverduePdf, setExportingOverduePdf] = useState(false);
@@ -387,18 +390,22 @@ export function LoanPortfolioWorkspace({
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     });
     const [exportingStatement, setExportingStatement] = useState(false);
-    const [filtersCollapsed, setFiltersCollapsed] = useReduxTableField("loan-portfolio", "filtersCollapsed", false);
-    const [filters, setFilters] = useReduxTableField<PortfolioFilters>("loan-portfolio", "filters", DEFAULT_FILTERS);
-    const [page, setPage] = useReduxTableField("loan-portfolio", "page", 1);
-    const [pageSize, setPageSize] = useReduxTableField<number>("loan-portfolio", "pageSize", 15);
+    const [filtersCollapsed, setFiltersCollapsed] = useReduxTableField(tableKey, "filtersCollapsed", false);
+    const [filters, setFilters] = useReduxTableField<PortfolioFilters>(tableKey, "filters", DEFAULT_FILTERS);
+    const [page, setPage] = useReduxTableField(tableKey, "page", 1);
+    const [pageSize, setPageSize] = useReduxTableField<number>(tableKey, "pageSize", 15);
     const [branches, setBranches] = useState<Branch[]>([]);
 
     useEffect(() => {
-        if (folioFromUrl) {
+        if (borrowerFromUrl) {
+            setSearch("");
+            setFilters(DEFAULT_FILTERS);
+            setPage(1);
+        } else if (folioFromUrl) {
             setSearch(folioFromUrl);
             setPage(1);
         }
-    }, [folioFromUrl]);
+    }, [borrowerFromUrl, folioFromUrl]);
 
     useEffect(() => {
         let cancelled = false;

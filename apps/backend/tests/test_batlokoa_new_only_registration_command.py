@@ -63,6 +63,7 @@ def test_approved_staging_path_binds_tenant_before_writer(monkeypatch):
         staff=SimpleNamespace(
             user_id=user_id, company_id=company_id,
             is_active=True, role=UserRole.LOAN_OFFICER,
+            branch_id=branch_id,
         ),
         company=None, company_id=company_id,
         branch_id=branch_id, is_platform_admin=False,
@@ -115,3 +116,69 @@ def test_approved_staging_path_binds_tenant_before_writer(monkeypatch):
     assert events == [
         "session_open", "tenant_bound", "atomic_writer", "session_close",
     ]
+
+
+@pytest.mark.parametrize("role_name", ["AUDITOR", "CUSTOMER_SUPPORT", "HR_MANAGER"])
+def test_early_role_guard_prevents_session_creation(role_name):
+    from datetime import date
+    from database.models.enums import UserRole, Gender, EmploymentStatus
+    user_id, company_id, branch_id = (uuid4() for _ in range(3))
+    role = UserRole[role_name]
+    context = TenantContext(
+        user=SimpleNamespace(id=user_id, is_active=True, role=role),
+        staff=SimpleNamespace(
+            user_id=user_id, company_id=company_id, branch_id=branch_id,
+            is_active=True, role=role,
+        ),
+        company=None, company_id=company_id,
+        branch_id=branch_id, is_platform_admin=False,
+    )
+    capture = FullNewOnlyClientCapture(
+        branch_id=branch_id, first_name="Synthetic", last_name="Applicant",
+        phone="59990001", date_of_birth=date(1991, 1, 1),
+        national_id="SYNTHETIC-TEST-ONLY", gender=Gender.MALE,
+        district="Maseru", employment_status=EmploymentStatus.EMPLOYED,
+        consent_to_share_profile=True, consent_to_credit_checks=True,
+    )
+    session_factory = Mock(side_effect=AssertionError("No session allowed"))
+    with pytest.raises(ValueError, match="lending staff"):
+        command.submit_new_only_client(
+            context=context, payload=capture,
+            idempotency_key="synthetic-idempotency-001",
+            fingerprint_secret=b"x" * 32,
+            session_factory=session_factory,
+            independently_approved_release=True,
+        )
+    session_factory.assert_not_called()
+
+
+def test_early_branch_guard_prevents_session_creation():
+    from datetime import date
+    from database.models.enums import UserRole, Gender, EmploymentStatus
+    user_id, company_id, staff_branch, target_branch = (uuid4() for _ in range(4))
+    context = TenantContext(
+        user=SimpleNamespace(id=user_id, is_active=True, role=UserRole.LOAN_OFFICER),
+        staff=SimpleNamespace(
+            user_id=user_id, company_id=company_id, branch_id=staff_branch,
+            is_active=True, role=UserRole.LOAN_OFFICER,
+        ),
+        company=None, company_id=company_id,
+        branch_id=staff_branch, is_platform_admin=False,
+    )
+    capture = FullNewOnlyClientCapture(
+        branch_id=target_branch, first_name="Synthetic", last_name="Applicant",
+        phone="59990001", date_of_birth=date(1991, 1, 1),
+        national_id="SYNTHETIC-TEST-ONLY", gender=Gender.MALE,
+        district="Maseru", employment_status=EmploymentStatus.EMPLOYED,
+        consent_to_share_profile=True, consent_to_credit_checks=True,
+    )
+    session_factory = Mock(side_effect=AssertionError("No session allowed"))
+    with pytest.raises(ValueError, match="Assigned registration branch"):
+        command.submit_new_only_client(
+            context=context, payload=capture,
+            idempotency_key="synthetic-idempotency-001",
+            fingerprint_secret=b"x" * 32,
+            session_factory=session_factory,
+            independently_approved_release=True,
+        )
+    session_factory.assert_not_called()
