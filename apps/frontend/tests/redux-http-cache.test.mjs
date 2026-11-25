@@ -4,14 +4,12 @@
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import ts from "typescript";
 
 // Keep the generated module beside frontend node_modules for bare package imports.
-const root = new URL("../", import.meta.url);
 const source = readFileSync(new URL("../store/features/slices/httpCacheSlice.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
