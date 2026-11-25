@@ -443,3 +443,39 @@ def test_treasury_inbound_direction_matches_inbound_payment():
         ), company_id=uuid4(), loan_id=uuid4(),
     )
     assert result.treasury_direction_mismatch_count == 0
+
+
+def test_cash_direction_mismatch_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                direction=PaymentDirection.INBOUND,
+            )],
+            [SimpleNamespace(
+                payment_id=payment_id, applied_amount=Decimal("100.00"),
+                direction=PaymentDirection.OUTBOUND,
+            )], [], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.cash_direction_mismatch_count == 1
+    assert result.complete is False
+
+
+def test_cash_direction_match_is_not_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                direction=PaymentDirection.INBOUND,
+            )],
+            [SimpleNamespace(
+                payment_id=payment_id, applied_amount=Decimal("100.00"),
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.cash_direction_mismatch_count == 0
+    assert result.complete is False
