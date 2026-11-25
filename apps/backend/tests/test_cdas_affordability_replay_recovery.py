@@ -190,7 +190,7 @@ async def test_unknown_outcome_replay_never_contacts_cdas(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("saved_state", ["missing", "invalid_snapshot", "wrong_borrower"])
+@pytest.mark.parametrize("saved_state", ["missing", "invalid_snapshot", "wrong_borrower", "invalid_timestamp"])
 async def test_completed_replay_with_untrusted_saved_record_fails_without_provider(
     monkeypatch, saved_state,
 ):
@@ -202,6 +202,16 @@ async def test_completed_replay_with_untrusted_saved_record_fails_without_provid
     elif saved_state == "invalid_snapshot":
         saved = SimpleNamespace(id=record_id, record_id=borrower,
                                 event_data={"snapshot": {}})
+    elif saved_state == "invalid_timestamp":
+        saved = SimpleNamespace(
+            id=record_id, record_id=borrower,
+            event_data={"snapshot": {
+                "borrower_id": str(borrower),
+                "reference": "CDAS-AFF-ARCHIVED",
+                "assessed_at": "not-a-date",
+                "decision": "pass",
+            }},
+        )
     else:
         saved = SimpleNamespace(
             id=record_id, record_id=borrower,
