@@ -19,8 +19,8 @@ function walk(directory) {
     });
 }
 
-function nativeInvocation(node) {
-    if (ts.isIdentifier(node)) return NATIVE.has(node.text) ? node.text : null;
+function nativeInvocation(node, localNames) {
+    if (ts.isIdentifier(node)) return NATIVE.has(node.text) && !localNames.has(node.text) ? node.text : null;
     if (ts.isPropertyAccessExpression(node)
         && ts.isIdentifier(node.expression)
         && ROOT_OBJECTS.has(node.expression.text)
@@ -42,9 +42,19 @@ test("LoanHub frontend never invokes default browser alert, confirm, or prompt d
             const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
                 file.endsWith(".tsx") || file.endsWith(".jsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
             scanned++;
+            // Local handlers such as MFAControlCard's confirm() are not native dialogs.
+            const localNames = new Set();
+            function collectLocalDeclarations(node) {
+                if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node))
+                    && node.name && ts.isIdentifier(node.name) && NATIVE.has(node.name.text)) {
+                    localNames.add(node.name.text);
+                }
+                ts.forEachChild(node, collectLocalDeclarations);
+            }
+            collectLocalDeclarations(tree);
             function visit(node) {
                 if (ts.isCallExpression(node)) {
-                    const native = nativeInvocation(node.expression);
+                    const native = nativeInvocation(node.expression, localNames);
                     if (native) {
                         const pos = tree.getLineAndCharacterOfPosition(node.getStart(tree));
                         violations.push(`${relative(ROOT, file)}:${pos.line + 1} native ${native}()`);
