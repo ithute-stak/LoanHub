@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -79,3 +79,80 @@ class EarlySettlementRead(BaseModel):
 class EarlySettlementPaymentResult(BaseModel):
     settlement: EarlySettlementRead
     payment: CashPaymentResult
+
+
+
+class PrincipalXSettlementPreviewRead(BaseModel):
+    """Non-payable, non-persisted preview of an approved Principal x% loan."""
+    loan_id: UUID
+    payment_model: str
+    settlement_date: date
+    snapshot_revision: str
+    period: int
+    uncapped_due: Decimal
+    settlement_amount: Decimal
+    contractual_remaining: Decimal
+    lifetime_cap_remaining: Decimal
+    total_credited: Decimal
+    ceiling_reduction: Decimal
+    payment_enabled: bool = False
+
+
+
+class PrincipalXSourceCoverageRead(BaseModel):
+    """Implementation inventory, never authoritative reconciliation proof."""
+    source_family: str
+    review_stage: Literal["diagnostic_only", "authoritative_adapter_missing"]
+    authoritatively_verified: Literal[False] = False
+
+
+class PrincipalXSettlementReadinessRead(BaseModel):
+    """Read-only diagnostics; never authorizes a financial transaction."""
+    loan_id: UUID
+    payment_model: str
+    can_post_settlement: Literal[False] = False
+    payment_rows_reviewed: int
+    unresolved_payment_rows: int
+    refund_payment_rows: int
+    reversed_payment_rows: int
+    nonfinal_refund_rows: int
+    invalid_payment_amount_rows: int
+    unsupported_payment_currency_rows: int
+    orphan_cash_rows: int
+    orphan_allocation_rows: int
+    unlinked_treasury_rows: int
+    missing_cash_evidence_rows: int
+    overallocated_payment_rows: int
+    invalid_allocation_rows: int
+    nonfinal_allocation_payment_rows: int
+    cash_overapplied_rows: int
+    invalid_cash_amount_rows: int
+    cash_direction_mismatch_rows: int
+    treasury_amount_mismatch_rows: int
+    treasury_currency_mismatch_rows: int
+    treasury_direction_mismatch_rows: int
+    treasury_entry_type_mismatch_rows: int
+    voided_linked_treasury_rows: int
+    unposted_linked_treasury_rows: int
+    missing_posted_treasury_evidence_rows: int
+    missing_posted_refund_treasury_rows: int
+    refund_treasury_type_mismatch_rows: int
+    cross_source_reconciliation_complete: Literal[False] = False
+    blocking_reasons: list[str]
+    source_coverage: list[PrincipalXSourceCoverageRead]
+
+
+class PrincipalXSettlementRevalidateRequest(BaseModel):
+    """Compare a prior non-payable preview against the current source snapshot."""
+    settlement_date: date
+    snapshot_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class PrincipalXSettlementRevalidateRead(BaseModel):
+    """Confirmation of an unchanged preview, NOT settlement authorization."""
+    loan_id: UUID
+    snapshot_revision: str
+    settlement_date: date
+    settlement_amount: Decimal
+    unchanged: Literal[True] = True
+    payment_enabled: Literal[False] = False
