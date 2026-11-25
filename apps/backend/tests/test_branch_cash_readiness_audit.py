@@ -57,6 +57,10 @@ def test_stale_open_cash_session_blocks_activation_even_with_matching_opening():
     assert classify(closed, as_of=date(2026, 11, 25)) == []
     same_day = row(session_status="open", business_date="2026-11-25")
     assert classify(same_day, as_of=date(2026, 11, 25)) == []
+    future = row(session_status="open", business_date="2026-12-01")
+    assert classify(future, as_of=date(2026, 11, 25)) == ["FUTURE_OPEN_CASH_SESSION"]
+    invalid = row(session_status="open", business_date="not-a-date")
+    assert classify(invalid, as_of=date(2026, 11, 25)) == ["INVALID_SESSION_BUSINESS_DATE"]
 
 
 def test_posted_cash_journal_and_treasury_difference_blocks_activation():
@@ -150,7 +154,9 @@ def test_stale_session_scope_query_is_company_wide_and_read_only():
     statement = str(STALE_SESSIONS_SQL)
     assert "company_id = :company_id" in statement
     assert "status = 'open'" in statement
-    assert "data->>'business_date' < :as_of" in statement
+    assert "data->>'business_date' <> :as_of" in statement
+    # Any non-today open date (older, future, malformed, or blank) blocks activation.
+    assert "data->>'business_date' IS NULL" in statement
     assert "BETWEEN :from_date AND :to_date" not in statement
     assert "UPDATE " not in statement.upper()
     assert "DELETE " not in statement.upper()
