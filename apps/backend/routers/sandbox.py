@@ -42,7 +42,7 @@ def sandbox_status():
         "writable": True,
         "sample_clients": 5,
         "login_phone": settings.SANDBOX_LOGIN_PHONE,
-        "available_roles": [role.value for role in UserRole],
+        "available_roles": [role.value for role in UserRole if role in COMPANY_ROLES],
         "message": "This environment contains synthetic demo data and is isolated from production.",
     }
 
@@ -54,6 +54,9 @@ def switch_sandbox_role(
     db: Session = Depends(get_db),
 ):
     _require_sandbox_tester(current_user)
+
+    if payload.role not in COMPANY_ROLES:
+        raise HTTPException(status_code=403, detail="Only company roles are available in the public sandbox")
 
     if payload.role in COMPANY_ROLES:
         membership = (
