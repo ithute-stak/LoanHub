@@ -24,7 +24,7 @@ test("custom dialogs use the full image banner with title and description", () =
   assert.match(custom, /<DialogContent\b/);
   assert.doesNotMatch(custom, /!solidHeader\s*\?/);
   assert.match(custom, /brandHeader=\{\(\s*<DialogBrand>\s*<DialogHeader[\s\S]*?<DialogTitle[\s\S]*?<DialogDescription[\s\S]*?<\/DialogBrand>/);
-  assert.doesNotMatch(custom, /solidHeader\s*&&|solidHeader\s*\?/);
+  assert.doesNotMatch(custom, /solidHeader\s*&&|solidHeader\s*\?(?!\s*:)/);
   assert.match(custom, /sm:p-0/);
 });
 
