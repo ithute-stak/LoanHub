@@ -86,7 +86,7 @@ def test_branch_cash_closed_day_rejects_posting_after_lock():
     dsn = os.environ.get("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not dsn:
         pytest.skip("Disposable PostgreSQL integration DSN not provided")
-    engine = create_engine(dsn, pool_size=2, max_overflow=0)
+    engine = create_engine(dsn, pool_size=3, max_overflow=0)
     table = "branch_cash_closed_probe_" + uuid4().hex[:16]
     branch = uuid4()
     try:
