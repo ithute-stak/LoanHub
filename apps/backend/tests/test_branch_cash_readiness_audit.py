@@ -1,4 +1,5 @@
 """Unit tests for read-only daily cash rollout audit classification."""
+from datetime import date
 from types import MappingProxyType
 
 from scripts.audit_branch_cash_readiness import classify, AUDIT_SQL, MAX_SESSIONS
@@ -47,3 +48,12 @@ def test_audit_query_is_company_scoped_bounded_and_read_only():
     assert "INSERT " not in statement.upper()
     assert "UPDATE " not in statement.upper()
     assert "DELETE " not in statement.upper()
+
+
+def test_stale_open_cash_session_blocks_activation_even_with_matching_opening():
+    old = row(session_status="open", business_date="2026-10-21")
+    assert classify(old, as_of=date(2026, 11, 25)) == ["STALE_OPEN_CASH_SESSION"]
+    closed = row(session_status="closed", business_date="2026-10-21")
+    assert classify(closed, as_of=date(2026, 11, 25)) == []
+    same_day = row(session_status="open", business_date="2026-11-25")
+    assert classify(same_day, as_of=date(2026, 11, 25)) == []
