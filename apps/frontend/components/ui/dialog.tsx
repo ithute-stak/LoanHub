@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { XIcon } from "lucide-react";
 
@@ -38,6 +39,14 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   );
 }
 
+function DialogBrand() {
+  return (
+    <div data-slot="dialog-brand" className="flex min-w-0 shrink-0 items-center justify-start px-4 py-3 pr-12">
+      <Image src="/loanhub-horizontal-logo.png" alt="LoanHub" width={180} height={48} className="h-9 w-auto max-w-full object-contain object-left" />
+    </div>
+  );
+}
+
 function DialogContent({
   className,
   children,
@@ -50,7 +59,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 grid max-h-[94vh] w-[calc(100%-1.5rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto",
+          "fixed left-1/2 top-1/2 z-50 grid max-h-[94vh] w-[calc(100%-1.5rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-x-hidden overflow-y-auto",
           "rounded-[1.75rem] border border-white/20 bg-gradient-to-br from-background via-background to-primary/5 p-5 text-sm text-foreground shadow-[0_32px_90px_-25px_rgba(2,32,71,0.75)] outline-none sm:max-w-lg sm:p-6",
           "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
@@ -59,6 +68,7 @@ function DialogContent({
         {...props}
       >
         <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
+        <DialogBrand />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close asChild>
@@ -129,6 +139,7 @@ function DialogDescription({ className, ...props }: React.ComponentProps<typeof 
 
 export {
   Dialog,
+  DialogBrand,
   DialogClose,
   DialogContent,
   DialogDescription,

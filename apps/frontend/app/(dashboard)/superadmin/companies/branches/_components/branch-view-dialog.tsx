@@ -67,7 +67,7 @@ export function BranchViewDialog({
                 onOpenChange
             }
             title={branch.name}
-            banner="/ithute-solutions-mark.png"
+            banner="/loanhub-horizontal-logo.png"
             contentClassName="sm:max-w-3xl"
         >
             <div className="space-y-6 px-5 py-6 sm:px-8">

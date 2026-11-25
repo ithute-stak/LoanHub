@@ -1,5 +1,6 @@
 "use client";
 
+import { DialogBrand } from "@/components/ui/dialog";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -302,6 +303,7 @@ export function MobileAppNavigation() {
                         className="loanhub-mobile-more-sheet absolute inset-x-0 bottom-0 mx-auto flex max-h-[84dvh] max-w-3xl flex-col overflow-hidden rounded-t-[2rem] border border-b-0 bg-background shadow-2xl"
                     >
                         <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-muted-foreground/25" aria-hidden />
+                        <DialogBrand />
                         <div className="flex items-center justify-between gap-3 border-b px-4 pb-3 pt-2 sm:px-6">
                             <div className="min-w-0">
                                 <h2 id="loanhub-mobile-tools-title" className="text-base font-black sm:text-lg">LoanHub tools</h2>

@@ -495,7 +495,7 @@ export function UserEditDialog({
             open={open}
             onOpenChange={handleOpenChange}
             title={dialogTitle}
-            banner="/ithute-solutions-mark.png"
+            banner="/loanhub-horizontal-logo.png"
         >
             <form onSubmit={handleSubmit}>
                 <div className="border-b bg-muted/20 px-5 py-4 sm:px-8">

@@ -1,5 +1,6 @@
 "use client";
 
+import { DialogBrand } from "@/components/ui/dialog";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -761,6 +762,7 @@ export function PortalShell({ children, mode }: { children: ReactNode; mode: "co
                             aria-label="Search LoanHub routes"
                             className="relative z-10 w-full max-w-2xl overflow-hidden rounded-3xl border bg-background shadow-2xl"
                         >
+                            <DialogBrand />
                             <div className="flex items-center gap-3 border-b px-4 py-3">
                                 <Search className="h-5 w-5 shrink-0 text-primary" />
                                 <input
