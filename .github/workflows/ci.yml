@@ -116,6 +116,7 @@ jobs:
           cd apps/frontend
           node --test tests/modal-branding.test.mjs
           node --test tests/no-native-browser-dialogs.test.mjs
+          node --test tests/app-dialog-decision-safety.test.mjs
           node --test tests/data-center-reducer.test.mjs
           node --test tests/data-center-replay-validation.test.mjs
           node --test tests/data-center-two-session-replay.test.mjs
