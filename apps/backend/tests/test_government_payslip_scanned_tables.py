@@ -134,3 +134,33 @@ def test_missing_earnings_anchor_is_explicitly_flagged():
     assert result.totals_reconciled
     assert result.review_required
     assert "earnings_heading_not_recognised" in result.review_reasons
+
+
+def test_corrupted_printed_gross_can_use_matching_separate_crop():
+    damaged = "1011 Monthly Basic Salary 8,826.00\nTotal Earnings: 8,826.0C"
+    rows, total = _parse_table(
+        damaged, section="earnings", allow_missing_heading=True,
+        corroborated_total=Decimal("8826.00"),
+    )
+    assert len(rows) == 1
+    assert total == Decimal("8826.00")
+
+
+def test_gross_crop_cannot_override_legible_but_conflicting_total():
+    with pytest.raises(AmbiguousPayslipLayout, match="gross crop conflicts"):
+        with patch("services.government_payslip_scanned_tables._ocr_table",
+                   side_effect=[EARNINGS, DEDUCTIONS]):
+            read_scanned_payslip_financials(
+                Image.new("RGB", (1698, 2400)), words(),
+                net_pay_candidate=Decimal("880.00"),
+                gross_crop_candidate=Decimal("1001.00"),
+            )
+
+
+def test_corrupted_gross_is_not_accepted_if_crop_disagrees_with_itemised_earnings():
+    damaged = "1011 Monthly Basic Salary 8,826.00\nTotal Earnings: 8,826.0C"
+    with pytest.raises(AmbiguousPayslipLayout, match="does not match"):
+        _parse_table(
+            damaged, section="earnings", allow_missing_heading=True,
+            corroborated_total=Decimal("8825.00"),
+        )
