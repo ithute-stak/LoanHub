@@ -70,6 +70,7 @@ def classify(row) -> list[str]:
         count = Decimal(str(row["counted_opening"]))
         if not count.is_finite() or count < 0:
             issues.append("INVALID_COUNTED_OPENING")
+            count = None
     except (InvalidOperation, TypeError, ValueError):
         issues.append("INVALID_COUNTED_OPENING")
         count = None
