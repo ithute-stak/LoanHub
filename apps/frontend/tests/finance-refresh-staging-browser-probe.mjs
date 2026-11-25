@@ -1,6 +1,7 @@
 /**
  * Opt-in, read-only browser certification for LoanHub company Finance.
- * Requires two independently provisioned synthetic company accounts.
+ * Supports single-company Finance smoke and optional two-company refresh checks.
+ * Neither mode alone proves tenant isolation.
  *
  * Install Playwright outside the committed dependency tree and provision
  * storageState files outside this repository:
@@ -23,8 +24,6 @@ const keys = [
   "LOANHUB_E2E_BASE_URL",
   "LOANHUB_E2E_STATE_A",
   "LOANHUB_E2E_COMPANY_A",
-  "LOANHUB_E2E_STATE_B",
-  "LOANHUB_E2E_COMPANY_B",
   "LOANHUB_E2E_CONFIRM_SYNTHETIC",
 ];
 for (const key of keys) {
@@ -37,11 +36,14 @@ assert.equal(base.protocol, "https:", "Only HTTPS staging environments are accep
 assert.match(base.hostname, /(^|[.-])(sandbox|staging|stage|test)([.-]|$)/i,
   "Refusing to test a host without an explicit staging or sandbox hostname");
 assert.notEqual(base.hostname, "loanhub.co.ls", "Production domain is forbidden");
-assert.notEqual(process.env.LOANHUB_E2E_COMPANY_A, process.env.LOANHUB_E2E_COMPANY_B,
-  "Use two distinct synthetic company IDs");
-assert.notEqual(process.env.LOANHUB_E2E_STATE_A, process.env.LOANHUB_E2E_STATE_B,
-  "Use two independent browser authentication states");
-for (const key of ["LOANHUB_E2E_STATE_A", "LOANHUB_E2E_STATE_B"]) {
+const hasStateB = Boolean(process.env.LOANHUB_E2E_STATE_B);
+const hasCompanyB = Boolean(process.env.LOANHUB_E2E_COMPANY_B);
+assert.equal(hasStateB, hasCompanyB, "Second company requires both ID and state");
+if (hasStateB) {
+  assert.notEqual(process.env.LOANHUB_E2E_COMPANY_A, process.env.LOANHUB_E2E_COMPANY_B);
+  assert.notEqual(process.env.LOANHUB_E2E_STATE_A, process.env.LOANHUB_E2E_STATE_B);
+}
+for (const key of hasStateB ? ["LOANHUB_E2E_STATE_A", "LOANHUB_E2E_STATE_B"] : ["LOANHUB_E2E_STATE_A"]) {
   const state = JSON.parse(readFileSync(process.env[key], "utf8"));
   assert.ok(Array.isArray(state.cookies) && Array.isArray(state.origins),
     "Invalid Playwright storage state");
@@ -100,10 +102,18 @@ async function certify(stateFile, expectedCompany, label) {
 try {
   await Promise.all([
     certify(process.env.LOANHUB_E2E_STATE_A, process.env.LOANHUB_E2E_COMPANY_A, "A"),
-    certify(process.env.LOANHUB_E2E_STATE_B, process.env.LOANHUB_E2E_COMPANY_B, "B"),
+    ...(hasStateB ? [
+      certify(process.env.LOANHUB_E2E_STATE_B, process.env.LOANHUB_E2E_COMPANY_B, "B"),
+    ] : []),
   ]);
-  assert.equal(results.length, 2, "Both independent company sessions must pass");
-  console.log(JSON.stringify({probe:"finance-refresh-staging-readonly",result:"PASS",results}));
+  assert.equal(results.length, hasStateB ? 2 : 1);
+  console.log(JSON.stringify({
+    probe:"finance-refresh-staging-readonly",
+    result:"PASS",
+    certification:hasStateB ? "two-company-refresh-smoke" : "single-company-refresh-smoke",
+    tenantIsolationCertified:false,
+    results,
+  }));
 } finally {
   await browser.close();
 }
