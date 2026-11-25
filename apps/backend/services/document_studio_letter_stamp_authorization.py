@@ -80,8 +80,9 @@ def preflight_approved_letter_stamp(
     # A protected, administrator-owned SQL-login mapping binds this DB role
     # to exactly one company. A caller-controlled tenant GUC cannot replace it.
     require_issuer_role_tenant_binding(db=db, authenticated_tenant_id=authenticated_tenant_id)
-    # Re-read active user, approved company and management membership under
-    # SHARE NOWAIT locks on the SAME isolated issuer transaction.
+    # Acquire protected role-bound SHARE NOWAIT authorization locks, then
+    # re-read user/company/staff under tenant RLS on this issuer transaction.
+    # Missing delegated function or EXECUTE grant must fail closed.
     authorized = require_current_document_issuer(db=db, context=context)
     if authorized.user_id != issuer_user_id or authorized.company_id != authenticated_tenant_id:
         raise PermissionError("Current issuer does not match authenticated company")
