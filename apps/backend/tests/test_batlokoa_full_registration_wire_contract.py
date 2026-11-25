@@ -149,7 +149,7 @@ def test_batlokoa_real_form_supported_sandbox_payload_is_lossless():
 @pytest.mark.parametrize("unsupported", [
     {"cdas_employee_number": "SYNTHETIC-PAYROLL"},
     {"employer_group_id": str(uuid4())},
-    {"email": "synthetic@example.invalid"},
+    {"email": "synthetic@example.com"},
     {"temporary_password": "SyntheticTemporary123!"},
 ])
 def test_advanced_batlokoa_fields_require_separate_save_certification(unsupported):
