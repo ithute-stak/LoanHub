@@ -49,3 +49,38 @@ def test_runtime_issuer_restrictions_do_not_remove_existing_data_center_guards()
     assert "data_center_runtime_permission_guard" in RUNTIME
     assert "loanhub_dc_pilot_audit" in RUNTIME
     assert "REVOKE ALL ON TABLE public.%I" in RUNTIME
+
+
+# Included in the existing Document Studio CI gate. The dedicated SQL-contract
+# test module also runs when the complete backend pytest suite is executed.
+AUTHORIZATION_LOCK = (
+    ROOT / "scripts" / "provision_document_issuer_authorization_lock.sql"
+).read_text()
+
+
+def test_delegated_authorization_lock_requires_login_bound_company():
+    assert "SECURITY DEFINER" in AUTHORIZATION_LOCK
+    assert "SET search_path = pg_catalog" in AUTHORIZATION_LOCK
+    assert "b.login_name = session_user AND b.company_id = p_company_id" in AUTHORIZATION_LOCK
+    assert "NOT r.rolsuper AND NOT r.rolbypassrls" in AUTHORIZATION_LOCK
+
+
+def test_delegated_authorization_lock_enforces_current_membership():
+    for fragment in (
+        "u.is_active IS TRUE",
+        "u.must_change_password IS FALSE",
+        "c.status::text = 'APPROVED'",
+        "s.user_id = p_user_id",
+        "s.company_id = p_company_id",
+        "s.is_active IS TRUE",
+        "s.role::text IN ('COMPANY_OWNER', 'COMPANY_ADMIN')",
+    ):
+        assert fragment in AUTHORIZATION_LOCK
+    assert AUTHORIZATION_LOCK.count("FOR SHARE NOWAIT") == 3
+
+
+def test_delegated_authorization_lock_denies_public_execution():
+    assert ("REVOKE ALL ON FUNCTION public.lock_document_issuer_authorization"
+            in AUTHORIZATION_LOCK)
+    assert "FROM PUBLIC;" in AUTHORIZATION_LOCK
+    assert "GRANT EXECUTE" not in AUTHORIZATION_LOCK
