@@ -119,6 +119,7 @@ jobs:
           node --test tests/data-center-reducer.test.mjs
           node --test tests/data-center-replay-validation.test.mjs
           node --test tests/data-center-two-session-replay.test.mjs
+          node --test tests/redux-http-cache.test.mjs
 
       - name: Check isolated Data Center staging safety preflight
         run: |
