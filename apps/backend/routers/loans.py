@@ -621,6 +621,8 @@ def principal_x_settlement_readiness(
         blockers.append("Cash transactions claim more applied cash than the linked payment.")
     if cross_sources.invalid_cash_amount_count:
         blockers.append("Cash transactions contain invalid monetary amounts.")
+    if cross_sources.cash_direction_mismatch_count:
+        blockers.append("Cash-in/cash-out direction disagrees with the linked payment.")
     if cross_sources.treasury_amount_mismatch_count:
         blockers.append("Treasury payment amounts disagree with linked payment records.")
     if cross_sources.treasury_currency_mismatch_count:
@@ -644,6 +646,7 @@ def principal_x_settlement_readiness(
         nonfinal_allocation_payment_rows=cross_sources.nonfinal_allocation_payment_count,
         cash_overapplied_rows=cross_sources.cash_overapplied_count,
         invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
+        cash_direction_mismatch_rows=cross_sources.cash_direction_mismatch_count,
         treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
         treasury_currency_mismatch_rows=cross_sources.treasury_currency_mismatch_count,
         treasury_direction_mismatch_rows=cross_sources.treasury_direction_mismatch_count,
