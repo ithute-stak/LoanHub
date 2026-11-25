@@ -36,12 +36,19 @@ def locate_net_pay_cell(
         raise ValueError("invalid OCR page geometry")
     matches: list[tuple[OCRWord, OCRWord]] = []
     for first in words:
-        if first.text.strip().casefold().rstrip(":") != "net":
+        first_text = first.text.strip().casefold().rstrip(":")
+        if first.confidence < min_label_confidence:
+            continue
+        # Layout OCR may emit "NET PAY:" as one word, or separate NET / PAY.
+        if first_text in {"net pay", "netpay"}:
+            matches.append((first, first))
+            continue
+        if first_text != "net":
             continue
         for second in words:
             if second.text.strip().casefold().rstrip(":") != "pay":
                 continue
-            if first.confidence < min_label_confidence or second.confidence < min_label_confidence:
+            if second.confidence < min_label_confidence:
                 continue
             if second.left <= first.left or second.left - first.right > max(first.height, second.height) * 3:
                 continue
