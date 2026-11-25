@@ -529,3 +529,58 @@ def test_pending_payment_with_unposted_treasury_is_not_reported_as_completed_col
     )
     assert result.unposted_linked_treasury_count == 0
     assert result.complete is False
+
+
+def test_succeeded_repayment_without_posted_treasury_link_is_reported():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100"), status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT, direction=PaymentDirection.INBOUND,
+            )], [], [], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_treasury_evidence_count == 1
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("approval,voided", [
+    ("pending", False), ("posted", True),
+])
+def test_unusable_treasury_link_does_not_count_as_posted_evidence(approval, voided):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100"), status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT, direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, approval_status=approval,
+                is_voided=voided,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_treasury_evidence_count == 1
+    assert result.complete is False
+
+
+def test_posted_treasury_link_prevents_missing_evidence_warning():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100"), currency="LSL",
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT, direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100"),
+                approval_status="posted", is_voided=False, currency="LSL",
+                direction=TreasuryDirection.MONEY_IN,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_treasury_evidence_count == 0
+    assert result.complete is False
