@@ -1,4 +1,6 @@
-from services.loan_sequence_history import recorded_loan_changes
+from decimal import Decimal
+
+from services.loan_sequence_history import recorded_loan_changes, recorded_balance_impact
 
 
 def test_recorded_balance_and_rate_changes():
@@ -52,3 +54,24 @@ def test_dates_and_installment_period():
 
 def test_non_dict_snapshots_are_safe():
     assert recorded_loan_changes([], "invalid") == []
+
+
+def test_balance_impact_exact_and_directional():
+    for old, new, delta in (("1800.00", "1200.00", "-600.00"),
+                            ("1200.00", "1800.00", "600.00"),
+                            ("0.10", "0.30", "0.20"),
+                            ("0", "0.00", "0.00")):
+        assert recorded_balance_impact({"balance": old}, {"balance": new}, "success") == {
+            "evidence": "recorded_loan_balance", "before": format(Decimal(old), ".2f"),
+            "after": format(Decimal(new), ".2f"), "delta": delta}
+
+
+def test_balance_impact_missing_or_invalid():
+    for snapshot in ({}, {"balance": None}, {"balance": "NaN"}, {"balance": "1.001"}, {"balance": "10000000000000"}):
+        assert recorded_balance_impact(snapshot, {"balance": "0"}, "success") == {
+            "evidence": "not_recorded", "before": None, "after": None, "delta": None}
+
+
+def test_balance_impact_failed_event():
+    assert recorded_balance_impact({"balance": 600}, {"balance": 0}, "failed") == {
+        "evidence": "not_confirmed", "before": None, "after": None, "delta": None}
