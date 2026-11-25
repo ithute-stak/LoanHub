@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
+
 from services.principal_x_collection_source_diagnostics import (
     inspect_principal_x_collection_sources,
 )
@@ -360,4 +362,45 @@ def test_missing_linked_treasury_currency_is_a_reconciliation_blocker(
     )
     assert result.treasury_currency_mismatch_count == 1
     assert result.treasury_amount_mismatch_count == 0
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("status,purpose,direction", [
+    (PaymentStatus.PENDING, PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND),
+    (PaymentStatus.FAILED, PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND),
+    (PaymentStatus.SUCCEEDED, PaymentPurpose.REFUND, PaymentDirection.OUTBOUND),
+    (PaymentStatus.SUCCEEDED, PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.OUTBOUND),
+])
+def test_allocation_to_unverified_or_non_repayment_payment_is_flagged(
+    status, purpose, direction,
+):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                status=status, purpose=purpose, direction=direction,
+            )],
+            [], [SimpleNamespace(payment_id=payment_id, amount=Decimal("80.00"))], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.nonfinal_allocation_payment_count == 1
+    assert result.overallocated_payment_count == 0
+    assert result.complete is False
+
+
+def test_allocation_to_succeeded_inbound_loan_payment_is_not_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND,
+            )],
+            [], [SimpleNamespace(payment_id=payment_id, amount=Decimal("80.00"))], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.nonfinal_allocation_payment_count == 0
     assert result.complete is False
