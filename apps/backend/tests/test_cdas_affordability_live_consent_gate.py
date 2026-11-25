@@ -169,3 +169,54 @@ def test_approved_consent_file_content_digest_rechecked(monkeypatch):
             reference="CONSENT-001", operator_user_id=operator,
         )
     assert blocked.value.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["revoked", "rejected", "pending"])
+async def test_nonapproved_live_preview_never_contacts_provider(monkeypatch, status):
+    company, borrower, reviewer = (uuid4() for _ in range(3))
+    evidence = approved(company=company, borrower=borrower, reviewer=reviewer)
+    evidence.status = status
+    monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
+    monkeypatch.setattr(module, "get_company_cdas_client",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            AssertionError("Invalid consent must not contact CDAS")))
+    payload = module.GovernmentEmployeeAffordabilityRequest(
+        borrower_id=borrower, employee_number="EMP-100",
+        proposed_monthly_installment="150.00",
+        authorisation_confirmed=True,
+        consent_evidence_reference="CONSENT-001",
+    )
+    with pytest.raises(HTTPException) as blocked:
+        await module.preview_government_employee_affordability(
+            payload=payload, context=context(company), db=DB(evidence=evidence),
+        )
+    assert blocked.value.status_code == 409
+    assert "consent_not_approved" in blocked.value.detail["reason_codes"]
+
+
+@pytest.mark.asyncio
+async def test_revoked_recorded_assessment_never_reserves_or_contacts_provider(monkeypatch):
+    company, borrower, reviewer = (uuid4() for _ in range(3))
+    evidence = approved(company=company, borrower=borrower, reviewer=reviewer)
+    evidence.status = "revoked"
+    monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
+    monkeypatch.setattr(module, "reserve_affordability_attempt",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            AssertionError("Revoked consent must not reserve an attempt")))
+    async def forbidden_preview(*args, **kwargs):
+        raise AssertionError("Revoked consent must not contact provider")
+    monkeypatch.setattr(module, "preview_government_employee_affordability", forbidden_preview)
+    payload = module.RecordedGovernmentEmployeeAffordabilityRequest(
+        borrower_id=borrower, employee_number="EMP-100",
+        proposed_monthly_installment="150.00",
+        idempotency_key="revoked-gate-001",
+        consent_evidence_reference="CONSENT-001",
+        authorisation_confirmed=True,
+    )
+    with pytest.raises(HTTPException) as blocked:
+        await module.create_government_affordability_record(
+            payload=payload, context=context(company), db=DB(evidence=evidence),
+        )
+    assert blocked.value.status_code == 409
+    assert "consent_not_approved" in blocked.value.detail["reason_codes"]
