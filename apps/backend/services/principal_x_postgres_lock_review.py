@@ -163,6 +163,12 @@ def inspect_scoped_principal_x_evidence_under_loan_lock(
         loan_id=financial.snapshot.loan_id,
         snapshot_revision=snapshot_revision, attestations=attestations,
     )
+    final_revision = local_principal_x_source_revision(
+        db, company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+    )
+    if final_revision != server_revision:
+        raise ValueError("Local financial sources changed during locked review")
     return LockedScopedEvidenceReview(
         financial_sources=financial, scope_claims=scoped, can_post=False,
     )
