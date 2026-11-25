@@ -187,3 +187,50 @@ async def test_unknown_outcome_replay_never_contacts_cdas(monkeypatch):
     assert blocked.value.detail["requires_manual_review"] is True
     assert blocked.value.detail["may_retry_provider_request"] is False
     assert len(reservations) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_state", ["missing", "invalid_snapshot", "wrong_borrower"])
+async def test_completed_replay_with_untrusted_saved_record_fails_without_provider(
+    monkeypatch, saved_state,
+):
+    """A completed attempt cannot silently replay a missing or corrupt audit record."""
+    company, borrower, record_id = uuid4(), uuid4(), uuid4()
+    attempt = SimpleNamespace(id=uuid4(), state="completed", assessment_record_id=record_id)
+    if saved_state == "missing":
+        saved = None
+    elif saved_state == "invalid_snapshot":
+        saved = SimpleNamespace(id=record_id, record_id=borrower,
+                                event_data={"snapshot": {}})
+    else:
+        saved = SimpleNamespace(
+            id=record_id, record_id=borrower,
+            event_data={"snapshot": {
+                "borrower_id": str(uuid4()), "reference": "CDAS-AFF-WRONG",
+            }},
+        )
+    class Query:
+        def filter(self, *clauses):
+            return self
+        def first(self):
+            return saved
+    def company_query(db, company_id):
+        assert company_id == company
+        return Query()
+    monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent",
+                        lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "reserve_affordability_attempt",
+                        lambda db, **kwargs: (attempt, False))
+    monkeypatch.setattr(module, "_company_assessment_query", company_query)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Corrupt replay must not contact CDAS")
+    monkeypatch.setattr(module, "preview_government_employee_affordability", forbidden)
+    with pytest.raises(HTTPException) as blocked:
+        await module.create_government_affordability_record(
+            payload=_payload(borrower), context=_context(company), db=object(),
+        )
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail["status"] == "completed"
+    assert blocked.value.detail["may_retry_provider_request"] is False
+    assert blocked.value.detail["record_id"] == str(record_id)
