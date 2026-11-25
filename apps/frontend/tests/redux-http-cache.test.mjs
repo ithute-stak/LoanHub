@@ -3,6 +3,7 @@
  * Exercises real reducer actions, not a reimplementation of its state machine.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -375,6 +376,21 @@ test("Axios clients with separate Redux stores never share a pending GET", async
   assert.equal((await pending).data.origin,"first");
   assert.equal(firstReads,1);
   assert.equal(secondReads,1);
+});
+
+test("opt-in Finance browser certification is syntactically valid and write-blocked", () => {
+  const filename = fileURLToPath(new URL("./finance-refresh-staging-browser-probe.mjs", import.meta.url));
+  execFileSync(process.execPath, ["--check", filename]);
+  const probe = readFileSync(filename, "utf8");
+  assert.match(probe, /LOANHUB_E2E_CONFIRM_SYNTHETIC/);
+  assert.match(probe, /route\.abort\("blockedbyclient"\)/);
+  assert.match(probe, /\["GET", "HEAD", "OPTIONS"\]\.includes\(request\.method\(\)\)/);
+  assert.match(probe, /page\.waitForResponse/);
+  for (const path of [
+    "/finance-config/company/agreements",
+    "/finance-config/company/charge-ledger",
+    "/finance-config/company/claims",
+  ]) assert.ok(probe.includes(path), `Missing read-only refresh check: ${path}`);
 });
 
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));
