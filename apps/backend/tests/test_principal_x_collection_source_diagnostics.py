@@ -659,3 +659,70 @@ def test_treasury_without_approval_field_is_unposted_not_certified():
     assert result.unposted_linked_treasury_count == 1
     assert result.missing_posted_treasury_evidence_count == 1
     assert result.complete is False
+
+
+@pytest.mark.parametrize("approval,voided", [
+    ("posted", True), ("pending", False), (None, False),
+])
+def test_completed_refund_without_usable_posted_treasury_is_flagged(approval, voided):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("50.00"), currency="LSL",
+                status=PaymentStatus.SUCCEEDED, purpose=PaymentPurpose.REFUND,
+                direction=PaymentDirection.OUTBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("50.00"),
+                currency="LSL", direction=TreasuryDirection.MONEY_OUT,
+                approval_status=approval, is_voided=voided,
+                entry_type=TreasuryEntryType.REFUND,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_refund_treasury_count == 1
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("entry_type,expected", [
+    (TreasuryEntryType.REFUND, 0),
+    (TreasuryEntryType.ADJUSTMENT, 1),
+    (TreasuryEntryType.EXPENSE, 1),
+    (None, 1),
+])
+def test_posted_refund_treasury_classification_is_checked(entry_type, expected):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("50.00"), currency="LSL",
+                status=PaymentStatus.SUCCEEDED, purpose=PaymentPurpose.REFUND,
+                direction=PaymentDirection.OUTBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("50.00"),
+                currency="LSL", direction=TreasuryDirection.MONEY_OUT,
+                approval_status="posted", is_voided=False,
+                entry_type=entry_type,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_refund_treasury_count == 0
+    assert result.refund_treasury_type_mismatch_count == expected
+    assert result.complete is False
+
+
+def test_pending_refund_does_not_claim_completed_refund_treasury_evidence():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("50.00"),
+                status=PaymentStatus.PENDING, purpose=PaymentPurpose.REFUND,
+                direction=PaymentDirection.OUTBOUND,
+            )], [], [], [],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.missing_posted_refund_treasury_count == 0
+    assert result.complete is False
