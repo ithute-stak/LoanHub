@@ -1,3 +1,4 @@
+from services.principal_x_source_coverage import principal_x_source_coverage
 from io import BytesIO
 from datetime import datetime, date, time
 from decimal import Decimal
@@ -664,6 +665,14 @@ def principal_x_settlement_readiness(
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
+        source_coverage=[
+            {
+                "source_family": item.source_family,
+                "review_stage": item.review_stage,
+                "authoritatively_verified": False,
+            }
+            for item in principal_x_source_coverage()
+        ],
     )
 
 
