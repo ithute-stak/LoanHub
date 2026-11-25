@@ -199,7 +199,8 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
             cash_overapplied_rows=0,
             invalid_cash_amount_rows=0, cash_direction_mismatch_rows=0,
         treasury_amount_mismatch_rows=0,
-            treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, voided_linked_treasury_rows=0,
+            treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, treasury_entry_type_mismatch_rows=0,
+        voided_linked_treasury_rows=0,
             unposted_linked_treasury_rows=0, missing_posted_treasury_evidence_rows=0,
             blocking_reasons=[],
         )
@@ -295,7 +296,7 @@ def test_readiness_endpoint_queries_real_cross_source_diagnostics():
         "cash_overapplied_rows", "invalid_cash_amount_rows",
         "cash_direction_mismatch_rows",
         "treasury_amount_mismatch_rows", "treasury_currency_mismatch_rows",
-        "treasury_direction_mismatch_rows",
+        "treasury_direction_mismatch_rows", "treasury_entry_type_mismatch_rows",
         "voided_linked_treasury_rows", "unposted_linked_treasury_rows",
         "missing_posted_treasury_evidence_rows",
     ):
@@ -318,7 +319,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
         nonfinal_allocation_payment_rows=0, cash_overapplied_rows=0,
         invalid_cash_amount_rows=0, cash_direction_mismatch_rows=0,
         treasury_amount_mismatch_rows=0,
-        treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, voided_linked_treasury_rows=0,
+        treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, treasury_entry_type_mismatch_rows=0,
+        voided_linked_treasury_rows=0,
             unposted_linked_treasury_rows=0, missing_posted_treasury_evidence_rows=0,
             blocking_reasons=["Authoritative external reconciliation missing"],
     )
