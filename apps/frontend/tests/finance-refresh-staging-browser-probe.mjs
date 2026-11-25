@@ -10,6 +10,7 @@
  *   LOANHUB_E2E_COMPANY_A=synthetic-company-a \
  *   LOANHUB_E2E_STATE_B=/secure/company-b.json \
  *   LOANHUB_E2E_COMPANY_B=synthetic-company-b \
+ *   LOANHUB_E2E_CONFIRM_SYNTHETIC=YES \
  *   node apps/frontend/tests/finance-refresh-staging-browser-probe.mjs
  *
  * Never use live customer accounts or production. Does not record response
@@ -24,14 +25,18 @@ const keys = [
   "LOANHUB_E2E_COMPANY_A",
   "LOANHUB_E2E_STATE_B",
   "LOANHUB_E2E_COMPANY_B",
+  "LOANHUB_E2E_CONFIRM_SYNTHETIC",
 ];
 for (const key of keys) {
   assert.ok(process.env[key], `Missing ${key}; browser certification did not start`);
 }
+assert.equal(process.env.LOANHUB_E2E_CONFIRM_SYNTHETIC, "YES",
+  "Explicit synthetic-account confirmation is required");
 const base = new URL(process.env.LOANHUB_E2E_BASE_URL);
 assert.equal(base.protocol, "https:", "Only HTTPS staging environments are accepted");
 assert.match(base.hostname, /(^|[.-])(sandbox|staging|stage|test)([.-]|$)/i,
   "Refusing to test a host without an explicit staging or sandbox hostname");
+assert.notEqual(base.hostname, "loanhub.co.ls", "Production domain is forbidden");
 assert.notEqual(process.env.LOANHUB_E2E_COMPANY_A, process.env.LOANHUB_E2E_COMPANY_B,
   "Use two distinct synthetic company IDs");
 assert.notEqual(process.env.LOANHUB_E2E_STATE_A, process.env.LOANHUB_E2E_STATE_B,
@@ -59,13 +64,11 @@ async function certify(stateFile, expectedCompany, label) {
   const context = await browser.newContext({ storageState: stateFile });
   const page = await context.newPage();
   try {
-    // This probe is strictly read-only: abort any financial write before it
-    // reaches even the isolated sandbox backend.
+    // Fail closed: abort every non-read API request, not only known
+    // financial endpoints. This probe must never mutate sandbox data.
     await page.route("**/api/v1/**", route => {
       const request = route.request();
-      const path = new URL(request.url()).pathname;
-      if (!["GET", "HEAD", "OPTIONS"].includes(request.method()) &&
-          /\/(loans|payments|finance-config|accounting|collections)(\/|$)/.test(path)) {
+      if (!["GET", "HEAD", "OPTIONS"].includes(request.method())) {
         return route.abort("blockedbyclient");
       }
       return route.continue();
