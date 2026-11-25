@@ -1,5 +1,7 @@
 "use client";
 
+import {promptAppDialog} from "@/lib/app-dialog";
+
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
@@ -141,7 +143,7 @@ export default function LegacyBankDeductionsPage() {
     try {
       const preview = await api.get<{count:number;recoverable:boolean}>("/legacy-bank-deductions/bulk-delete/preview");
       if (!preview.data.count) {setStatus("There are no active legacy records to remove.");return;}
-      const typed = window.prompt("This will remove all "+preview.data.count+" active LEGACY bank deductions for this company from capture lists and exports. Existing loans are NOT deleted. Records remain recoverable. Type DELETE LEGACY RECORDS to continue:");
+      const typed = await promptAppDialog("This will remove all "+preview.data.count+" active LEGACY bank deductions for this company from capture lists and exports. Existing loans are NOT deleted. Records remain recoverable. Type DELETE LEGACY RECORDS to continue:", "", {title: "Confirm bulk removal", destructive: true, confirmLabel: "Continue"});
       if (typed !== "DELETE LEGACY RECORDS") {setStatus("Bulk removal cancelled.");return;}
       const response = await api.post<{deleted:number}>("/legacy-bank-deductions/bulk-delete",{
         confirmation:"DELETE LEGACY RECORDS",expected_count:preview.data.count
