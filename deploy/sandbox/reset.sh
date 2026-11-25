@@ -14,20 +14,33 @@ unset DOCKER_CONTEXT DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
 export DOCKER_HOST=unix:///var/run/docker.sock
 compose=(docker compose --project-name loanhub-sandbox --project-directory "$PWD" --env-file "$PWD/sandbox.env" --file "$PWD/compose.yaml" --profile verified)
+# Public ingress is opt-in and must survive a scheduled reset.
+if [[ -f .ingress-approved ]]; then
+  compose+=(--file "$PWD/compose.edge.yaml")
+  export SANDBOX_RESET_INGRESS=1
+else
+  export SANDBOX_RESET_INGRESS=0
+fi
 # Validate the entire resolved configuration without printing credentials.
-# Reject alternate mounts, external resources, unrecognized services and names.
+# Reject unexpected networks, named volumes, services and published ports.
 "${compose[@]}" config --format json | python3 -c '
-import json, sys
+import json, os, sys
 c = json.load(sys.stdin)
 def require(ok):
     if not ok:
         sys.exit("Sandbox reset refused: unexpected compose configuration")
 require(c["name"] == "loanhub-sandbox")
-require(set(c["services"]) == {"db","redis","migrate","role-bootstrap","seed","backend","frontend"})
+edge = os.environ["SANDBOX_RESET_INGRESS"] == "1"
+require(set(c["services"]) == {"db","redis","migrate","role-bootstrap","seed","backend","frontend"} | ({"ingress"} if edge else set()))
 require(set(c["volumes"]) == {"sandbox_db","sandbox_redis","sandbox_files"})
 for key, vol in c["volumes"].items():
     require(vol.get("name") == "loanhub-sandbox_" + key and not vol.get("external") and not vol.get("driver_opts"))
-require(set(c["networks"]) == {"isolated"})
+require(set(c["networks"]) == ({"isolated","public_edge"} if edge else {"isolated"}))
+if edge:
+    require(c["networks"]["public_edge"].get("external") is True and c["networks"]["public_edge"].get("name") == "public-edge")
+for name, svc in c["services"].items():
+    require(set(svc.get("networks", {})) == ({"isolated","public_edge"} if name == "ingress" else {"isolated"}))
+    require(not svc.get("ports"))
 require(c["networks"]["isolated"].get("internal") is True and not c["networks"]["isolated"].get("external"))
 for key in ("migrate","seed","backend","role-bootstrap"):
     e = c["services"][key]["environment"]
