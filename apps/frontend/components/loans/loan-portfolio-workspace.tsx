@@ -669,7 +669,7 @@ export function LoanPortfolioWorkspace({
             URL.revokeObjectURL(url);
         } catch (error) {
             console.error("Bank submission export failed", error);
-            window.alert("Could not generate bank ZIP. Ensure clients have outstanding loans and complete bank details.");
+            toast.error("Could not generate bank ZIP. Ensure clients have outstanding loans and complete bank details.");
         } finally {
             setExportingBankZip(false);
         }
@@ -689,7 +689,7 @@ export function LoanPortfolioWorkspace({
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) {
             console.error("Loan accounting statement error", error);
-            window.alert("Could not generate the loan statement. Verify the reporting period and your access.");
+            toast.error("Could not generate the loan statement. Verify the reporting period and your access.");
         } finally {
             setExportingStatement(false);
         }
@@ -709,7 +709,7 @@ export function LoanPortfolioWorkspace({
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) {
             console.error("Monthly loan payment report failed", error);
-            window.alert("Could not generate the monthly payments report. Please check your access and try again.");
+            toast.error("Could not generate the monthly payments report. Please check your access and try again.");
         } finally {
             setExportingMonthlyReport(false);
         }
@@ -731,7 +731,7 @@ export function LoanPortfolioWorkspace({
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) {
             console.error("Overdue report generation failed", error);
-            window.alert("Could not generate the overdue report. Refresh your overdue selection and try again.");
+            toast.error("Could not generate the overdue report. Refresh your overdue selection and try again.");
         } finally {
             setExportingOverduePdf(false);
         }
