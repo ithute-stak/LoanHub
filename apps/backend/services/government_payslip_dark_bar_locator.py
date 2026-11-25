@@ -39,9 +39,20 @@ def locate_dark_bar_net_pay_cell(
         and word.confidence >= min_heading_confidence
         and word.top < height // 2
     ]
-    if len(headings) != 1:
+    # Normal and inverted OCR can report the same physical anchor twice.
+    # Deduplicate only overlapping boxes; separate headings remain ambiguous.
+    distinct: list[OCRWord] = []
+    for candidate in sorted(headings, key=lambda w: -w.confidence):
+        if any(
+            abs(candidate.left - known.left) <= max(12, width // 70)
+            and abs(candidate.top - known.top) <= max(12, height // 130)
+            for known in distinct
+        ):
+            continue
+        distinct.append(candidate)
+    if len(distinct) != 1:
         raise AmountCellLocationError("missing or ambiguous earnings table anchor")
-    heading = headings[0]
+    heading = distinct[0]
     bar_left = max(0, heading.left - max(8, width // 100))
     bar_right = min(width, bar_left + int(width * 0.29))
     if bar_right - bar_left < 130:
