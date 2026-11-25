@@ -6,6 +6,7 @@ import {Button} from "@/components/ui/button";
 import {LoanSequenceViews} from "./loan-sequence-views";
 import {useTenant} from "@/provider/tenantProvider";
 import {useAppSelector} from "@/store/hooks";
+import {useReduxTableField} from "@/store/hooks/useReduxTableField";
 
 type FieldChange = {field: string; before_recorded: boolean; after_recorded: boolean; before: string | number | null; after: string | number | null};
 type BalanceImpact = {evidence: string; before: string | null; after: string | null; delta: string | null};
@@ -21,7 +22,7 @@ type LoanEvent = {
   changes?: FieldChange[];
   balance_impact?: BalanceImpact;
 };
-type History = {items: LoanEvent[]; count: number; history_limit: number; history_truncated?: boolean};
+type History = {items: LoanEvent[]; count: number; history_limit: number; history_truncated?: boolean; page?: number; page_size?: number; total_audit_events?: number};
 
 export function LoanActivityPanel({loanId}: {loanId: string}) {
   const {activeCompanyId, activeBranchId, activeRole} = useTenant();
@@ -35,6 +36,7 @@ function displayValue(recorded: boolean, value: string | number | null) {
 
 function LoanActivityContent({loanId}: {loanId: string}) {
   const [open, setOpen] = useState(false);
+  const [page, setPage] = useReduxTableField("loan-sequence:"+loanId, "activityPage", 1);
   const [result, setResult] = useState<History | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -46,19 +48,20 @@ function LoanActivityContent({loanId}: {loanId: string}) {
     setError("");
     try {
       await api.post(`/loans/${encodeURIComponent(loanId)}/processing-acknowledgement`);
-      await load();
+      await load(1);
     } catch {
       setError("Unable to record processing acknowledgement. Only authorized lending staff can record it.");
       setOpen(true);
     } finally { setLoading(false); }
   }
 
-  async function load() {
+  async function load(nextPage = page) {
     setOpen(true);
     setLoading(true);
     setError("");
+    setPage(nextPage);
     try {
-      const response = await api.get<History>(`/loans/${encodeURIComponent(loanId)}/activity`);
+      const response = await api.get<History>(`/loans/${encodeURIComponent(loanId)}/activity?page=${nextPage}&page_size=30`);
       setResult(response.data);
     } catch {
       setError("The activity history could not be loaded. Please check your permissions or try again.");
@@ -74,15 +77,16 @@ function LoanActivityContent({loanId}: {loanId: string}) {
         <p className="text-xs text-muted-foreground">Recorded actions, responsible staff, field changes and loan balance evidence.</p>
       </div>
       <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={loading} onClick={() => void acknowledge()}>Acknowledge processing</Button>
-      <Button type="button" variant="outline" onClick={() => open ? setOpen(false) : void load()}>
+      <Button type="button" variant="outline" disabled={loading} onClick={() => open ? setOpen(false) : void load()}>
         {open ? "Hide history" : "View history"}
       </Button></div>
     </div>
     {open && <LoanSequenceViews loanId={loanId}/>}
     {open && (loading ? <p className="text-sm">Loading loan activity…</p> : error ?
-      <p role="alert" className="text-sm text-destructive">{error}</p> : result?.items.length ?
+      <p role="alert" className="text-sm text-destructive">{error}</p> : result ?
       <div className="space-y-3">
-      {result.history_truncated && <p role="status" className="text-sm text-muted-foreground">History exceeds the current display limit. Additional events are not shown.</p>}
+      {result.total_audit_events !== undefined && <p className="text-xs text-muted-foreground">{result.total_audit_events} recorded audit events. Workflow fallback records appear on page one.</p>}
+      {!result.items.length && <p className="text-sm text-muted-foreground">No recorded events on this page.</p>}
       <ol className="space-y-3">
         {result.items.map((entry) => <li key={entry.id} className="rounded-lg border border-l-4 border-l-red-600 p-3 space-y-2 text-sm">
           <p className="font-medium">{entry.action.replace(/_/g, " ")}</p>
@@ -95,7 +99,7 @@ function LoanActivityContent({loanId}: {loanId: string}) {
           </dl> : <p className="text-xs text-muted-foreground">{entry.balance_impact?.evidence === "not_confirmed" ? "Financial movement not confirmed" : "Historical balance impact not recorded"}</p>}
           {!!entry.changes?.length && <details className="rounded-md border p-2"><summary className="cursor-pointer font-medium">Recorded field changes ({entry.changes.length})</summary><dl className="mt-2 space-y-2">{entry.changes.map(change => <div key={change.field} className="grid gap-1 border-t pt-2 sm:grid-cols-3"><dt className="font-medium">{change.field.replace(/_/g, " ")}</dt><dd className="break-all"><span className="text-muted-foreground">Before: </span>{displayValue(change.before_recorded, change.before)}</dd><dd className="break-all"><span className="text-muted-foreground">After: </span>{displayValue(change.after_recorded, change.after)}</dd></div>)}</dl></details>}
         </li>)}
-      </ol></div> :
+      </ol><div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" disabled={loading || page<=1} onClick={()=>void load(page-1)}>Previous</Button><span className="text-xs">Page {result.page ?? page}</span><Button type="button" variant="outline" disabled={loading || !result.history_truncated} onClick={()=>void load(page+1)}>Next</Button></div></div> :
       <p className="text-sm text-muted-foreground">No recorded processing actions were found for this loan. Historical activity cannot be reconstructed without evidence.</p>)}
   </section>;
 }
