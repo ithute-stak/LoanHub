@@ -177,7 +177,8 @@ def inspect_principal_x_collection_sources(
                 voided_linked_treasury += 1
             continue
         approval = getattr(entry, "approval_status", None)
-        if approval is not None and getattr(approval, "value", approval) != "posted":
+        # Missing/unknown status is NOT a posted treasury entry.
+        if getattr(approval, "value", approval) != "posted":
             if is_collected_repayment:
                 unposted_linked_treasury += 1
             continue
