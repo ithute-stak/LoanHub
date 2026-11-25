@@ -1,0 +1,12 @@
+{
+    auto_https off
+    admin off
+}
+
+http://sandbox.loanhub.co.ls {
+    reverse_proxy frontend:3000
+}
+
+http://api-sandbox.loanhub.co.ls {
+    reverse_proxy backend:8000
+}
