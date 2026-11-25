@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from database.models.enums import TreasuryDirection
+
 from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
 
 from services.principal_x_collection_source_diagnostics import (
@@ -404,3 +406,40 @@ def test_allocation_to_succeeded_inbound_loan_payment_is_not_flagged():
     )
     assert result.nonfinal_allocation_payment_count == 0
     assert result.complete is False
+
+
+def test_treasury_outbound_direction_for_inbound_payment_is_flagged():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency="LSL",
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.00"),
+                currency="LSL", approval_status="posted", is_voided=False,
+                direction=TreasuryDirection.MONEY_OUT,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_direction_mismatch_count == 1
+    assert result.complete is False
+
+
+def test_treasury_inbound_direction_matches_inbound_payment():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency="LSL",
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.00"),
+                currency="LSL", approval_status="posted", is_voided=False,
+                direction=TreasuryDirection.MONEY_IN,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_direction_mismatch_count == 0
