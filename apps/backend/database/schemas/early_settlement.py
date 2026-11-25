@@ -99,6 +99,13 @@ class PrincipalXSettlementPreviewRead(BaseModel):
 
 
 
+class PrincipalXSourceCoverageRead(BaseModel):
+    """Implementation inventory, never authoritative reconciliation proof."""
+    source_family: str
+    review_stage: Literal["diagnostic_only", "authoritative_adapter_missing"]
+    authoritatively_verified: Literal[False] = False
+
+
 class PrincipalXSettlementReadinessRead(BaseModel):
     """Read-only diagnostics; never authorizes a financial transaction."""
     loan_id: UUID
@@ -125,6 +132,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     missing_posted_treasury_evidence_rows: int
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
+    source_coverage: list[PrincipalXSourceCoverageRead]
 
 
 class PrincipalXSettlementRevalidateRequest(BaseModel):
