@@ -18,13 +18,14 @@ from services.government_payslip_amount_locator import (
 )
 
 
-def locate_dark_bar_net_pay_cell(
+def _locate_dark_bar_amount_cell(
     image: Image.Image,
     words: Sequence[OCRWord],
     *,
     min_heading_confidence: float = 65.0,
+    summary_index: int = 1,
 ) -> LocatedAmountCell:
-    """Find the second of two separated summary bars beneath EARNINGS.
+    """Find a specified one of two separated summary bars beneath EARNINGS.
 
     Fails closed without a reliable earnings anchor, two distinct dark bars,
     or a bounded amount-only box. Designed for horizontal single-page scans.
@@ -93,8 +94,33 @@ def locate_dark_bar_net_pay_cell(
 
     left = bar_right + max(6, width // 150)
     right = min(width, left + int(width * 0.118))
-    top = max(0, second[0] - 2)
-    bottom = min(height, second[1] + 2)
+    chosen_bar = first if summary_index == 0 else second
+    top = max(0, chosen_bar[0] - 2)
+    bottom = min(height, chosen_bar[1] + 2)
     if right - left < 35 or bottom - top < 12 or (right-left)*(bottom-top) > 2_000_000:
         raise AmountCellLocationError("unsafe summary amount crop")
-    return LocatedAmountCell("net_pay_dark_bar_candidate", (left, top, right, bottom))
+    return LocatedAmountCell(
+        "gross_dark_bar_candidate" if summary_index == 0 else "net_pay_dark_bar_candidate",
+        (left, top, right, bottom),
+    )
+
+
+
+def locate_dark_bar_net_pay_cell(
+    image: Image.Image, words: Sequence[OCRWord], *,
+    min_heading_confidence: float = 65.0,
+) -> LocatedAmountCell:
+    """Locate the second summary amount cell, never verify salary authenticity."""
+    return _locate_dark_bar_amount_cell(
+        image, words, min_heading_confidence=min_heading_confidence, summary_index=1,
+    )
+
+
+def locate_dark_bar_gross_cell(
+    image: Image.Image, words: Sequence[OCRWord], *,
+    min_heading_confidence: float = 65.0,
+) -> LocatedAmountCell:
+    """Locate the first summary amount cell, requiring the net-pay bar below it."""
+    return _locate_dark_bar_amount_cell(
+        image, words, min_heading_confidence=min_heading_confidence, summary_index=0,
+    )
