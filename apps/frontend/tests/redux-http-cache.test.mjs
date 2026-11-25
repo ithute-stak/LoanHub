@@ -195,4 +195,71 @@ test("in-flight GET started before successful mutation cannot refill the Redux c
   assert.equal(getCount, 2);
 });
 
+
+test("successful disbursement, repayment and top-up invalidate current company's loan and payment tables", async () => {
+  for (const mutationPath of [
+    "/loans/loan-1/disburse",
+    "/loans/repayments",
+    "/origination/applications/compact-top-up",
+  ]) {
+    let amount = 100;
+    const calls = [];
+    const {client, store} = createCacheClient("financial-" + mutationPath, async (config) => {
+      calls.push(config.method + " " + config.url);
+      if (config.method === "post") {
+        amount = 200;
+        return response(config, {ok:true});
+      }
+      return response(config, {amount});
+    });
+    const a = {headers:headersFor("company-A")};
+    const b = {headers:headersFor("company-B")};
+    const read = (headers, path) => client.get(path, {headers});
+    assert.equal((await read(a, "/loans/")).data.amount, 100);
+    assert.equal((await read(a, "/payments/")).data.amount, 100);
+    assert.equal((await read(b, "/loans/")).data.amount, 100);
+    assert.equal((await read(a, "/loans/")).data.amount, 100);
+    await client.post(mutationPath, {amount:100}, a);
+    const keys = Object.values(store.getState().httpCache.entries);
+    assert.equal(keys.filter(entry => entry.scope.includes("company-A")).length, 0);
+    assert.equal(keys.filter(entry => entry.scope.includes("company-B")).length, 1);
+    assert.equal((await read(a, "/loans/")).data.amount, 200);
+    assert.equal((await read(a, "/payments/")).data.amount, 200);
+    assert.equal(calls.filter(value => value === "get /loans/").length, 3);
+  }
+});
+
+test("failed financial mutation leaves valid cached reads intact", async () => {
+  let gets = 0;
+  const {client, store} = createCacheClient("failed-write", async (config) => {
+    if (config.method === "post") {
+      throw new Error("Payment rejected");
+    }
+    gets++;
+    return response(config, {balance:100});
+  });
+  const config = {headers:headersFor("company-A")};
+  await client.get("/loans/", config);
+  const revision = store.getState().httpCache.revision;
+  await assert.rejects(client.post("/loans/repayments", {amount:30}, config), /Payment rejected/);
+  assert.equal(store.getState().httpCache.revision, revision);
+  assert.equal((await client.get("/loans/", config)).data.balance, 100);
+  assert.equal(gets, 1);
+});
+
+test("forced manual refresh bypasses a valid cached GET without affecting other tenants", async () => {
+  let version = 0;
+  const {client, store} = createCacheClient("forced-refresh", async config =>
+    response(config, {version:++version}));
+  const a = {headers:headersFor("company-A")};
+  const b = {headers:headersFor("company-B")};
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  assert.equal((await client.get("/loans/", b)).data.version, 2);
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  assert.equal((await client.get("/loans/", {...a, loanHubCache:{mode:"refresh"}})).data.version, 3);
+  assert.equal((await client.get("/loans/", a)).data.version, 3);
+  assert.equal((await client.get("/loans/", b)).data.version, 2);
+  assert.equal(Object.keys(store.getState().httpCache.entries).length, 2);
+});
+
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));
