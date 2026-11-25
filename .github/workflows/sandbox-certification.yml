@@ -78,6 +78,14 @@ jobs:
         run: |
           bash reset.sh --confirm-sandbox-reset
           docker compose --env-file sandbox.env --profile verified exec -T backend python -c 'import json,urllib.request; r=urllib.request.Request("http://127.0.0.1:8000/api/v1/auth/login",data=json.dumps(dict(phone="sandbox@loanhub.co.ls",password="sandox123")).encode(),headers={"Content-Type":"application/json"}); assert urllib.request.urlopen(r,timeout=15).status==200'
+      - name: Capture startup diagnostics on failure
+        if: failure()
+        working-directory: deploy/sandbox
+        run: |
+          if test -f sandbox.env; then
+            docker compose --env-file sandbox.env --profile verified ps -a
+            docker compose --env-file sandbox.env --profile verified logs --tail=100 backend frontend migrate role-bootstrap seed
+          fi
       - name: Clean up disposable stack
         if: always()
         working-directory: deploy/sandbox
