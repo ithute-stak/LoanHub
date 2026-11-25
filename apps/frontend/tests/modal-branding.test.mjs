@@ -8,19 +8,24 @@ test("shared modal surfaces render the LoanHub branding", () => {
   assert.ok(existsSync(new URL("../public/loanhub-horizontal-logo.png", import.meta.url)));
   const dialog = read("components/ui/dialog.tsx");
   assert.match(dialog, /<Image src="\/loanhub-horizontal-logo\.png" alt="LoanHub"/);
-  assert.match(dialog, /<DialogBrand\s*\/>/);
+  assert.match(dialog, /brandHeader \?\? <DialogBrand\s*\/>/);
+  assert.match(dialog, /<Image[^>]*\bfill\b[^>]*object-cover/);
+  assert.match(dialog, /data-slot="dialog-brand"[^>]*min-h-28[^>]*w-full/);
+  assert.doesNotMatch(dialog, /width=\{180\}|height=\{48\}/);
   assert.doesNotMatch(dialog, /brandSrc|brandAlt/);
   for (const name of ["alert-dialog", "sheet", "drawer"]) {
     assert.match(read("components/ui/" + name + ".tsx"), /<DialogBrand\s*\/>/, name);
   }
 });
 
-test("solid custom headers retain branding and separate the title", () => {
+test("custom dialogs use the full image banner with title and description", () => {
   const custom = read("components/ui/custom-dialog.tsx");
   assert.doesNotMatch(custom, /brandSrc|brandAlt|banner\s*=/);
   assert.match(custom, /<DialogContent\b/);
   assert.doesNotMatch(custom, /!solidHeader\s*\?/);
-  assert.doesNotMatch(custom, /object-cover/);
+  assert.match(custom, /brandHeader=\{\(\s*<DialogBrand>\s*<DialogHeader[\s\S]*?<DialogTitle[\s\S]*?<DialogDescription[\s\S]*?<\/DialogBrand>/);
+  assert.doesNotMatch(custom, /solidHeader\s*&&|solidHeader\s*\?/);
+  assert.match(custom, /sm:p-0/);
 });
 
 test("corrected administration banners use LoanHub", () => {
