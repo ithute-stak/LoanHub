@@ -573,9 +573,11 @@ def test_actual_full_registration_failure_rolls_back_all_new_rows(
         """)).scalar_one() == 1
 
 
-def full_capture_with_bank(branch_id):
+def full_capture_with_bank(
+    branch_id, *, national_id="SYN-FULL-REG-001", phone="59000070",
+):
     """Synthetic account whose prefix and length satisfy FNB validation."""
-    request = full_capture(branch_id)
+    request = full_capture(branch_id, national_id=national_id, phone=phone)
     payload = request.model_dump(mode="python")
     payload["bank_account"] = {
         "account_holder": "Palesa Mokoena",
@@ -766,3 +768,193 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
             Decimal("550.00"), Decimal("55.00"),
         )
 
+
+
+def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
+    real_models_sandbox, monkeypatch,
+):
+    """Full HTTP -> adapter -> real DB -> fresh readback, never live."""
+    from contextlib import contextmanager
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from core.access_control import get_tenant_context
+    from routers.batlokoa_new_only_registration_offline import (
+        build_offline_certification_router,
+    )
+
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+        """), {"branch": branch, "company": company})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (
+                id, phone, password_hash, role, is_active, is_verified,
+                must_change_password
+            ) VALUES (
+                :actor, '69997777', 'synthetic-staff-hash-not-credential',
+                'LOAN_OFFICER', TRUE, TRUE, FALSE
+            )
+        """), {"actor": employee})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active
+            ) VALUES (
+                :actor, :actor, :company, :branch,
+                'LOAN_OFFICER', TRUE, TRUE
+            )
+        """), {"actor": employee, "company": company, "branch": branch})
+
+    @contextmanager
+    def fresh_session():
+        with sandbox_session(engine, schema) as connection:
+            with Session(bind=connection, expire_on_commit=False) as db:
+                yield db
+
+    app = FastAPI()
+    app.include_router(build_offline_certification_router(
+        session_factory=fresh_session,
+        fingerprint_secret=b"synthetic-only-hmac-secret-for-offline-certification",
+    ), prefix="/api/v1")
+    app.dependency_overrides[get_tenant_context] = lambda: context
+    client = TestClient(app)
+    url = "/api/v1/batlokoa/registration/clients"
+    body = full_capture_with_bank(
+        branch, national_id="SYN-OFFLINE-HTTP-001", phone="59007881",
+    ).model_dump(mode="json")
+    headers = {"Idempotency-Key": "offline-http-reg-001"}
+    monkeypatch.setenv(
+        "LOANHUB_REGISTRATION_E2E_ACK", "isolated_disposable_database"
+    )
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+
+    created = client.post(url, json=body, headers=headers)
+    assert created.status_code == 201, created.json()
+    assert created.json()["replayed"] is False
+    assert set(created.json()) == {"registered", "client_account_id", "replayed"}
+    assert created.json()["registered"] is True
+    assert "SYN-OFFLINE-HTTP-001" not in created.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    replay = client.post(url, json=body, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json() == {
+        "registered": True,
+        "client_account_id": created.json()["client_account_id"],
+        "replayed": True,
+    }
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    changed = {**body, "first_name": "Modified"}
+    conflict = client.post(url, json=changed, headers=headers)
+    assert conflict.status_code == 409
+    assert "SYN-OFFLINE-HTTP-001" not in conflict.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    # The record really committed and is independently readable.
+    with engine.connect() as conn:
+        saved = conn.execute(text(f"""
+            SELECT a.company_id, a.branch_id, p.first_name,
+                   b.employer_name, b.monthly_income
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrowers b ON b.id = a.borrower_id
+            JOIN {schema}.people p ON p.user_id = b.user_id
+            WHERE a.id = :id
+        """), {"id": created.json()["client_account_id"]}).one()
+        assert saved == (
+            company, branch, "Palesa", "Synthetic Employer", Decimal("6000.00"),
+        )
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 1
+        bank = conn.execute(text(f"""
+            SELECT account_number_encrypted, account_number_last4,
+                   tokenized_card_reference_encrypted, verification_status
+            FROM {schema}.borrower_bank_accounts
+        """)).one()
+        assert bank.account_number_last4 == "7890"
+        assert "61234567890" not in bank.account_number_encrypted
+        assert "CI-ONLY-TOKEN-REF" not in bank.tokenized_card_reference_encrypted
+        assert bank.verification_status == "unverified"
+
+    # Removing the explicit operator acknowledgement fails before any write.
+    monkeypatch.delenv("LOANHUB_REGISTRATION_E2E_ACK")
+    assert client.post(url, json=body, headers=headers).status_code == 503
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+
+    # Simulate a failure AFTER full banking and debt staging, but BEFORE
+    # finalization. The same HTTP endpoint must roll back identity, accounts,
+    # debt, encrypted banking and the idempotency reservation in one tx.
+    monkeypatch.setenv(
+        "LOANHUB_REGISTRATION_E2E_ACK", "isolated_disposable_database"
+    )
+    second_body = full_capture_with_bank(
+        branch, national_id="SYN-OFFLINE-HTTP-RECOVER-002",
+        phone="59007882",
+    ).model_dump(mode="json")
+    second_headers = {"Idempotency-Key": "offline-http-recovery-002"}
+    import services.atomic_new_client_registration as atomic
+    original_details = atomic.stage_full_new_only_client_details
+
+    def fail_after_full_details(*args, **kwargs):
+        original_details(*args, **kwargs)
+        raise RuntimeError("synthetic offline failure after all details")
+
+    with monkeypatch.context() as isolated_failure:
+        isolated_failure.setattr(
+            atomic, "stage_full_new_only_client_details",
+            fail_after_full_details,
+        )
+        failed = client.post(
+            url, json=second_body, headers=second_headers,
+        )
+    assert failed.status_code == 503
+    assert "synthetic offline failure" not in failed.text
+    assert "SYN-OFFLINE-HTTP-RECOVER-002" not in failed.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_bank_accounts", "borrower_debt_obligations",
+            "borrower_debt_obligation_events",
+        ):
+            assert conn.execute(text(f"""
+                SELECT count(*) FROM {schema}.{table_name}
+            """)).scalar_one() == 1
+
+    recovered = client.post(url, json=second_body, headers=second_headers)
+    assert recovered.status_code == 201, recovered.json()
+    assert recovered.json()["registered"] is True
+    assert recovered.json()["replayed"] is False
+    assert recovered.json()["client_account_id"] != created.json()["client_account_id"]
+    assert totals(engine, schema) == (2, 2, 2, 2, 2, 2)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_bank_accounts", "borrower_debt_obligations",
+            "borrower_debt_obligation_events",
+        ):
+            assert conn.execute(text(f"""
+                SELECT count(*) FROM {schema}.{table_name}
+            """)).scalar_one() == 2
+
+    # A previously authenticated staff context is not authority after
+    # persisted membership revocation. The atomic writer checks the DB again.
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            UPDATE {schema}.company_staff SET is_active = FALSE
+            WHERE user_id = :employee
+        """), {"employee": employee})
+    revoked_body = full_capture_with_bank(
+        branch, national_id="SYN-OFFLINE-HTTP-REVOKED-003",
+        phone="59007883",
+    ).model_dump(mode="json")
+    revoked = client.post(
+        url, json=revoked_body,
+        headers={"Idempotency-Key": "offline-http-revoked-003"},
+    )
+    assert revoked.status_code == 503
+    assert "SYN-OFFLINE-HTTP-REVOKED-003" not in revoked.text
+    assert totals(engine, schema) == (2, 2, 2, 2, 2, 2)
