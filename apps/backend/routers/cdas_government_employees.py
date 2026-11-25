@@ -1017,6 +1017,12 @@ def stored_assessment_summary(record: AuditLog) -> dict:
     if any(not isinstance(data.get(field), str) or not data[field].strip()
            for field in ("reference", "assessed_at", "decision")):
         raise ValueError("Assessment archive lacks required result metadata")
+    try:
+        assessed_at = datetime.fromisoformat(data["assessed_at"].replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Assessment archive has invalid timestamp") from exc
+    if assessed_at.tzinfo is None or assessed_at.utcoffset() is None:
+        raise ValueError("Assessment archive has invalid timestamp")
     return {
         "record_id": str(record.id),
         "reference": data.get("reference"),
