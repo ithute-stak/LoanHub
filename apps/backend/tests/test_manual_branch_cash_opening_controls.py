@@ -1,4 +1,5 @@
 """Daily branch cash funding and manual-opening policy safeguards."""
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -60,6 +61,7 @@ class FundsDB:
 def make_ledger():
     return SimpleNamespace(
         id=uuid4(), company_id=uuid4(), branch_id=uuid4(),
+        business_date=date(2026, 11, 24),
         status=treasury.TreasuryDayStatus.OPEN,
     )
 
