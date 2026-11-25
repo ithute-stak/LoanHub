@@ -57,3 +57,30 @@ def test_stale_open_cash_session_blocks_activation_even_with_matching_opening():
     assert classify(closed, as_of=date(2026, 11, 25)) == []
     same_day = row(session_status="open", business_date="2026-11-25")
     assert classify(same_day, as_of=date(2026, 11, 25)) == []
+
+
+def test_posted_cash_journal_and_treasury_difference_blocks_activation():
+    values = row(
+        posted_journal_cash_net="2320.00",
+        treasury_cash_net="2300.00",
+        posted_journal_cash_count=1,
+        posted_cash_count=1,
+    )
+    assert classify(values) == ["CASH_JOURNAL_TREASURY_MISMATCH"]
+    matched = row(
+        posted_journal_cash_net="2320.00",
+        treasury_cash_net="2320.00",
+        posted_journal_cash_count=1,
+        posted_cash_count=1,
+    )
+    assert classify(matched) == []
+
+
+def test_cash_reconciliation_audit_compares_posted_journals_with_treasury():
+    statement = str(AUDIT_SQL)
+    assert "journal_entries je" in statement
+    assert "journal_lines jl" in statement
+    assert "accounting_accounts aa" in statement
+    assert "je.posted_at >=" in statement
+    assert "posted_journal_cash_net" in statement
+    assert "treasury_cash_net" in statement
