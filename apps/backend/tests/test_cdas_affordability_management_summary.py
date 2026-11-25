@@ -74,3 +74,13 @@ def test_summary_rejects_missing_essential_result_metadata(field, value):
     archived.event_data["snapshot"][field] = value
     with pytest.raises(ValueError, match="required result metadata"):
         stored_assessment_summary(archived)
+
+
+@pytest.mark.parametrize("bad_timestamp", [
+    "not-a-date", "2026-11-25T18:00:00", "2026-13-01T00:00:00Z",
+])
+def test_summary_rejects_invalid_or_timezone_naive_assessment_timestamp(bad_timestamp):
+    archived = record()
+    archived.event_data["snapshot"]["assessed_at"] = bad_timestamp
+    with pytest.raises(ValueError, match="invalid timestamp"):
+        stored_assessment_summary(archived)
