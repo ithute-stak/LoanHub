@@ -73,3 +73,32 @@ def test_naive_timestamps_and_invalid_hash_fail_closed():
     blockers = consent_evidence_blockers(evidence=evidence, **args)
     assert {"consent_verification_unavailable", "consent_expired",
             "document_integrity_unavailable"} <= set(blockers)
+
+
+def test_revoked_and_rejected_consent_are_ineligible_even_before_expiry():
+    for status in ("revoked", "rejected"):
+        evidence, args = fixture()
+        evidence.status = status
+        assert "consent_not_approved" in consent_evidence_blockers(
+            evidence=evidence, **args
+        )
+
+
+def test_consent_expires_at_exact_boundary():
+    evidence, args = fixture()
+    evidence.expires_at = args["now"]
+    assert "consent_expired" in consent_evidence_blockers(
+        evidence=evidence, **args
+    )
+    evidence.expires_at = args["now"] + timedelta(microseconds=1)
+    assert "consent_expired" not in consent_evidence_blockers(
+        evidence=evidence, **args
+    )
+
+
+def test_future_review_timestamp_is_invalid():
+    evidence, args = fixture()
+    evidence.verified_at = args["now"] + timedelta(seconds=1)
+    assert "consent_verification_unavailable" in consent_evidence_blockers(
+        evidence=evidence, **args
+    )
