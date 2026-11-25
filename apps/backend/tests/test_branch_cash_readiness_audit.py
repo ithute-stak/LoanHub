@@ -127,6 +127,9 @@ def test_narrow_date_window_cannot_hide_company_wide_stale_cash_session(monkeypa
                 assert params["company_id"] == str(company_id)
                 assert "as_of" in params
                 return FakeResult(1)
+            if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
+                assert params["company_id"] == str(company_id)
+                return FakeResult(0)
             assert "LIMIT :limit" in statement
             return FakeResult([{
                 **dict(row()), "branch_id": "one", "business_date": "2026-11-25",
@@ -146,6 +149,7 @@ def test_narrow_date_window_cannot_hide_company_wide_stale_cash_session(monkeypa
     assert result["sessions_checked"] == 1
     assert result["issue_counts"] == {}
     assert result["company_wide_stale_open_sessions"] == 1
+    assert result["company_wide_sessions_outside_range"] == 0
     assert result["ready"] is False
 
 
@@ -158,5 +162,70 @@ def test_stale_session_scope_query_is_company_wide_and_read_only():
     # Any non-today open date (older, future, malformed, or blank) blocks activation.
     assert "data->>'business_date' IS NULL" in statement
     assert "BETWEEN :from_date AND :to_date" not in statement
+    assert "UPDATE " not in statement.upper()
+    assert "DELETE " not in statement.upper()
+
+
+def test_partial_history_cannot_report_company_ready(monkeypatch):
+    from contextlib import nullcontext
+    from uuid import uuid4
+    from scripts import audit_branch_cash_readiness as audit_module
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self.value
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def begin(self):
+            return nullcontext()
+
+        def execute(self, sql, params=None):
+            statement = str(sql)
+            if "SET TRANSACTION READ ONLY" in statement:
+                return Result(None)
+            if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
+                return Result(1)  # older closed session is outside selected window
+            if "SELECT count(*) FROM company_operating_records" in statement:
+                return Result(0)  # no stale open sessions
+            return Result([{**dict(row()), "business_date": "2026-11-25",
+                            "session_status": "closed"}])
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(audit_module, "create_engine", lambda *_args, **_kwargs: Engine())
+    report = audit_module.audit(uuid4(), date(2026, 11, 25), date(2026, 11, 25), "dummy")
+    assert report["sessions_checked"] == 1
+    assert report["issue_counts"] == {}
+    assert report["company_wide_stale_open_sessions"] == 0
+    assert report["company_wide_sessions_outside_range"] == 1
+    assert report["ready"] is False
+
+
+def test_coverage_query_is_company_scoped_and_read_only():
+    from scripts.audit_branch_cash_readiness import OUT_OF_RANGE_SESSIONS_SQL
+    statement = str(OUT_OF_RANGE_SESSIONS_SQL)
+    assert "company_id = :company_id" in statement
+    assert "data->>'business_date' IS NULL" in statement
+    assert "NOT BETWEEN :from_date AND :to_date" in statement
     assert "UPDATE " not in statement.upper()
     assert "DELETE " not in statement.upper()
