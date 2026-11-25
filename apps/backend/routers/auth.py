@@ -104,7 +104,10 @@ def load_user(db: Session, user_id) -> User | None:
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    user = load_user_by_phone(db, payload.phone.strip())
+    identifier = payload.phone.strip()
+    if settings.SANDBOX_MODE and identifier.lower() == "sandbox@loanhub.co.ls":
+        identifier = settings.SANDBOX_LOGIN_PHONE
+    user = load_user_by_phone(db, identifier)
     if user:
         ensure_not_locked(db, user)
     password_valid = verify_password(
@@ -633,6 +636,8 @@ def change_password(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="The shared sandbox password cannot be changed")
     if not verify_password(payload.current_password, str(current_user.password_hash)):
         raise HTTPException(status_code=400, detail="The current password is incorrect")
 
