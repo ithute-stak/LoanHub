@@ -197,7 +197,8 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
             orphan_allocation_rows=0, unlinked_treasury_rows=0,
             missing_cash_evidence_rows=0, overallocated_payment_rows=0, invalid_allocation_rows=0, nonfinal_allocation_payment_rows=0,
             cash_overapplied_rows=0,
-            invalid_cash_amount_rows=0, treasury_amount_mismatch_rows=0,
+            invalid_cash_amount_rows=0, cash_direction_mismatch_rows=0,
+        treasury_amount_mismatch_rows=0,
             treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, blocking_reasons=[],
         )
 
@@ -290,6 +291,7 @@ def test_readiness_endpoint_queries_real_cross_source_diagnostics():
         "overallocated_payment_rows", "invalid_allocation_rows",
         "nonfinal_allocation_payment_rows",
         "cash_overapplied_rows", "invalid_cash_amount_rows",
+        "cash_direction_mismatch_rows",
         "treasury_amount_mismatch_rows", "treasury_currency_mismatch_rows",
         "treasury_direction_mismatch_rows",
     ):
@@ -310,7 +312,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
         unlinked_treasury_rows=0, missing_cash_evidence_rows=0,
         overallocated_payment_rows=0, invalid_allocation_rows=0,
         nonfinal_allocation_payment_rows=0, cash_overapplied_rows=0,
-        invalid_cash_amount_rows=0, treasury_amount_mismatch_rows=0,
+        invalid_cash_amount_rows=0, cash_direction_mismatch_rows=0,
+        treasury_amount_mismatch_rows=0,
         treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, blocking_reasons=["Authoritative external reconciliation missing"],
     )
     report = PrincipalXSettlementReadinessRead(**data)
