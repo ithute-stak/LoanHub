@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from core.access_control import (
@@ -1536,21 +1537,24 @@ def get_loan_activity(
     loan_id: UUID,
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(500, ge=1, le=500),
 ):
     """Loan-scoped, non-invented actor timeline from durable audit and workflow fields."""
     loan = _tenant_loan_or_404(db, context, loan_id)
-    events = (
+    query = (
         db.query(AuditLog)
         .options(joinedload(AuditLog.user).joinedload(User.person))
         .filter(AuditLog.company_id == context.company_id, AuditLog.record_id == loan.id)
         .filter((AuditLog.branch_id.is_(None)) | (AuditLog.branch_id == loan.branch_id))
-        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
-        .limit(501)
-        .all()
     )
-    history_truncated = len(events) > 500
+    total = query.count()
+    events = query.order_by(AuditLog.created_at.asc(), AuditLog.id.asc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+    history_truncated = total > page * page_size
     items = []
-    for event in events[:500]:
+    for event in events:
         if event.branch_id is not None and event.branch_id != loan.branch_id:
             continue
         actor = None
@@ -1572,7 +1576,10 @@ def get_loan_activity(
         ("LOAN_APPROVED", loan.approved_at, loan.approved_by),
         ("LOAN_DISBURSED", loan.disbursed_at, loan.disbursed_by),
     ):
-        if at and not any(event["action"].lower().replace("_", "") == action.lower().replace("_", "") for event in items):
+        if page == 1 and at and not query.filter(
+            AuditLog.status == "success",
+            func.lower(func.replace(AuditLog.action, "_", "")) == action.lower().replace("_", ""),
+        ).first():
             actor = user.person.full_name if user and user.person else (user.email or user.phone if user else None)
             items.append({
                 "id": action.lower(), "action": action, "description": None,
@@ -1582,7 +1589,8 @@ def get_loan_activity(
             })
     items.sort(key=lambda event: event["occurred_at"] or "")
     return {"loan_id": str(loan.id), "loan_reference": loan.loan_reference, "items": items,
-            "count": len(items), "history_limit": 500, "history_truncated": history_truncated}
+            "count": len(items), "history_limit": page_size, "history_truncated": history_truncated,
+            "page": page, "page_size": page_size, "total_audit_events": total}
 
 
 @router.get("/{loan_id}", response_model=LoanRead)
