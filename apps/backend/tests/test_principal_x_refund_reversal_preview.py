@@ -131,3 +131,25 @@ def test_reversal_without_verified_original_reference_fails_closed():
     ])
     assert result.net_collected is None
     assert "rv1:missing_original_payment" in result.unresolved
+
+
+def test_oversized_finite_decimal_is_unresolved_not_an_exception():
+    result = preview_reconciliation([
+        PaymentEvidence(
+            "huge", Decimal("1E+100"), "completed", "collection",
+            verified=True,
+        ),
+    ])
+    assert result.net_collected is None
+    assert "huge:invalid_amount" in result.unresolved
+    assert result.complete is False
+
+
+def test_non_numeric_or_null_amount_is_unresolved_not_an_exception():
+    for amount in (None, "invalid"):
+        result = preview_reconciliation([
+            PaymentEvidence("bad", amount, "completed", "collection", verified=True),
+        ])
+        assert result.net_collected is None
+        assert "bad:invalid_amount" in result.unresolved
+        assert result.complete is False
