@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily LoanHub sandbox reset at midnight in Lesotho
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 Africa/Maseru
+AccuracySec=1s
+Persistent=false
+Unit=loanhub-sandbox-reset.service
+
+[Install]
+WantedBy=timers.target

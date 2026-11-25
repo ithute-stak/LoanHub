@@ -1,0 +1,23 @@
+# Optional ingress overlay. Only the relay joins the shared edge network.
+# Do not activate before reset validation and runtime isolation certification.
+services:
+  ingress:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile.internal:/etc/caddy/Caddyfile:ro
+    networks:
+      isolated:
+      public_edge:
+        aliases:
+          - loanhub-sandbox-ingress
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+    profiles: ["verified"]
+networks:
+  public_edge:
+    external: true
+    name: public-edge

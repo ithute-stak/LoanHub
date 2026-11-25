@@ -191,7 +191,8 @@ def health(db: Session = Depends(get_db)):
 
 from services.bootstrap_superadmin import install_superadmin_bootstrap
 
-install_superadmin_bootstrap(app)
+if not settings.SANDBOX_MODE:
+    install_superadmin_bootstrap(app)
 
 _CRITICAL_API_ROUTES = {
     ("GET", "/api/v1/analytics/company"),

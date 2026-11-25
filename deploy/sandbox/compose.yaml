@@ -1,0 +1,127 @@
+name: loanhub-sandbox
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: loanhub_sandbox
+      POSTGRES_USER: sandbox_owner
+      POSTGRES_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+    volumes: [sandbox_db:/var/lib/postgresql/data]
+    networks: [isolated]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sandbox_owner", "-d", "loanhub_sandbox"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    networks: [isolated]
+    volumes: [sandbox_redis:/data]
+  migrate:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    env_file: ./sandbox.env
+    environment: &backend_env
+      SANDBOX_MODE: "true"
+      BOOTSTRAP_SUPERADMIN_ENABLED: "false"
+      TREASURY_AUTO_SUBMIT_ENABLED: "false"
+      MIDNIGHT_REPORTS_ENABLED: "false"
+      COLLECTION_AUTOMATION_ENABLED: "false"
+      COLLECTION_DAILY_REPORT_ENABLED: "false"
+      PORTFOLIO_RISK_SNAPSHOT_ENABLED: "false"
+      PREDICTIVE_INTELLIGENCE_ENABLED: "false"
+      LELEFAPAYGATE_ENABLED: "false"
+      ITHUTEPAY_BATLOKOA_HANDSHAKE_ENABLED: "false"
+      ITHUTEPAY_BATLOKOA_INTENT_PREVIEW_ENABLED: "false"
+      ENABLE_ROLE_IMPERSONATION: "false"
+      CALL_MEDIA_PROVIDER: disabled
+      SANDBOX_ROLE_SWITCH_ENABLED: "true"
+      SANDBOX_LOGIN_PASSWORD: ${SANDBOX_LOGIN_PASSWORD:?required}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: loanhub_sandbox
+      DB_USER: sandbox_owner
+      DB_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_APP_URL: https://sandbox.loanhub.co.ls
+      CORS_ORIGINS: https://sandbox.loanhub.co.ls
+      JWT_PRIVATE_KEY_PATH: /app/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /app/secrets/jwt_public.pem
+      FILE_STORAGE_PATH: /app/media/uploads
+      RUN_MIGRATIONS: "false"
+      APP_TIMEZONE: Africa/Maseru
+    command: ["alembic", "upgrade", "head"]
+    volumes: [./secrets:/app/secrets:ro]
+    networks: [isolated]
+    depends_on:
+      db:
+        condition: service_healthy
+  role-bootstrap:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      DB_NAME: loanhub_sandbox
+      DB_USER: sandbox_owner
+      DB_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+      DB_RUNTIME_USER: sandbox_app
+      DB_RUNTIME_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    command: ["/bin/sh", "/scripts/ensure_database_runtime_role.sh"]
+    volumes: [../../scripts:/scripts:ro]
+    networks: [isolated]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  seed:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    restart: "no"
+    env_file: ./sandbox.env
+    environment:
+      <<: *backend_env
+      DB_USER: sandbox_app
+      DB_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    command: ["python", "-m", "scripts.seed_sandbox"]
+    networks: [isolated]
+    depends_on:
+      role-bootstrap:
+        condition: service_completed_successfully
+    volumes: [./secrets:/app/secrets:ro]
+  backend:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    env_file: ./sandbox.env
+    environment:
+      <<: *backend_env
+      DB_USER: sandbox_app
+      DB_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    volumes: [./secrets:/app/secrets:ro, sandbox_files:/app/media]
+    networks: [isolated]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    profiles: ["verified"]
+  frontend:
+    image: ${SANDBOX_FRONTEND_IMAGE:?required}
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    networks: [isolated]
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles: ["verified"]
+networks:
+  isolated:
+    internal: true
+volumes:
+  sandbox_db:
+  sandbox_redis:
+  sandbox_files:

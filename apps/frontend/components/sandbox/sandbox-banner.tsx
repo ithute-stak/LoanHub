@@ -13,15 +13,13 @@ import {
 import { useAppSelector } from "@/store/hooks";
 import {
     COMPANY_ROLES,
-    PLATFORM_ROLES,
     type UserRole,
 } from "@/types/auth";
 
 const SANDBOX_PHONE = "12345678";
-const SANDBOX_PASSWORD = "1234567890";
+const SANDBOX_PASSWORD = "sandox123";
+const SANDBOX_EMAIL = "sandbox@loanhub.co.ls";
 const ALL_SANDBOX_ROLES: readonly UserRole[] = [
-    ...PLATFORM_ROLES,
-    "borrower",
     ...COMPANY_ROLES,
 ];
 
@@ -64,7 +62,7 @@ export function SandboxAccessCard() {
 
             <dl className="mt-3 grid grid-cols-[88px_1fr] gap-x-3 gap-y-2 rounded-xl border border-amber-200 bg-white/80 p-3 text-sm">
                 <dt className="font-bold text-slate-600">Login</dt>
-                <dd className="font-mono font-black tracking-wide">{SANDBOX_PHONE}</dd>
+                <dd className="font-mono font-black tracking-wide">{SANDBOX_EMAIL}</dd>
                 <dt className="font-bold text-slate-600">Password</dt>
                 <dd className="font-mono font-black tracking-wide">{SANDBOX_PASSWORD}</dd>
             </dl>

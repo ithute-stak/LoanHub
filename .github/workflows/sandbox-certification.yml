@@ -1,0 +1,96 @@
+name: Sandbox runtime certification
+on:
+  pull_request:
+    paths:
+      - 'deploy/sandbox/**'
+      - 'apps/**'
+      - 'scripts/ensure_database_runtime_role.sh'
+      - '.github/workflows/sandbox-certification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated demo images
+        run: |
+          docker build -t sandbox-cert-backend:local apps/backend
+          docker build --build-arg NEXT_PUBLIC_API_URL=https://api-sandbox.loanhub.co.ls/api/v1 -t sandbox-cert-frontend:local apps/frontend
+      - name: Generate disposable configuration
+        working-directory: deploy/sandbox
+        run: |
+          umask 077
+          mkdir -p secrets
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out secrets/jwt_private.pem
+          openssl pkey -in secrets/jwt_private.pem -pubout -out secrets/jwt_public.pem
+          chmod 644 secrets/jwt_private.pem secrets/jwt_public.pem
+          {
+            echo SANDBOX_BACKEND_IMAGE=sandbox-cert-backend:local
+            echo SANDBOX_FRONTEND_IMAGE=sandbox-cert-frontend:local
+            echo SANDBOX_DB_PASSWORD=$(openssl rand -hex 24)
+            echo SANDBOX_RUNTIME_PASSWORD=$(openssl rand -hex 24)
+            echo SANDBOX_LOGIN_PASSWORD=sandox123
+            echo SECRET_KEY=$(openssl rand -hex 32)
+            echo FERNET_SECRET_KEY=$(openssl rand -base64 32 | tr '+/' '-_')
+          } > sandbox.env
+      - name: Start isolated sandbox
+        working-directory: deploy/sandbox
+        run: docker compose --env-file sandbox.env --profile verified up -d --wait --wait-timeout 300
+      - name: Verify actual database, network and login
+        working-directory: deploy/sandbox
+        run: |
+          docker network inspect loanhub-sandbox_isolated --format '{{.Internal}}' | grep -x true
+          docker compose --env-file sandbox.env --profile verified exec -T backend python - <<'PY'
+          import json, urllib.request, urllib.error, socket
+          from database.session import SessionLocal
+          from sqlalchemy import text
+          with SessionLocal() as db:
+              assert db.execute(text("select current_database(), current_user")).one() == ("loanhub_sandbox", "sandbox_app")
+              assert not db.execute(text("select rolsuper from pg_roles where rolname=current_user")).scalar()
+          try:
+              socket.create_connection(("1.1.1.1", 443), timeout=3).close()
+          except OSError:
+              pass
+          else:
+              raise AssertionError("Unexpected external connectivity")
+          def post(path, body, token=None):
+              headers={"Content-Type":"application/json"}
+              if token:
+                  headers["Authorization"]="Bearer "+token
+              req=urllib.request.Request("http://127.0.0.1:8000/api/v1"+path, data=json.dumps(body).encode(), headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as r:
+                      return r.status, json.load(r)
+              except urllib.error.HTTPError as e:
+                  return e.code, {}
+          status, data=post("/auth/login", {"phone":"sandbox@loanhub.co.ls","password":"sandox123"})
+          assert status == 200, status
+          token=data["access_token"]
+          assert post("/sandbox/switch-role", {"role":"superadmin"}, token)[0] == 403
+          assert post("/auth/change-password", {"current_password":"sandox123","new_password":"NotAllowed123"}, token)[0] == 403
+          assert post("/auth/mfa/enroll", {}, token)[0] == 403
+          PY
+      - name: Restore demo state and verify login again
+        working-directory: deploy/sandbox
+        run: |
+          bash reset.sh --confirm-sandbox-reset
+          docker compose --env-file sandbox.env --profile verified exec -T backend python -c 'import json,urllib.request; r=urllib.request.Request("http://127.0.0.1:8000/api/v1/auth/login",data=json.dumps(dict(phone="sandbox@loanhub.co.ls",password="sandox123")).encode(),headers={"Content-Type":"application/json"}); assert urllib.request.urlopen(r,timeout=15).status==200'
+      - name: Capture startup diagnostics on failure
+        if: failure()
+        working-directory: deploy/sandbox
+        run: |
+          if test -f sandbox.env; then
+            docker compose --env-file sandbox.env --profile verified ps -a
+            docker compose --env-file sandbox.env --profile verified logs --tail=100 backend frontend migrate role-bootstrap seed
+          fi
+      - name: Clean up disposable stack
+        if: always()
+        working-directory: deploy/sandbox
+        run: |
+          if test -f sandbox.env; then
+            docker compose --env-file sandbox.env --profile verified down -v
+          fi
+          rm -f sandbox.env secrets/jwt_private.pem secrets/jwt_public.pem

@@ -44,32 +44,36 @@ def _seed_constants() -> dict[str, object]:
 
 
 def test_sandbox_uses_separate_database_redis_files_and_internal_network():
-    compose = (REPOSITORY_ROOT / "compose.yaml").read_text()
+    compose = (REPOSITORY_ROOT / "deploy" / "sandbox" / "compose.yaml").read_text()
 
-    assert "sandbox_db:" in compose
-    assert "DB_HOST: sandbox_db" in compose
+    assert "name: loanhub-sandbox" in compose
+    assert "DB_HOST: db" in compose
     assert "DB_NAME: loanhub_sandbox" in compose
-    assert "sandbox_postgres_data:/var/lib/postgresql/data" in compose
+    assert "sandbox_db:/var/lib/postgresql/data" in compose
 
     assert "sandbox_redis:" in compose
-    assert "REDIS_URL: redis://sandbox_redis:6379/0" in compose
-    assert "sandbox_redis_data:/data" in compose
+    assert "REDIS_URL: redis://redis:6379/0" in compose
+    assert "sandbox_redis:/data" in compose
 
     assert "sandbox_files:/app/media" in compose
     assert "SANDBOX_MODE: \"true\"" in compose
     assert "SANDBOX_ROLE_SWITCH_ENABLED: \"true\"" in compose
-    assert "SANDBOX_LOGIN_PHONE: \"12345678\"" in compose
-    assert "SANDBOX_LOGIN_PASSWORD: \"1234567890\"" in compose
+    assert "SANDBOX_LOGIN_PASSWORD: ${SANDBOX_LOGIN_PASSWORD:?required}" in compose
 
-    assert "sandbox:\n    driver: bridge\n    internal: true" in compose
-    assert "sandbox_backend:" in compose
-    assert "sandbox_frontend:" in compose
-    assert "sandbox_migrate:" in compose
-    assert "sandbox_seed:" in compose
+    assert "isolated:\n    internal: true" in compose
+    assert "  backend:" in compose
+    assert "  frontend:" in compose
+    assert "  migrate:" in compose
+    assert "  seed:" in compose
+    assert "DB_USER: sandbox_app" in compose
+    assert "DB_RUNTIME_USER: sandbox_app" in compose
+    assert "role-bootstrap:" in compose
+    assert "ports:" not in compose
+    assert ".env.production" not in compose
 
 
 def test_sandbox_disables_live_background_and_external_runtime_actions():
-    compose = (REPOSITORY_ROOT / "compose.yaml").read_text()
+    compose = (REPOSITORY_ROOT / "deploy" / "sandbox" / "compose.yaml").read_text()
     main = (REPOSITORY_ROOT / "apps" / "backend" / "main.py").read_text()
 
     assert "TREASURY_AUTO_SUBMIT_ENABLED: \"false\"" in compose
@@ -82,15 +86,8 @@ def test_sandbox_disables_live_background_and_external_runtime_actions():
 
 
 def test_sandbox_public_routes_are_host_separated_from_production():
-    caddy = (REPOSITORY_ROOT / "infra" / "caddy" / "Caddyfile").read_text()
     api_client = (REPOSITORY_ROOT / "apps" / "frontend" / "lib" / "api.ts").read_text()
     realtime = (REPOSITORY_ROOT / "apps" / "frontend" / "provider" / "realtimeProvider.tsx").read_text()
-
-    assert "{$SANDBOX_APP_DOMAIN}" in caddy
-    assert "reverse_proxy sandbox_frontend:3000" in caddy
-    assert "{$SANDBOX_API_DOMAIN}" in caddy
-    assert "reverse_proxy sandbox_backend:8000" in caddy
-    assert 'X-Robots-Tag "noindex, nofollow, noarchive"' in caddy
 
     assert 'hostname.startsWith("sandbox.")' in api_client
     assert "api-sandbox.${rootDomain}/api/v1" in api_client
@@ -137,8 +134,20 @@ def test_sandbox_role_switch_and_login_ui_are_demo_only():
     assert '@router.post("/switch-role")' in router
 
     assert 'const SANDBOX_PHONE = "12345678"' in controls
-    assert 'const SANDBOX_PASSWORD = "1234567890"' in controls
-    assert "PLATFORM_ROLES" in controls
+    assert 'const SANDBOX_PASSWORD = "sandox123"' in controls
+    assert "PLATFORM_ROLES" not in controls
     assert "COMPANY_ROLES" in controls
-    assert '"borrower"' in controls
+    assert "payload.role not in COMPANY_ROLES" in router
     assert "browserIsSandbox()" in controls
+
+def test_sandbox_account_protection_source_guards():
+    auth = (REPOSITORY_ROOT / "apps" / "backend" / "routers" / "auth.py").read_text()
+    tree = ast.parse(auth)
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    for name in ("change_password", "enroll_mfa", "confirm_mfa", "disable_mfa", "revoke_session", "revoke_every_session"):
+        guard = funcs[name].body[0]
+        assert isinstance(guard, ast.If)
+        assert "settings.SANDBOX_MODE" in ast.unparse(guard.test)
+        assert "settings.SANDBOX_LOGIN_PHONE" in ast.unparse(guard.test)
+        assert isinstance(guard.body[0], ast.Raise)
+    assert 'identifier.lower() == "sandbox@loanhub.co.ls"' in auth
