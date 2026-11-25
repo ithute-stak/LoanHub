@@ -193,7 +193,8 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
         PrincipalXSettlementReadinessRead(
             loan_id=uuid4(), payment_model="principal_x",
             can_post_settlement=True, payment_rows_reviewed=0,
-            unresolved_payment_rows=0, orphan_cash_rows=0,
+            unresolved_payment_rows=0, refund_payment_rows=0,
+            reversed_payment_rows=0, nonfinal_refund_rows=0, orphan_cash_rows=0,
             orphan_allocation_rows=0, unlinked_treasury_rows=0,
             missing_cash_evidence_rows=0, overallocated_payment_rows=0, invalid_allocation_rows=0, nonfinal_allocation_payment_rows=0,
             cash_overapplied_rows=0,
@@ -289,6 +290,7 @@ def test_readiness_endpoint_queries_real_cross_source_diagnostics():
     )
     values = {kw.arg: kw.value for kw in response.keywords}
     for field in (
+        "refund_payment_rows", "reversed_payment_rows", "nonfinal_refund_rows",
         "orphan_cash_rows", "orphan_allocation_rows",
         "unlinked_treasury_rows", "missing_cash_evidence_rows",
         "overallocated_payment_rows", "invalid_allocation_rows",
@@ -312,7 +314,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
 
     data = dict(
         loan_id=uuid4(), payment_model="principal_x",
-        payment_rows_reviewed=1, unresolved_payment_rows=0,
+        payment_rows_reviewed=1, unresolved_payment_rows=0, refund_payment_rows=0,
+        reversed_payment_rows=0, nonfinal_refund_rows=0,
         orphan_cash_rows=0, orphan_allocation_rows=0,
         unlinked_treasury_rows=0, missing_cash_evidence_rows=0,
         overallocated_payment_rows=0, invalid_allocation_rows=0,
