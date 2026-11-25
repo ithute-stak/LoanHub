@@ -219,6 +219,7 @@ test("successful disbursement, repayment and top-up invalidate current company's
     assert.equal((await read(a, "/payments/")).data.amount, 100);
     assert.equal((await read(b, "/loans/")).data.amount, 100);
     assert.equal((await read(a, "/loans/")).data.amount, 100);
+    assert.equal(Object.values(store.getState().httpCache.entries).filter(entry => entry.scope.includes("company-B")).length, 1, "Company B cache must exist before any financial mutation");
     await client.post(mutationPath, {amount:100}, a);
     const keys = Object.values(store.getState().httpCache.entries);
     assert.equal(keys.filter(entry => entry.scope.includes("company-A")).length, 0);
