@@ -610,6 +610,10 @@ def principal_x_settlement_readiness(
         blockers.append("Reversed payments require authoritative provider reversal reconciliation.")
     if audit.nonfinal_refund_count:
         blockers.append("Refunds are unfinished or have an unexpected payment direction.")
+    if audit.invalid_payment_amount_count:
+        blockers.append("Payment history contains invalid or sub-cent monetary amounts.")
+    if audit.unsupported_currency_count:
+        blockers.append("Payment history contains unsupported settlement currencies.")
     if cross_sources.orphan_cash_count:
         blockers.append("Cash transaction links require reconciliation.")
     if cross_sources.orphan_allocation_count:
@@ -655,6 +659,8 @@ def principal_x_settlement_readiness(
         refund_payment_rows=audit.refund_payment_count,
         reversed_payment_rows=audit.reversed_payment_count,
         nonfinal_refund_rows=audit.nonfinal_refund_count,
+        invalid_payment_amount_rows=audit.invalid_payment_amount_count,
+        unsupported_payment_currency_rows=audit.unsupported_currency_count,
         orphan_cash_rows=cross_sources.orphan_cash_count,
         orphan_allocation_rows=cross_sources.orphan_allocation_count,
         unlinked_treasury_rows=cross_sources.unlinked_treasury_count,
