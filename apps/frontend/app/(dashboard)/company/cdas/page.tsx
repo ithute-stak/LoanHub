@@ -805,6 +805,13 @@ export default function CdasWorkspacePage() {
                         </CardHeader>
                         <CardContent><Button asChild variant="outline"><Link href="/company/cdas/documents">Open document retrieval</Link></Button></CardContent>
                     </Card>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base"><ListChecks className="h-5 w-5" /> Government employee affordability</CardTitle>
+                            <CardDescription>Discover company employees, prepare safe assessment drafts, review saved results and download affordability reports.</CardDescription>
+                        </CardHeader>
+                        <CardContent><Button asChild variant="outline"><Link href="/company/cdas/government-affordability">Open affordability workspace</Link></Button></CardContent>
+                    </Card>
                 </div>
             )}
 

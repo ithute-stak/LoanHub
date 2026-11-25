@@ -31,7 +31,8 @@ RESOURCE_TABLES = {
 }
 CAP = 500
 MAX_JS_CURSOR = 9007199254740991
-EXPECTED_REVISION = "dc20261122002"
+# Only the exact audited Data Center revision and no-DDL CDAS merge are accepted.
+EXPECTED_REVISIONS = frozenset({"dc20261122002", "f4a6c8e0d064", "f5b7d9a1e065"})
 
 
 class PilotControlBlocked(RuntimeError):
@@ -73,7 +74,7 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
     if not all(privileges):
         raise PilotControlBlocked("Dedicated operator database privileges required")
     versions = connection.execute(text("SELECT version_num FROM public.alembic_version")).scalars().all()
-    if versions != [EXPECTED_REVISION]:
+    if len(versions) != 1 or versions[0] not in EXPECTED_REVISIONS:
         raise PilotControlBlocked("Unexpected or multiple Alembic revisions")
 
     # Serialize transitions for the target company. Never acquire locks on
