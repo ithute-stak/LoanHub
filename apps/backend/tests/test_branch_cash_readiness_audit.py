@@ -123,13 +123,14 @@ def test_narrow_date_window_cannot_hide_company_wide_stale_cash_session(monkeypa
             statement = str(sql)
             if "SET TRANSACTION READ ONLY" in statement:
                 return FakeResult(None)
+            if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
+                assert params["company_id"] == str(company_id)
+                assert "from_date" in params and "to_date" in params
+                return FakeResult(0)
             if "SELECT count(*) FROM company_operating_records" in statement:
                 assert params["company_id"] == str(company_id)
                 assert "as_of" in params
                 return FakeResult(1)
-            if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
-                assert params["company_id"] == str(company_id)
-                return FakeResult(0)
             assert "LIMIT :limit" in statement
             return FakeResult([{
                 **dict(row()), "branch_id": "one", "business_date": "2026-11-25",
