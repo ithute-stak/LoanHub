@@ -115,6 +115,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     nonfinal_allocation_payment_rows: int
     cash_overapplied_rows: int
     invalid_cash_amount_rows: int
+    cash_direction_mismatch_rows: int
     treasury_amount_mismatch_rows: int
     treasury_currency_mismatch_rows: int
     treasury_direction_mismatch_rows: int
