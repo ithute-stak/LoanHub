@@ -89,3 +89,21 @@ def test_unique_evidence_references_are_allowed():
         net_collected=Decimal("20.00"), attestations=original,
     )
     assert result.source_count == len(REQUIRED_SOURCE_FAMILIES)
+
+
+@pytest.mark.parametrize("bad_total", [
+    Decimal("100.001"), Decimal("NaN"), Decimal("Infinity"),
+    Decimal("1E+100"), "not-a-number", None,
+])
+def test_authoritative_ledger_refuses_corrupt_or_subcent_net_totals(bad_total):
+    with pytest.raises(ValueError):
+        require_authoritative_ledger_attestations(
+            net_collected=bad_total, attestations=evidence(),
+        )
+
+
+def test_exact_cents_with_extra_zero_decimal_places_are_allowed():
+    result = require_authoritative_ledger_attestations(
+        net_collected=Decimal("100.0000"), attestations=evidence(),
+    )
+    assert result.net_collected == Decimal("100.00")
