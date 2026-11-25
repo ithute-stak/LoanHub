@@ -1,3 +1,5 @@
+import {confirmAppDialog} from "@/lib/app-dialog";
+
 import { api } from "@/lib/api";
 import {
   markDocumentGenerationFailed,
@@ -131,7 +133,7 @@ export const originationApi = {
       ?? (await loanSettingsApi.getSettings()).default_contract_template_style;
     const resolvedIncludeMandate = includeMandate ?? (
       typeof window !== "undefined"
-        ? window.confirm(
+        ? await confirmAppDialog(
           "Include debit-order mandate?\n\nSelect OK to append the Authority to Debit Account mandate for the borrower to sign. Select Cancel to generate the normal contract without the mandate.",
         )
         : false
