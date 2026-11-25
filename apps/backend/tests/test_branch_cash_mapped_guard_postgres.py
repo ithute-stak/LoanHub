@@ -68,10 +68,10 @@ def test_actual_mapped_branch_funding_guard_prevents_double_disbursement():
             conn.execute(text("""
                 INSERT INTO branch_opening_sources
                 (id, company_id, branch_id, daily_ledger_id, source_type,
-                 payment_method, amount, description, source_reference,
+                 payment_method, amount, currency, description, source_reference,
                  is_system_generated, is_confirmed, is_voided)
                 VALUES (:id, :company, :branch, :ledger, 'cash_float',
-                        'cash', 100, 'Manual counted cash', 'OPEN-MAPPED-001',
+                        'cash', 100, 'LSL', 'Manual counted cash', 'OPEN-MAPPED-001',
                         false, true, false)
             """), dict(id=uuid4(), company=company, branch=branch, ledger=ledger_id))
 
