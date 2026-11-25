@@ -721,7 +721,7 @@ export function SpreadsheetEditor({
 
     async function renameSheet() {
         if (!activeSheet || !workbook) return;
-        const requested = await promptAppDialog("Sheet name", activeSheet.name)?.trim();
+        const requested = (await promptAppDialog("Sheet name", activeSheet.name))?.trim();
         if (!requested || requested === activeSheet.name) return;
         const cleaned = requested.replace(/[\\/*?:\[\]]/g, " ").trim().slice(0, 31);
         if (
