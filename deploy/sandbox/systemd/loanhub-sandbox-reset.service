@@ -1,0 +1,11 @@
+[Unit]
+Description=Restore LoanHub public sandbox demonstration data
+ConditionPathExists=/opt/loanhub-sandbox/deploy/sandbox/sandbox.env
+ConditionPathExists=/opt/loanhub-sandbox/deploy/sandbox/.reset-approved
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/loanhub-sandbox/deploy/sandbox
+ExecStart=/usr/bin/bash /opt/loanhub-sandbox/deploy/sandbox/reset.sh --confirm-sandbox-reset
+TimeoutStartSec=15min
+UMask=0077
