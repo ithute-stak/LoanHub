@@ -35,11 +35,19 @@ def test_only_cash_and_gateway_are_available_for_new_postings():
 
 def test_real_world_daily_cycle_defaults_and_validation():
     settings = TreasurySettingsUpdate()
+    assert settings.opening_balance_mode == "manual"
     assert settings.auto_open_time.isoformat() == "00:01:00"
     assert settings.auto_submit_time.isoformat() == "16:30:00"
 
     with pytest.raises(ValidationError):
         TreasurySettingsUpdate(auto_open_time="17:00", auto_submit_time="16:30")
+
+
+def test_previous_closing_requires_explicit_opt_in():
+    assert TreasurySettingsUpdate().opening_balance_mode == "manual"
+    assert TreasurySettingsUpdate(opening_balance_mode="previous_closing").opening_balance_mode == "previous_closing"
+    with pytest.raises(ValidationError):
+        TreasurySettingsUpdate(opening_balance_mode="automatic")
 
 
 def test_non_cash_proof_can_be_required_by_company_policy():
@@ -210,3 +218,21 @@ def test_platform_fee_and_billing_schemas_accept_verified_non_cash_methods():
     assert unlock.payment_method == PaymentMethod.MPESA_MERCHANT
     assert request_fee.payment_method == PaymentMethod.ECOCASH_WALLET
     assert claim.payment_method == PaymentMethod.CDAS
+
+
+def test_zero_opening_balance_is_valid_and_negative_is_rejected():
+    from database.models.enums import OpeningSourceType
+    from database.schemas.treasury import OpeningSourceCreate
+
+    opening = OpeningSourceCreate(
+        source_type=OpeningSourceType.CASH_FLOAT,
+        amount=Decimal("0.00"),
+        description="Verified zero opening cash balance",
+    )
+    assert opening.amount == Decimal("0.00")
+    with pytest.raises(ValidationError):
+        OpeningSourceCreate(
+            source_type=OpeningSourceType.CASH_FLOAT,
+            amount=Decimal("-0.01"),
+            description="Invalid negative opening",
+        )

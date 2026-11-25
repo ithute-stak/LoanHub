@@ -15,12 +15,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from database.models.branch import CompanyBranch
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.enums import (
     BranchTransferStatus,
     OpeningSourceType,
     PaymentDirection,
     PaymentMethod,
     PaymentPurpose,
+    PaymentStatus,
     TreasuryDayStatus,
     TreasuryDirection,
     TreasuryEntryApprovalStatus,
@@ -102,6 +104,7 @@ def get_or_create_settings(db: Session, company_id: UUID) -> TreasurySettings:
         headquarters_branch_id=headquarters.id if headquarters else None,
         currency="LSL",
         timezone="Africa/Maseru",
+        opening_balance_mode="manual",
         auto_open_enabled=True,
         auto_open_time=time(0, 1),
         auto_submit_enabled=True,
@@ -306,7 +309,8 @@ def get_or_create_daily_ledger(
         # silently rewrite its carried-forward opening composition. Reopened
         # days can refresh because they are explicitly writable again.
         if ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}:
-            _ensure_previous_closing_source(db, ledger)
+            if get_or_create_settings(db, company_id).opening_balance_mode == "previous_closing":
+                _ensure_previous_closing_source(db, ledger)
         return ledger
     branch = db.get(CompanyBranch, branch_id)
     if not branch or branch.company_id != company_id:
@@ -326,7 +330,8 @@ def get_or_create_daily_ledger(
     )
     db.add(ledger)
     db.flush()
-    _ensure_previous_closing_source(db, ledger)
+    if get_or_create_settings(db, company_id).opening_balance_mode == "previous_closing":
+        _ensure_previous_closing_source(db, ledger)
     recalculate_daily_ledger(db, ledger)
     return ledger
 
@@ -483,6 +488,18 @@ def create_opening_source(
     settings = get_or_create_settings(db, company_id)
     target_date = payload.business_date or local_business_date(settings)
     ledger = get_or_create_daily_ledger(db, company_id=company_id, branch_id=branch_id, business_date=target_date)
+    # Serialize opening-float edits with outgoing payments for this branch day.
+    # A confirmed zero opening remains a real, auditable opening source.
+    ledger = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == company_id,
+            BranchDailyLedger.branch_id == branch_id,
+        )
+        .with_for_update()
+        .one()
+    )
     assert_ledger_writable(ledger)
     validate_manual_proof(settings, payload.payment_method, payload.proof_reference, payload.proof_url)
     reference = (payload.source_reference or "").strip() or f"OPEN-{target_date:%Y%m%d}-{secrets.token_hex(4).upper()}"
@@ -520,6 +537,42 @@ def create_opening_source(
     return source
 
 
+
+def sync_counted_cash_opening(db: Session, *, company_id: UUID, branch_id: UUID,
+                              user_id: UUID, business_date: date, counted: Decimal,
+                              reference: str) -> None:
+    """A physical cash count confirms availability, not a new journal inflow."""
+    ledger = get_or_create_daily_ledger(db, company_id=company_id,
+                                        branch_id=branch_id, business_date=business_date)
+    ledger = db.query(BranchDailyLedger).filter(
+        BranchDailyLedger.id == ledger.id
+    ).with_for_update().one()
+    assert_ledger_writable(ledger)
+    value = money(counted)
+    if value < 0:
+        raise HTTPException(status_code=422, detail="Opening cash cannot be negative")
+    sources = db.query(BranchOpeningSource).filter(
+        BranchOpeningSource.daily_ledger_id == ledger.id,
+        BranchOpeningSource.payment_method == PaymentMethod.CASH,
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).all()
+    if sources:
+        if sum((money(source.amount) for source in sources), Decimal("0.00")) != value:
+            raise HTTPException(status_code=409, detail="Counted cash differs from confirmed treasury opening")
+        return
+    db.add(BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id, daily_ledger_id=ledger.id,
+        source_type=OpeningSourceType.CASH_FLOAT, payment_method=PaymentMethod.CASH,
+        amount=value, currency="LSL", description="Confirmed daily cash count",
+        source_reference=reference, is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc), confirmed_by_user_id=user_id,
+        recorded_by_user_id=user_id,
+    ))
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+
+
 def void_opening_source(db: Session, source: BranchOpeningSource, *, user_id: UUID, reason: str) -> BranchOpeningSource:
     if source.source_type == OpeningSourceType.PREVIOUS_CLOSING or source.is_system_generated:
         raise HTTPException(status_code=409, detail="System-generated previous closing cannot be voided")
@@ -548,6 +601,78 @@ def _requires_expense_approval(settings: TreasurySettings, payload: TreasuryEntr
         return False
     threshold = money(settings.expense_approval_threshold)
     return threshold > 0 and money(payload.amount) >= threshold
+
+
+def _assert_expense_funds_locked(db: Session, ledger: BranchDailyLedger, payment_method: PaymentMethod, debit: Decimal) -> None:
+    """Check outgoing treasury funds under a branch-day lock.
+
+    Used for manual expenses, cash disbursements and gateway payout initiation.
+    This does not authorize untracked outgoing paths or replace end-to-end tests.
+    """
+    from services.branch_funding_policy import FundingRejected, require_available_funds
+
+    # A PostgreSQL row lock serializes competing treasury expense postings
+    # on the same branch/day, including expenses on different channels.
+    locked = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == ledger.company_id,
+            BranchDailyLedger.branch_id == ledger.branch_id,
+        )
+        .with_for_update()
+        .one()
+    )
+    assert_ledger_writable(locked)
+    opening_rows = (
+        db.query(BranchOpeningSource.amount)
+        .filter(
+            BranchOpeningSource.daily_ledger_id == locked.id,
+            BranchOpeningSource.payment_method == payment_method,
+            BranchOpeningSource.is_voided.is_(False),
+            BranchOpeningSource.is_confirmed.is_(True),
+        )
+        .all()
+    )
+    opening = sum((money(row.amount) for row in opening_rows), Decimal("0.00"))
+    movements = (
+        db.query(TreasuryEntry.direction, TreasuryEntry.amount)
+        .filter(
+            TreasuryEntry.daily_ledger_id == locked.id,
+            TreasuryEntry.payment_method == payment_method,
+            TreasuryEntry.is_voided.is_(False),
+            _posted_entry_filter(),
+        )
+        .all()
+    )
+    available = opening
+    for direction, value in movements:
+        available += money(value) if direction == TreasuryDirection.MONEY_IN else -money(value)
+    # Pending gateway disbursements are durable reservations: the gateway
+    # initiation transaction inserts PROCESSING payment records before it
+    # releases this branch-day lock. Failed/cancelled payments release funds
+    # automatically by leaving this status set.
+    reserved = (
+        db.query(func.coalesce(func.sum(PaymentTransaction.amount), 0))
+        .join(ClientCompanyLoan, ClientCompanyLoan.id == PaymentTransaction.loan_id)
+        .filter(
+            PaymentTransaction.company_id == locked.company_id,
+            ClientCompanyLoan.branch_id == locked.branch_id,
+            PaymentTransaction.payment_method == payment_method,
+            PaymentTransaction.purpose == PaymentPurpose.LOAN_DISBURSEMENT,
+            PaymentTransaction.status.in_([PaymentStatus.PENDING, PaymentStatus.PROCESSING]),
+        )
+        .scalar()
+    )
+    try:
+        require_available_funds(
+            opening_confirmed=bool(opening_rows),
+            available=available,
+            reserved=money(reserved or 0),
+            requested=debit,
+        )
+    except FundingRejected as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 def create_manual_entry(
@@ -579,6 +704,8 @@ def create_manual_entry(
             raise HTTPException(status_code=422, detail="Choose an active expense category from this company")
 
     requires_approval = _requires_expense_approval(settings, payload)
+    if payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
+        _assert_expense_funds_locked(db, ledger, payload.payment_method, money(payload.amount))
     entry = TreasuryEntry(
         company_id=company_id,
         branch_id=branch_id,
@@ -622,6 +749,8 @@ def approve_treasury_entry(db: Session, entry: TreasuryEntry, *, user_id: UUID, 
     if not ledger:
         raise HTTPException(status_code=404, detail="Branch day was not found")
     assert_ledger_writable(ledger)
+    if entry.entry_type == TreasuryEntryType.EXPENSE and entry.direction == TreasuryDirection.MONEY_OUT:
+        _assert_expense_funds_locked(db, ledger, entry.payment_method, money(entry.amount))
     entry.approval_status = TreasuryEntryApprovalStatus.APPROVED
     entry.approved_at = datetime.now(timezone.utc)
     entry.approved_by_user_id = user_id
@@ -915,6 +1044,8 @@ def issue_branch_funding(
     target_ledger = get_or_create_daily_ledger(db, company_id=company_id, branch_id=target.id, business_date=business_date)
     assert_ledger_writable(source_ledger)
     assert_ledger_writable(target_ledger)
+    # Internal transfers consume confirmed funds just like other outgoing payments.
+    _assert_expense_funds_locked(db, source_ledger, payment_method, amount_value)
     reference = f"BFT-{business_date:%Y%m%d}-{secrets.token_hex(4).upper()}"
     transfer = BranchFundingTransfer(
         company_id=company_id,

@@ -682,8 +682,27 @@ def disburse_cash_loan(
         return existing, existing.cash_transaction
     if payment_method == PaymentMethod.LELEFAPAYGATE:
         from services.lelefa_paygate_service import initiate_gateway_loan_disbursement
+        from services.treasury_service import (
+            _assert_expense_funds_locked,
+            get_or_create_daily_ledger,
+            get_or_create_settings,
+            local_business_date,
+        )
 
         amount = money(loan.top_up_cash_amount if loan.is_top_up else loan.principal_amount)
+        # Preflight only: a gateway payout is asynchronous and must reserve
+        # funds durably before this becomes a concurrency-safe authorization.
+        # This blocks an obviously unfunded payout without claiming to reserve
+        # the balance across gateway requests.
+        settings = get_or_create_settings(db, loan.company_id)
+        now = datetime.now(timezone.utc)
+        branch_day = get_or_create_daily_ledger(
+            db,
+            company_id=loan.company_id,
+            branch_id=loan.branch_id,
+            business_date=local_business_date(settings, now),
+        )
+        _assert_expense_funds_locked(db, branch_day, payment_method, amount)
         return (
             initiate_gateway_loan_disbursement(
                 db,
@@ -712,7 +731,22 @@ def disburse_cash_loan(
     if disbursement_amount <= 0:
         raise HTTPException(status_code=409, detail="The loan does not have a positive amount to disburse")
 
+    # Verify the actual cash channel BEFORE creating a successful payout.
+    # Keep the branch-day row lock until the enclosing transaction commits;
+    # the treasury entry is recorded by finalize_loan_payment below.
+    from services.treasury_service import (
+        _assert_expense_funds_locked,
+        get_or_create_daily_ledger,
+        local_business_date,
+    )
     now = datetime.now(timezone.utc)
+    branch_day = get_or_create_daily_ledger(
+        db,
+        company_id=loan.company_id,
+        branch_id=loan.branch_id,
+        business_date=local_business_date(settings, now),
+    )
+    _assert_expense_funds_locked(db, branch_day, payment_method, disbursement_amount)
     reference = _recorded_payment_reference(payment_method, PaymentDirection.OUTBOUND, proof_reference)
     payment = PaymentTransaction(
         company_id=loan.company_id,

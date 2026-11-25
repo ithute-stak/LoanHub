@@ -30,6 +30,7 @@ class TreasurySettingsUpdate(BaseModel):
     headquarters_branch_id: UUID | None = None
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     timezone: str = Field(default="Africa/Maseru", min_length=3, max_length=80)
+    opening_balance_mode: Literal["manual", "previous_closing"] = "manual"
     auto_open_enabled: bool = True
     auto_open_time: time = time(0, 1)
     auto_submit_enabled: bool = True
@@ -84,7 +85,7 @@ class OpeningSourceCreate(BaseModel):
     business_date: date | None = None
     source_type: OpeningSourceType
     payment_method: PaymentMethod = PaymentMethod.CASH
-    amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
+    amount: Decimal = Field(ge=0, max_digits=15, decimal_places=2)
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     description: str = Field(min_length=3, max_length=2000)
     source_reference: str | None = Field(default=None, max_length=180)

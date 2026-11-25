@@ -665,6 +665,243 @@ def repair_integrity(
     return result
 
 
+@router.get("/owner/branch-day-summary")
+def owner_branch_day_summary(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only owner overview from existing tenant-scoped daily ledgers.
+
+    Does not create ledgers, recalculate posted amounts or change production data.
+    Missing ledgers are explicitly identified instead of reported as zero activity.
+    """
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES)
+    company_id = company_id_from(context)
+    branches = (
+        db.query(CompanyBranch)
+        .filter(CompanyBranch.company_id == company_id, CompanyBranch.is_active.is_(True))
+        .order_by(CompanyBranch.name.asc())
+        .all()
+    )
+    ledgers = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.company_id == company_id,
+            BranchDailyLedger.business_date == business_date,
+        )
+        .all()
+    )
+    by_branch = {ledger.branch_id: ledger for ledger in ledgers}
+    rows = []
+    for branch in branches:
+        ledger = by_branch.get(branch.id)
+        rows.append({
+            "branch_id": str(branch.id),
+            "branch_name": branch.name,
+            "has_ledger": ledger is not None,
+            "status": ledger.status.value if ledger else None,
+            "opening_balance": str(ledger.opening_balance) if ledger else None,
+            "money_in": str(ledger.total_money_in) if ledger else None,
+            "money_out": str(ledger.total_money_out) if ledger else None,
+            "expected_closing": str(ledger.expected_closing_balance) if ledger else None,
+        })
+    from decimal import Decimal
+    from services.treasury_service import _posted_entry_filter
+
+    active_ids = {branch.id for branch in branches}
+    recorded = [ledger for ledger in ledgers if ledger.branch_id in active_ids]
+    ledger_ids = [ledger.id for ledger in recorded]
+    # Only matched, confirmed internal receipts may offset outgoing transfers.
+    outgoing = db.query(TreasuryEntry).filter(
+        TreasuryEntry.company_id == company_id,
+        TreasuryEntry.daily_ledger_id.in_(ledger_ids),
+        TreasuryEntry.entry_type == TreasuryEntryType.BRANCH_FUNDING,
+        TreasuryEntry.direction == TreasuryDirection.MONEY_OUT,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).all()
+    receipts = db.query(BranchOpeningSource).filter(
+        BranchOpeningSource.company_id == company_id,
+        BranchOpeningSource.daily_ledger_id.in_(ledger_ids),
+        BranchOpeningSource.transfer_id.isnot(None),
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).all()
+    receipt_by_transfer = {}
+    for receipt in receipts:
+        receipt_by_transfer.setdefault(receipt.transfer_id, []).append(receipt)
+    matched = Decimal("0.00")
+    unmatched = Decimal("0.00")
+    matched_ids = set()
+    for entry in outgoing:
+        candidates = receipt_by_transfer.get(entry.transfer_id, [])
+        if (
+            entry.transfer_id is not None
+            and entry.transfer_id not in matched_ids
+            and len(candidates) == 1
+            and candidates[0].branch_id != entry.branch_id
+            and candidates[0].payment_method == entry.payment_method
+            and candidates[0].currency == entry.currency
+            and candidates[0].amount == entry.amount
+        ):
+            matched += entry.amount
+            matched_ids.add(entry.transfer_id)
+        else:
+            unmatched += entry.amount
+    unmatched_receipts = sum(
+        (receipt.amount for receipt in receipts if receipt.transfer_id not in matched_ids),
+        Decimal("0.00"),
+    )
+    return {
+        "business_date": business_date.isoformat(),
+        "branch_count": len(branches),
+        "recorded_branch_count": len([row for row in rows if row["has_ledger"]]),
+        "missing_branch_count": len([row for row in rows if not row["has_ledger"]]),
+        "opening_balance": str(sum((Decimal(str(row.opening_balance)) for row in recorded), Decimal("0"))),
+        "money_in": str(sum((Decimal(str(row.total_money_in)) for row in recorded), Decimal("0"))),
+        "money_out": str(sum((Decimal(str(row.total_money_out)) for row in recorded), Decimal("0"))),
+        "expected_closing": str(sum((Decimal(str(row.expected_closing_balance)) for row in recorded), Decimal("0"))),
+        "includes_internal_transfers": True,
+        "matched_internal_transfers": str(matched),
+        "unmatched_internal_outgoing": str(unmatched),
+        "unmatched_internal_receipts": str(unmatched_receipts),
+        "net_external_opening_balance": str(sum((row.opening_balance for row in recorded), Decimal("0.00")) - matched),
+        "net_external_money_out": str(sum((row.total_money_out for row in recorded), Decimal("0.00")) - matched),
+        "transfers_reconciled": unmatched == 0 and unmatched_receipts == 0,
+        "complete": len(recorded) == len(branches) and unmatched == 0 and unmatched_receipts == 0,
+        "branches": rows,
+    }
+
+
+@router.get("/owner/branch-day-summary.pdf")
+def export_owner_branch_day_pdf(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    from io import BytesIO
+    from decimal import Decimal
+    from xml.sax.saxutils import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    report = owner_branch_day_summary(business_date, db, context)
+    output = BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=landscape(A4), leftMargin=36,
+                            rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    def money_text(value):
+        return "Not recorded" if value is None else f"M{Decimal(value):,.2f}"
+    story = [
+        Paragraph("LoanHub | Daily branch financial overview", styles["Title"]),
+        Paragraph(f"Business date: {business_date.isoformat()} | "
+                  + ("Complete recorded overview" if report["complete"] else "PROVISIONAL - reconciliation required"), styles["Normal"]),
+        Spacer(1, 12),
+    ]
+    summary = [["Financial measure", "Amount"]]
+    for label, key in [
+        ("Recorded opening", "opening_balance"),
+        ("Recorded money in", "money_in"),
+        ("Recorded money out", "money_out"),
+        ("Matched internal transfers", "matched_internal_transfers"),
+        ("Unmatched outgoing transfers", "unmatched_internal_outgoing"),
+        ("Unmatched receipts", "unmatched_internal_receipts"),
+        ("Opening excluding matched transfers", "net_external_opening_balance"),
+        ("Outflow excluding matched transfers", "net_external_money_out"),
+        ("Recorded expected closing", "expected_closing"),
+    ]:
+        summary.append([label, money_text(report[key])])
+    def styled_table(rows, widths):
+        table = Table(rows, colWidths=widths, repeatRows=1, hAlign="LEFT")
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        return table
+    story.extend([styled_table(summary, [310, 160]), Spacer(1, 12),
+        Paragraph(f"Missing branch ledgers: {report['missing_branch_count']}. "
+                  "Unmatched transfers are not eliminated. This report reflects recorded treasury balances.", styles["Normal"]),
+        Spacer(1, 12), Paragraph("Individual branches", styles["Heading2"])])
+    rows = [["Branch", "Status", "Opening", "Money in", "Money out", "Expected closing"]]
+    for row in report["branches"]:
+        rows.append([
+            Paragraph(escape(row["branch_name"]), styles["Normal"]),
+            Paragraph(escape(row["status"] or "Missing ledger"), styles["Normal"]),
+            *[money_text(row[key]) for key in ("opening_balance", "money_in", "money_out", "expected_closing")],
+        ])
+    story.append(styled_table(rows, [170, 105, 115, 115, 115, 125]))
+    doc.build(story)
+    return Response(content=output.getvalue(), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="loanhub-branch-day-{business_date.isoformat()}.pdf"'})
+
+
+@router.get("/owner/branch-day-summary.xlsx")
+def export_owner_branch_day_summary(
+    business_date: date,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    from io import BytesIO
+    from decimal import Decimal
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    report = owner_branch_day_summary(business_date, db, context)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Daily overview"
+    sheet.append(["LoanHub daily branch financial overview", business_date.isoformat()])
+    sheet.append(["Status", "Complete" if report["complete"] else "PROVISIONAL"])
+    for label, key in [
+        ("Recorded opening", "opening_balance"),
+        ("Recorded money in", "money_in"),
+        ("Recorded money out", "money_out"),
+        ("Recorded expected closing", "expected_closing"),
+        ("Matched internal transfers", "matched_internal_transfers"),
+        ("Unmatched outgoing", "unmatched_internal_outgoing"),
+        ("Unmatched receipts", "unmatched_internal_receipts"),
+        ("Opening excluding matched transfers", "net_external_opening_balance"),
+        ("Outflow excluding matched transfers", "net_external_money_out"),
+    ]:
+        sheet.append([label, Decimal(report[key])])
+        sheet.cell(sheet.max_row, 2).number_format = '#,##0.00'
+    sheet.append(["Missing branch ledgers", report["missing_branch_count"]])
+    sheet.column_dimensions["A"].width = 46
+    sheet.column_dimensions["B"].width = 24
+    branches = workbook.create_sheet("Branches")
+    branches.append(["Branch", "Status", "Opening", "Money in", "Money out", "Expected closing"])
+    for row in report["branches"]:
+        values = [Decimal(row[key]) if row[key] is not None else None for key in (
+            "opening_balance", "money_in", "money_out", "expected_closing"
+        )]
+        branches.append([row["branch_name"], row["status"] or "Missing ledger", *values])
+        branches.cell(branches.max_row, 1).data_type = "s"
+        for cell in branches[branches.max_row][2:]:
+            cell.number_format = '#,##0.00'
+    for column in "ABCDEF":
+        branches.column_dimensions[column].width = 24
+    branches.freeze_panes = "C2"
+    for tab in (sheet, branches):
+        for cell in tab[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="17365D")
+    output = BytesIO()
+    workbook.save(output)
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="loanhub-branch-day-{business_date.isoformat()}.xlsx"'},
+    )
+
+
 @router.get("/statements", response_model=TreasuryStatementRead)
 def statement(
     date_from: date,
