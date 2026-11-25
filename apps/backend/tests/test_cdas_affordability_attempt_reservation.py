@@ -89,3 +89,43 @@ def test_status_response_excludes_private_data():
     assert result["status"] == "unknown"
     assert result["requires_manual_review"] is True
     assert "raw_provider_response" not in result
+
+
+@pytest.mark.parametrize("unresolved_state", ["reserved", "unknown"])
+def test_new_idempotency_key_cannot_bypass_unresolved_fingerprint(unresolved_state):
+    company_id, borrower_id = uuid4(), uuid4()
+    unresolved = SimpleNamespace(
+        id=uuid4(), state=unresolved_state, assessment_record_id=None,
+    )
+    class Query:
+        def __init__(self, result):
+            self.result = result
+        def filter(self, *clauses):
+            assert clauses
+            return self
+        def first(self):
+            return self.result
+    class DB:
+        calls = 0
+        def query(self, model):
+            assert model is CdasAffordabilityAttempt
+            self.calls += 1
+            return Query(None if self.calls == 1 else unresolved)
+        def add(self, item):
+            raise AssertionError("Unresolved assessment must block new reservation")
+        def commit(self):
+            raise AssertionError("Unresolved assessment must not be committed")
+    db = DB()
+    with pytest.raises(HTTPException) as blocked:
+        reserve_affordability_attempt(
+            db, company_id=company_id, actor_user_id=uuid4(),
+            borrower_id=borrower_id, employee_number="EMP-100",
+            installment=Decimal("100.00"),
+            consent_evidence_reference="CONSENT-001",
+            idempotency_key="a-different-key-002",
+        )
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail["status"] == unresolved_state
+    assert blocked.value.detail["may_retry_provider_request"] is False
+    assert blocked.value.detail["requires_manual_review"] is True
+    assert db.calls == 2
