@@ -55,6 +55,13 @@ try {
 } catch {
   throw new Error("Playwright is an opt-in dependency; install it outside production CI");
 }
+// Refuse production-backed Finance requests even when the UI is on a sandbox URL.
+function isStageHost(hostname) {
+  return /(^|[.-])(sandbox|staging|stage|test)([.-]|$)/i.test(hostname);
+}
+function isProductionLoanHubHost(hostname) {
+  return ["loanhub.co.ls", "api.loanhub.co.ls", "www.loanhub.co.ls"].includes(hostname);
+}
 const paths = [
   "/finance-config/company/agreements",
   "/finance-config/company/charge-ledger",
@@ -68,9 +75,14 @@ async function certify(stateFile, expectedCompany, label) {
   try {
     // Fail closed: abort every non-read API request, not only known
     // financial endpoints. This probe must never mutate sandbox data.
-    await page.route("**/api/v1/**", route => {
+    await page.route("**/*", route => {
       const request = route.request();
-      if (!["GET", "HEAD", "OPTIONS"].includes(request.method())) {
+      const target = new URL(request.url());
+      // Block writes on every path and domain, not just known API routes.
+      if (!["GET", "HEAD", "OPTIONS"].includes(request.method()) ||
+          isProductionLoanHubHost(target.hostname) ||
+          (target.pathname.includes("/api/v1/") &&
+            (target.protocol !== "https:" || !isStageHost(target.hostname)))) {
         return route.abort("blockedbyclient");
       }
       return route.continue();
@@ -84,6 +96,9 @@ async function certify(stateFile, expectedCompany, label) {
       const request = response.request();
       const requestPath = new URL(response.url()).pathname;
       if (request.method() !== "GET" || !requestPath.endsWith(path)) return false;
+      const apiUrl = new URL(response.url());
+      assert.ok(apiUrl.protocol === "https:" && isStageHost(apiUrl.hostname),
+        `${label}: Finance API response is not from staging`);
       assert.equal(request.headers()["x-company-id"], expectedCompany,
         `${label}: Finance request company mismatch`);
       assert.equal(response.status(), 200,
