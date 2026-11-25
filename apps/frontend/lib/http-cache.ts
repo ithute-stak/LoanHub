@@ -373,6 +373,12 @@ export function installReduxHttpCache(
     }
     installedClients.add(client);
 
+    // Bind each write to the tenant/branch identity present when it starts.
+    // The selected membership can change while a financial POST is awaiting
+    // a response; invalidating against the current Redux auth state would
+    // target the new tenant and leave the original tenant's cache stale.
+    const mutationOriginScopes = new WeakMap<InternalAxiosRequestConfig, string>();
+
     const networkAdapter: AxiosAdapter = axios.getAdapter(
         client.defaults.adapter,
     );
@@ -433,10 +439,12 @@ export function installReduxHttpCache(
         const method = (config.method ?? "get").toLowerCase();
         const path = normalizedPath(config);
 
-        if (
-            method !== "get" ||
-            isExplicitlyUncacheable(config, path)
-        ) {
+        if (method !== "get") {
+            mutationOriginScopes.set(config, requestScope(store.getState(), config));
+            return networkAdapter(config);
+        }
+
+        if (isExplicitlyUncacheable(config, path)) {
             return networkAdapter(config);
         }
 
@@ -526,10 +534,16 @@ export function installReduxHttpCache(
             return response;
         }
 
-        const scope = requestScope(
-            store.getState(),
-            response.config as InternalAxiosRequestConfig,
-        );
+        const requestConfig = response.config as InternalAxiosRequestConfig;
+        const scope = mutationOriginScopes.get(requestConfig);
+        mutationOriginScopes.delete(requestConfig);
+        if (!scope) {
+            // A custom adapter may return a different response.config object.
+            // Never invalidate whichever tenant happens to be active now:
+            // clear all cached data rather than leave stale finance records.
+            store.dispatch(cacheCleared());
+            return response;
+        }
         store.dispatch(cacheScopeInvalidated({ scope }));
         return response;
     });
