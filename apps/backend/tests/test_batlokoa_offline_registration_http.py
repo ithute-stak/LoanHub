@@ -102,7 +102,8 @@ def test_full_client_http_receipt_contains_no_personal_data(monkeypatch):
         response = post(client)
     assert response.status_code == 201
     assert response.json() == {
-        "client_account_id": str(client_id), "replayed": False,
+        "registered": True, "client_account_id": str(client_id),
+        "replayed": False,
     }
     assert "SYNTHETIC-TEST-ONLY" not in response.text
     assert writer.call_args.kwargs["payload"].national_id == "SYNTHETIC-TEST-ONLY"
