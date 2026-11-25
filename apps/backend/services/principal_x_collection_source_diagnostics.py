@@ -12,7 +12,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
-from database.models.enums import PaymentMethod
+from database.models.enums import (
+    PaymentDirection, PaymentMethod, PaymentPurpose, PaymentStatus,
+)
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.treasury import TreasuryEntry
@@ -31,6 +33,7 @@ class CollectionSourceDiagnostics:
     missing_cash_evidence_count: int = 0
     overallocated_payment_count: int = 0
     invalid_allocation_count: int = 0
+    nonfinal_allocation_payment_count: int = 0
     cash_overapplied_count: int = 0
     invalid_cash_amount_count: int = 0
     treasury_amount_mismatch_count: int = 0
@@ -85,6 +88,16 @@ def inspect_principal_x_collection_sources(
         allocated_by_payment[allocation.payment_id] = (
             allocated_by_payment.get(allocation.payment_id, Decimal("0")) + amount
         )
+    # An allocation linked to a real but unfinished/failed/outbound payment
+    # must never be mistaken for an established borrower repayment.
+    nonfinal_allocation_payments = sum(
+        1 for payment_id in allocated_by_payment
+        if (
+            getattr(payment_by_id[payment_id], "status", None) != PaymentStatus.SUCCEEDED
+            or getattr(payment_by_id[payment_id], "purpose", None) != PaymentPurpose.LOAN_REPAYMENT
+            or getattr(payment_by_id[payment_id], "direction", None) != PaymentDirection.INBOUND
+        )
+    )
     overallocated = 0
     for payment_id, allocated in allocated_by_payment.items():
         try:
@@ -179,6 +192,7 @@ def inspect_principal_x_collection_sources(
         complete=False,
         overallocated_payment_count=overallocated,
         invalid_allocation_count=invalid_allocations,
+        nonfinal_allocation_payment_count=nonfinal_allocation_payments,
         cash_overapplied_count=cash_overapplied,
         invalid_cash_amount_count=invalid_cash,
         treasury_amount_mismatch_count=treasury_amount_mismatches,
