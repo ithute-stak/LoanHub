@@ -50,6 +50,7 @@ def require_authoritative_ledger_attestations(
     loan lock. Never accept attestations from a borrower or API request.
     """
     indexed: dict[str, LedgerSourceAttestation] = {}
+    evidence_references: set[str] = set()
     for item in attestations:
         if item.source_family not in REQUIRED_SOURCE_FAMILIES:
             raise ValueError("Unknown ledger source family")
@@ -59,6 +60,12 @@ def require_authoritative_ledger_attestations(
             raise ValueError("Incomplete ledger source")
         if not isinstance(item.evidence_reference, str) or not item.evidence_reference.strip():
             raise ValueError("Source audit evidence required")
+        # A single evidence reference cannot independently attest two
+        # different source families. Normalize spaces before deduplicating.
+        reference = item.evidence_reference.strip()
+        if reference in evidence_references:
+            raise ValueError("Duplicate ledger evidence reference")
+        evidence_references.add(reference)
         if type(item.unresolved_count) is not int or item.unresolved_count != 0:
             raise ValueError("Unresolved ledger entries")
         indexed[item.source_family] = item
