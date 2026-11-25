@@ -629,6 +629,8 @@ def principal_x_settlement_readiness(
         blockers.append("Treasury currency disagrees with the linked payment.")
     if cross_sources.treasury_direction_mismatch_count:
         blockers.append("Treasury money-in/money-out direction disagrees with the linked payment.")
+    if cross_sources.treasury_entry_type_mismatch_count:
+        blockers.append("Successful loan repayments are linked to incorrectly classified treasury entries.")
     if cross_sources.voided_linked_treasury_count:
         blockers.append("Successful loan repayments reference voided treasury entries.")
     if cross_sources.unposted_linked_treasury_count:
@@ -656,6 +658,7 @@ def principal_x_settlement_readiness(
         treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
         treasury_currency_mismatch_rows=cross_sources.treasury_currency_mismatch_count,
         treasury_direction_mismatch_rows=cross_sources.treasury_direction_mismatch_count,
+        treasury_entry_type_mismatch_rows=cross_sources.treasury_entry_type_mismatch_count,
         voided_linked_treasury_rows=cross_sources.voided_linked_treasury_count,
         unposted_linked_treasury_rows=cross_sources.unposted_linked_treasury_count,
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
