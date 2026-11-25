@@ -270,7 +270,7 @@ test("company Finance manual Refresh bypasses cached agreements, ledger and clai
     assert.match(apiSource, new RegExp(`export async function ${name}\\(options\\?: \\{ refresh\\?: boolean \\}\\)`));
     assert.match(pageSource, new RegExp(`${name}\\(\\{ refresh \\}\\)`));
   }
-  assert.equal((apiSource.match(/loanHubCache: options\\?\\.refresh \\? \\{ mode: "refresh" \\}/g) ?? []).length, 3);
+  assert.equal(apiSource.split('loanHubCache: options?.refresh ? { mode: "refresh" }').length - 1, 3);
   assert.match(pageSource, /onClick=\\{\\(\\) => void load\\(true\\)\\}><RefreshCcw/);
 });
 
