@@ -162,3 +162,14 @@ def test_valid_lsl_amounts_are_not_reported_as_corrupt():
     assert result.invalid_payment_amount_count == 0
     assert result.unsupported_currency_count == 0
     assert result.complete is False
+
+
+def test_huge_payment_row_does_not_crash_readiness_diagnostics():
+    row = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    row.amount = Decimal("1E+100")
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([row]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_payment_amount_count == 1
+    assert result.preview.net_collected is None
+    assert result.complete is False
