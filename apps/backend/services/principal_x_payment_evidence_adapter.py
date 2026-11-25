@@ -21,6 +21,9 @@ class LoanHubPaymentAudit:
     payment_count: int
     unresolved_payment_ids: tuple[str, ...]
     complete: bool = False
+    refund_payment_count: int = 0
+    reversed_payment_count: int = 0
+    nonfinal_refund_count: int = 0
 
 
 def inspect_loanhub_payment_evidence(
@@ -44,7 +47,16 @@ def inspect_loanhub_payment_evidence(
     )
     evidence = []
     unresolved = []
+    refund_count = 0
+    reversal_count = 0
+    nonfinal_refund_count = 0
     for row in rows:
+        if row.purpose == PaymentPurpose.REFUND:
+            refund_count += 1
+            if row.status != PaymentStatus.SUCCEEDED or row.direction != PaymentDirection.OUTBOUND:
+                nonfinal_refund_count += 1
+        if row.status == PaymentStatus.REVERSED:
+            reversal_count += 1
         identifier = str(row.id)
         if (
             row.purpose == PaymentPurpose.LOAN_REPAYMENT
@@ -76,4 +88,7 @@ def inspect_loanhub_payment_evidence(
         payment_count=len(rows),
         unresolved_payment_ids=tuple(unresolved),
         complete=False,
+        refund_payment_count=refund_count,
+        reversed_payment_count=reversal_count,
+        nonfinal_refund_count=nonfinal_refund_count,
     )
