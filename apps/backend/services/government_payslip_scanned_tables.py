@@ -65,14 +65,14 @@ def _ocr_table(image: Image.Image) -> str:
     ).decode("utf-8", errors="replace")
 
 
-def _parse_table(text: str, *, section: str) -> tuple[tuple[ScannedPayItem, ...], Decimal]:
+def _parse_table(text: str, *, section: str, allow_missing_heading: bool = False) -> tuple[tuple[ScannedPayItem, ...], Decimal]:
     required_header = "earnings" if section == "earnings" else "deductions"
     expected_total = _EARNINGS_TOTAL if section == "earnings" else _DEDUCTIONS_TOTAL
     rows: list[ScannedPayItem] = []
     totals: list[Decimal] = []
-    started = False
+    started = allow_missing_heading
     for raw in text.splitlines():
-        line = raw.strip()
+        line = raw.strip().lstrip("| ").strip()
         if not line:
             continue
         if not started:
@@ -110,21 +110,40 @@ def read_scanned_payslip_financials(
     width, height = image.size
     if width < 650 or height < 850 or width * height > 18_000_000:
         raise DocumentReadError("payslip scan outside layout bounds")
-    left = _heading(words, "earnings", width=width, height=height)
     right = _heading(words, "deductions", width=width, height=height)
-    if right.left - left.left < width * .25 or abs(left.top-right.top) > height * .03:
+    missing_left_heading = False
+    try:
+        left = _heading(words, "earnings", width=width, height=height)
+    except AmbiguousPayslipLayout:
+        # On some scanned payslips the dark EARNINGS band vanishes in OCR.
+        # Still allow a left table only when the independently located right
+        # DEDUCTIONS column is in the expected half of the same page.
+        if right.left < width * .52 or right.left > width * .75:
+            raise
+        missing_left_heading = True
+        left = None
+    if left is not None and (
+        right.left - left.left < width * .25
+        or abs(left.top-right.top) > height * .03
+    ):
         raise AmbiguousPayslipLayout("payslip financial columns not aligned")
-    divider = (left.right + right.left) // 2
-    start = max(0, min(left.top, right.top) - height // 150)
+    divider = ((left.right + right.left) // 2 if left is not None
+               else right.left - width // 20)
+    start = max(0, (min(left.top, right.top) if left else right.top) - height // 100)
     finish = min(height, start + height // 5)
-    if finish <= start or not left.left < divider < right.left:
+    left_start = (max(0, left.left-width//100) if left is not None else width // 10)
+    if finish <= start or not left_start < divider < right.left:
         raise AmbiguousPayslipLayout("unsafe financial table bounds")
-    # Both crops include their own heading, itemised rows, and printed total.
-    left_crop = image.crop((max(0, left.left-width//100), start, divider, finish))
+    left_crop = image.crop((left_start, start, divider, finish))
     right_crop = image.crop((max(0, right.left-width//100), start, width, finish))
-    earnings, printed_gross = _parse_table(_ocr_table(left_crop), section="earnings")
+    earnings, printed_gross = _parse_table(
+        _ocr_table(left_crop), section="earnings",
+        allow_missing_heading=missing_left_heading,
+    )
     deductions, printed_deductions = _parse_table(_ocr_table(right_crop), section="deductions")
     reasons: list[str] = ["issuer_and_original_document_unverified"]
+    if missing_left_heading:
+        reasons.append("earnings_heading_not_recognised")
     reconciled = False
     if net_pay_candidate is None:
         reasons.append("printed_net_pay_unconfirmed")
