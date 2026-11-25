@@ -50,3 +50,16 @@ def test_cell_outside_page_is_rejected():
     parts = [word("NET", 790, 200), word("PAY", 833, 200, w=40)]
     with pytest.raises(AmountCellLocationError, match="cannot be safely"):
         locate_net_pay_cell(parts, width=900, height=1000)
+
+
+def test_combined_net_pay_ocr_token_is_located():
+    parts = [word("NET PAY:", 100, 200, w=90), word("2,651.29", 250, 200, w=100)]
+    result = locate_net_pay_cell(parts, width=900, height=1000)
+    assert result.box[0] > 190
+    assert result.review_required
+
+
+def test_duplicate_combined_labels_are_rejected():
+    parts = [word("NET PAY:", 100, 200, w=90), word("NET PAY:", 100, 500, w=90)]
+    with pytest.raises(AmountCellLocationError, match="ambiguous"):
+        locate_net_pay_cell(parts, width=900, height=1000)
