@@ -3,6 +3,9 @@
 import {useEffect, useState} from "react";
 import {api} from "@/lib/api";
 import {Button} from "@/components/ui/button";
+import {LoanSequenceViews} from "./loan-sequence-views";
+import {useTenant} from "@/provider/tenantProvider";
+import {useAppSelector} from "@/store/hooks";
 
 type FieldChange = {field: string; before_recorded: boolean; after_recorded: boolean; before: string | number | null; after: string | number | null};
 type BalanceImpact = {evidence: string; before: string | null; after: string | null; delta: string | null};
@@ -21,7 +24,9 @@ type LoanEvent = {
 type History = {items: LoanEvent[]; count: number; history_limit: number; history_truncated?: boolean};
 
 export function LoanActivityPanel({loanId}: {loanId: string}) {
-  return <LoanActivityContent key={loanId} loanId={loanId}/>;
+  const {activeCompanyId, activeBranchId, activeRole} = useTenant();
+  const userId = useAppSelector(state => state.auth.user?.id);
+  return <LoanActivityContent key={JSON.stringify([userId, activeCompanyId, activeBranchId, activeRole, loanId])} loanId={loanId}/>;
 }
 
 function displayValue(recorded: boolean, value: string | number | null) {
@@ -73,6 +78,7 @@ function LoanActivityContent({loanId}: {loanId: string}) {
         {open ? "Hide history" : "View history"}
       </Button></div>
     </div>
+    {open && <LoanSequenceViews loanId={loanId}/>}
     {open && (loading ? <p className="text-sm">Loading loan activity…</p> : error ?
       <p role="alert" className="text-sm text-destructive">{error}</p> : result?.items.length ?
       <div className="space-y-3">
