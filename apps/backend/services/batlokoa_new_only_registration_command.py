@@ -12,7 +12,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from core.access_control import TenantContext
+from core.access_control import (
+    COMPANY_MANAGEMENT_ROLES, LENDING_ROLES, TenantContext,
+)
 from database.tenant_context import bind_database_tenant_context
 from database.schemas.full_new_only_client_capture import FullNewOnlyClientCapture
 from services.atomic_new_client_registration import (
@@ -64,8 +66,21 @@ def submit_new_only_client(
         or context.company_id is None
         or context.staff.company_id != context.company_id
         or context.staff.user_id != context.user.id
+        or context.role not in LENDING_ROLES
+        or context.staff.role != context.role
     ):
-        raise ValueError("Verified active LoanHub staff context required")
+        raise ValueError("Verified active LoanHub lending staff context required")
+    # This early check is defense in depth only. The atomic writer also
+    # locks and re-verifies the persisted staff/branch membership in its
+    # transaction to prevent revocation races.
+    if (
+        context.role not in COMPANY_MANAGEMENT_ROLES
+        and (
+            context.staff.branch_id is None
+            or context.staff.branch_id != payload.branch_id
+        )
+    ):
+        raise ValueError("Assigned registration branch required")
     if not isinstance(idempotency_key, str) or not 16 <= len(idempotency_key) <= 128:
         raise ValueError("Valid server-bound idempotency key required")
     if not isinstance(fingerprint_secret, bytes) or len(fingerprint_secret) < 32:
