@@ -766,3 +766,108 @@ def test_batlokoa_adapter_persists_full_new_client_and_replays_in_sandbox(
             Decimal("550.00"), Decimal("55.00"),
         )
 
+
+
+def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
+    real_models_sandbox, monkeypatch,
+):
+    """Full HTTP -> adapter -> real DB -> fresh readback, never live."""
+    from contextlib import contextmanager
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from core.access_control import get_tenant_context
+    from routers.batlokoa_new_only_registration_offline import (
+        build_offline_certification_router,
+    )
+
+    engine, schema = real_models_sandbox
+    company, branch, employee = uuid4(), uuid4(), uuid4()
+    context = staff(company, branch, employee)
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_branches (id, company_id, is_active)
+            VALUES (:branch, :company, TRUE)
+        """), {"branch": branch, "company": company})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.users (
+                id, phone, password_hash, role, is_active, is_verified,
+                must_change_password
+            ) VALUES (
+                :actor, '69997777', 'synthetic-staff-hash-not-credential',
+                'LOAN_OFFICER', TRUE, TRUE, FALSE
+            )
+        """), {"actor": employee})
+        conn.execute(text(f"""
+            INSERT INTO {schema}.company_staff (
+                id, user_id, company_id, branch_id, role, is_primary, is_active
+            ) VALUES (
+                :actor, :actor, :company, :branch,
+                'LOAN_OFFICER', TRUE, TRUE
+            )
+        """), {"actor": employee, "company": company, "branch": branch})
+
+    @contextmanager
+    def fresh_session():
+        with sandbox_session(engine, schema) as connection:
+            with Session(bind=connection, expire_on_commit=False) as db:
+                yield db
+
+    app = FastAPI()
+    app.include_router(build_offline_certification_router(
+        session_factory=fresh_session,
+        fingerprint_secret=b"synthetic-only-hmac-secret-for-offline-certification",
+    ), prefix="/api/v1")
+    app.dependency_overrides[get_tenant_context] = lambda: context
+    client = TestClient(app)
+    url = "/api/v1/batlokoa/registration/clients"
+    body = full_capture(
+        branch, national_id="SYN-OFFLINE-HTTP-001", phone="59007881",
+    ).model_dump(mode="json")
+    headers = {"Idempotency-Key": "offline-http-reg-001"}
+    monkeypatch.setenv(
+        "LOANHUB_REGISTRATION_E2E_ACK", "isolated_disposable_database"
+    )
+    assert totals(engine, schema) == (0, 0, 0, 0, 0, 0)
+
+    created = client.post(url, json=body, headers=headers)
+    assert created.status_code == 201, created.json()
+    assert created.json()["replayed"] is False
+    assert set(created.json()) == {"client_account_id", "replayed"}
+    assert "SYN-OFFLINE-HTTP-001" not in created.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    replay = client.post(url, json=body, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json() == {
+        "client_account_id": created.json()["client_account_id"],
+        "replayed": True,
+    }
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    changed = {**body, "first_name": "Modified"}
+    conflict = client.post(url, json=changed, headers=headers)
+    assert conflict.status_code == 409
+    assert "SYN-OFFLINE-HTTP-001" not in conflict.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+    # The record really committed and is independently readable.
+    with engine.connect() as conn:
+        saved = conn.execute(text(f"""
+            SELECT a.company_id, a.branch_id, p.first_name,
+                   b.employer_name, b.monthly_income
+            FROM {schema}.company_borrower_accounts a
+            JOIN {schema}.borrowers b ON b.id = a.borrower_id
+            JOIN {schema}.people p ON p.user_id = b.user_id
+            WHERE a.id = :id
+        """), {"id": created.json()["client_account_id"]}).one()
+        assert saved == (
+            company, branch, "Palesa", "Synthetic Employer", Decimal("6000.00"),
+        )
+        assert conn.execute(text(f"""
+            SELECT count(*) FROM {schema}.borrower_debt_obligations
+        """)).scalar_one() == 1
+
+    # Removing the explicit operator acknowledgement fails before any write.
+    monkeypatch.delenv("LOANHUB_REGISTRATION_E2E_ACK")
+    assert client.post(url, json=body, headers=headers).status_code == 503
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
