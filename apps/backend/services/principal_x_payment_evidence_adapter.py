@@ -24,6 +24,8 @@ class LoanHubPaymentAudit:
     refund_payment_count: int = 0
     reversed_payment_count: int = 0
     nonfinal_refund_count: int = 0
+    invalid_payment_amount_count: int = 0
+    unsupported_currency_count: int = 0
 
 
 def inspect_loanhub_payment_evidence(
@@ -83,12 +85,19 @@ def inspect_loanhub_payment_evidence(
             original_payment_id=None,
             verified=False,
         ))
+    preview = preview_reconciliation(evidence)
     return LoanHubPaymentAudit(
-        preview=preview_reconciliation(evidence),
+        preview=preview,
         payment_count=len(rows),
         unresolved_payment_ids=tuple(unresolved),
         complete=False,
         refund_payment_count=refund_count,
         reversed_payment_count=reversal_count,
         nonfinal_refund_count=nonfinal_refund_count,
+        invalid_payment_amount_count=sum(
+            1 for reason in preview.unresolved if reason.endswith(":invalid_amount")
+        ),
+        unsupported_currency_count=sum(
+            1 for reason in preview.unresolved if reason.endswith(":unsupported_currency")
+        ),
     )
