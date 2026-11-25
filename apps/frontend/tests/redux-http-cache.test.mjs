@@ -393,4 +393,34 @@ test("opt-in Finance browser certification is syntactically valid and write-bloc
   ]) assert.ok(probe.includes(path), `Missing read-only refresh check: ${path}`);
 });
 
+test("stale cache remains usable when background revalidation fails", async () => {
+  let calls = 0;
+  let failRevalidation;
+  const {client, store} = createCacheClient("stale-error", config => {
+    calls++;
+    if (calls === 1) return Promise.resolve(response(config, {balance:100}));
+    return new Promise((resolve, reject) => {
+      failRevalidation = () => reject(new Error("Temporary network outage"));
+    });
+  });
+  const config = {
+    headers: headersFor("company-A"),
+    loanHubCache: {ttlMs:0, staleWhileRevalidateMs:60000},
+  };
+  assert.equal((await client.get("/loans/", config)).data.balance, 100);
+  const stale = await client.get("/loans/", config);
+  assert.equal(stale.data.balance,100,"stale financial data must be labelled but remain readable");
+  assert.equal(stale.headers.get("X-LoanHub-Client-Cache"),"STALE");
+  for (let i=0; i<20 && !failRevalidation; i++) await Promise.resolve();
+  assert.equal(typeof failRevalidation,"function");
+  failRevalidation();
+  // Flush the rejected adapter promise, cleanup finally, and its error observer.
+  for (let i=0; i<20; i++) await Promise.resolve();
+  assert.equal(calls,2);
+  const cacheEntries=Object.values(store.getState().httpCache.entries);
+  assert.equal(cacheEntries.length,1);
+  assert.equal(cacheEntries[0].data.balance,100,
+    "a failed background refresh must never replace cached financial data");
+});
+
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));
