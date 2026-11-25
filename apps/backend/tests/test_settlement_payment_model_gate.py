@@ -204,6 +204,8 @@ def test_principal_x_readiness_schema_rejects_true_posting_capability():
             treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, treasury_entry_type_mismatch_rows=0,
         voided_linked_treasury_rows=0,
             unposted_linked_treasury_rows=0, missing_posted_treasury_evidence_rows=0,
+            missing_posted_refund_treasury_rows=0,
+            refund_treasury_type_mismatch_rows=0,
             blocking_reasons=[], source_coverage=[],
         )
 
@@ -302,7 +304,9 @@ def test_readiness_endpoint_queries_real_cross_source_diagnostics():
         "treasury_amount_mismatch_rows", "treasury_currency_mismatch_rows",
         "treasury_direction_mismatch_rows", "treasury_entry_type_mismatch_rows",
         "voided_linked_treasury_rows", "unposted_linked_treasury_rows",
-        "missing_posted_treasury_evidence_rows", "source_coverage",
+        "missing_posted_treasury_evidence_rows",
+        "missing_posted_refund_treasury_rows",
+        "refund_treasury_type_mismatch_rows", "source_coverage",
     ):
         assert field in values
     for field in ("can_post_settlement", "cross_source_reconciliation_complete"):
@@ -328,6 +332,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
         treasury_currency_mismatch_rows=0, treasury_direction_mismatch_rows=0, treasury_entry_type_mismatch_rows=0,
         voided_linked_treasury_rows=0,
             unposted_linked_treasury_rows=0, missing_posted_treasury_evidence_rows=0,
+            missing_posted_refund_treasury_rows=0,
+            refund_treasury_type_mismatch_rows=0,
             blocking_reasons=["Authoritative external reconciliation missing"],
         source_coverage=[],
     )
