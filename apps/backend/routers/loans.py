@@ -615,6 +615,8 @@ def principal_x_settlement_readiness(
         blockers.append("Instalment allocations exceed recorded payment amounts.")
     if cross_sources.invalid_allocation_count:
         blockers.append("Invalid installment allocation amounts require investigation.")
+    if cross_sources.nonfinal_allocation_payment_count:
+        blockers.append("Instalment allocations reference unfinished or non-repayment payments.")
     if cross_sources.cash_overapplied_count:
         blockers.append("Cash transactions claim more applied cash than the linked payment.")
     if cross_sources.invalid_cash_amount_count:
@@ -637,6 +639,7 @@ def principal_x_settlement_readiness(
         missing_cash_evidence_rows=cross_sources.missing_cash_evidence_count,
         overallocated_payment_rows=cross_sources.overallocated_payment_count,
         invalid_allocation_rows=cross_sources.invalid_allocation_count,
+        nonfinal_allocation_payment_rows=cross_sources.nonfinal_allocation_payment_count,
         cash_overapplied_rows=cross_sources.cash_overapplied_count,
         invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
         treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
