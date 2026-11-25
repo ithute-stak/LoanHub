@@ -227,6 +227,8 @@ def enroll_mfa(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="Shared sandbox account security settings cannot be changed")
     _enrollment, secret, recovery_codes = begin_enrollment(db, current_user)
     record_account_event(
         db,
@@ -265,6 +267,8 @@ def confirm_mfa(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="Shared sandbox account security settings cannot be changed")
     enrollment = db.query(UserMFAEnrollment).filter(
         UserMFAEnrollment.user_id == current_user.id,
         UserMFAEnrollment.is_enabled.is_(False),
@@ -298,6 +302,8 @@ def disable_mfa(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="Shared sandbox account security settings cannot be changed")
     if not verify_password(payload.password, str(current_user.password_hash)):
         raise HTTPException(status_code=400, detail="The account password is incorrect")
     enrollment = db.query(UserMFAEnrollment).filter(
@@ -361,6 +367,8 @@ def revoke_session(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="Shared sandbox account security settings cannot be changed")
     token = db.query(RefreshToken).filter(
         RefreshToken.user_id == current_user.id,
         RefreshToken.jti == session_jti,
@@ -388,6 +396,8 @@ def revoke_every_session(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    if settings.SANDBOX_MODE and current_user.phone == settings.SANDBOX_LOGIN_PHONE:
+        raise HTTPException(status_code=403, detail="Shared sandbox account security settings cannot be changed")
     count = revoke_all_sessions(db, current_user)
     record_account_event(
         db,
@@ -496,6 +506,8 @@ def request_password_reset(
 ):
     """Create a privacy-safe support request without revealing account existence."""
     identifier = payload.identifier.strip().lower()
+    if settings.SANDBOX_MODE:
+        raise HTTPException(status_code=403, detail="Password recovery is unavailable in the public sandbox")
     request_reference = f"RST-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
 
     user = (
