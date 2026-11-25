@@ -121,7 +121,7 @@ def test_narrow_date_window_cannot_hide_company_wide_stale_cash_session(monkeypa
 
         def execute(self, sql, params=None):
             statement = str(sql)
-            if "SET TRANSACTION READ ONLY" in statement:
+            if "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY" in statement:
                 return FakeResult(None)
             if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
                 assert params["company_id"] == str(company_id)
@@ -197,7 +197,7 @@ def test_partial_history_cannot_report_company_ready(monkeypatch):
 
         def execute(self, sql, params=None):
             statement = str(sql)
-            if "SET TRANSACTION READ ONLY" in statement:
+            if "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY" in statement:
                 return Result(None)
             if "data->>'business_date' NOT BETWEEN :from_date AND :to_date" in statement:
                 return Result(1)  # older closed session is outside selected window
