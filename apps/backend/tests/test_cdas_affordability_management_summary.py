@@ -62,3 +62,15 @@ def test_empty_consolidated_report_is_valid(monkeypatch):
         db=None, company=None, rows=[], generated_at="2026-11-18",
     )
     assert result.startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("reference", None), ("reference", "   "),
+    ("assessed_at", None), ("assessed_at", ""),
+    ("decision", None), ("decision", " "),
+])
+def test_summary_rejects_missing_essential_result_metadata(field, value):
+    archived = record()
+    archived.event_data["snapshot"][field] = value
+    with pytest.raises(ValueError, match="required result metadata"):
+        stored_assessment_summary(archived)
