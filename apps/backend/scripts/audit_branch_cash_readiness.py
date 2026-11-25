@@ -79,7 +79,8 @@ LIMIT :limit
 
 # The requested date window must not be allowed to hide an older open
 # session elsewhere in the company. Activation is company-scoped and needs
-# a company-wide stale-session check, not only the displayed audit range.
+# a company-wide check of every open session outside today, including
+# malformed and future-dated values, not only the displayed audit range.
 STALE_SESSIONS_SQL = text("""
 SELECT count(*) FROM company_operating_records
 WHERE company_id = :company_id
@@ -88,7 +89,7 @@ WHERE company_id = :company_id
   AND status = 'open'
   AND (
       data->>'business_date' IS NULL
-      OR data->>'business_date' < :as_of
+      OR data->>'business_date' <> :as_of
   )
 """)
 
@@ -99,8 +100,11 @@ def classify(row, *, as_of: date | None = None) -> list[str]:
     # its counted amount and Treasury projection appear consistent.
     if as_of and row.get('session_status') == 'open':
         try:
-            if date.fromisoformat(row['business_date']) < as_of:
+            business_date = date.fromisoformat(row['business_date'])
+            if business_date < as_of:
                 issues.append('STALE_OPEN_CASH_SESSION')
+            elif business_date > as_of:
+                issues.append('FUTURE_OPEN_CASH_SESSION')
         except (ValueError, TypeError, KeyError):
             issues.append('INVALID_SESSION_BUSINESS_DATE')
     if row["branch_id"] is None:
