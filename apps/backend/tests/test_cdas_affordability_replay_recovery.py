@@ -147,3 +147,28 @@ def test_exact_saved_record_fails_closed_if_missing_or_corrupt(monkeypatch):
             record_id=corrupt.id, context=_context(company), db=object(),
         )
     assert invalid.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_unknown_outcome_replay_never_contacts_cdas(monkeypatch):
+    attempt = SimpleNamespace(id=uuid4(), state="unknown", assessment_record_id=None)
+    monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
+    monkeypatch.setattr(module, "_require_approved_affordability_consent",
+                        lambda *args, **kwargs: None)
+    reservations = []
+    def existing_attempt(db, **kwargs):
+        reservations.append(kwargs)
+        return attempt, False
+    monkeypatch.setattr(module, "reserve_affordability_attempt", existing_attempt)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("An unknown outcome must never trigger another CDAS call")
+    monkeypatch.setattr(module, "preview_government_employee_affordability", forbidden)
+    with pytest.raises(HTTPException) as blocked:
+        await module.create_government_affordability_record(
+            payload=_payload(), context=_context(), db=object(),
+        )
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail["status"] == "unknown"
+    assert blocked.value.detail["requires_manual_review"] is True
+    assert blocked.value.detail["may_retry_provider_request"] is False
+    assert len(reservations) == 1
