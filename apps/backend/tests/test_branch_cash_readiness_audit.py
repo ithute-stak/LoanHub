@@ -84,3 +84,73 @@ def test_cash_reconciliation_audit_compares_posted_journals_with_treasury():
     assert "je.posted_at >=" in statement
     assert "posted_journal_cash_net" in statement
     assert "treasury_cash_net" in statement
+
+
+def test_narrow_date_window_cannot_hide_company_wide_stale_cash_session(monkeypatch):
+    from contextlib import nullcontext
+    from datetime import date
+    from uuid import uuid4
+    from scripts import audit_branch_cash_readiness as audit_module
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self.value
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def begin(self):
+            return nullcontext()
+
+        def execute(self, sql, params=None):
+            statement = str(sql)
+            if "SET TRANSACTION READ ONLY" in statement:
+                return FakeResult(None)
+            if "SELECT count(*) FROM company_operating_records" in statement:
+                assert params["company_id"] == str(company_id)
+                assert "as_of" in params
+                return FakeResult(1)
+            assert "LIMIT :limit" in statement
+            return FakeResult([{
+                **dict(row()), "branch_id": "one", "business_date": "2026-11-25",
+                "session_status": "closed",
+            }])
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(audit_module, "create_engine", lambda *_args, **_kwargs: FakeEngine())
+    company_id = uuid4()
+    result = audit_module.audit(company_id, date(2026, 11, 25), date(2026, 11, 25), "dummy")
+    assert result["sessions_checked"] == 1
+    assert result["issue_counts"] == {}
+    assert result["company_wide_stale_open_sessions"] == 1
+    assert result["ready"] is False
+
+
+def test_stale_session_scope_query_is_company_wide_and_read_only():
+    from scripts.audit_branch_cash_readiness import STALE_SESSIONS_SQL
+    statement = str(STALE_SESSIONS_SQL)
+    assert "company_id = :company_id" in statement
+    assert "status = 'open'" in statement
+    assert "data->>'business_date' < :as_of" in statement
+    assert "BETWEEN :from_date AND :to_date" not in statement
+    assert "UPDATE " not in statement.upper()
+    assert "DELETE " not in statement.upper()
