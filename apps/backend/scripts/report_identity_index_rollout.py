@@ -217,6 +217,30 @@ def generate_read_only_report(url: str, *, expected_role: str) -> dict:
                 ):
                     raise IndexRolloutPreflightError(
                         "Unexpected database role or writable transaction")
+                # The audit must see every relevant row. A restricted
+                # login can otherwise silently undercount when RLS changes.
+                required_tables = {
+                    "people", "users", "legacy_loan_captures",
+                    "borrowers", "company_borrower_accounts",
+                }
+                table_security = connection.execute(text("""
+                    SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = current_schema()
+                      AND c.relkind IN ('r', 'p')
+                      AND c.relname IN (
+                        'people', 'users', 'legacy_loan_captures',
+                        'borrowers', 'company_borrower_accounts'
+                      )
+                """)).all()
+                if (
+                    len(table_security) != len(required_tables)
+                    or {name for name, _, _ in table_security} != required_tables
+                    or any(rls or force_rls for _, rls, force_rls in table_security)
+                ):
+                    raise IndexRolloutPreflightError(
+                        "Identity audit cannot establish full table visibility")
                 with Session(bind=connection) as session:
                     with session.begin():
                         scan = inspect_index_rollout_preflight(session)
