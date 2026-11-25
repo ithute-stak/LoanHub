@@ -28,7 +28,11 @@ from database.models.treasury import BranchDailyLedger, BranchOpeningSource, Tre
 from services.treasury_service import assert_branch_outflow_funded
 
 
-def test_actual_mapped_branch_funding_guard_prevents_double_disbursement():
+@pytest.mark.parametrize("second_entry_type", [
+    TreasuryEntryType.LOAN_DISBURSEMENT,
+    TreasuryEntryType.EXPENSE,
+])
+def test_actual_mapped_branch_funding_guard_prevents_double_disbursement(second_entry_type):
     dsn = os.environ.get("LOANHUB_ACCOUNTING_TEST_POSTGRES_URL")
     if not dsn:
         pytest.skip("Disposable PostgreSQL integration DSN not configured")
@@ -75,7 +79,7 @@ def test_actual_mapped_branch_funding_guard_prevents_double_disbursement():
                         false, true, false)
             """), dict(id=uuid4(), company=company, branch=branch, ledger=ledger_id))
 
-        def worker() -> bool:
+        def worker(entry_type: TreasuryEntryType) -> bool:
             barrier.wait(timeout=12)
             with Session(engine) as db:
                 with db.begin():
@@ -94,7 +98,7 @@ def test_actual_mapped_branch_funding_guard_prevents_double_disbursement():
                         company_id=company, branch_id=branch,
                         daily_ledger_id=ledger_id,
                         direction=TreasuryDirection.MONEY_OUT,
-                        entry_type=TreasuryEntryType.LOAN_DISBURSEMENT,
+                        entry_type=entry_type,
                         payment_method=PaymentMethod.CASH,
                         approval_status=TreasuryEntryApprovalStatus.POSTED,
                         requires_approval=False, amount=Decimal("80.00"),
@@ -107,7 +111,10 @@ def test_actual_mapped_branch_funding_guard_prevents_double_disbursement():
                     return True
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(worker) for _ in range(2)]
+            futures = [
+                pool.submit(worker, TreasuryEntryType.LOAN_DISBURSEMENT),
+                pool.submit(worker, second_entry_type),
+            ]
             outcomes = [f.result(timeout=30) for f in futures]
         assert sorted(outcomes) == [False, True]
         with engine.connect() as conn:
