@@ -40,6 +40,8 @@ class CollectionSourceDiagnostics:
     treasury_amount_mismatch_count: int = 0
     treasury_currency_mismatch_count: int = 0
     treasury_direction_mismatch_count: int = 0
+    voided_linked_treasury_count: int = 0
+    unposted_linked_treasury_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -152,12 +154,28 @@ def inspect_principal_x_collection_sources(
     treasury_amount_mismatches = 0
     treasury_currency_mismatches = 0
     treasury_direction_mismatches = 0
+    voided_linked_treasury = 0
+    unposted_linked_treasury = 0
     for entry in treasury:
         payment = payment_by_id.get(entry.payment_transaction_id)
-        if payment is None or getattr(entry, "is_voided", False):
+        if payment is None:
+            continue
+        # Only successful inbound loan repayments are candidates for
+        # collection corroboration. Voided or unposted linked treasury
+        # evidence needs explicit review, not silent exclusion.
+        is_collected_repayment = (
+            getattr(payment, "status", None) == PaymentStatus.SUCCEEDED
+            and getattr(payment, "purpose", None) == PaymentPurpose.LOAN_REPAYMENT
+            and getattr(payment, "direction", None) == PaymentDirection.INBOUND
+        )
+        if getattr(entry, "is_voided", False):
+            if is_collected_repayment:
+                voided_linked_treasury += 1
             continue
         approval = getattr(entry, "approval_status", None)
         if approval is not None and getattr(approval, "value", approval) != "posted":
+            if is_collected_repayment:
+                unposted_linked_treasury += 1
             continue
         treasury_direction = getattr(entry, "direction", None)
         payment_direction = getattr(payment, "direction", None)
@@ -221,6 +239,8 @@ def inspect_principal_x_collection_sources(
         treasury_amount_mismatch_count=treasury_amount_mismatches,
         treasury_currency_mismatch_count=treasury_currency_mismatches,
         treasury_direction_mismatch_count=treasury_direction_mismatches,
+        voided_linked_treasury_count=voided_linked_treasury,
+        unposted_linked_treasury_count=unposted_linked_treasury,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
