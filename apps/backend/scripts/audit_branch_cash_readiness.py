@@ -122,6 +122,14 @@ def classify(row, *, as_of: date | None = None) -> list[str]:
                 issues.append('FUTURE_OPEN_CASH_SESSION')
         except (ValueError, TypeError, KeyError):
             issues.append('INVALID_SESSION_BUSINESS_DATE')
+    # Closed sessions also need valid dates; a malformed historical record
+    # must never be treated as activation evidence.
+    if as_of and row.get("session_status") != "open":
+        try:
+            if date.fromisoformat(row["business_date"]) > as_of:
+                issues.append("FUTURE_SESSION_BUSINESS_DATE")
+        except (ValueError, TypeError, KeyError):
+            issues.append("INVALID_SESSION_BUSINESS_DATE")
     if row["branch_id"] is None:
         issues.append("NO_BRANCH")
     if row["ledger_id"] is None:
