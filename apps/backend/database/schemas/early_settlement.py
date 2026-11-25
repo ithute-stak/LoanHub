@@ -116,6 +116,8 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     refund_payment_rows: int
     reversed_payment_rows: int
     nonfinal_refund_rows: int
+    invalid_payment_amount_rows: int
+    unsupported_payment_currency_rows: int
     orphan_cash_rows: int
     orphan_allocation_rows: int
     unlinked_treasury_rows: int
