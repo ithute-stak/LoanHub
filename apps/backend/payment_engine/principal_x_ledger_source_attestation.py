@@ -82,7 +82,11 @@ def require_authoritative_ledger_attestations(
         raise ValueError("Invalid authoritative net collection")
     if raw_collected < 0:
         raise ValueError("Negative net collections")
-    if raw_collected != raw_collected.quantize(Decimal("0.01")):
+    try:
+        cent_exact = raw_collected == raw_collected.quantize(Decimal("0.01"))
+    except ArithmeticError as exc:
+        raise ValueError("Invalid authoritative net collection") from exc
+    if not cent_exact:
         raise ValueError("Sub-cent authoritative net collection")
     collected = money(raw_collected)
     return LedgerCompleteness(
