@@ -625,6 +625,8 @@ def principal_x_settlement_readiness(
         blockers.append("Treasury payment amounts disagree with linked payment records.")
     if cross_sources.treasury_currency_mismatch_count:
         blockers.append("Treasury currency disagrees with the linked payment.")
+    if cross_sources.treasury_direction_mismatch_count:
+        blockers.append("Treasury money-in/money-out direction disagrees with the linked payment.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -644,6 +646,7 @@ def principal_x_settlement_readiness(
         invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
         treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
         treasury_currency_mismatch_rows=cross_sources.treasury_currency_mismatch_count,
+        treasury_direction_mismatch_rows=cross_sources.treasury_direction_mismatch_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
     )
