@@ -21,6 +21,9 @@ services:
     image: ${SANDBOX_BACKEND_IMAGE:?required}
     env_file: ./sandbox.env
     environment: &backend_env
+      SANDBOX_MODE: "true"
+      SANDBOX_ROLE_SWITCH_ENABLED: "true"
+      SANDBOX_LOGIN_PASSWORD: ${SANDBOX_LOGIN_PASSWORD:?required}
       DB_HOST: db
       DB_PORT: "5432"
       DB_NAME: loanhub_sandbox
@@ -55,6 +58,20 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+  seed:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    restart: "no"
+    env_file: ./sandbox.env
+    environment:
+      <<: *backend_env
+      DB_USER: sandbox_app
+      DB_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    command: ["python", "-m", "scripts.seed_sandbox"]
+    networks: [isolated]
+    depends_on:
+      role-bootstrap:
+        condition: service_completed_successfully
+    volumes: [./secrets:/app/secrets:ro]
   backend:
     image: ${SANDBOX_BACKEND_IMAGE:?required}
     env_file: ./sandbox.env
@@ -65,7 +82,7 @@ services:
     volumes: [./secrets:/app/secrets:ro, sandbox_files:/app/media]
     networks: [isolated]
     depends_on:
-      role-bootstrap:
+      seed:
         condition: service_completed_successfully
       redis:
         condition: service_started
@@ -78,6 +95,9 @@ services:
       PORT: "3000"
       HOSTNAME: 0.0.0.0
     networks: [isolated]
+    depends_on:
+      backend:
+        condition: service_started
     profiles: ["verified"]
 networks:
   isolated:
