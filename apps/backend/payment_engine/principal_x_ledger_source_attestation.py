@@ -72,9 +72,19 @@ def require_authoritative_ledger_attestations(
     missing = REQUIRED_SOURCE_FAMILIES - indexed.keys()
     if missing:
         raise ValueError("Missing authoritative ledger sources: " + ", ".join(sorted(missing)))
-    collected = money(net_collected)
-    if collected < 0:
+    # Certification must not silently round an inconsistent sub-cent
+    # lifetime total into an apparently exact financial balance.
+    try:
+        raw_collected = Decimal(str(net_collected))
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise ValueError("Invalid authoritative net collection") from exc
+    if not raw_collected.is_finite():
+        raise ValueError("Invalid authoritative net collection")
+    if raw_collected < 0:
         raise ValueError("Negative net collections")
+    if raw_collected != raw_collected.quantize(Decimal("0.01")):
+        raise ValueError("Sub-cent authoritative net collection")
+    collected = money(raw_collected)
     return LedgerCompleteness(
         net_collected=collected, reconciled=True,
         source_count=len(indexed),
