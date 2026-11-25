@@ -1,5 +1,7 @@
 "use client";
 
+import {confirmAppDialog} from "@/lib/app-dialog";
+
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, Clipboard, KeyRound, Loader2, RefreshCcw, Save, ShieldCheck, UserRoundCog } from "lucide-react";
 
@@ -99,7 +101,7 @@ export function CompanyOwnerAccessDialog({ company, open, onOpenChange }: Props)
 
     async function resetPassword() {
         if (!company || resetting) return;
-        if (!window.confirm(`Create a new temporary password for ${account?.full_name ?? "this company owner"}? Existing sessions will be signed out.`)) {
+        if (!await confirmAppDialog(`Create a new temporary password for ${account?.full_name ?? "this company owner"}? Existing sessions will be signed out.`)) {
             return;
         }
 
