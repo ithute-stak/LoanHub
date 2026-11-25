@@ -39,10 +39,16 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   );
 }
 
-function DialogBrand() {
+function DialogBrand({ children }: { children?: React.ReactNode }) {
   return (
-    <div data-slot="dialog-brand" className="flex min-w-0 shrink-0 items-center justify-start px-4 py-3 pr-12">
-      <Image src="/loanhub-horizontal-logo.png" alt="LoanHub" width={180} height={48} className="h-9 w-auto max-w-full object-contain object-left" />
+    <div data-slot="dialog-brand" className="relative isolate flex min-h-28 w-full min-w-0 shrink-0 flex-col justify-end overflow-hidden rounded-t-xl bg-slate-950 sm:min-h-32">
+      <Image src="/loanhub-horizontal-logo.png" alt="LoanHub" fill sizes="(max-width: 768px) 100vw, 896px" className="object-cover object-center" />
+      {children ? (
+        <>
+          <div aria-hidden className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/55 to-transparent" />
+          <div className="relative z-10 px-4 pb-4 pt-16 text-left sm:px-6 sm:pb-5">{children}</div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -51,8 +57,9 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  brandHeader,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean }) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; brandHeader?: React.ReactNode }) {
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -68,7 +75,7 @@ function DialogContent({
         {...props}
       >
         <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
-        <DialogBrand />
+        {brandHeader ?? <DialogBrand />}
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close asChild>
@@ -76,7 +83,7 @@ function DialogContent({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="absolute right-3 top-3 rounded-full border border-border/60 bg-background/80 shadow-sm backdrop-blur hover:bg-muted"
+              className="absolute right-3 top-3 z-20 rounded-full border border-border/60 bg-background/80 shadow-sm backdrop-blur hover:bg-muted"
             >
               <XIcon className="h-4 w-4" />
               <span className="sr-only">Close dialog</span>

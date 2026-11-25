@@ -4,6 +4,7 @@ import * as React from "react";
 
 import {
   Dialog,
+  DialogBrand,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -32,7 +33,6 @@ export function CustomDialog({
   trigger,
   title,
   description,
-  solidHeader = false,
   children,
   open,
   onOpenChange,
@@ -44,16 +44,10 @@ export function CustomDialog({
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
 
       <DialogContent
-        className={cn(
-          "flex max-h-[95vh] flex-col gap-0 overflow-hidden rounded-[1.75rem]",
-          "border border-white/20 bg-card p-0 shadow-2xl sm:max-w-4xl",
-          contentClassName,
-        )}
-      >
-        <div className={cn("w-full shrink-0 border-b border-white/10 bg-gradient-to-r from-slate-950 to-slate-800", solidHeader && "from-slate-950 to-slate-950")}>
-          <div className="px-4 py-4 text-left sm:px-6">
+        brandHeader={(
+          <DialogBrand>
             <DialogHeader className="gap-1 pr-10">
-              <DialogTitle className="text-2xl font-black tracking-tight text-white">
+              <DialogTitle className="text-xl font-black tracking-tight text-white sm:text-2xl">
                 {title ?? "LoanHub"}
               </DialogTitle>
               {description ? (
@@ -62,8 +56,15 @@ export function CustomDialog({
                 </DialogDescription>
               ) : null}
             </DialogHeader>
-          </div>
-        </div>
+          </DialogBrand>
+        )}
+        className={cn(
+          "flex max-h-[95dvh] flex-col gap-0 overflow-hidden rounded-[1.75rem]",
+          "border border-white/20 bg-card p-0 sm:p-0 shadow-2xl sm:max-w-4xl",
+          contentClassName,
+        )}
+      >
+
 
         <div className={cn("min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto", bodyClassName)}>
           {children}
