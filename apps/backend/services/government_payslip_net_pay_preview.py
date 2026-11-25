@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from PIL import ImageOps
 
 from services.document_intelligence_reader import _pdf_pages, _safe_image, DocumentReadError
 from services.document_spatial_ocr import spatial_ocr
@@ -33,7 +34,17 @@ def preview_net_pay_amount(content: bytes, filename: str) -> NetPayPreview:
     try:
         located = locate_net_pay_cell(words, width=image.width, height=image.height)
     except AmountCellLocationError:
-        return NetPayPreview(None, "manual_review", True, ("net_pay_cell_not_reliably_located",))
+        # Payslips commonly print NET PAY as light text on a black bar.
+        # Inverting preserves geometry while making the label dark on light.
+        inverted_words = spatial_ocr(ImageOps.invert(image.convert("RGB")))
+        try:
+            located = locate_net_pay_cell(
+                inverted_words, width=image.width, height=image.height,
+            )
+        except AmountCellLocationError:
+            return NetPayPreview(
+                None, "manual_review", True, ("net_pay_cell_not_reliably_located",),
+            )
     evidence = read_amount_crop(image, located.box)
     return NetPayPreview(
         evidence.candidate, "candidate_only" if evidence.candidate is not None else "manual_review",
