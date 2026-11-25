@@ -1370,6 +1370,62 @@ def get_company_loan_activity(
     }
 
 
+@router.get("/{loan_id}/borrowing-sequence")
+def get_loan_borrowing_sequence(
+    loan_id: UUID,
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(30, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Recorded disbursement history within the caller's permitted loan scope."""
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | LENDING_ROLES | FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    query = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == loan.company_id,
+        ClientCompanyLoan.borrower_id == loan.borrower_id,
+        ClientCompanyLoan.disbursed_at.isnot(None),
+    )
+    if context.branch_id is not None:
+        query = query.filter(ClientCompanyLoan.branch_id == context.branch_id)
+    total = query.count()
+    rows = query.order_by(
+        ClientCompanyLoan.disbursed_at.asc(), ClientCompanyLoan.id.asc()
+    ).offset((page - 1) * page_size).limit(page_size).all()
+    position = None
+    if loan.disbursed_at is not None:
+        position = query.filter(
+            (ClientCompanyLoan.disbursed_at < loan.disbursed_at) |
+            ((ClientCompanyLoan.disbursed_at == loan.disbursed_at) &
+             (ClientCompanyLoan.id < loan.id))
+        ).count() + 1
+    return {
+        "loan_id": str(loan.id),
+        "position": position,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "scope": "branch" if context.branch_id is not None else "company",
+        "sequence_basis": "recorded disbursement timestamps, including top-ups; not independently reconciled",
+        "items": [
+            {
+                "sequence": index,
+                "loan_id": str(row.id),
+                "loan_reference": row.loan_reference,
+                "folio_number": row.folio_number,
+                "disbursed_at": row.disbursed_at.isoformat(),
+                "is_top_up": row.is_top_up,
+                "status": row.status.value,
+                "current_principal": format(row.principal_amount, ".2f"),
+                "current_amount_paid": format(row.amount_paid, ".2f"),
+                "current_balance": format(row.balance, ".2f"),
+                "is_selected_loan": row.id == loan.id,
+            }
+            for index, row in enumerate(rows, start=(page - 1) * page_size + 1)
+        ],
+    }
+
+
 @router.get("/{loan_id}/sequence-profile")
 def get_loan_sequence_profile(
     loan_id: UUID,
