@@ -15,13 +15,14 @@ import {
     Sparkles,
     Workflow,
 } from "lucide-react";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { Input } from "@/components/ui/input";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { loginUser } from "@/store/slices/authSlice";
 import { getDashboardRoute } from "@/lib/role-redirect";
+import { isSandboxHostname } from "@/lib/api";
 
 function normalisePhone(value: string) {
     return value.replace(/\s+/g, "").replace(/^\+266/, "").replace(/^266/, "");
@@ -32,12 +33,14 @@ export default function LoginPage() {
     const dispatch = useAppDispatch();
     const { loading, error } = useAppSelector((state) => state.auth);
 
+    const [sandbox, setSandbox] = useState(false);
+    useEffect(() => setSandbox(isSandboxHostname(window.location.hostname)), []);
     const [showPassword, setShowPassword] = useState(false);
     const [phone, setPhone] = useState("");
     const [password, setPassword] = useState("");
     const [secondFactor, setSecondFactor] = useState("");
 
-    const cleanedPhone = useMemo(() => normalisePhone(phone), [phone]);
+    const cleanedPhone = useMemo(() => sandbox ? phone.trim() : normalisePhone(phone), [phone, sandbox]);
     const formReady = cleanedPhone.trim().length >= 8 && password.trim().length > 0;
 
     const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -195,10 +198,10 @@ export default function LoginPage() {
                                 <div className="space-y-2.5">
                                     <div className="flex items-center justify-between gap-2">
                                         <label htmlFor="login-phone" className="text-sm font-black text-slate-800">
-                                            Phone number
+                                            {sandbox ? "Demo email" : "Phone number"}
                                         </label>
                                         <span className="text-xs font-semibold text-slate-500">
-                                            Use your registered LoanHub number
+                                            {sandbox ? "Use the shared demonstration account" : "Use your registered LoanHub number"}
                                         </span>
                                     </div>
 
@@ -208,18 +211,18 @@ export default function LoginPage() {
                                                 <Phone className="h-5 w-5" />
                                             </div>
                                             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-black tracking-wide text-slate-600">
-                                                +266
+                                                {sandbox ? "Demo" : "+266"}
                                             </span>
                                         </div>
 
                                         <Input
                                             id="login-phone"
-                                            type="tel"
+                                            type={sandbox ? "email" : "tel"}
                                             value={phone}
-                                            onChange={(event) => setPhone(normalisePhone(event.target.value))}
-                                            placeholder="59000000"
-                                            autoComplete="tel"
-                                            inputMode="numeric"
+                                            onChange={(event) => setPhone(sandbox ? event.target.value : normalisePhone(event.target.value))}
+                                            placeholder={sandbox ? "sandbox@loanhub.co.ls" : "59000000"}
+                                            autoComplete={sandbox ? "username" : "tel"}
+                                            inputMode={sandbox ? "email" : "numeric"}
                                             disabled={loading}
                                             className="h-14 w-full border-0 bg-transparent px-0 text-base font-semibold shadow-none outline-none ring-0 placeholder:font-normal placeholder:text-slate-400 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
                                         />
@@ -281,7 +284,7 @@ export default function LoginPage() {
                                 </div>
 
                                 <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-xs leading-6 text-slate-500">
-                                    Use your registered phone number and password. If your password was recently changed, log in again using the new one.
+                                    {sandbox ? "Use the public demo email and password. All records are for demonstration only." : "Use your registered phone number and password. If your password was recently changed, log in again using the new one."}
                                 </div>
 
                                 <button
