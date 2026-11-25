@@ -884,3 +884,77 @@ def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
     monkeypatch.delenv("LOANHUB_REGISTRATION_E2E_ACK")
     assert client.post(url, json=body, headers=headers).status_code == 503
     assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+
+
+    # Simulate a failure AFTER full banking and debt staging, but BEFORE
+    # finalization. The same HTTP endpoint must roll back identity, accounts,
+    # debt, encrypted banking and the idempotency reservation in one tx.
+    monkeypatch.setenv(
+        "LOANHUB_REGISTRATION_E2E_ACK", "isolated_disposable_database"
+    )
+    second_body = full_capture_with_bank(
+        branch, national_id="SYN-OFFLINE-HTTP-RECOVER-002",
+        phone="59007882",
+    ).model_dump(mode="json")
+    second_headers = {"Idempotency-Key": "offline-http-recovery-002"}
+    import services.atomic_new_client_registration as atomic
+    original_details = atomic.stage_full_new_only_client_details
+
+    def fail_after_full_details(*args, **kwargs):
+        original_details(*args, **kwargs)
+        raise RuntimeError("synthetic offline failure after all details")
+
+    with monkeypatch.context() as isolated_failure:
+        isolated_failure.setattr(
+            atomic, "stage_full_new_only_client_details",
+            fail_after_full_details,
+        )
+        failed = client.post(
+            url, json=second_body, headers=second_headers,
+        )
+    assert failed.status_code == 503
+    assert "synthetic offline failure" not in failed.text
+    assert "SYN-OFFLINE-HTTP-RECOVER-002" not in failed.text
+    assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_bank_accounts", "borrower_debt_obligations",
+            "borrower_debt_obligation_events",
+        ):
+            assert conn.execute(text(f"""
+                SELECT count(*) FROM {schema}.{table_name}
+            """)).scalar_one() == 1
+
+    recovered = client.post(url, json=second_body, headers=second_headers)
+    assert recovered.status_code == 201, recovered.json()
+    assert recovered.json()["registered"] is True
+    assert recovered.json()["replayed"] is False
+    assert recovered.json()["client_account_id"] != created.json()["client_account_id"]
+    assert totals(engine, schema) == (2, 2, 2, 2, 2, 2)
+    with engine.connect() as conn:
+        for table_name in (
+            "borrower_bank_accounts", "borrower_debt_obligations",
+            "borrower_debt_obligation_events",
+        ):
+            assert conn.execute(text(f"""
+                SELECT count(*) FROM {schema}.{table_name}
+            """)).scalar_one() == 2
+
+    # A previously authenticated staff context is not authority after
+    # persisted membership revocation. The atomic writer checks the DB again.
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            UPDATE {schema}.company_staff SET is_active = FALSE
+            WHERE user_id = :employee
+        """), {"employee": employee})
+    revoked_body = full_capture_with_bank(
+        branch, national_id="SYN-OFFLINE-HTTP-REVOKED-003",
+        phone="59007883",
+    ).model_dump(mode="json")
+    revoked = client.post(
+        url, json=revoked_body,
+        headers={"Idempotency-Key": "offline-http-revoked-003"},
+    )
+    assert revoked.status_code == 503
+    assert "SYN-OFFLINE-HTTP-REVOKED-003" not in revoked.text
+    assert totals(engine, schema) == (2, 2, 2, 2, 2, 2)
