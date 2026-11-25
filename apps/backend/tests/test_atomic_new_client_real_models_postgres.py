@@ -834,13 +834,15 @@ def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
     created = client.post(url, json=body, headers=headers)
     assert created.status_code == 201, created.json()
     assert created.json()["replayed"] is False
-    assert set(created.json()) == {"client_account_id", "replayed"}
+    assert set(created.json()) == {"registered", "client_account_id", "replayed"}
+    assert created.json()["registered"] is True
     assert "SYN-OFFLINE-HTTP-001" not in created.text
     assert totals(engine, schema) == (1, 1, 1, 1, 1, 1)
 
     replay = client.post(url, json=body, headers=headers)
     assert replay.status_code == 201
     assert replay.json() == {
+        "registered": True,
         "client_account_id": created.json()["client_account_id"],
         "replayed": True,
     }
