@@ -53,7 +53,7 @@ def test_sandbox_uses_separate_database_redis_files_and_internal_network():
 
     assert "sandbox_redis:" in compose
     assert "REDIS_URL: redis://redis:6379/0" in compose
-    assert "sandbox_redis_data:/data" in compose
+    assert "sandbox_redis:/data" in compose
 
     assert "sandbox_files:/app/media" in compose
     assert "SANDBOX_MODE: \"true\"" in compose
@@ -65,6 +65,11 @@ def test_sandbox_uses_separate_database_redis_files_and_internal_network():
     assert "  frontend:" in compose
     assert "  migrate:" in compose
     assert "  seed:" in compose
+    assert "DB_USER: sandbox_app" in compose
+    assert "DB_RUNTIME_USER: sandbox_app" in compose
+    assert "role-bootstrap:" in compose
+    assert "ports:" not in compose
+    assert ".env.production" not in compose
 
 
 def test_sandbox_disables_live_background_and_external_runtime_actions():
