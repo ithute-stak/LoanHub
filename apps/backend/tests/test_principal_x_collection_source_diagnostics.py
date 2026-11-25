@@ -616,3 +616,46 @@ def test_posted_repayment_treasury_entry_type_must_be_loan_collection(
     )
     assert result.treasury_entry_type_mismatch_count == expected
     assert result.complete is False
+
+
+@pytest.mark.parametrize("approval", [None, "", "unknown", "approved"])
+def test_missing_or_nonposted_treasury_approval_is_not_proof_of_collection(approval):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency="LSL",
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.00"),
+                currency="LSL", approval_status=approval, is_voided=False,
+                entry_type=TreasuryEntryType.LOAN_COLLECTION,
+                direction=TreasuryDirection.MONEY_IN,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.unposted_linked_treasury_count == 1
+    assert result.missing_posted_treasury_evidence_count == 1
+    assert result.treasury_amount_mismatch_count == 0
+    assert result.complete is False
+
+
+def test_treasury_without_approval_field_is_unposted_not_certified():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(payment_transaction_id=payment_id, is_voided=False)],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.unposted_linked_treasury_count == 1
+    assert result.missing_posted_treasury_evidence_count == 1
+    assert result.complete is False
