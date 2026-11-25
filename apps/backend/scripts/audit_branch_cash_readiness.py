@@ -14,9 +14,10 @@ import argparse
 import json
 import os
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, text
 
@@ -60,8 +61,16 @@ LIMIT :limit
 """)
 
 
-def classify(row) -> list[str]:
+def classify(row, *, as_of: date | None = None) -> list[str]:
     issues = []
+    # An old session left open is a separate activation blocker even when
+    # its counted amount and Treasury projection appear consistent.
+    if as_of and row.get('session_status') == 'open':
+        try:
+            if date.fromisoformat(row['business_date']) < as_of:
+                issues.append('STALE_OPEN_CASH_SESSION')
+        except (ValueError, TypeError, KeyError):
+            issues.append('INVALID_SESSION_BUSINESS_DATE')
     if row["branch_id"] is None:
         issues.append("NO_BRANCH")
     if row["ledger_id"] is None:
@@ -108,8 +117,9 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
             }
         summary = Counter()
         exceptions = []
+        as_of = datetime.now(ZoneInfo('Africa/Maseru')).date()
         for row in rows:
-            codes = classify(row)
+            codes = classify(row, as_of=as_of)
             summary.update(codes)
             if codes:
                 exceptions.append({
