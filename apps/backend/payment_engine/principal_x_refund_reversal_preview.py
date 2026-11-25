@@ -36,11 +36,14 @@ class ReconciliationPreview:
 def _amount(value: Decimal) -> Decimal:
     try:
         amount = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
+        if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
+            raise ValueError("Amounts must be positive finite currency values")
+        # Quantization can raise InvalidOperation for very large finite
+        # Decimals under the active context precision. It must fail closed
+        # as evidence, not abort the settlement-readiness endpoint.
+        return amount.quantize(CENT)
+    except (InvalidOperation, ValueError, TypeError, OverflowError) as exc:
         raise ValueError("Invalid monetary amount") from exc
-    if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
-        raise ValueError("Amounts must be positive finite currency values")
-    return amount.quantize(CENT)
 
 
 def preview_reconciliation(rows: Iterable[PaymentEvidence]) -> ReconciliationPreview:
