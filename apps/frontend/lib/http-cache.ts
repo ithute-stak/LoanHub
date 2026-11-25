@@ -499,7 +499,7 @@ export function installReduxHttpCache(
                     }
                 });
                 inflightRequests.set(inflightKey, backgroundTracked);
-                void backgroundRequest.catch(() => undefined);
+                // The cleanup promise also rejects when the network fails.\n                // Observe that promise to avoid an unhandled rejection while\n                // preserving stale data for the user.\n                void backgroundTracked.catch(() => undefined);
             }
             return responseFromEntry(entry, config, "STALE");
         }
