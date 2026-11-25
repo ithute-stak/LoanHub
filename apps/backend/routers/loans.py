@@ -67,6 +67,7 @@ from services.early_settlement_service import (
     quote_early_settlement,
 )
 from services.installment_service import adjust_installment_due_date
+from services.loan_sequence_history import recorded_loan_changes
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.loan_service import (
     calculate_micro_loan_totals,
@@ -1381,12 +1382,14 @@ def get_loan_activity(
         db.query(AuditLog)
         .options(joinedload(AuditLog.user).joinedload(User.person))
         .filter(AuditLog.company_id == context.company_id, AuditLog.record_id == loan.id)
-        .order_by(AuditLog.created_at.asc())
-        .limit(500)
+        .filter((AuditLog.branch_id.is_(None)) | (AuditLog.branch_id == loan.branch_id))
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .limit(501)
         .all()
     )
+    history_truncated = len(events) > 500
     items = []
-    for event in events:
+    for event in events[:500]:
         if event.branch_id is not None and event.branch_id != loan.branch_id:
             continue
         actor = None
@@ -1397,6 +1400,8 @@ def get_loan_activity(
             "description": event.description, "actor_name": actor,
             "actor_role": event.actor_role, "occurred_at": event.created_at.isoformat() if event.created_at else None,
             "source": "audit", "status": event.status,
+            "changes": recorded_loan_changes(event.before_data, event.after_data)
+            if event.table_name == "client_company_loan" and event.entity_type in (None, "loan", "client_company_loan") else [],
         })
     # First-class approval/disbursement columns provide trustworthy fallbacks.
     for action, at, user in (
@@ -1408,11 +1413,11 @@ def get_loan_activity(
             items.append({
                 "id": action.lower(), "action": action, "description": None,
                 "actor_name": actor, "actor_role": None,
-                "occurred_at": at.isoformat(), "source": "loan_record", "status": "recorded",
+                "occurred_at": at.isoformat(), "source": "loan_record", "status": "recorded", "changes": [],
             })
     items.sort(key=lambda event: event["occurred_at"] or "")
     return {"loan_id": str(loan.id), "loan_reference": loan.loan_reference, "items": items,
-            "count": len(items), "history_limit": 500}
+            "count": len(items), "history_limit": 500, "history_truncated": history_truncated}
 
 
 @router.get("/{loan_id}", response_model=LoanRead)
