@@ -479,3 +479,53 @@ def test_cash_direction_match_is_not_flagged():
     )
     assert result.cash_direction_mismatch_count == 0
     assert result.complete is False
+
+
+@pytest.mark.parametrize("voided,approval,expected_field", [
+    (True, "posted", "voided_linked_treasury_count"),
+    (False, "pending", "unposted_linked_treasury_count"),
+    (False, "rejected", "unposted_linked_treasury_count"),
+])
+def test_successful_repayment_with_unusable_treasury_evidence_is_flagged(
+    voided, approval, expected_field,
+):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency="LSL",
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id,
+                amount=Decimal("100.00"), currency="LSL",
+                direction=TreasuryDirection.MONEY_IN,
+                approval_status=approval, is_voided=voided,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert getattr(result, expected_field) == 1
+    assert result.complete is False
+
+
+def test_pending_payment_with_unposted_treasury_is_not_reported_as_completed_collection():
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"), currency="LSL",
+                status=PaymentStatus.PENDING,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND,
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id,
+                amount=Decimal("100.00"), currency="LSL",
+                approval_status="pending", is_voided=False,
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.unposted_linked_treasury_count == 0
+    assert result.complete is False
