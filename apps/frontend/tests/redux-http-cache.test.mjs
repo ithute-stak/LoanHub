@@ -113,7 +113,8 @@ function createCacheClient(userId, adapter) {
     },
   };
   const store = configureStore({
-    reducer: { httpCache: reducer, auth: (state = auth) => state },
+    reducer: { httpCache: reducer, auth: (state = auth, action) =>
+      action.type === "test/auth/set" ? {user:action.payload} : state },
   });
   const client = axios.create({baseURL:"https://api.loanhub.co.ls/api/v1", adapter});
   installReduxHttpCache(client, store);
@@ -272,6 +273,62 @@ test("company Finance manual Refresh bypasses cached agreements, ledger and clai
   }
   assert.equal(apiSource.split('loanHubCache: options?.refresh ? { mode: "refresh" }').length - 1, 3);
   assert.ok(pageSource.includes('onClick={() => void load(true)}><RefreshCcw'));
+});
+
+test("delayed repayment invalidates its originating branch even after active membership switches", async () => {
+  let resolvePayment;
+  let networkReads = 0;
+  const {client, store} = createCacheClient("branch-race", config => {
+    if (config.method === "post") {
+      return new Promise(resolve => { resolvePayment = () => resolve(response(config, {ok:true})); });
+    }
+    networkReads++;
+    return Promise.resolve(response(config, {version:networkReads}));
+  });
+  const a = {headers:headersFor("company-A")};
+  const b = {headers:headersFor("company-B")};
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  assert.equal((await client.get("/loans/", b)).data.version, 2);
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  const oldScope = Object.values(store.getState().httpCache.entries)
+    .find(entry => entry.scope.includes("company-A"))?.scope;
+  assert.match(oldScope, /company-A:loan_officer:branch-1$/);
+  const payment = client.post("/loans/repayments", {amount:75}, a);
+  for (let attempt = 0; attempt < 20 && !resolvePayment; attempt++) await Promise.resolve();
+  assert.equal(typeof resolvePayment, "function", "repayment must have started on branch-1");
+  const currentUser = store.getState().auth.user;
+  store.dispatch({type:"test/auth/set", payload:{
+    ...currentUser,
+    memberships: currentUser.memberships.map(m =>
+      m.company_id === "company-A" ? {...m,branch_id:"branch-9"} : m),
+  }});
+  // The selected branch changed while the network payment was still in flight.
+  resolvePayment();
+  await payment;
+  const entries = Object.values(store.getState().httpCache.entries);
+  assert.equal(entries.some(entry => entry.scope === oldScope), false,
+    "the original branch's cached loan figures must be invalidated");
+  assert.equal(entries.some(entry => entry.scope.includes("company-B")), true,
+    "a different company's cache must remain untouched");
+  assert.equal((await client.get("/loans/", a)).data.version, 3,
+    "the new membership must fetch its own independent financial records");
+});
+
+test("adapter returning a new response config fails closed on mutation scope loss", async () => {
+  const {client, store} = createCacheClient("config-replacement", async config => {
+    if (config.method === "post") {
+      return response({...config}, {ok:true});
+    }
+    return response(config, {ok:true});
+  });
+  const a = {headers:headersFor("company-A")};
+  const b = {headers:headersFor("company-B")};
+  await client.get("/loans/", a);
+  await client.get("/loans/", b);
+  assert.equal(Object.keys(store.getState().httpCache.entries).length, 2);
+  await client.post("/loans/repayments", {amount:50}, a);
+  assert.equal(Object.keys(store.getState().httpCache.entries).length, 0,
+    "unknown mutation origin must not leave finance caches stale");
 });
 
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));
