@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from database.models.enums import TreasuryEntryType
+
 from database.models.enums import TreasuryDirection
 
 from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
@@ -583,4 +585,34 @@ def test_posted_treasury_link_prevents_missing_evidence_warning():
         ), company_id=uuid4(), loan_id=uuid4(),
     )
     assert result.missing_posted_treasury_evidence_count == 0
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("entry_type,expected", [
+    (TreasuryEntryType.LOAN_COLLECTION, 0),
+    (TreasuryEntryType.MANUAL_INCOME, 1),
+    (TreasuryEntryType.ADJUSTMENT, 1),
+    (None, 1),
+])
+def test_posted_repayment_treasury_entry_type_must_be_loan_collection(
+    entry_type, expected,
+):
+    payment_id = uuid4()
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(
+            [SimpleNamespace(
+                id=payment_id, amount=Decimal("100.00"),
+                status=PaymentStatus.SUCCEEDED,
+                purpose=PaymentPurpose.LOAN_REPAYMENT,
+                direction=PaymentDirection.INBOUND, currency="LSL",
+            )], [], [],
+            [SimpleNamespace(
+                payment_transaction_id=payment_id, amount=Decimal("100.00"),
+                approval_status="posted", is_voided=False,
+                entry_type=entry_type, direction=TreasuryDirection.MONEY_IN,
+                currency="LSL",
+            )],
+        ), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.treasury_entry_type_mismatch_count == expected
     assert result.complete is False
