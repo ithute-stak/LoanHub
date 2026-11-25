@@ -94,6 +94,21 @@ WHERE company_id = :company_id
 """)
 
 
+# Readiness must cover the company's complete cash-session history. An audit
+# window is useful for investigation, but cannot certify an omitted closed
+# session with a missing opening link or unmatched financial movement.
+OUT_OF_RANGE_SESSIONS_SQL = text("""
+SELECT count(*) FROM company_operating_records
+WHERE company_id = :company_id
+  AND module = 'cash_control'
+  AND record_type = 'daily_cash_session'
+  AND (
+      data->>'business_date' IS NULL
+      OR data->>'business_date' NOT BETWEEN :from_date AND :to_date
+  )
+""")
+
+
 def classify(row, *, as_of: date | None = None) -> list[str]:
     issues = []
     # An old session left open is a separate activation blocker even when
@@ -153,6 +168,11 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
                     "company_id": str(company_id),
                     "as_of": as_of.isoformat(),
                 }).scalar_one())
+                outside_range_sessions = int(conn.execute(OUT_OF_RANGE_SESSIONS_SQL, {
+                    "company_id": str(company_id),
+                    "from_date": from_date.isoformat(),
+                    "to_date": to_date.isoformat(),
+                }).scalar_one())
                 rows = conn.execute(AUDIT_SQL, {
                     "company_id": str(company_id),
                     "from_date": from_date.isoformat(),
@@ -163,6 +183,7 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
             return {
                 "company_id": str(company_id), "ready": False, "truncated": True,
                 "company_wide_stale_open_sessions": stale_open_sessions,
+                "company_wide_sessions_outside_range": outside_range_sessions,
                 "reason": "More than 1000 sessions; narrow date range",
             }
         summary = Counter()
@@ -181,12 +202,13 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
             "date_from": from_date.isoformat(), "date_to": to_date.isoformat(),
             "read_only": True, "sessions_checked": len(rows),
             "company_wide_stale_open_sessions": stale_open_sessions,
-            "ready": bool(rows) and not exceptions and stale_open_sessions == 0,
+            "company_wide_sessions_outside_range": outside_range_sessions,
+            "ready": bool(rows) and not exceptions and stale_open_sessions == 0 and outside_range_sessions == 0,
             "issue_counts": dict(summary),
             "exceptions": exceptions[:50],
             "exceptions_omitted": max(0, len(exceptions) - 50),
             "note": (
-                "No matching cash sessions is not approval to activate. "
+                "No matching cash sessions or incomplete historical coverage is not approval to activate. "
                 "A clean result is necessary but insufficient; certify transaction "
                 "locks, branch scope, reconciliation and authorised activation separately."
             ),
