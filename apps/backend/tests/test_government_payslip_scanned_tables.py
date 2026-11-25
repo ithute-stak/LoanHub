@@ -87,3 +87,50 @@ def test_duplicate_codes_rejected_even_if_totals_reconcile():
 def test_duplicate_or_missing_headings_fail_closed():
     with pytest.raises(AmbiguousPayslipLayout, match="heading"):
         read_scanned_payslip_financials(Image.new("RGB", (1698, 2400)), words()[:1])
+
+
+def test_seven_deductions_are_individually_checked_against_printed_total():
+    """Synthetic labels with amounts matching the seven-row scanned example."""
+    text = """Deductions
+0533 Sample Tax 847.41
+2010 Sample Pension 441.30
+2180 Sample Loan One 231.00
+2230 Sample Association 20.00
+2419 Sample Insurance 30.00
+2670 Sample Rent 91.00
+2907 Sample Loan Two 4,514.00
+Total Deductions: 6,174.71
+"""
+    rows, total = _parse_table(text, section="deductions")
+    assert len(rows) == 7
+    assert total == Decimal("6174.71")
+    assert sum((r.amount for r in rows), Decimal("0.00")) == total
+
+
+def test_earnings_dark_heading_missing_can_be_reviewed_but_not_invented():
+    sample = "| 1011 Monthly Basic Salary 8,826.00\nTotal Earnings: 8,826.00\n"
+    rows, total = _parse_table(sample, section="earnings", allow_missing_heading=True)
+    assert len(rows) == 1
+    assert total == Decimal("8826.00")
+    with pytest.raises(AmbiguousPayslipLayout):
+        _parse_table(sample, section="earnings")
+
+
+def test_ocr_corrupted_gross_total_fails_closed():
+    damaged = "1011 Monthly Basic Salary 8,826.00\nTotal Earnings: 8,826.0C"
+    with pytest.raises(AmbiguousPayslipLayout, match="printed total"):
+        _parse_table(damaged, section="earnings", allow_missing_heading=True)
+
+
+def test_missing_earnings_anchor_is_explicitly_flagged():
+    page = Image.new("RGB", (1698, 2400))
+    only_right = (OCRWord("Deductions", 95, 1019, 951, 113, 25, 2, 1, 1),)
+    left_text = "1011 Monthly Basic Salary 1,000.00\nTotal Earnings: 1,000.00"
+    with patch("services.government_payslip_scanned_tables._ocr_table",
+               side_effect=[left_text, DEDUCTIONS]):
+        result = read_scanned_payslip_financials(
+            page, only_right, net_pay_candidate=Decimal("880.00"),
+        )
+    assert result.totals_reconciled
+    assert result.review_required
+    assert "earnings_heading_not_recognised" in result.review_reasons
