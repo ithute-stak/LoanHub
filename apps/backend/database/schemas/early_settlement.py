@@ -121,6 +121,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     treasury_direction_mismatch_rows: int
     voided_linked_treasury_rows: int
     unposted_linked_treasury_rows: int
+    missing_posted_treasury_evidence_rows: int
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
 
