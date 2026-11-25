@@ -1,0 +1,10 @@
+# Import into the existing TLS-terminating edge only after certification.
+sandbox.loanhub.co.ls {
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    reverse_proxy loanhub-sandbox-ingress:80
+}
+
+api-sandbox.loanhub.co.ls {
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    reverse_proxy loanhub-sandbox-ingress:80
+}
