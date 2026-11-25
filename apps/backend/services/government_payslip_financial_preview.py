@@ -14,6 +14,9 @@ from PIL import Image, ImageOps
 from services.document_intelligence_reader import DocumentReadError, _pdf_pages, _safe_image
 from services.document_spatial_ocr import spatial_ocr
 from services.government_payslip_net_pay_preview import preview_net_pay_amount
+from services.government_payslip_dark_bar_locator import locate_dark_bar_gross_cell
+from services.government_payslip_amount_locator import AmountCellLocationError
+from services.government_payslip_amount_crop import read_amount_crop
 from services.government_payslip_scanned_tables import read_scanned_payslip_financials
 from services.government_payslip_spatial_layout import AmbiguousPayslipLayout
 
@@ -58,8 +61,20 @@ def preview_scanned_payslip_financials(contents: bytes, filename: str) -> Financ
         # A second contrast pass is only used to locate headings, not as
         # additional independent evidence that the financial values are true.
         words_inverted = spatial_ocr(ImageOps.invert(image.convert("RGB")))
+        gross_candidate = None
+        try:
+            gross_box = locate_dark_bar_gross_cell(
+                image, (*words, *words_inverted),
+            )
+            gross_evidence = read_amount_crop(image, gross_box.box)
+            gross_candidate = gross_evidence.candidate
+            reasons.extend(gross_evidence.review_reasons)
+        except (AmountCellLocationError, DocumentReadError, ValueError):
+            reasons.append("gross_total_crop_not_reliably_located_or_read")
         scanned = read_scanned_payslip_financials(
-            image, (*words, *words_inverted), net_pay_candidate=net.candidate,
+            image, (*words, *words_inverted),
+            net_pay_candidate=net.candidate,
+            gross_crop_candidate=gross_candidate,
         )
     except (DocumentReadError, AmbiguousPayslipLayout, ValueError):
         return FinancialPreview(
