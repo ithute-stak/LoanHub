@@ -307,7 +307,8 @@ def test_readiness_schema_cannot_certify_reconciliation_or_posting():
         payment_rows_reviewed=1, unresolved_payment_rows=0,
         orphan_cash_rows=0, orphan_allocation_rows=0,
         unlinked_treasury_rows=0, missing_cash_evidence_rows=0,
-        overallocated_payment_rows=0, invalid_allocation_rows=0, cash_overapplied_rows=0,
+        overallocated_payment_rows=0, invalid_allocation_rows=0,
+        nonfinal_allocation_payment_rows=0, cash_overapplied_rows=0,
         invalid_cash_amount_rows=0, treasury_amount_mismatch_rows=0,
         treasury_currency_mismatch_rows=0, blocking_reasons=["Authoritative external reconciliation missing"],
     )
