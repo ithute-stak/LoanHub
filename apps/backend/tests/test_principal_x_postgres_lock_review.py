@@ -153,6 +153,11 @@ def test_scoped_claims_are_checked_only_after_locked_financial_review(monkeypatc
         return original_validate(**kwargs)
     monkeypatch.setattr(review, "inspect_principal_x_sources_under_loan_lock", locked)
     monkeypatch.setattr(review, "review_scoped_ledger_attestations", validate)
+    def server_revision(db, **kwargs):
+        events.append("server_revision")
+        assert kwargs == {"company_id": company_id, "loan_id": loan_id}
+        return revision
+    monkeypatch.setattr(review, "local_principal_x_source_revision", server_revision)
     attestations = tuple(
         ScopedSourceAttestation(
             family, company_id, loan_id, revision, "ref:" + family, True, 0,
@@ -163,7 +168,7 @@ def test_scoped_claims_are_checked_only_after_locked_financial_review(monkeypatc
         object(), company_id=company_id, loan_id=loan_id,
         snapshot_revision=revision, attestations=attestations,
     )
-    assert events == ["lock_and_review", "scope_check"]
+    assert events == ["lock_and_review", "server_revision", "scope_check"]
     assert result.scope_claims.independently_verified is False
     assert result.financial_sources.snapshot.reconciled is False
     assert result.can_post is False
@@ -191,6 +196,7 @@ def test_locked_scoped_review_rejects_mismatched_attestation_after_lock(monkeypa
             source_diagnostics=None, can_post=False,
         )
     monkeypatch.setattr(review, "inspect_principal_x_sources_under_loan_lock", locked)
+    monkeypatch.setattr(review, "local_principal_x_source_revision", lambda db, **kwargs: revision)
     attestations = tuple(
         ScopedSourceAttestation(
             family, uuid4() if i == 0 else company_id,
@@ -215,3 +221,47 @@ def test_locked_scoped_review_has_no_mutating_orm_calls():
     assert "review_scoped_ledger_attestations(" in source
     for forbidden in ("db.add(", "db.commit(", "db.flush(", "db.delete("):
         assert forbidden not in source
+
+
+
+def test_caller_claims_cannot_override_server_revision_under_lock(monkeypatch):
+    from decimal import Decimal
+    from services import principal_x_postgres_lock_review as review
+    from services.principal_x_transaction_coordinator import LockedLoanSnapshot
+    from payment_engine.principal_x_scoped_ledger_review import ScopedSourceAttestation
+    from payment_engine.principal_x_ledger_source_attestation import REQUIRED_SOURCE_FAMILIES
+
+    company_id, loan_id, claimed = uuid4(), uuid4(), "a" * 64
+    snapshot = LockedLoanSnapshot(
+        company_id=company_id, loan_id=loan_id,
+        original_principal=Decimal("1500"),
+        authoritative_net_collected=Decimal("0"),
+        live_policy_enabled=False, reconciled=False,
+    )
+    events = []
+    def locked(db, **kwargs):
+        events.append("lock")
+        return review.LockedCollectionEvidenceReview(
+            snapshot=snapshot, payment_audit=None,
+            source_diagnostics=None, can_post=False,
+        )
+    def revision(db, **kwargs):
+        events.append("server_revision")
+        return "b" * 64
+    def forbidden_validate(**kwargs):
+        raise AssertionError("Should not validate untrusted claims against a stale revision")
+    monkeypatch.setattr(review, "inspect_principal_x_sources_under_loan_lock", locked)
+    monkeypatch.setattr(review, "local_principal_x_source_revision", revision)
+    monkeypatch.setattr(review, "review_scoped_ledger_attestations", forbidden_validate)
+    attestations = tuple(
+        ScopedSourceAttestation(
+            family, company_id, loan_id, claimed, "ref:" + family, True, 0,
+        )
+        for family in sorted(REQUIRED_SOURCE_FAMILIES)
+    )
+    with pytest.raises(ValueError, match="caller-supplied local source revision"):
+        review.inspect_scoped_principal_x_evidence_under_loan_lock(
+            object(), company_id=company_id, loan_id=loan_id,
+            snapshot_revision=claimed, attestations=attestations,
+        )
+    assert events == ["lock", "server_revision"]
