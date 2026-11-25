@@ -26,7 +26,8 @@ def _case():
         is_platform_admin=False,
     )
     db = Mock()
-    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.one_or_none.side_effect = [
+    db.execute.return_value.scalar_one_or_none.return_value = True
+    db.query.return_value.filter.return_value.populate_existing.return_value.one_or_none.side_effect = [
         user, company, staff,
     ]
     return db, context, user, company, staff
@@ -43,9 +44,10 @@ def test_active_current_management_membership_is_required():
     # Previously loaded CompanyStaff/LoanCompany objects must not authorize
     # issuance through SQLAlchemy's identity-map cache after an admin update.
     assert db.query.return_value.filter.return_value.populate_existing.call_count == 3
-    assert db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.call_count == 3
-    for call in db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.call_args_list:
-        assert call.kwargs == {"read": True, "nowait": True}
+    db.execute.assert_called_once()
+    sql, params = db.execute.call_args.args
+    assert "lock_document_issuer_authorization" in str(sql)
+    assert params == {"user_id": user.id, "company_id": company.id, "staff_id": staff.id}
     db.commit.assert_not_called()
 
 
@@ -79,7 +81,7 @@ def test_revoked_or_changed_membership_rejected(field, value):
     db, context, user, company, staff = _case()
     persisted = SimpleNamespace(**vars(staff))
     setattr(persisted, field, value)
-    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.one_or_none.side_effect = [
+    db.query.return_value.filter.return_value.populate_existing.return_value.one_or_none.side_effect = [
         user, company, persisted,
     ]
     with pytest.raises(PermissionError, match="membership was revoked or changed"):
@@ -113,7 +115,7 @@ def test_platform_admin_cannot_use_company_issuer_gate():
 
 def test_missing_persisted_staff_denied():
     db, context, user, company, _ = _case()
-    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.one_or_none.side_effect = [
+    db.query.return_value.filter.return_value.populate_existing.return_value.one_or_none.side_effect = [
         user, company, None,
     ]
     with pytest.raises(PermissionError, match="membership"):
@@ -122,9 +124,26 @@ def test_missing_persisted_staff_denied():
 
 def test_issuer_lock_failure_cannot_fall_back_to_unlocked_authorization():
     db, context, *_ = _case()
-    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.one_or_none.side_effect = PermissionError(
-        "permission denied for FOR SHARE"
-    )
-    with pytest.raises(PermissionError, match="FOR SHARE"):
+    db.execute.side_effect = PermissionError("permission denied for delegated lock")
+    with pytest.raises(PermissionError, match="delegated lock"):
         require_current_document_issuer(db=db, context=context)
+    db.query.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_missing_or_false_delegated_lock_rejected_without_readback():
+    for response in (None, False):
+        db, context, *_ = _case()
+        db.execute.return_value.scalar_one_or_none.return_value = response
+        with pytest.raises(PermissionError, match="lock was not acquired"):
+            require_current_document_issuer(db=db, context=context)
+        db.query.assert_not_called()
+
+
+def test_cross_tenant_context_never_invokes_delegated_lock():
+    db, context, *_ = _case()
+    context.company_id = uuid4()
+    with pytest.raises(PermissionError, match="authenticated company issuer"):
+        require_current_document_issuer(db=db, context=context)
+    db.execute.assert_not_called()
+    db.query.assert_not_called()
