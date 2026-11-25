@@ -40,6 +40,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  role-bootstrap:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      DB_NAME: loanhub_sandbox
+      DB_USER: sandbox_owner
+      DB_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+      DB_RUNTIME_USER: sandbox_app
+      DB_RUNTIME_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    command: ["/bin/sh", "/scripts/ensure_database_runtime_role.sh"]
+    volumes: [../../scripts:/scripts:ro]
+    networks: [isolated]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   backend:
     image: ${SANDBOX_BACKEND_IMAGE:?required}
     env_file: ./sandbox.env
@@ -50,7 +65,7 @@ services:
     volumes: [./secrets:/app/secrets:ro, sandbox_files:/app/media]
     networks: [isolated]
     depends_on:
-      migrate:
+      role-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_started
