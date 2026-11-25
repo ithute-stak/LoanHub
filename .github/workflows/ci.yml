@@ -186,6 +186,17 @@ jobs:
           set -euo pipefail
           python -m pytest -q -rs tests/test_early_settlement_postgres_transaction_probe.py
 
+      - name: Certify Principal x snapshot concurrency on disposable PostgreSQL
+        working-directory: apps/backend
+        env:
+          PRINCIPAL_X_TEST_DATABASE_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
+        run: |
+          set -euo pipefail
+          python -m pytest -q -ra --maxfail=1 \
+            tests/test_principal_x_postgres_snapshot_race.py \
+            tests/test_principal_x_postgres_ceiling_race.py \
+            tests/test_principal_x_postgres_concurrency.py
+
       - name: Verify PostgreSQL tenant isolation
         working-directory: apps/backend
         run: |
