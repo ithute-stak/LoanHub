@@ -18,6 +18,9 @@ from database.models.loan_payment_model_assignment import LoanPaymentModelAssign
 from database.models.payment import PaymentTransaction
 from payment_engine.principal_x_policy import PaymentModel
 from services.principal_x_transaction_coordinator import LockedLoanSnapshot
+from payment_engine.principal_x_scoped_ledger_review import (
+    ScopedLedgerReview, ScopedSourceAttestation, review_scoped_ledger_attestations,
+)
 from services.principal_x_collection_source_diagnostics import (
     CollectionSourceDiagnostics, inspect_principal_x_collection_sources,
 )
@@ -119,4 +122,38 @@ def inspect_principal_x_sources_under_loan_lock(
         payment_audit=audit,
         source_diagnostics=sources,
         can_post=False,
+    )
+
+
+
+@dataclass(frozen=True)
+class LockedScopedEvidenceReview:
+    """Read-only locked source diagnostics and unverified scope claims."""
+    financial_sources: LockedCollectionEvidenceReview
+    scope_claims: ScopedLedgerReview
+    can_post: bool = False
+
+
+def inspect_scoped_principal_x_evidence_under_loan_lock(
+    db: Session, *, company_id: UUID, loan_id: UUID,
+    snapshot_revision: str,
+    attestations: tuple[ScopedSourceAttestation, ...],
+) -> LockedScopedEvidenceReview:
+    """Obtain real loan-row lock before validating externally supplied claims.
+
+    Do not expose this as a borrower API or infer a trusted financial snapshot
+    from a user-provided revision. The supplied revision is only a consistency
+    constraint until a server-side canonical evidence snapshot is available.
+    Caller owns the transaction and must not commit/post in this review.
+    """
+    financial = inspect_principal_x_sources_under_loan_lock(
+        db, company_id=company_id, loan_id=loan_id,
+    )
+    scoped = review_scoped_ledger_attestations(
+        company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+        snapshot_revision=snapshot_revision, attestations=attestations,
+    )
+    return LockedScopedEvidenceReview(
+        financial_sources=financial, scope_claims=scoped, can_post=False,
     )
