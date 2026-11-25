@@ -47,6 +47,8 @@ export type TreasurySettingsUpdate = {
   headquarters_branch_id: string | null;
   currency: string;
   timezone: string;
+  carry_previous_closing_enabled: boolean;
+  enforce_branch_cash_controls_enabled: boolean;
   auto_open_enabled: boolean;
   auto_open_time: string;
   auto_submit_enabled: boolean;

@@ -102,6 +102,8 @@ def get_or_create_settings(db: Session, company_id: UUID) -> TreasurySettings:
         headquarters_branch_id=headquarters.id if headquarters else None,
         currency="LSL",
         timezone="Africa/Maseru",
+        carry_previous_closing_enabled=False,
+        enforce_branch_cash_controls_enabled=False,
         auto_open_enabled=True,
         auto_open_time=time(0, 1),
         auto_submit_enabled=True,
@@ -301,11 +303,13 @@ def get_or_create_daily_ledger(
         )
         .first()
     )
+    settings = get_or_create_settings(db, company_id)
     if ledger:
-        # A submitted day is a frozen operational snapshot. Read paths must not
-        # silently rewrite its carried-forward opening composition. Reopened
-        # days can refresh because they are explicitly writable again.
-        if ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}:
+        # Historical opening sources are immutable evidence; do not rewrite
+        # or remove them when a company changes its policy. Carry-forward is
+        # opt-in, and only refreshes for writable ledgers when enabled.
+        if (settings.carry_previous_closing_enabled
+                and ledger.status in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}):
             _ensure_previous_closing_source(db, ledger)
         return ledger
     branch = db.get(CompanyBranch, branch_id)
@@ -326,7 +330,10 @@ def get_or_create_daily_ledger(
     )
     db.add(ledger)
     db.flush()
-    _ensure_previous_closing_source(db, ledger)
+    if settings.carry_previous_closing_enabled:
+        _ensure_previous_closing_source(db, ledger)
+    # With the default manual opening policy there is no auto-opening source;
+    # users must explicitly record an authorised opening amount for each day.
     recalculate_daily_ledger(db, ledger)
     return ledger
 
@@ -514,8 +521,9 @@ def create_opening_source(
     )
     db.add(source)
     db.flush()
-    from services.accounting_service import record_opening_source_accounting
-    record_opening_source_accounting(db, source)
+    if money(source.amount) > 0:
+        from services.accounting_service import record_opening_source_accounting
+        record_opening_source_accounting(db, source)
     recalculate_daily_ledger(db, ledger)
     return source
 
@@ -541,6 +549,256 @@ def void_opening_source(db: Session, source: BranchOpeningSource, *, user_id: UU
     )
     recalculate_daily_ledger(db, ledger)
     return source
+
+
+def sync_counted_cash_opening(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    session_id: UUID,
+    amount: Decimal,
+    user_id: UUID,
+) -> BranchOpeningSource:
+    """Bridge the existing Daily Finance Desk to the treasury opening ledger.
+
+    A counted cash opening is a stocktake, not a fresh capital contribution.
+    Never journal the snapshot a second time. The finance session is the
+    authoritative source and the linked treasury row is its audit projection.
+    """
+    if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:
+        return None
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    settings = get_or_create_settings(db, company_id)
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
+    )
+    assert_ledger_writable(ledger)
+    existing = (
+        db.query(BranchOpeningSource)
+        .filter(
+            BranchOpeningSource.daily_ledger_id == ledger.id,
+            BranchOpeningSource.payment_method == PaymentMethod.CASH,
+            BranchOpeningSource.is_voided.is_(False),
+            BranchOpeningSource.is_confirmed.is_(True),
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="An opening cash source already exists for this branch day; reconcile it before opening the Daily Finance Desk",
+        )
+    already_posted = db.query(TreasuryEntry.id).filter(
+        TreasuryEntry.daily_ledger_id == ledger.id,
+        TreasuryEntry.payment_method == PaymentMethod.CASH,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).first()
+    if already_posted:
+        raise HTTPException(
+            status_code=409,
+            detail="Cash movements were already posted for this branch day. Reconcile before declaring an opening count",
+        )
+    source = BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, source_type=OpeningSourceType.CASH_FLOAT,
+        payment_method=PaymentMethod.CASH, amount=money(amount),
+        currency="LSL", description="Counted opening cash from Daily Finance Desk",
+        source_reference=f"DAILY-CASH-OPEN:{session_id}",
+        is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc),
+        confirmed_by_user_id=user_id, recorded_by_user_id=user_id,
+    )
+    db.add(source)
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+    return source
+
+
+def sync_recorded_cash_float(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    journal_id: UUID,
+    amount: Decimal,
+    user_id: UUID,
+) -> BranchOpeningSource:
+    """Record an already-journaled Finance Desk cash float exactly once in treasury."""
+    if not get_or_create_settings(db, company_id).enforce_branch_cash_controls_enabled:
+        return None
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    settings = get_or_create_settings(db, company_id)
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
+    )
+    assert_ledger_writable(ledger)
+    source = BranchOpeningSource(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, source_type=OpeningSourceType.OTHER,
+        payment_method=PaymentMethod.CASH, amount=money(amount),
+        currency="LSL", description="Additional cash float recorded in Daily Finance Desk",
+        source_reference=f"DAILY-CASH-FLOAT:{journal_id}",
+        is_system_generated=False, is_confirmed=True,
+        confirmed_at=datetime.now(timezone.utc),
+        confirmed_by_user_id=user_id, recorded_by_user_id=user_id,
+    )
+    db.add(source)
+    db.flush()
+    # Do not call record_opening_source_accounting: the accounting journal
+    # was already posted by the Finance Desk before this projection.
+    recalculate_daily_ledger(db, ledger)
+    return source
+
+
+def sync_paid_accounting_expense(
+    db: Session, *,
+    company_id: UUID,
+    branch_id: UUID,
+    business_date: date,
+    journal_id: UUID,
+    amount: Decimal,
+    description: str,
+    user_id: UUID,
+) -> TreasuryEntry:
+    """Mirror an already-journaled cash expense to the operational treasury.
+
+    Call after locking/validating the same branch day, in the same transaction.
+    No second accounting posting is created.
+    """
+    settings = get_or_create_settings(db, company_id)
+    if not settings.enforce_branch_cash_controls_enabled:
+        return None
+    ledger = get_or_create_daily_ledger(
+        db, company_id=company_id, branch_id=branch_id,
+        business_date=business_date,
+    )
+    ledger = ensure_current_payment_day_writable(
+        db, ledger, settings=settings, occurred_at=datetime.now(timezone.utc),
+    )
+    assert_branch_outflow_funded(
+        db, ledger=ledger, payment_method=PaymentMethod.CASH,
+        amount=amount, settings=settings,
+    )
+    entry = TreasuryEntry(
+        company_id=company_id, branch_id=branch_id,
+        daily_ledger_id=ledger.id, direction=TreasuryDirection.MONEY_OUT,
+        entry_type=TreasuryEntryType.EXPENSE, payment_method=PaymentMethod.CASH,
+        approval_status=TreasuryEntryApprovalStatus.POSTED,
+        requires_approval=False, amount=money(amount), currency="LSL",
+        description=description, occurred_at=datetime.now(timezone.utc),
+        external_reference=str(journal_id),
+        idempotency_key=f"accounting-expense:{journal_id}",
+        recorded_by_user_id=user_id,
+    )
+    db.add(entry)
+    db.flush()
+    recalculate_daily_ledger(db, ledger)
+    return entry
+
+
+def assert_branch_outflow_funded(
+    db: Session, *,
+    ledger: BranchDailyLedger,
+    payment_method: PaymentMethod,
+    amount: Decimal,
+    settings: TreasurySettings,
+) -> Decimal:
+    """Serialize outgoing cash decisions on the existing day ledger row.
+
+    The branch opening must be entered and confirmed manually by default.
+    Available funds are calculated from posted, non-voided movements only.
+    This helper is called before creating a cash payout or posting expenses,
+    in the same database transaction as the financial event.
+    """
+    if not settings.enforce_branch_cash_controls_enabled:
+        return Decimal("0.00")
+    if not getattr(ledger, "id", None):
+        raise HTTPException(status_code=409, detail="Branch business day has not been initialized")
+    locked = (
+        db.query(BranchDailyLedger)
+        .filter(
+            BranchDailyLedger.id == ledger.id,
+            BranchDailyLedger.company_id == ledger.company_id,
+            BranchDailyLedger.branch_id == ledger.branch_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if locked is None:
+        raise HTTPException(status_code=409, detail="Branch day is unavailable for a cash-control check")
+    assert_ledger_writable(locked)
+    if payment_method == PaymentMethod.CASH:
+        from database.models.company_operating_system import CompanyOperatingRecord
+        reference = f"cash-day:{locked.branch_id}:{locked.business_date.isoformat()}"
+        cash_session = (
+            db.query(CompanyOperatingRecord)
+            .filter(
+                CompanyOperatingRecord.company_id == locked.company_id,
+                CompanyOperatingRecord.branch_id == locked.branch_id,
+                CompanyOperatingRecord.module == "cash_control",
+                CompanyOperatingRecord.record_type == "daily_cash_session",
+                CompanyOperatingRecord.reference == reference,
+            )
+            .first()
+        )
+        if cash_session is not None and cash_session.status == "closed":
+            raise HTTPException(
+                status_code=409,
+                detail="This branch cash session is closed. An authorised closing adjustment is required before further cash outflows",
+            )
+    if not settings.carry_previous_closing_enabled:
+        manual_source = (
+            db.query(BranchOpeningSource.id)
+            .filter(
+                BranchOpeningSource.daily_ledger_id == locked.id,
+                BranchOpeningSource.payment_method == payment_method,
+                BranchOpeningSource.source_type != OpeningSourceType.PREVIOUS_CLOSING,
+                BranchOpeningSource.is_system_generated.is_(False),
+                BranchOpeningSource.is_confirmed.is_(True),
+                BranchOpeningSource.is_voided.is_(False),
+            )
+            .first()
+        )
+        if manual_source is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Record and confirm today's opening balance for this payment method before paying out or posting expenses",
+            )
+    opening = db.query(func.coalesce(func.sum(BranchOpeningSource.amount), 0)).filter(
+        BranchOpeningSource.daily_ledger_id == locked.id,
+        BranchOpeningSource.payment_method == payment_method,
+        BranchOpeningSource.is_confirmed.is_(True),
+        BranchOpeningSource.is_voided.is_(False),
+    ).scalar()
+    movements = db.query(
+        TreasuryEntry.direction,
+        func.coalesce(func.sum(TreasuryEntry.amount), 0),
+    ).filter(
+        TreasuryEntry.daily_ledger_id == locked.id,
+        TreasuryEntry.payment_method == payment_method,
+        TreasuryEntry.is_voided.is_(False),
+        _posted_entry_filter(),
+    ).group_by(TreasuryEntry.direction).all()
+    available = money(opening)
+    for direction, value in movements:
+        available += money(value) if direction == TreasuryDirection.MONEY_IN else -money(value)
+    requested = money(amount)
+    if requested <= 0:
+        raise HTTPException(status_code=422, detail="The payout amount must be positive")
+    if money(available) < requested:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Insufficient branch funds for {PAYMENT_METHOD_LABELS[payment_method]}: available M {money(available):,.2f}; requested M {requested:,.2f}",
+        )
+    return money(available)
 
 
 def _requires_expense_approval(settings: TreasurySettings, payload: TreasuryEntryCreate) -> bool:
@@ -579,6 +837,11 @@ def create_manual_entry(
             raise HTTPException(status_code=422, detail="Choose an active expense category from this company")
 
     requires_approval = _requires_expense_approval(settings, payload)
+    if payload.direction == TreasuryDirection.MONEY_OUT and not requires_approval:
+        assert_branch_outflow_funded(
+            db, ledger=ledger, payment_method=payload.payment_method,
+            amount=payload.amount, settings=settings,
+        )
     entry = TreasuryEntry(
         company_id=company_id,
         branch_id=branch_id,
@@ -622,6 +885,11 @@ def approve_treasury_entry(db: Session, entry: TreasuryEntry, *, user_id: UUID, 
     if not ledger:
         raise HTTPException(status_code=404, detail="Branch day was not found")
     assert_ledger_writable(ledger)
+    if entry.direction == TreasuryDirection.MONEY_OUT:
+        assert_branch_outflow_funded(
+            db, ledger=ledger, payment_method=entry.payment_method,
+            amount=entry.amount, settings=settings,
+        )
     entry.approval_status = TreasuryEntryApprovalStatus.APPROVED
     entry.approved_at = datetime.now(timezone.utc)
     entry.approved_by_user_id = user_id

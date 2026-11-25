@@ -32,6 +32,9 @@ RESOURCE_TABLES = {
 CAP = 500
 MAX_JS_CURSOR = 9007199254740991
 EXPECTED_REVISION = "dc20261122002"
+# Explicitly reviewed forward successors. The privileged Data Center control
+# remains fail-closed for unknown / divergent or multiple migration heads.
+APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001"}
 
 
 class PilotControlBlocked(RuntimeError):
@@ -73,7 +76,7 @@ def verify_database(connection, company_id: UUID, *, action: str, apply: bool) -
     if not all(privileges):
         raise PilotControlBlocked("Dedicated operator database privileges required")
     versions = connection.execute(text("SELECT version_num FROM public.alembic_version")).scalars().all()
-    if versions != [EXPECTED_REVISION]:
+    if len(versions) != 1 or versions[0] not in APPROVED_FORWARD_REVISIONS:
         raise PilotControlBlocked("Unexpected or multiple Alembic revisions")
 
     # Serialize transitions for the target company. Never acquire locks on
