@@ -33,7 +33,10 @@ SELECT
     l.id::text AS ledger_id,
     COALESCE(opening.linked_count, 0) AS linked_count,
     COALESCE(opening.linked_amount, 0) AS linked_amount,
-    COALESCE(moves.posted_cash_count, 0) AS posted_cash_count
+    COALESCE(moves.posted_cash_count, 0) AS posted_cash_count,
+    COALESCE(moves.treasury_cash_net, 0) AS treasury_cash_net,
+    COALESCE(journal.posted_journal_cash_count, 0) AS posted_journal_cash_count,
+    COALESCE(journal.posted_journal_cash_net, 0) AS posted_journal_cash_net
 FROM company_operating_records s
 LEFT JOIN branch_daily_ledgers l
   ON l.company_id = s.company_id
@@ -47,11 +50,24 @@ LEFT JOIN LATERAL (
       AND src.source_reference = 'DAILY-CASH-OPEN:' || s.id::text
 ) opening ON true
 LEFT JOIN LATERAL (
-    SELECT count(*) AS posted_cash_count
+    SELECT count(*) AS posted_cash_count,
+           COALESCE(sum(CASE WHEN e.direction = 'money_in' THEN e.amount ELSE -e.amount END), 0)
+              AS treasury_cash_net
     FROM treasury_entries e
     WHERE e.daily_ledger_id = l.id AND e.payment_method = 'cash'
       AND e.is_voided = false AND e.approval_status IN ('posted','approved')
 ) moves ON true
+LEFT JOIN LATERAL (
+    SELECT count(*) AS posted_journal_cash_count,
+           COALESCE(sum(jl.debit - jl.credit), 0) AS posted_journal_cash_net
+    FROM journal_entries je
+    JOIN journal_lines jl ON jl.journal_entry_id = je.id
+    JOIN accounting_accounts aa ON aa.id = jl.account_id AND aa.code = '1000'
+    WHERE je.company_id = s.company_id AND je.branch_id = s.branch_id
+      AND je.entry_date::text = s.data->>'business_date'
+      AND je.status = 'posted'
+      AND je.posted_at >= NULLIF(s.data->>'opened_at','')::timestamptz
+) journal ON true
 WHERE s.company_id = :company_id
   AND s.module = 'cash_control'
   AND s.record_type = 'daily_cash_session'
@@ -93,6 +109,14 @@ def classify(row, *, as_of: date | None = None) -> list[str]:
             issues.append("CASH_OPENING_MISMATCH")
         if int(row["posted_cash_count"]) and not linked:
             issues.append("CASH_POSTINGS_WITHOUT_SESSION_OPENING_LINK")
+        # Treasury is an operational projection, not the physical count.
+        # Compare journal net and treasury net without treating one as a
+        # replacement for the other. Both missing and surplus projections
+        # require review before financial controls are activated.
+        if ("posted_journal_cash_net" in row and "treasury_cash_net" in row
+                and Decimal(str(row["posted_journal_cash_net"]))
+                != Decimal(str(row["treasury_cash_net"]))):
+            issues.append("CASH_JOURNAL_TREASURY_MISMATCH")
     return issues
 
 
