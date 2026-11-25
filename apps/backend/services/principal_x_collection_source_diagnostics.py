@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from database.models.cash import CashTransaction
 from database.models.enums import (
     PaymentDirection, PaymentMethod, PaymentPurpose, PaymentStatus, TreasuryDirection,
+    TreasuryEntryType,
 )
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
@@ -43,6 +44,7 @@ class CollectionSourceDiagnostics:
     voided_linked_treasury_count: int = 0
     unposted_linked_treasury_count: int = 0
     missing_posted_treasury_evidence_count: int = 0
+    treasury_entry_type_mismatch_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -155,6 +157,7 @@ def inspect_principal_x_collection_sources(
     treasury_amount_mismatches = 0
     treasury_currency_mismatches = 0
     treasury_direction_mismatches = 0
+    treasury_entry_type_mismatches = 0
     voided_linked_treasury = 0
     unposted_linked_treasury = 0
     for entry in treasury:
@@ -178,6 +181,12 @@ def inspect_principal_x_collection_sources(
             if is_collected_repayment:
                 unposted_linked_treasury += 1
             continue
+        # A posted loan collection must be classified as a loan collection,
+        # not as a branch adjustment, expense or unrelated income.
+        if is_collected_repayment and (
+            getattr(entry, "entry_type", None) != TreasuryEntryType.LOAN_COLLECTION
+        ):
+            treasury_entry_type_mismatches += 1
         treasury_direction = getattr(entry, "direction", None)
         payment_direction = getattr(payment, "direction", None)
         expected_treasury_direction = {
@@ -260,6 +269,7 @@ def inspect_principal_x_collection_sources(
         treasury_amount_mismatch_count=treasury_amount_mismatches,
         treasury_currency_mismatch_count=treasury_currency_mismatches,
         treasury_direction_mismatch_count=treasury_direction_mismatches,
+        treasury_entry_type_mismatch_count=treasury_entry_type_mismatches,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
