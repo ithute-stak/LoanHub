@@ -6,9 +6,14 @@ import {Button} from "@/components/ui/button";
 import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle} from "@/components/ui/dialog";
 import {Textarea} from "@/components/ui/textarea";
 
-type DialogKind = "message" | "confirm" | "prompt";
-type DialogResult = string | boolean | null;
-type Options = {title?: string; confirmLabel?: string; destructive?: boolean; minLength?: number};
+import {
+    cancelledDialogResult,
+    canSubmitDialog,
+    submittedDialogResult,
+    type AppDialogKind as DialogKind,
+    type AppDialogOptions as Options,
+    type AppDialogResult as DialogResult,
+} from "@/lib/app-dialog-decisions";
 
 function NativeDialogReplacement({
     kind, message, initialValue, options, resolve,
@@ -21,11 +26,10 @@ function NativeDialogReplacement({
 }) {
     const [value, setValue] = useState(initialValue);
     const title = options.title ?? (kind === "message" ? "LoanHub notice" : kind === "confirm" ? "Confirm action" : "Provide information");
-    const minLength = options.minLength ?? 0;
-    const allowed = kind !== "prompt" || value.trim().length >= minLength;
+    const allowed = canSubmitDialog(kind, value, options);
 
-    return <Dialog open onOpenChange={(open) => { if (!open) resolve(kind === "confirm" ? false : null); }}>
-        <DialogContent className="sm:max-w-lg" onEscapeKeyDown={() => resolve(kind === "confirm" ? false : null)}>
+    return <Dialog open onOpenChange={(open) => { if (!open) resolve(cancelledDialogResult(kind)); }}>
+        <DialogContent className="sm:max-w-lg" onEscapeKeyDown={() => resolve(cancelledDialogResult(kind))}>
             <DialogHeader>
                 <DialogTitle>{title}</DialogTitle>
                 <DialogDescription className="whitespace-pre-wrap break-words leading-relaxed">{message}</DialogDescription>
@@ -39,9 +43,9 @@ function NativeDialogReplacement({
                 className="min-h-24 resize-y"
             /> : null}
             <DialogFooter>
-                {kind !== "message" ? <Button variant="outline" type="button" onClick={() => resolve(kind === "confirm" ? false : null)}>Cancel</Button> : null}
+                {kind !== "message" ? <Button variant="outline" type="button" onClick={() => resolve(cancelledDialogResult(kind))}>Cancel</Button> : null}
                 <Button type="button" variant={options.destructive ? "destructive" : "default"} disabled={!allowed}
-                    onClick={() => resolve(kind === "confirm" ? true : kind === "prompt" ? value : null)}>
+                    onClick={() => resolve(submittedDialogResult(kind, value, options))}>
                     {options.confirmLabel ?? (kind === "message" ? "Close" : kind === "confirm" ? "Confirm" : "Continue")}
                 </Button>
             </DialogFooter>
@@ -50,7 +54,7 @@ function NativeDialogReplacement({
 }
 
 function openLoanHubDialog(kind: DialogKind, message: string, initialValue = "", options: Options = {}): Promise<DialogResult> {
-    if (typeof document === "undefined") return Promise.resolve(kind === "confirm" ? false : null);
+    if (typeof document === "undefined") return Promise.resolve(cancelledDialogResult(kind));
     return new Promise((finish) => {
         const mount = document.createElement("div");
         mount.dataset.loanhubDialog = kind;
