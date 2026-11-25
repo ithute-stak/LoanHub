@@ -72,8 +72,8 @@ WHERE s.company_id = :company_id
   AND s.module = 'cash_control'
   AND s.record_type = 'daily_cash_session'
   AND s.data->>'business_date' BETWEEN :from_date AND :to_date
-ORDER BY s.data->>'business_date' DESC, s.branch_id
-LIMIT :limit
+ORDER BY s.data->>'business_date' DESC, s.branch_id, s.id
+LIMIT :limit OFFSET :offset
 """)
 
 
@@ -181,40 +181,42 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
                     "from_date": from_date.isoformat(),
                     "to_date": to_date.isoformat(),
                 }).scalar_one())
-                rows = conn.execute(AUDIT_SQL, {
-                    "company_id": str(company_id),
-                    "from_date": from_date.isoformat(),
-                    "to_date": to_date.isoformat(),
-                    "limit": MAX_SESSIONS + 1,
-                }).mappings().all()
-        if len(rows) > MAX_SESSIONS:
-            return {
-                "company_id": str(company_id), "ready": False, "truncated": True,
-                "company_wide_stale_open_sessions": stale_open_sessions,
-                "company_wide_sessions_outside_range": outside_range_sessions,
-                "reason": "More than 1000 sessions; narrow date range",
-            }
-        summary = Counter()
-        exceptions = []
-        for row in rows:
-            codes = classify(row, as_of=as_of)
-            summary.update(codes)
-            if codes:
-                exceptions.append({
-                    "branch_id": row["branch_id"],
-                    "business_date": row["business_date"],
-                    "codes": codes,
-                })
+                summary = Counter()
+                exceptions = []
+                exception_count = 0
+                sessions_checked = 0
+                while True:
+                    rows = conn.execute(AUDIT_SQL, {
+                        "company_id": str(company_id),
+                        "from_date": from_date.isoformat(),
+                        "to_date": to_date.isoformat(),
+                        "limit": MAX_SESSIONS,
+                        "offset": sessions_checked,
+                    }).mappings().all()
+                    for row in rows:
+                        codes = classify(row, as_of=as_of)
+                        summary.update(codes)
+                        if codes:
+                            exception_count += 1
+                            if len(exceptions) < 50:
+                                exceptions.append({
+                                    "branch_id": row["branch_id"],
+                                    "business_date": row["business_date"],
+                                    "codes": codes,
+                                })
+                    sessions_checked += len(rows)
+                    if len(rows) < MAX_SESSIONS:
+                        break
         return {
             "company_id": str(company_id),
             "date_from": from_date.isoformat(), "date_to": to_date.isoformat(),
-            "read_only": True, "sessions_checked": len(rows),
+            "read_only": True, "sessions_checked": sessions_checked,
             "company_wide_stale_open_sessions": stale_open_sessions,
             "company_wide_sessions_outside_range": outside_range_sessions,
-            "ready": bool(rows) and not exceptions and stale_open_sessions == 0 and outside_range_sessions == 0,
+            "ready": sessions_checked > 0 and exception_count == 0 and stale_open_sessions == 0 and outside_range_sessions == 0,
             "issue_counts": dict(summary),
-            "exceptions": exceptions[:50],
-            "exceptions_omitted": max(0, len(exceptions) - 50),
+            "exceptions": exceptions,
+            "exceptions_omitted": max(0, exception_count - 50),
             "note": (
                 "No matching cash sessions or incomplete historical coverage is not approval to activate. "
                 "A clean result is necessary but insufficient; certify transaction "
