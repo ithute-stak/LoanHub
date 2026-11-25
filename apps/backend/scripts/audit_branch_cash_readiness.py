@@ -163,7 +163,7 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
     try:
         with engine.connect() as conn:
             with conn.begin():
-                conn.execute(text("SET TRANSACTION READ ONLY"))
+                conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 stale_open_sessions = int(conn.execute(STALE_SESSIONS_SQL, {
                     "company_id": str(company_id),
                     "as_of": as_of.isoformat(),
