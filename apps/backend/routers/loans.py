@@ -67,7 +67,7 @@ from services.early_settlement_service import (
     quote_early_settlement,
 )
 from services.installment_service import adjust_installment_due_date
-from services.loan_sequence_history import recorded_loan_changes
+from services.loan_sequence_history import recorded_loan_changes, recorded_balance_impact
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
 from services.loan_service import (
     calculate_micro_loan_totals,
@@ -1395,13 +1395,16 @@ def get_loan_activity(
         actor = None
         if event.user:
             actor = event.user.person.full_name if event.user.person else (event.user.email or event.user.phone)
+        is_loan_snapshot = event.table_name == "client_company_loan" and event.entity_type in (None, "loan", "client_company_loan")
         items.append({
             "id": str(event.id), "action": event.action,
             "description": event.description, "actor_name": actor,
             "actor_role": event.actor_role, "occurred_at": event.created_at.isoformat() if event.created_at else None,
             "source": "audit", "status": event.status,
             "changes": recorded_loan_changes(event.before_data, event.after_data)
-            if event.table_name == "client_company_loan" and event.entity_type in (None, "loan", "client_company_loan") else [],
+            if is_loan_snapshot else [],
+            "balance_impact": recorded_balance_impact(event.before_data, event.after_data, event.status)
+            if is_loan_snapshot else recorded_balance_impact(None, None, event.status),
         })
     # First-class approval/disbursement columns provide trustworthy fallbacks.
     for action, at, user in (
@@ -1414,6 +1417,7 @@ def get_loan_activity(
                 "id": action.lower(), "action": action, "description": None,
                 "actor_name": actor, "actor_role": None,
                 "occurred_at": at.isoformat(), "source": "loan_record", "status": "recorded", "changes": [],
+                "balance_impact": recorded_balance_impact(None, None, "success"),
             })
     items.sort(key=lambda event: event["occurred_at"] or "")
     return {"loan_id": str(loan.id), "loan_reference": loan.loan_reference, "items": items,
