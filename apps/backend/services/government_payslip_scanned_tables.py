@@ -79,6 +79,8 @@ def _parse_table(text: str, *, section: str, allow_missing_heading: bool = False
             if line.casefold() == required_header:
                 started = True
             continue
+        if started and line.casefold() == required_header and not rows:
+            continue
         match = expected_total.fullmatch(line)
         if match:
             totals.append(money(match.group(1)))
