@@ -36,6 +36,7 @@ class CollectionSourceDiagnostics:
     nonfinal_allocation_payment_count: int = 0
     cash_overapplied_count: int = 0
     invalid_cash_amount_count: int = 0
+    cash_direction_mismatch_count: int = 0
     treasury_amount_mismatch_count: int = 0
     treasury_currency_mismatch_count: int = 0
     treasury_direction_mismatch_count: int = 0
@@ -117,10 +118,18 @@ def inspect_principal_x_collection_sources(
     # forwarding and split handling may differ).
     cash_overapplied = 0
     invalid_cash = 0
+    cash_direction_mismatches = 0
     for row in cash:
         payment = payment_by_id.get(row.payment_id)
         if payment is None:
             continue
+        if (
+            getattr(row, "direction", None) != getattr(payment, "direction", None)
+            or getattr(row, "direction", None) not in (
+                PaymentDirection.INBOUND, PaymentDirection.OUTBOUND,
+            )
+        ):
+            cash_direction_mismatches += 1
         try:
             applied = Decimal(str(row.applied_amount))
             received = Decimal(str(payment.amount))
@@ -208,6 +217,7 @@ def inspect_principal_x_collection_sources(
         nonfinal_allocation_payment_count=nonfinal_allocation_payments,
         cash_overapplied_count=cash_overapplied,
         invalid_cash_amount_count=invalid_cash,
+        cash_direction_mismatch_count=cash_direction_mismatches,
         treasury_amount_mismatch_count=treasury_amount_mismatches,
         treasury_currency_mismatch_count=treasury_currency_mismatches,
         treasury_direction_mismatch_count=treasury_direction_mismatches,
