@@ -1370,6 +1370,42 @@ def get_company_loan_activity(
     }
 
 
+@router.get("/{loan_id}/sequence-profile")
+def get_loan_sequence_profile(
+    loan_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read stored contract profile; never repair or substitute current profile."""
+    from services.loan_sequence_history import recorded_contract_profile
+
+    require_tenant_roles(context, COMPANY_MANAGEMENT_ROLES | LENDING_ROLES | FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    contract = db.query(LoanContract).filter(
+        LoanContract.company_id == loan.company_id,
+        LoanContract.borrower_id == loan.borrower_id,
+        LoanContract.loan_id == loan.id,
+    ).first()
+    return {
+        "loan_id": str(loan.id),
+        "loan_reference": loan.loan_reference,
+        "folio_number": loan.folio_number,
+        "disbursed_at": loan.disbursed_at.isoformat() if loan.disbursed_at else None,
+        "current_loan_terms": {
+            "repayment_period": loan.repayment_period,
+            "principal_amount": format(loan.principal_amount, ".2f"),
+            "total_repayable": format(loan.total_repayable, ".2f"),
+            "amount_paid": format(loan.amount_paid, ".2f"),
+            "balance": format(loan.balance, ".2f"),
+            "status": loan.status.value,
+        },
+        "contract_profile": recorded_contract_profile(
+            contract.terms_snapshot if contract else None, loan.borrower_id
+        ),
+        "contract_reference": contract.contract_number if contract else None,
+    }
+
+
 @router.get("/{loan_id}/payment-sequence")
 def get_loan_payment_sequence(
     loan_id: UUID,
