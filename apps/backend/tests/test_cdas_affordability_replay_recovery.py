@@ -95,8 +95,12 @@ async def test_provider_timeout_is_recorded_unknown_without_retry(monkeypatch):
     attempt = SimpleNamespace(id=uuid4(), state="reserved", assessment_record_id=None)
     monkeypatch.setattr(module, "_require_company_manager", lambda context: None)
     monkeypatch.setattr(module, "_require_approved_affordability_consent", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "reserve_affordability_attempt",
-                        lambda db, **kwargs: (attempt, True))
+    reservation_calls = 0
+    def reservation(db, **kwargs):
+        nonlocal reservation_calls
+        reservation_calls += 1
+        return attempt, reservation_calls == 1
+    monkeypatch.setattr(module, "reserve_affordability_attempt", reservation)
     calls = 0
     async def timeout(*args, **kwargs):
         nonlocal calls
@@ -118,6 +122,17 @@ async def test_provider_timeout_is_recorded_unknown_without_retry(monkeypatch):
     assert calls == 1
     assert attempt.state == "unknown"
     assert db.rollbacks == 1
+    assert db.commits == 1
+    # Replay the actual attempt after its first provider timeout: no second call.
+    with pytest.raises(HTTPException) as blocked:
+        await module.create_government_affordability_record(
+            payload=_payload(), context=_context(), db=db,
+        )
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail["status"] == "unknown"
+    assert blocked.value.detail["may_retry_provider_request"] is False
+    assert calls == 1
+    assert reservation_calls == 2
     assert db.commits == 1
 
 
