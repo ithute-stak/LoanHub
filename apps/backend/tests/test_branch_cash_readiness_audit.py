@@ -230,3 +230,15 @@ def test_coverage_query_is_company_scoped_and_read_only():
     assert "NOT BETWEEN :from_date AND :to_date" in statement
     assert "UPDATE " not in statement.upper()
     assert "DELETE " not in statement.upper()
+
+
+def test_closed_session_invalid_or_future_date_blocks_activation():
+    as_of = date(2026, 11, 25)
+    for value in (None, "", "not-a-date", "2026-11-31"):
+        assert classify(row(session_status="closed", business_date=value), as_of=as_of) == [
+            "INVALID_SESSION_BUSINESS_DATE"
+        ]
+    assert classify(row(session_status="closed", business_date="2026-11-26"), as_of=as_of) == [
+        "FUTURE_SESSION_BUSINESS_DATE"
+    ]
+    assert classify(row(session_status="closed", business_date="2026-10-21"), as_of=as_of) == []
