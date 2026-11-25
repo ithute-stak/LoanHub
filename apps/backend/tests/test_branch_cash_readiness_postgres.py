@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 
-from scripts.audit_branch_cash_readiness import STALE_SESSIONS_SQL
+from scripts.audit_branch_cash_readiness import STALE_SESSIONS_SQL, OUT_OF_RANGE_SESSIONS_SQL
 
 
 def test_company_wide_open_session_scan_rejects_outside_today_and_bad_dates():
@@ -54,6 +54,11 @@ def test_company_wide_open_session_scan_rejects_outside_today_and_bad_dates():
                 {"company_id": str(company), "as_of": date(2026, 11, 25).isoformat()},
             ).scalar_one()
             assert found == 4
+            excluded = conn.execute(
+                OUT_OF_RANGE_SESSIONS_SQL,
+                {"company_id": str(company), "from_date": "2026-11-25", "to_date": "2026-11-25"},
+            ).scalar_one()
+            assert excluded == 5  # old closed day is also outside the audit window
     finally:
         try:
             with engine.begin() as conn:
