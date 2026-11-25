@@ -1,0 +1,73 @@
+name: loanhub-sandbox
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: loanhub_sandbox
+      POSTGRES_USER: sandbox_owner
+      POSTGRES_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+    volumes: [sandbox_db:/var/lib/postgresql/data]
+    networks: [isolated]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sandbox_owner", "-d", "loanhub_sandbox"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    networks: [isolated]
+    volumes: [sandbox_redis:/data]
+  migrate:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    env_file: ./sandbox.env
+    environment: &backend_env
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: loanhub_sandbox
+      DB_USER: sandbox_owner
+      DB_PASSWORD: ${SANDBOX_DB_PASSWORD:?required}
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_APP_URL: https://sandbox.loanhub.co.ls
+      CORS_ORIGINS: https://sandbox.loanhub.co.ls
+      JWT_PRIVATE_KEY_PATH: /app/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /app/secrets/jwt_public.pem
+      FILE_STORAGE_PATH: /app/media/uploads
+      RUN_MIGRATIONS: "false"
+      APP_TIMEZONE: Africa/Maseru
+    command: ["alembic", "upgrade", "head"]
+    volumes: [./secrets:/app/secrets:ro]
+    networks: [isolated]
+    depends_on:
+      db:
+        condition: service_healthy
+  backend:
+    image: ${SANDBOX_BACKEND_IMAGE:?required}
+    env_file: ./sandbox.env
+    environment:
+      <<: *backend_env
+      DB_USER: sandbox_app
+      DB_PASSWORD: ${SANDBOX_RUNTIME_PASSWORD:?required}
+    volumes: [./secrets:/app/secrets:ro, sandbox_files:/app/media]
+    networks: [isolated]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    profiles: ["verified"]
+  frontend:
+    image: ${SANDBOX_FRONTEND_IMAGE:?required}
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    networks: [isolated]
+    profiles: ["verified"]
+networks:
+  isolated:
+    internal: true
+volumes:
+  sandbox_db:
+  sandbox_redis:
+  sandbox_files:
