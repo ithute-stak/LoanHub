@@ -1,4 +1,5 @@
 "use client";
+import {toast} from "@/utils/toast";
 
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
