@@ -44,6 +44,8 @@ class CollectionSourceDiagnostics:
     voided_linked_treasury_count: int = 0
     unposted_linked_treasury_count: int = 0
     missing_posted_treasury_evidence_count: int = 0
+    missing_posted_refund_treasury_count: int = 0
+    refund_treasury_type_mismatch_count: int = 0
     treasury_entry_type_mismatch_count: int = 0
 
 
@@ -158,6 +160,7 @@ def inspect_principal_x_collection_sources(
     treasury_currency_mismatches = 0
     treasury_direction_mismatches = 0
     treasury_entry_type_mismatches = 0
+    refund_treasury_type_mismatches = 0
     voided_linked_treasury = 0
     unposted_linked_treasury = 0
     for entry in treasury:
@@ -188,6 +191,15 @@ def inspect_principal_x_collection_sources(
             getattr(entry, "entry_type", None) != TreasuryEntryType.LOAN_COLLECTION
         ):
             treasury_entry_type_mismatches += 1
+        is_completed_refund = (
+            getattr(payment, "status", None) == PaymentStatus.SUCCEEDED
+            and getattr(payment, "purpose", None) == PaymentPurpose.REFUND
+            and getattr(payment, "direction", None) == PaymentDirection.OUTBOUND
+        )
+        if is_completed_refund and (
+            getattr(entry, "entry_type", None) != TreasuryEntryType.REFUND
+        ):
+            refund_treasury_type_mismatches += 1
         treasury_direction = getattr(entry, "direction", None)
         payment_direction = getattr(payment, "direction", None)
         expected_treasury_direction = {
@@ -246,6 +258,17 @@ def inspect_principal_x_collection_sources(
             and row.id not in posted_treasury_payment_ids
         )
     )
+    # Refunds also require a posted, non-voided treasury link, but this
+    # diagnostic does NOT verify the refund against its original collection.
+    missing_posted_refund_treasury = sum(
+        1 for row in payments
+        if (
+            getattr(row, "status", None) == PaymentStatus.SUCCEEDED
+            and getattr(row, "purpose", None) == PaymentPurpose.REFUND
+            and getattr(row, "direction", None) == PaymentDirection.OUTBOUND
+            and row.id not in posted_treasury_payment_ids
+        )
+    )
 
     return CollectionSourceDiagnostics(
         payment_count=len(payments),
@@ -274,6 +297,8 @@ def inspect_principal_x_collection_sources(
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
+        missing_posted_refund_treasury_count=missing_posted_refund_treasury,
+        refund_treasury_type_mismatch_count=refund_treasury_type_mismatches,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
