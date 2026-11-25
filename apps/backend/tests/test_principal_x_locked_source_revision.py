@@ -7,7 +7,7 @@ import pytest
 
 from database.models.cash import CashTransaction
 from database.models.payment import PaymentTransaction
-from database.models.repayment import PaymentAllocation
+from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from database.models.treasury import TreasuryEntry
 from services.principal_x_locked_source_revision import local_principal_x_source_revision
 
@@ -27,10 +27,11 @@ class Query:
 
 
 class Session:
-    def __init__(self, payments, cash=(), allocations=(), treasury=()):
+    def __init__(self, payments, cash=(), allocations=(), treasury=(), installments=()):
         self.data = {
             PaymentTransaction: list(payments), CashTransaction: list(cash),
             PaymentAllocation: list(allocations), TreasuryEntry: list(treasury),
+            RepaymentInstallment: list(installments),
         }
 
     def query(self, model):
@@ -110,3 +111,51 @@ def test_invalid_company_or_loan_scope_is_rejected():
         local_principal_x_source_revision(
             Session([]), company_id="untrusted", loan_id=uuid4(),
         )
+
+
+@pytest.mark.parametrize("field,new_value", [
+    ("principal_due", Decimal("98.00")),
+    ("interest_due", Decimal("18.00")),
+    ("fee_due", Decimal("6.00")),
+    ("total_due", Decimal("122.00")),
+    ("paid_amount", Decimal("50.00")),
+    ("status", "paid"),
+    ("due_date", "2026-12-31"),
+    ("is_superseded", True),
+])
+def test_installment_financial_or_status_change_invalidates_revision(field, new_value):
+    company_id, loan_id = uuid4(), uuid4()
+    installment = SimpleNamespace(
+        id=uuid4(), loan_id=loan_id,
+        principal_due=Decimal("100.00"),
+        interest_due=Decimal("20.00"),
+        fee_due=Decimal("5.00"),
+        total_due=Decimal("125.00"),
+        paid_amount=Decimal("0.00"),
+        status="pending", due_date="2026-12-01",
+        is_superseded=False,
+    )
+    session = Session([], installments=[installment])
+    before = local_principal_x_source_revision(
+        session, company_id=company_id, loan_id=loan_id,
+    )
+    setattr(installment, field, new_value)
+    after = local_principal_x_source_revision(
+        session, company_id=company_id, loan_id=loan_id,
+    )
+    assert before != after
+
+
+def test_installment_row_added_or_removed_invalidates_revision():
+    company_id, loan_id = uuid4(), uuid4()
+    session = Session([])
+    before = local_principal_x_source_revision(
+        session, company_id=company_id, loan_id=loan_id,
+    )
+    session.data[RepaymentInstallment].append(
+        SimpleNamespace(id=uuid4(), loan_id=loan_id, total_due=Decimal("10.00"))
+    )
+    after = local_principal_x_source_revision(
+        session, company_id=company_id, loan_id=loan_id,
+    )
+    assert before != after
