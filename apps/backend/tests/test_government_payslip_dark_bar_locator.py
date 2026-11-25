@@ -47,3 +47,17 @@ def test_wrong_scale_fails_closed():
     image = Image.new("RGB", (450, 700), "white")
     with pytest.raises(AmountCellLocationError, match="too small"):
         locate_dark_bar_net_pay_cell(image, (heading(),))
+
+
+def test_duplicate_earnings_heading_from_inverted_ocr_is_deduplicated():
+    first = heading()
+    duplicate = OCRWord("Earnings", 93.0, 242, 957, 88, 21, 9, 1, 1)
+    result = locate_dark_bar_net_pay_cell(sample_image(), (first, duplicate))
+    assert result.label == "net_pay_dark_bar_candidate"
+
+
+def test_distinct_second_earnings_heading_is_not_silently_selected():
+    first = heading()
+    other = OCRWord("Earnings", 94.0, 280, 600, 90, 21, 9, 1, 1)
+    with pytest.raises(AmountCellLocationError, match="ambiguous"):
+        locate_dark_bar_net_pay_cell(sample_image(), (first, other))
