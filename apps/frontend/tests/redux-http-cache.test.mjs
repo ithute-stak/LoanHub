@@ -331,4 +331,50 @@ test("adapter returning a new response config fails closed on mutation scope los
     "unknown mutation origin must not leave finance caches stale");
 });
 
+test("manual refresh cannot be overwritten by a slower earlier read", async () => {
+  let finishOld;
+  let reads = 0;
+  const {client,store} = createCacheClient("refresh-order", config => {
+    reads++;
+    if (reads === 1) {
+      return new Promise(resolve => { finishOld = () => resolve(response(config, {balance:100})); });
+    }
+    return Promise.resolve(response(config, {balance:200}));
+  });
+  const config = {headers:headersFor("company-A")};
+  const staleRead = client.get("/loans/", config);
+  for (let attempt = 0; attempt < 20 && !finishOld; attempt++) await Promise.resolve();
+  assert.equal(typeof finishOld, "function");
+  const refreshed = await client.get("/loans/", {...config, loanHubCache:{mode:"refresh"}});
+  assert.equal(refreshed.data.balance,200);
+  finishOld();
+  assert.equal((await staleRead).data.balance,100);
+  assert.equal((await client.get("/loans/", config)).data.balance,200);
+  assert.equal(reads,2,"an older response must not replace the refreshed cache entry");
+  assert.equal(Object.values(store.getState().httpCache.entries)[0].data.balance,200);
+});
+
+test("Axios clients with separate Redux stores never share a pending GET", async () => {
+  let finishFirst;
+  let firstReads = 0;
+  let secondReads = 0;
+  const a = createCacheClient("same-user", config => {
+    firstReads++;
+    return new Promise(resolve => { finishFirst = () => resolve(response(config, {origin:"first"})); });
+  });
+  const b = createCacheClient("same-user", async config => {
+    secondReads++;
+    return response(config, {origin:"second"});
+  });
+  const config = {headers:headersFor("company-A")};
+  const pending = a.client.get("/loans/", config);
+  for (let attempt = 0; attempt < 20 && !finishFirst; attempt++) await Promise.resolve();
+  assert.equal(typeof finishFirst,"function");
+  assert.equal((await b.client.get("/loans/", config)).data.origin,"second");
+  finishFirst();
+  assert.equal((await pending).data.origin,"first");
+  assert.equal(firstReads,1);
+  assert.equal(secondReads,1);
+});
+
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));
