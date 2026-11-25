@@ -46,3 +46,34 @@ def test_native_pdf_without_raster_stamp_remains_manual_review():
         result = preview_net_pay_amount(b"test", "scan.pdf")
     assert result.candidate is None
     assert "net_pay_spatial_image_unavailable" in result.review_reasons
+
+
+
+def test_inverted_dark_bar_label_can_recover_candidate_but_not_verify():
+    image = Image.new("RGB", (900, 1000), "white")
+    inverted_label = OCRWord("NET PAY:", 96.0, 100, 200, 90, 20, 1, 1, 1)
+    with patch("services.government_payslip_net_pay_preview._safe_image", return_value=image):
+        with patch("services.government_payslip_net_pay_preview.spatial_ocr",
+                   side_effect=[(), (inverted_label,)]) as ocr:
+            with patch("services.government_payslip_net_pay_preview.read_amount_crop",
+                       return_value=AmountCropEvidence(
+                           Decimal("2651.29"), ("2,651.29", "2,651.29"),
+                           True, True, ("printed_amount_crop_requires_reviewer_confirmation",)
+                       )):
+                result = preview_net_pay_amount(b"test", "scan.png")
+    assert ocr.call_count == 2
+    assert result.candidate == Decimal("2651.29")
+    assert result.review_required
+    assert result.status == "candidate_only"
+
+
+def test_inverted_ocr_cannot_override_missing_net_pay_label():
+    image = Image.new("RGB", (900, 1000), "white")
+    with patch("services.government_payslip_net_pay_preview._safe_image", return_value=image):
+        with patch("services.government_payslip_net_pay_preview.spatial_ocr",
+                   side_effect=[(), ()]):
+            with patch("services.government_payslip_net_pay_preview.read_amount_crop") as crop:
+                result = preview_net_pay_amount(b"test", "scan.png")
+    assert result.status == "manual_review"
+    assert result.candidate is None
+    crop.assert_not_called()
