@@ -61,3 +61,20 @@ def test_distinct_second_earnings_heading_is_not_silently_selected():
     other = OCRWord("Earnings", 94.0, 280, 600, 90, 21, 9, 1, 1)
     with pytest.raises(AmountCellLocationError, match="ambiguous"):
         locate_dark_bar_net_pay_cell(sample_image(), (first, other))
+
+
+def test_gross_locator_returns_first_bar_amount_cell():
+    from services.government_payslip_dark_bar_locator import locate_dark_bar_gross_cell
+    result = locate_dark_bar_gross_cell(sample_image(), (heading(),))
+    left, top, right, bottom = result.box
+    assert 720 < left < 740
+    assert 1265 < top < 1280
+    assert 1315 < bottom < 1330
+    assert result.label == "gross_dark_bar_candidate"
+    assert result.review_required
+
+
+def test_gross_locator_rejects_missing_second_bar():
+    from services.government_payslip_dark_bar_locator import locate_dark_bar_gross_cell
+    with pytest.raises(AmountCellLocationError, match="two summary bars"):
+        locate_dark_bar_gross_cell(sample_image(two_bars=False), (heading(),))
