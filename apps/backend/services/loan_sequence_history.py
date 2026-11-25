@@ -81,3 +81,37 @@ def recorded_balance_impact(before_data, after_data, status):
     return {"evidence": "recorded_loan_balance",
             "before": format(before, ".2f"), "after": format(after, ".2f"),
             "delta": format(after - before, ".2f")}
+
+
+def recorded_contract_profile(snapshot, borrower_id):
+    """Stored contract values only; legacy repair may have used current data."""
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    borrower = snapshot.get("borrower")
+    bank = snapshot.get("bank_account")
+    if not isinstance(borrower, dict) or borrower.get("id") != str(borrower_id):
+        borrower, bank = {}, {}
+    bank = bank if isinstance(bank, dict) else {}
+
+    def text_value(source, key, limit=200):
+        value = source.get(key)
+        return value.strip() if isinstance(value, str) and 0 < len(value.strip()) <= limit else None
+
+    def masked_phone(value):
+        if not isinstance(value, str):
+            return None
+        digits = re.sub(r"[^0-9]", "", value)
+        return "****" + digits[-4:] if len(digits) >= 8 else None
+
+    last4 = bank.get("account_number_last4")
+    return {
+        "name": text_value(borrower, "name"),
+        "occupation": text_value(borrower, "job_title"),
+        "employer": text_value(borrower, "employer_name"),
+        "employee_number": None,
+        "contact_1": masked_phone(borrower.get("phone")),
+        "contact_2": None,
+        "bank_name": text_value(bank, "bank_name"),
+        "bank_account_masked": "****" + last4 if isinstance(last4, str) and re.fullmatch(r"[0-9]{4}", last4) else None,
+        "evidence": "stored_contract_snapshot" if borrower else "not_recorded",
+        "issuance_time_verified": False,
+    }
