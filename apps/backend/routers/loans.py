@@ -648,6 +648,10 @@ def principal_x_settlement_readiness(
         blockers.append("Successful loan repayments reference unposted treasury entries.")
     if cross_sources.missing_posted_treasury_evidence_count:
         blockers.append("Successful loan repayments lack a posted, non-voided linked treasury entry; historical accounting must be reviewed.")
+    if cross_sources.missing_posted_refund_treasury_count:
+        blockers.append("Successful refunds lack posted, non-voided treasury entries.")
+    if cross_sources.refund_treasury_type_mismatch_count:
+        blockers.append("Successful refunds are linked to treasury entries not classified as refunds.")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         blockers.append("Loan is not active or defaulted.")
     return PrincipalXSettlementReadinessRead(
@@ -678,6 +682,8 @@ def principal_x_settlement_readiness(
         voided_linked_treasury_rows=cross_sources.voided_linked_treasury_count,
         unposted_linked_treasury_rows=cross_sources.unposted_linked_treasury_count,
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
+        missing_posted_refund_treasury_rows=cross_sources.missing_posted_refund_treasury_count,
+        refund_treasury_type_mismatch_rows=cross_sources.refund_treasury_type_mismatch_count,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
         source_coverage=[
