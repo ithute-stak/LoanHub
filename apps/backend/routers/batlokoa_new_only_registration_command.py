@@ -6,6 +6,7 @@ The request schema is lossless and the response never includes client PII.
 """
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -22,6 +23,9 @@ router = APIRouter(prefix="/batlokoa/registration", tags=["Batlokoa Registration
 
 class NewOnlyClientReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    # Batlokoa's fail-closed Save Client parser requires explicit proof,
+    # not merely an account UUID from an ambiguous response.
+    registered: Literal[True] = True
     client_account_id: UUID
     replayed: bool
 
