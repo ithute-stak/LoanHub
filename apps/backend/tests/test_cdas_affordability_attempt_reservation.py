@@ -129,3 +129,69 @@ def test_new_idempotency_key_cannot_bypass_unresolved_fingerprint(unresolved_sta
     assert blocked.value.detail["may_retry_provider_request"] is False
     assert blocked.value.detail["requires_manual_review"] is True
     assert db.calls == 2
+
+
+@pytest.mark.parametrize("collision", ["same_key", "same_fingerprint"])
+def test_concurrent_reservation_integrity_collision_fails_closed(collision):
+    """A raced insert must never authorize a second provider call."""
+    from sqlalchemy.exc import IntegrityError
+
+    company_id, borrower_id = uuid4(), uuid4()
+    fingerprint = affordability_request_fingerprint(
+        company_id=company_id, borrower_id=borrower_id,
+        employee_number="EMP-100", installment=Decimal("100.00"),
+        consent_evidence_reference="CONSENT-001",
+    )
+    other = SimpleNamespace(
+        id=uuid4(), state="unknown", assessment_record_id=None,
+        request_fingerprint=fingerprint,
+    )
+    class Query:
+        def __init__(self, result):
+            self.result = result
+        def filter(self, *clauses):
+            return self
+        def first(self):
+            return self.result
+    class DB:
+        def __init__(self):
+            self.queries = 0
+            self.rollbacks = 0
+            self.commits = 0
+        def query(self, model):
+            assert model is CdasAffordabilityAttempt
+            self.queries += 1
+            if self.queries <= 2:
+                return Query(None)
+            if collision == "same_key":
+                return Query(other if self.queries == 3 else None)
+            return Query(None if self.queries == 3 else other)
+        def add(self, item):
+            assert isinstance(item, CdasAffordabilityAttempt)
+        def commit(self):
+            self.commits += 1
+            raise IntegrityError("INSERT", {}, Exception("unique conflict"))
+        def rollback(self):
+            self.rollbacks += 1
+        def refresh(self, item):
+            raise AssertionError("Never refresh a conflicted reservation")
+    db = DB()
+    kwargs = dict(
+        company_id=company_id, actor_user_id=uuid4(),
+        borrower_id=borrower_id, employee_number="EMP-100",
+        installment=Decimal("100.00"),
+        consent_evidence_reference="CONSENT-001",
+        idempotency_key="concurrent-collision-001",
+    )
+    if collision == "same_key":
+        attempt, created = reserve_affordability_attempt(db, **kwargs)
+        assert attempt is other
+        assert created is False
+    else:
+        with pytest.raises(HTTPException) as blocked:
+            reserve_affordability_attempt(db, **kwargs)
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["status"] == "unknown"
+        assert blocked.value.detail["may_retry_provider_request"] is False
+    assert db.commits == 1
+    assert db.rollbacks == 1
