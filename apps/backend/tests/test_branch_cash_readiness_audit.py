@@ -242,3 +242,55 @@ def test_closed_session_invalid_or_future_date_blocks_activation():
         "FUTURE_SESSION_BUSINESS_DATE"
     ]
     assert classify(row(session_status="closed", business_date="2026-10-21"), as_of=as_of) == []
+
+
+def test_paginated_audit_checks_later_records_and_bounds_exception_output(monkeypatch):
+    from contextlib import nullcontext
+    from uuid import uuid4
+    from scripts import audit_branch_cash_readiness as module
+
+    monkeypatch.setattr(module, "MAX_SESSIONS", 2)
+    base = dict(row(), business_date="2026-10-21", session_status="closed")
+    records = [base, base] + [dict(base, linked_count=0) for _ in range(53)]
+    offsets = []
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+        def scalar_one(self):
+            return self.value
+        def mappings(self):
+            return self
+        def all(self):
+            return self.value
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def begin(self):
+            return nullcontext()
+        def execute(self, sql, params=None):
+            if sql is module.AUDIT_SQL:
+                assert params["company_id"] == str(company_id)
+                offset = params["offset"]
+                offsets.append(offset)
+                return Result(records[offset:offset + params["limit"]])
+            return Result(0)
+
+    class Engine:
+        def connect(self):
+            return Connection()
+        def dispose(self):
+            pass
+
+    company_id = uuid4()
+    monkeypatch.setattr(module, "create_engine", lambda *_a, **_k: Engine())
+    report = module.audit(company_id, date(2026, 10, 1), date(2026, 10, 31), "dummy")
+    assert offsets == list(range(0, 55, 2))
+    assert report["sessions_checked"] == 55
+    assert report["issue_counts"]["MISSING_SESSION_OPENING_LINK"] == 53
+    assert len(report["exceptions"]) == 50
+    assert report["exceptions_omitted"] == 3
+    assert report["ready"] is False
