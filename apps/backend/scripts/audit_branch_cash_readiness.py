@@ -77,6 +77,22 @@ LIMIT :limit
 """)
 
 
+# The requested date window must not be allowed to hide an older open
+# session elsewhere in the company. Activation is company-scoped and needs
+# a company-wide stale-session check, not only the displayed audit range.
+STALE_SESSIONS_SQL = text("""
+SELECT count(*) FROM company_operating_records
+WHERE company_id = :company_id
+  AND module = 'cash_control'
+  AND record_type = 'daily_cash_session'
+  AND status = 'open'
+  AND (
+      data->>'business_date' IS NULL
+      OR data->>'business_date' < :as_of
+  )
+""")
+
+
 def classify(row, *, as_of: date | None = None) -> list[str]:
     issues = []
     # An old session left open is a separate activation blocker even when
@@ -123,11 +139,16 @@ def classify(row, *, as_of: date | None = None) -> list[str]:
 def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
     if from_date > to_date:
         raise ValueError("from-date cannot exceed to-date")
+    as_of = datetime.now(ZoneInfo('Africa/Maseru')).date()
     engine = create_engine(dsn, pool_pre_ping=True)
     try:
         with engine.connect() as conn:
             with conn.begin():
                 conn.execute(text("SET TRANSACTION READ ONLY"))
+                stale_open_sessions = int(conn.execute(STALE_SESSIONS_SQL, {
+                    "company_id": str(company_id),
+                    "as_of": as_of.isoformat(),
+                }).scalar_one())
                 rows = conn.execute(AUDIT_SQL, {
                     "company_id": str(company_id),
                     "from_date": from_date.isoformat(),
@@ -137,11 +158,11 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
         if len(rows) > MAX_SESSIONS:
             return {
                 "company_id": str(company_id), "ready": False, "truncated": True,
+                "company_wide_stale_open_sessions": stale_open_sessions,
                 "reason": "More than 1000 sessions; narrow date range",
             }
         summary = Counter()
         exceptions = []
-        as_of = datetime.now(ZoneInfo('Africa/Maseru')).date()
         for row in rows:
             codes = classify(row, as_of=as_of)
             summary.update(codes)
@@ -155,7 +176,8 @@ def audit(company_id: UUID, from_date: date, to_date: date, dsn: str) -> dict:
             "company_id": str(company_id),
             "date_from": from_date.isoformat(), "date_to": to_date.isoformat(),
             "read_only": True, "sessions_checked": len(rows),
-            "ready": bool(rows) and not exceptions,
+            "company_wide_stale_open_sessions": stale_open_sessions,
+            "ready": bool(rows) and not exceptions and stale_open_sessions == 0,
             "issue_counts": dict(summary),
             "exceptions": exceptions[:50],
             "exceptions_omitted": max(0, len(exceptions) - 50),
