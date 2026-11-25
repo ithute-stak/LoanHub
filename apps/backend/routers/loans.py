@@ -604,6 +604,12 @@ def principal_x_settlement_readiness(
     ]
     if audit.unresolved_payment_ids:
         blockers.append("Payment rows require reconciliation before settlement posting.")
+    if audit.refund_payment_count:
+        blockers.append("Refund payments require verified original-collection linkage and external finality.")
+    if audit.reversed_payment_count:
+        blockers.append("Reversed payments require authoritative provider reversal reconciliation.")
+    if audit.nonfinal_refund_count:
+        blockers.append("Refunds are unfinished or have an unexpected payment direction.")
     if cross_sources.orphan_cash_count:
         blockers.append("Cash transaction links require reconciliation.")
     if cross_sources.orphan_allocation_count:
@@ -646,6 +652,9 @@ def principal_x_settlement_readiness(
         can_post_settlement=False,
         payment_rows_reviewed=audit.payment_count,
         unresolved_payment_rows=len(audit.unresolved_payment_ids),
+        refund_payment_rows=audit.refund_payment_count,
+        reversed_payment_rows=audit.reversed_payment_count,
+        nonfinal_refund_rows=audit.nonfinal_refund_count,
         orphan_cash_rows=cross_sources.orphan_cash_count,
         orphan_allocation_rows=cross_sources.orphan_allocation_count,
         unlinked_treasury_rows=cross_sources.unlinked_treasury_count,
