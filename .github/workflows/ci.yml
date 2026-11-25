@@ -213,7 +213,7 @@ jobs:
           LOANHUB_ACCOUNTING_TEST_POSTGRES_URL: postgresql+psycopg2://loanhub:ci-only-postgres-password@127.0.0.1:5432/loan_db
         run: |
           set -euo pipefail
-          python -m pytest -q -ra tests/test_branch_cash_controls_postgres.py tests/test_branch_cash_mapped_guard_postgres.py tests/test_manual_branch_cash_opening_controls.py tests/test_branch_cash_readiness_audit.py
+          python -m pytest -q -ra tests/test_branch_cash_controls_postgres.py tests/test_branch_cash_mapped_guard_postgres.py tests/test_manual_branch_cash_opening_controls.py tests/test_branch_cash_readiness_audit.py tests/test_branch_cash_readiness_postgres.py
 
       - name: Verify PostgreSQL tenant isolation
         working-directory: apps/backend
