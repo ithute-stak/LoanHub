@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from database.models.cash import CashTransaction
 from database.models.enums import (
-    PaymentDirection, PaymentMethod, PaymentPurpose, PaymentStatus,
+    PaymentDirection, PaymentMethod, PaymentPurpose, PaymentStatus, TreasuryDirection,
 )
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
@@ -38,6 +38,7 @@ class CollectionSourceDiagnostics:
     invalid_cash_amount_count: int = 0
     treasury_amount_mismatch_count: int = 0
     treasury_currency_mismatch_count: int = 0
+    treasury_direction_mismatch_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -141,6 +142,7 @@ def inspect_principal_x_collection_sources(
     # only; refunds/reversals and external sources still need certification.
     treasury_amount_mismatches = 0
     treasury_currency_mismatches = 0
+    treasury_direction_mismatches = 0
     for entry in treasury:
         payment = payment_by_id.get(entry.payment_transaction_id)
         if payment is None or getattr(entry, "is_voided", False):
@@ -148,6 +150,17 @@ def inspect_principal_x_collection_sources(
         approval = getattr(entry, "approval_status", None)
         if approval is not None and getattr(approval, "value", approval) != "posted":
             continue
+        treasury_direction = getattr(entry, "direction", None)
+        payment_direction = getattr(payment, "direction", None)
+        expected_treasury_direction = {
+            PaymentDirection.INBOUND: TreasuryDirection.MONEY_IN,
+            PaymentDirection.OUTBOUND: TreasuryDirection.MONEY_OUT,
+        }.get(payment_direction)
+        if (
+            expected_treasury_direction is None
+            or treasury_direction != expected_treasury_direction
+        ):
+            treasury_direction_mismatches += 1
         treasury_currency = getattr(entry, "currency", None)
         payment_currency = getattr(payment, "currency", None)
         # Missing currency evidence is a mismatch too. A linked treasury
@@ -197,6 +210,7 @@ def inspect_principal_x_collection_sources(
         invalid_cash_amount_count=invalid_cash,
         treasury_amount_mismatch_count=treasury_amount_mismatches,
         treasury_currency_mismatch_count=treasury_currency_mismatches,
+        treasury_direction_mismatch_count=treasury_direction_mismatches,
         missing_cash_evidence_count=sum(
             1 for row in payments
             if getattr(row, "payment_method", None) == PaymentMethod.CASH
