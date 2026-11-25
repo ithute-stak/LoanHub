@@ -1,5 +1,7 @@
 "use client";
 
+import {confirmAppDialog} from "@/lib/app-dialog";
+
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {
   Activity,
@@ -331,7 +333,7 @@ export default function CallsAndQAPage() {
   }
 
   async function removeCall(call: ClientCall) {
-    if (!window.confirm("Delete this call record and its recording permanently? This cannot be undone.")) return;
+    if (!await confirmAppDialog("Delete this call record and its recording permanently? This cannot be undone.", {destructive: true, confirmLabel: "Delete call"})) return;
     setDeletingCallId(call.id);
     try {
       await callsApi.deleteCall(call.id);

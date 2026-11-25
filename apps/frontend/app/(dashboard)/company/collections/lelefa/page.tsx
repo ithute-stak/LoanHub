@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import {confirmAppDialog} from "@/lib/app-dialog";
+
 import {
   ArrowLeft,
   BadgeCheck,
@@ -187,7 +189,7 @@ export default function LelefaManagedCollectionsPage() {
 
   async function decideOffer(referral: LelefaReferral, decision: "accept" | "reject") {
     const verb = decision === "accept" ? "accept" : "reject";
-    if (!window.confirm(`${verb[0].toUpperCase()}${verb.slice(1)} Lelefa's offer for ${referral.reference}?`)) return;
+    if (!await confirmAppDialog(`${verb[0].toUpperCase()}${verb.slice(1)} Lelefa's offer for ${referral.reference}?`)) return;
     setWorkingReferralId(referral.id);
     try {
       await lelefaCollectionsApi.decideOffer(referral.id, decision);

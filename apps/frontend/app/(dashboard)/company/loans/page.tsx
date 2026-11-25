@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import {promptAppDialog, showAppMessage} from "@/lib/app-dialog";
+
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import {useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode} from "react";
@@ -516,7 +518,7 @@ export default function CompanyLoansPage() {
                 requires_signed_amendment: boolean;
             }>(`/loans/${selectedLoan.id}/installments/${item.id}/final-rollover-preview`);
             const quote = response.data;
-            window.alert(
+            await showAppMessage(
                 `FINAL INSTALLMENT ROLLOVER — REVIEW ONLY\\n\\n` +
                 `Remaining balance: ${formatMoney(quote.unpaid_remainder)}\\n` +
                 `Proposed linked facility: ${formatMoney(quote.unpaid_remainder)}\\n` +
@@ -532,7 +534,7 @@ export default function CompanyLoansPage() {
     async function carryForwardInstallment(item: RepaymentInstallment) {
         if (!selectedLoan) return;
         const remainder = Math.max(0, Number(item.total_due) - Number(item.paid_amount));
-        const agreement = window.prompt(
+        const agreement = await promptAppDialog(
             `Approve carrying ${formatMoney(remainder)} from installment ${item.installment_number} into the next installment? Enter the documented agreement or approval reason (at least 12 characters):`
         );
         if (agreement === null) return;

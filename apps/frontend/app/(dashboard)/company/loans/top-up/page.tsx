@@ -1,5 +1,7 @@
 "use client";
 
+import {confirmAppDialog, promptAppDialog} from "@/lib/app-dialog";
+
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -73,7 +75,7 @@ function TopUpWorkspace() {
 
   async function approveException() {
     if (!application || activeRole !== "company_owner") return;
-    const reason = window.prompt("Company-owner top-up exception reason (minimum 10 characters):");
+    const reason = await promptAppDialog("Company-owner top-up exception reason (minimum 10 characters):", "", {minLength: 10});
     if (!reason || reason.trim().length < 10) return;
     setSaving(true);
     try {
@@ -91,12 +93,12 @@ function TopUpWorkspace() {
   async function rejectTopUp() {
     if (!application || !canManage || !canReject) return;
     const defaultReason = !parentEligible ? "Parent loan settled before the top-up was processed." : "";
-    const reason = window.prompt("Reason for rejecting this top-up (minimum 10 characters):", defaultReason);
+    const reason = await promptAppDialog("Reason for rejecting this top-up (minimum 10 characters):", defaultReason, {minLength: 10});
     if (!reason || reason.trim().length < 10) {
       if (reason !== null) toast.error("Enter at least 10 characters for the rejection reason.");
       return;
     }
-    if (!window.confirm("Reject this top-up application? The parent loan and payments will remain unchanged.")) return;
+    if (!await confirmAppDialog("Reject this top-up application? The parent loan and payments will remain unchanged.", {destructive: true, confirmLabel: "Reject top-up"})) return;
     setSaving(true);
     try {
       const result = await originationApi.rejectTopUp(application.id, reason.trim());

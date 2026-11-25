@@ -1,4 +1,5 @@
 "use client";
+import {toast} from "@/utils/toast";
 
 import { useReduxTableField } from "@/store/hooks/useReduxTableField";
 import Link from "next/link";
@@ -209,7 +210,7 @@ export default function CdasHistoryPage() {
             anchor.remove();
             URL.revokeObjectURL(url);
         } catch {
-            window.alert("Unable to generate the CDAS history PDF. Check permissions and try again.");
+            toast.error("Unable to generate the CDAS history PDF. Check permissions and try again.");
         }
     }
 
@@ -225,7 +226,7 @@ export default function CdasHistoryPage() {
             anchor.remove();
             URL.revokeObjectURL(url);
         } catch (error: unknown) {
-            window.alert(getErrorMessage(error, "Unable to export CDAS transactions; narrow filters if there are more than 500 matching rows."));
+            toast.error(getErrorMessage(error, "Unable to export CDAS transactions; narrow filters if there are more than 500 matching rows."));
         }
     }
 

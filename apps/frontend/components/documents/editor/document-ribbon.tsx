@@ -1,6 +1,8 @@
 "use client";
 
 import type { Editor } from "@tiptap/react";
+import {promptAppDialog} from "@/lib/app-dialog";
+
 import {
     AlignCenter,
     AlignJustify,
@@ -283,9 +285,9 @@ function applyWordStyle(editor: Editor, styleKey: (typeof WORD_STYLES)[number]["
     }
 }
 
-function insertLink(editor: Editor) {
+async function insertLink(editor: Editor) {
     const previous = editor.getAttributes("link").href as string | undefined;
-    const value = window.prompt("Enter the link URL", previous || "https://");
+    const value = await promptAppDialog("Enter the link URL", previous || "https://");
     if (value === null) return;
     if (!value.trim()) editor.chain().focus().unsetLink().run();
     else editor.chain().focus().extendMarkRange("link").setLink({ href: value.trim() }).run();

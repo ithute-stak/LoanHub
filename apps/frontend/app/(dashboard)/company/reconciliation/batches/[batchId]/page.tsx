@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import {promptAppDialog} from "@/lib/app-dialog";
+
 import { useParams } from "next/navigation";
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, Loader2, RefreshCcw, Scale, Upload } from "lucide-react";
@@ -96,7 +98,7 @@ export default function ReconciliationBatchPage() {
 
   async function ignoreLine(line: ReconciliationLine) {
     if (!batch) return;
-    const note = window.prompt("Evidence note explaining why this row should be ignored:");
+    const note = await promptAppDialog("Evidence note explaining why this row should be ignored:", "", {minLength: 1});
     if (!note) return;
     setBusy(`resolve:${line.id}`); setError(null);
     try { await resolveReconciliationLine(batch.id, line.id, "ignored", note); await load(); }
