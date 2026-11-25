@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import {promptAppDialog} from "@/lib/app-dialog";
+
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
@@ -623,7 +625,7 @@ function OriginationWizard() {
 
   async function approveTopUpExceptionFromReview() {
     if (!application || application.application_type !== "top_up" || !application.top_up_exception_requested || application.top_up_exception_approved || activeRole !== "company_owner") return;
-    const reason = window.prompt("Approve this early top-up exception as Company Owner. Enter the business reason (at least 10 characters). This records your decision but does not disburse the loan.", application.top_up_exception_reason ?? "");
+    const reason = await promptAppDialog("Approve this early top-up exception as Company Owner. Enter the business reason (at least 10 characters). This records your decision but does not disburse the loan.", application.top_up_exception_reason ?? "", {minLength: 10});
     if (reason === null) return;
     if (reason.trim().length < 10) {
       toast.error("Please enter at least 10 characters explaining the owner exception.");
