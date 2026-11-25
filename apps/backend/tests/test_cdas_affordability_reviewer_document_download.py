@@ -114,3 +114,46 @@ def test_missing_binding_cannot_be_downloaded(monkeypatch):
     with pytest.raises(HTTPException) as blocked:
         module.download_cdas_consent_review_document(record.id, context, db)
     assert blocked.value.status_code == 409
+
+
+def test_unknown_evidence_is_not_downloadable(monkeypatch):
+    record, db, context = fixture()
+    db.record = None
+    monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("No file verification")))
+    with pytest.raises(HTTPException) as blocked:
+        module.download_cdas_consent_review_document(record.id, context, db)
+    assert blocked.value.status_code == 404
+
+
+def test_unidentified_submitter_cannot_be_independently_reviewed(monkeypatch):
+    record, db, context = fixture()
+    record.submitted_by_user_id = None
+    monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("No file verification")))
+    with pytest.raises(HTTPException) as blocked:
+        module.download_cdas_consent_review_document(record.id, context, db)
+    assert blocked.value.status_code == 403
+
+
+def test_missing_managed_file_fails_integrity_verification(monkeypatch):
+    record, db, context = fixture()
+    db.file = None
+    monkeypatch.setattr(module, "_require_company_manager", lambda ctx: None)
+    seen = []
+    def verify(**kwargs):
+        seen.append(kwargs)
+        if kwargs["file"] is None:
+            raise HTTPException(409, "Consent source missing")
+        raise AssertionError("Unexpected file")
+    monkeypatch.setattr(module, "verify_managed_cdas_consent_bytes", verify)
+    from services import file_service
+    monkeypatch.setattr(file_service, "read_file_bytes",
+                        lambda file: (_ for _ in ()).throw(AssertionError("No file download")))
+    with pytest.raises(HTTPException) as blocked:
+        module.download_cdas_consent_review_document(record.id, context, db)
+    assert blocked.value.status_code == 409
+    assert len(seen) == 1
+    assert seen[0]["borrower_id"] == record.borrower_id
