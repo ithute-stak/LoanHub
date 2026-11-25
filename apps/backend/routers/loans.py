@@ -1370,6 +1370,75 @@ def get_company_loan_activity(
     }
 
 
+@router.get("/{loan_id}/payment-sequence")
+def get_loan_payment_sequence(
+    loan_id: UUID,
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(30, ge=1, le=100),
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db),
+):
+    """Read recorded repayment transactions without generating receipts or posting money."""
+    from database.models.enums import PaymentPurpose, PaymentDirection
+    from database.models.repayment import PaymentAllocation
+
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    query = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == loan.company_id,
+        PaymentTransaction.loan_id == loan.id,
+        PaymentTransaction.borrower_id == loan.borrower_id,
+        PaymentTransaction.purpose == PaymentPurpose.LOAN_REPAYMENT,
+        PaymentTransaction.direction == PaymentDirection.INBOUND,
+    )
+    total = query.count()
+    payments = query.options(
+        joinedload(PaymentTransaction.initiated_by).joinedload(User.person),
+        joinedload(PaymentTransaction.verified_by).joinedload(User.person),
+        selectinload(PaymentTransaction.allocations).joinedload(PaymentAllocation.installment),
+    ).order_by(PaymentTransaction.created_at.asc(), PaymentTransaction.id.asc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+    receipts = db.query(PaymentReceipt).filter(
+        PaymentReceipt.company_id == loan.company_id,
+        PaymentReceipt.loan_id == loan.id,
+        PaymentReceipt.borrower_id == loan.borrower_id,
+        PaymentReceipt.payment_id.in_([payment.id for payment in payments]),
+    ).all() if payments else []
+    by_payment = {receipt.payment_id: receipt for receipt in receipts}
+
+    def actor_name(user):
+        return user.person.full_name if user and user.person else None
+
+    items = []
+    for index, payment in enumerate(payments, start=(page - 1) * page_size + 1):
+        receipt = by_payment.get(payment.id)
+        items.append({
+            "sequence": index,
+            "payment_id": str(payment.id),
+            "amount": format(payment.amount, ".2f"),
+            "currency": payment.currency,
+            "status": payment.status.value,
+            "payment_method": payment.payment_method.value,
+            "created_at": payment.created_at.isoformat() if payment.created_at else None,
+            "completed_at": payment.completed_at.isoformat() if payment.completed_at else None,
+            "initiated_by": actor_name(payment.initiated_by),
+            "verified_by": actor_name(payment.verified_by),
+            "receipt_number": receipt.receipt_number if receipt else None,
+            "allocations": [
+                {"installment_number": allocation.installment.installment_number,
+                 "amount": format(allocation.amount, ".2f")}
+                for allocation in sorted(payment.allocations, key=lambda row: (
+                    row.installment.installment_number if row.installment else 0, str(row.id)))
+                if allocation.installment and allocation.installment.loan_id == loan.id
+            ],
+            "balance_evidence": "not_verified",
+        })
+    return {"loan_id": str(loan.id), "items": items, "total": total,
+            "page": page, "page_size": page_size,
+            "sequence_basis": "recorded repayment attempts ordered by creation time",
+            "allocation_basis": "currently retained allocation records"}
+
+
 @router.get("/{loan_id}/activity")
 def get_loan_activity(
     loan_id: UUID,
