@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.access_control import COMPANY_MANAGEMENT_ROLES, TenantContext
@@ -34,10 +35,9 @@ def require_current_document_issuer(
 ) -> AuthorizedIssuer:
     """Reload live staff/company status, bypassing previously cached ORM objects.
 
-    Acquire PostgreSQL SHARE NOWAIT locks on all three authorization rows.
-    They must remain held in this Session transaction through issuance COMMIT.
-    A SELECT-only runtime role cannot acquire these locks and must fail closed;
-    trusted issuer credentials and transaction isolation remain prerequisites.
+    Acquire delegated PostgreSQL SHARE NOWAIT locks on all three records,
+    then re-read them under tenant RLS. The issuer has SELECT-only grants;
+    the protected lock function must be provisioned and executable, or fail closed.
     """
     if (context.is_platform_admin or context.user is None
             or context.staff is None or context.company is None
@@ -50,11 +50,24 @@ def require_current_document_issuer(
             or context.staff.role not in COMPANY_MANAGEMENT_ROLES):
         raise PermissionError("Current authenticated company issuer required")
 
+    # A database-owner SECURITY DEFINER function checks the protected
+    # session_user/company mapping and locks authorization rows without
+    # granting this SQL login UPDATE. Never fall back to an unlocked read.
+    locked = db.execute(text(
+        "SELECT public.lock_document_issuer_authorization(:user_id, :company_id, :staff_id)"
+    ), {
+        "user_id": context.user.id,
+        "company_id": context.company_id,
+        "staff_id": context.staff.id,
+    }).scalar_one_or_none()
+    if locked is not True:
+        raise PermissionError("Delegated issuer authorization lock was not acquired")
+
     user = db.query(User).filter(
         User.id == context.user.id,
         User.is_active.is_(True),
         User.must_change_password.is_(False),
-    ).populate_existing().with_for_update(read=True, nowait=True).one_or_none()
+    ).populate_existing().one_or_none()
     if (user is None or user.id != context.user.id
             or user.is_active is not True
             or user.must_change_password is not False):
@@ -64,7 +77,7 @@ def require_current_document_issuer(
         LoanCompany.id == context.company_id,
         LoanCompany.is_active.is_(True),
         LoanCompany.status == CompanyStatus.APPROVED,
-    ).populate_existing().with_for_update(read=True, nowait=True).one_or_none()
+    ).populate_existing().one_or_none()
     if (company is None or company.id != context.company_id
             or company.is_active is not True
             or company.status != CompanyStatus.APPROVED):
@@ -76,7 +89,7 @@ def require_current_document_issuer(
         CompanyStaff.company_id == context.company_id,
         CompanyStaff.is_active.is_(True),
         CompanyStaff.role.in_(COMPANY_MANAGEMENT_ROLES),
-    ).populate_existing().with_for_update(read=True, nowait=True).one_or_none()
+    ).populate_existing().one_or_none()
     if (membership is None or membership.id != context.staff.id
             or membership.user_id != context.user.id
             or membership.company_id != context.company_id
