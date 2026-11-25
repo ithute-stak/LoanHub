@@ -1416,6 +1416,17 @@ def generate_contract(
         )
 
     terms = build_terms(db, loan)
+    # Capture only at initial contract creation; legacy repair must not invent it.
+    from database.models.origination import BorrowerEmploymentProfile
+    employment = db.query(BorrowerEmploymentProfile).filter(
+        BorrowerEmploymentProfile.company_id == loan.company_id,
+        BorrowerEmploymentProfile.borrower_id == loan.borrower_id,
+    ).first()
+    terms["sequence_profile_v1"] = {
+        "borrower_id": str(loan.borrower_id),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "employee_number": employment.employee_number if employment else None,
+    }
     terms["contract_template_style"] = _normalize_contract_style(template_style)
     canonical = json.dumps(terms, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
