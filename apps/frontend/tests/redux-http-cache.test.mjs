@@ -214,7 +214,7 @@ test("successful disbursement, repayment and top-up invalidate current company's
     });
     const a = {headers:headersFor("company-A")};
     const b = {headers:headersFor("company-B")};
-    const read = (headers, path) => client.get(path, {headers});
+    const read = (requestConfig, path) => client.get(path, requestConfig);
     assert.equal((await read(a, "/loans/")).data.amount, 100);
     assert.equal((await read(a, "/payments/")).data.amount, 100);
     assert.equal((await read(b, "/loans/")).data.amount, 100);
