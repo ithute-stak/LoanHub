@@ -573,9 +573,11 @@ def test_actual_full_registration_failure_rolls_back_all_new_rows(
         """)).scalar_one() == 1
 
 
-def full_capture_with_bank(branch_id):
+def full_capture_with_bank(
+    branch_id, *, national_id="SYN-FULL-REG-001", phone="59000070",
+):
     """Synthetic account whose prefix and length satisfy FNB validation."""
-    request = full_capture(branch_id)
+    request = full_capture(branch_id, national_id=national_id, phone=phone)
     payload = request.model_dump(mode="python")
     payload["bank_account"] = {
         "account_holder": "Palesa Mokoena",
@@ -820,7 +822,7 @@ def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
     app.dependency_overrides[get_tenant_context] = lambda: context
     client = TestClient(app)
     url = "/api/v1/batlokoa/registration/clients"
-    body = full_capture(
+    body = full_capture_with_bank(
         branch, national_id="SYN-OFFLINE-HTTP-001", phone="59007881",
     ).model_dump(mode="json")
     headers = {"Idempotency-Key": "offline-http-reg-001"}
@@ -866,6 +868,15 @@ def test_offline_http_registration_saves_replays_and_reads_back_in_sandbox(
         assert conn.execute(text(f"""
             SELECT count(*) FROM {schema}.borrower_debt_obligations
         """)).scalar_one() == 1
+        bank = conn.execute(text(f"""
+            SELECT account_number_encrypted, account_number_last4,
+                   tokenized_card_reference_encrypted, verification_status
+            FROM {schema}.borrower_bank_accounts
+        """)).one()
+        assert bank.account_number_last4 == "7890"
+        assert "61234567890" not in bank.account_number_encrypted
+        assert "CI-ONLY-TOKEN-REF" not in bank.tokenized_card_reference_encrypted
+        assert bank.verification_status == "unverified"
 
     # Removing the explicit operator acknowledgement fails before any write.
     monkeypatch.delenv("LOANHUB_REGISTRATION_E2E_ACK")
