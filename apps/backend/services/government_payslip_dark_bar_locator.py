@@ -43,7 +43,7 @@ def locate_dark_bar_net_pay_cell(
         raise AmountCellLocationError("missing or ambiguous earnings table anchor")
     heading = headings[0]
     bar_left = max(0, heading.left - max(8, width // 100))
-    bar_right = min(width, bar_left + int(width * 0.28))
+    bar_right = min(width, bar_left + int(width * 0.29))
     if bar_right - bar_left < 130:
         raise AmountCellLocationError("insufficient space for financial summary bar")
 
@@ -81,7 +81,7 @@ def locate_dark_bar_net_pay_cell(
         raise AmountCellLocationError("summary bars have inconsistent heights")
 
     left = bar_right + max(6, width // 150)
-    right = min(width, left + int(width * 0.115))
+    right = min(width, left + int(width * 0.118))
     top = max(0, second[0] - 2)
     bottom = min(height, second[1] + 2)
     if right - left < 35 or bottom - top < 12 or (right-left)*(bottom-top) > 2_000_000:
