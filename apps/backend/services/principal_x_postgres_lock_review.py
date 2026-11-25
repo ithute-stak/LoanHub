@@ -18,6 +18,7 @@ from database.models.loan_payment_model_assignment import LoanPaymentModelAssign
 from database.models.payment import PaymentTransaction
 from payment_engine.principal_x_policy import PaymentModel
 from services.principal_x_transaction_coordinator import LockedLoanSnapshot
+from services.principal_x_locked_source_revision import local_principal_x_source_revision
 from payment_engine.principal_x_scoped_ledger_review import (
     ScopedLedgerReview, ScopedSourceAttestation, review_scoped_ledger_attestations,
 )
@@ -149,6 +150,14 @@ def inspect_scoped_principal_x_evidence_under_loan_lock(
     financial = inspect_principal_x_sources_under_loan_lock(
         db, company_id=company_id, loan_id=loan_id,
     )
+    # The review revision must come from the database state read under the
+    # same loan lock, not only from a caller's matching attestations.
+    server_revision = local_principal_x_source_revision(
+        db, company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+    )
+    if snapshot_revision != server_revision:
+        raise ValueError("Stale or caller-supplied local source revision")
     scoped = review_scoped_ledger_attestations(
         company_id=financial.snapshot.company_id,
         loan_id=financial.snapshot.loan_id,
