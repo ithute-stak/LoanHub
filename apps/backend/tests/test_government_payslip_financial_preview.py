@@ -71,3 +71,29 @@ def test_inconsistent_total_remains_manual_review_even_if_rows_read():
                     result = preview_scanned_payslip_financials(b"test", "scan.png")
     assert result.status == "manual_review"
     assert result.review_required
+
+
+
+def test_gross_crop_candidate_is_passed_to_table_reconciliation():
+    from services.government_payslip_amount_crop import AmountCropEvidence
+    from services.government_payslip_amount_locator import LocatedAmountCell
+
+    with patch("services.government_payslip_financial_preview.preview_net_pay_amount", return_value=net()):
+        with patch("services.government_payslip_financial_preview._single_image",
+                   return_value=Image.new("RGB", (900, 1000))):
+            with patch("services.government_payslip_financial_preview.spatial_ocr", return_value=()):
+                with patch("services.government_payslip_financial_preview.locate_dark_bar_gross_cell",
+                           return_value=LocatedAmountCell("gross_dark_bar_candidate", (200, 400, 330, 440))):
+                    with patch("services.government_payslip_financial_preview.read_amount_crop",
+                               return_value=AmountCropEvidence(
+                                   Decimal("1000.00"), ("1,000.00", "1,000.00"),
+                                   True, True, ("printed_amount_crop_requires_reviewer_confirmation",),
+                               )):
+                        with patch(
+                            "services.government_payslip_financial_preview.read_scanned_payslip_financials",
+                            return_value=scanned(),
+                        ) as table:
+                            result = preview_scanned_payslip_financials(b"test", "scan.png")
+    assert table.call_args.kwargs["gross_crop_candidate"] == Decimal("1000.00")
+    assert result.status == "arithmetic_reconciled_review_required"
+    assert result.review_required
