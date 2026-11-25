@@ -3,6 +3,7 @@
  * Exercises real reducer actions, not a reimplementation of its state machine.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -113,7 +114,8 @@ function createCacheClient(userId, adapter) {
     },
   };
   const store = configureStore({
-    reducer: { httpCache: reducer, auth: (state = auth) => state },
+    reducer: { httpCache: reducer, auth: (state = auth, action) =>
+      action.type === "test/auth/set" ? {user:action.payload} : state },
   });
   const client = axios.create({baseURL:"https://api.loanhub.co.ls/api/v1", adapter});
   installReduxHttpCache(client, store);
@@ -272,6 +274,153 @@ test("company Finance manual Refresh bypasses cached agreements, ledger and clai
   }
   assert.equal(apiSource.split('loanHubCache: options?.refresh ? { mode: "refresh" }').length - 1, 3);
   assert.ok(pageSource.includes('onClick={() => void load(true)}><RefreshCcw'));
+});
+
+test("delayed repayment invalidates its originating branch even after active membership switches", async () => {
+  let resolvePayment;
+  let networkReads = 0;
+  const {client, store} = createCacheClient("branch-race", config => {
+    if (config.method === "post") {
+      return new Promise(resolve => { resolvePayment = () => resolve(response(config, {ok:true})); });
+    }
+    networkReads++;
+    return Promise.resolve(response(config, {version:networkReads}));
+  });
+  const a = {headers:headersFor("company-A")};
+  const b = {headers:headersFor("company-B")};
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  assert.equal((await client.get("/loans/", b)).data.version, 2);
+  assert.equal((await client.get("/loans/", a)).data.version, 1);
+  const oldScope = Object.values(store.getState().httpCache.entries)
+    .find(entry => entry.scope.includes("company-A"))?.scope;
+  assert.match(oldScope, /company-A:loan_officer:branch-1$/);
+  const payment = client.post("/loans/repayments", {amount:75}, a);
+  for (let attempt = 0; attempt < 20 && !resolvePayment; attempt++) await Promise.resolve();
+  assert.equal(typeof resolvePayment, "function", "repayment must have started on branch-1");
+  const currentUser = store.getState().auth.user;
+  store.dispatch({type:"test/auth/set", payload:{
+    ...currentUser,
+    memberships: currentUser.memberships.map(m =>
+      m.company_id === "company-A" ? {...m,branch_id:"branch-9"} : m),
+  }});
+  // The selected branch changed while the network payment was still in flight.
+  resolvePayment();
+  await payment;
+  const entries = Object.values(store.getState().httpCache.entries);
+  assert.equal(entries.some(entry => entry.scope === oldScope), false,
+    "the original branch's cached loan figures must be invalidated");
+  assert.equal(entries.some(entry => entry.scope.includes("company-B")), true,
+    "a different company's cache must remain untouched");
+  assert.equal((await client.get("/loans/", a)).data.version, 3,
+    "the new membership must fetch its own independent financial records");
+});
+
+test("adapter returning a new response config fails closed on mutation scope loss", async () => {
+  const {client, store} = createCacheClient("config-replacement", async config => {
+    if (config.method === "post") {
+      return response({...config}, {ok:true});
+    }
+    return response(config, {ok:true});
+  });
+  const a = {headers:headersFor("company-A")};
+  const b = {headers:headersFor("company-B")};
+  await client.get("/loans/", a);
+  await client.get("/loans/", b);
+  assert.equal(Object.keys(store.getState().httpCache.entries).length, 2);
+  await client.post("/loans/repayments", {amount:50}, a);
+  assert.equal(Object.keys(store.getState().httpCache.entries).length, 0,
+    "unknown mutation origin must not leave finance caches stale");
+});
+
+test("manual refresh cannot be overwritten by a slower earlier read", async () => {
+  let finishOld;
+  let reads = 0;
+  const {client,store} = createCacheClient("refresh-order", config => {
+    reads++;
+    if (reads === 1) {
+      return new Promise(resolve => { finishOld = () => resolve(response(config, {balance:100})); });
+    }
+    return Promise.resolve(response(config, {balance:200}));
+  });
+  const config = {headers:headersFor("company-A")};
+  const staleRead = client.get("/loans/", config);
+  for (let attempt = 0; attempt < 20 && !finishOld; attempt++) await Promise.resolve();
+  assert.equal(typeof finishOld, "function");
+  const refreshed = await client.get("/loans/", {...config, loanHubCache:{mode:"refresh"}});
+  assert.equal(refreshed.data.balance,200);
+  finishOld();
+  assert.equal((await staleRead).data.balance,100);
+  assert.equal((await client.get("/loans/", config)).data.balance,200);
+  assert.equal(reads,2,"an older response must not replace the refreshed cache entry");
+  assert.equal(Object.values(store.getState().httpCache.entries)[0].data.balance,200);
+});
+
+test("Axios clients with separate Redux stores never share a pending GET", async () => {
+  let finishFirst;
+  let firstReads = 0;
+  let secondReads = 0;
+  const a = createCacheClient("same-user", config => {
+    firstReads++;
+    return new Promise(resolve => { finishFirst = () => resolve(response(config, {origin:"first"})); });
+  });
+  const b = createCacheClient("same-user", async config => {
+    secondReads++;
+    return response(config, {origin:"second"});
+  });
+  const config = {headers:headersFor("company-A")};
+  const pending = a.client.get("/loans/", config);
+  for (let attempt = 0; attempt < 20 && !finishFirst; attempt++) await Promise.resolve();
+  assert.equal(typeof finishFirst,"function");
+  assert.equal((await b.client.get("/loans/", config)).data.origin,"second");
+  finishFirst();
+  assert.equal((await pending).data.origin,"first");
+  assert.equal(firstReads,1);
+  assert.equal(secondReads,1);
+});
+
+test("opt-in Finance browser certification is syntactically valid and write-blocked", () => {
+  const filename = fileURLToPath(new URL("./finance-refresh-staging-browser-probe.mjs", import.meta.url));
+  execFileSync(process.execPath, ["--check", filename]);
+  const probe = readFileSync(filename, "utf8");
+  assert.match(probe, /LOANHUB_E2E_CONFIRM_SYNTHETIC/);
+  assert.match(probe, /route\.abort\("blockedbyclient"\)/);
+  assert.match(probe, /\["GET", "HEAD", "OPTIONS"\]\.includes\(request\.method\(\)\)/);
+  assert.match(probe, /page\.waitForResponse/);
+  for (const path of [
+    "/finance-config/company/agreements",
+    "/finance-config/company/charge-ledger",
+    "/finance-config/company/claims",
+  ]) assert.ok(probe.includes(path), `Missing read-only refresh check: ${path}`);
+});
+
+test("stale cache remains usable when background revalidation fails", async () => {
+  let calls = 0;
+  let failRevalidation;
+  const {client, store} = createCacheClient("stale-error", config => {
+    calls++;
+    if (calls === 1) return Promise.resolve(response(config, {balance:100}));
+    return new Promise((resolve, reject) => {
+      failRevalidation = () => reject(new Error("Temporary network outage"));
+    });
+  });
+  const config = {
+    headers: headersFor("company-A"),
+    loanHubCache: {ttlMs:0, staleWhileRevalidateMs:60000},
+  };
+  assert.equal((await client.get("/loans/", config)).data.balance, 100);
+  const stale = await client.get("/loans/", config);
+  assert.equal(stale.data.balance,100,"stale financial data must be labelled but remain readable");
+  assert.equal(stale.headers.get("X-LoanHub-Client-Cache"),"STALE");
+  for (let i=0; i<20 && !failRevalidation; i++) await Promise.resolve();
+  assert.equal(typeof failRevalidation,"function");
+  failRevalidation();
+  // Flush the rejected adapter promise, cleanup finally, and its error observer.
+  for (let i=0; i<20; i++) await Promise.resolve();
+  assert.equal(calls,2);
+  const cacheEntries=Object.values(store.getState().httpCache.entries);
+  assert.equal(cacheEntries.length,1);
+  assert.equal(cacheEntries[0].data.balance,100,
+    "a failed background refresh must never replace cached financial data");
 });
 
 process.on("exit", () => rmSync(dir, {recursive:true,force:true}));

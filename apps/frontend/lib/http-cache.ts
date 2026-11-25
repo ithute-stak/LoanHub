@@ -44,7 +44,6 @@ type CachePolicy = {
 
 const installedClients = new WeakSet<AxiosInstance>();
 const storeUnsubscribers = new WeakMap<object, () => void>();
-const inflightRequests = new Map<string, Promise<AxiosResponse>>();
 
 const DEFAULT_POLICY: CachePolicy = {
     ttlMs: 30_000,
@@ -373,6 +372,16 @@ export function installReduxHttpCache(
     }
     installedClients.add(client);
 
+    // Bind each write to the tenant/branch identity present when it starts.
+    // The selected membership can change while a financial POST is awaiting
+    // a response; invalidating against the current Redux auth state would
+    // target the new tenant and leave the original tenant's cache stale.
+    const mutationOriginScopes = new WeakMap<InternalAxiosRequestConfig, string>();
+    // Single-flight requests and response ordering belong to one Axios client,
+    // not all stores on the page (or all clients in an integration test).
+    const inflightRequests = new Map<string, Promise<AxiosResponse>>();
+    const latestFetchByKey = new Map<string, number>();
+
     const networkAdapter: AxiosAdapter = axios.getAdapter(
         client.defaults.adapter,
     );
@@ -388,6 +397,8 @@ export function installReduxHttpCache(
         path: string,
     ): Promise<AxiosResponse> {
         const requestRevision = store.getState().httpCache.revision;
+        const fetchSequence = (latestFetchByKey.get(cacheIdentity.key) ?? 0) + 1;
+        latestFetchByKey.set(cacheIdentity.key, fetchSequence);
         store.dispatch(cacheNetworkRequest());
         const response = await networkAdapter(config);
         const responseHeaders = responseHeadersToAxiosHeaders(response.headers);
@@ -396,6 +407,7 @@ export function installReduxHttpCache(
 
         if (
             requestRevision === store.getState().httpCache.revision &&
+            latestFetchByKey.get(cacheIdentity.key) === fetchSequence &&
             cacheableResponse(response)
         ) {
             const now = Date.now();
@@ -433,10 +445,12 @@ export function installReduxHttpCache(
         const method = (config.method ?? "get").toLowerCase();
         const path = normalizedPath(config);
 
-        if (
-            method !== "get" ||
-            isExplicitlyUncacheable(config, path)
-        ) {
+        if (method !== "get") {
+            mutationOriginScopes.set(config, requestScope(store.getState(), config));
+            return networkAdapter(config);
+        }
+
+        if (isExplicitlyUncacheable(config, path)) {
             return networkAdapter(config);
         }
 
@@ -478,11 +492,17 @@ export function installReduxHttpCache(
                     identity,
                     policy,
                     path,
-                ).finally(() => {
-                    inflightRequests.delete(inflightKey);
+                );
+                const backgroundTracked = backgroundRequest.finally(() => {
+                    if (inflightRequests.get(inflightKey) === backgroundTracked) {
+                        inflightRequests.delete(inflightKey);
+                    }
                 });
-                inflightRequests.set(inflightKey, backgroundRequest);
-                void backgroundRequest.catch(() => undefined);
+                inflightRequests.set(inflightKey, backgroundTracked);
+                // The cleanup promise also rejects when the network fails.
+                // Observe that promise to avoid an unhandled rejection while
+                // preserving stale data for the user.
+                void backgroundTracked.catch(() => undefined);
             }
             return responseFromEntry(entry, config, "STALE");
         }
@@ -493,7 +513,7 @@ export function installReduxHttpCache(
         store.dispatch(cacheMiss());
 
         const inflight = inflightRequests.get(inflightKey);
-        if (inflight) {
+        if (inflight && !forceRefresh) {
             store.dispatch(cacheDeduplicated());
             return inflight;
         }
@@ -503,13 +523,16 @@ export function installReduxHttpCache(
             identity,
             policy,
             path,
-        ).finally(() => {
-            inflightRequests.delete(inflightKey);
+        );
+        const trackedRequest = request.finally(() => {
+            if (inflightRequests.get(inflightKey) === trackedRequest) {
+                inflightRequests.delete(inflightKey);
+            }
         });
         // Use the same revision-qualified identity as the lookup above.
         // Otherwise identical concurrent GETs bypass single-flight.
-        inflightRequests.set(inflightKey, request);
-        return request;
+        inflightRequests.set(inflightKey, trackedRequest);
+        return trackedRequest;
     };
 
     client.interceptors.response.use((response) => {
@@ -526,10 +549,16 @@ export function installReduxHttpCache(
             return response;
         }
 
-        const scope = requestScope(
-            store.getState(),
-            response.config as InternalAxiosRequestConfig,
-        );
+        const requestConfig = response.config as InternalAxiosRequestConfig;
+        const scope = mutationOriginScopes.get(requestConfig);
+        mutationOriginScopes.delete(requestConfig);
+        if (!scope) {
+            // A custom adapter may return a different response.config object.
+            // Never invalidate whichever tenant happens to be active now:
+            // clear all cached data rather than leave stale finance records.
+            store.dispatch(cacheCleared());
+            return response;
+        }
         store.dispatch(cacheScopeInvalidated({ scope }));
         return response;
     });
