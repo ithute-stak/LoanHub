@@ -55,6 +55,11 @@ def local_principal_x_source_revision(
                 PaymentTransaction.loan_id == loan_id)
         .all()
     )
+    installments = (
+        db.query(RepaymentInstallment)
+        .filter(RepaymentInstallment.loan_id == loan_id)
+        .all()
+    )
     allocations = (
         db.query(PaymentAllocation)
         .join(RepaymentInstallment,
@@ -69,7 +74,7 @@ def local_principal_x_source_revision(
         .all()
     )
     payload = {
-        "version": 1,
+        "version": 2,
         "company_id": str(company_id), "loan_id": str(loan_id),
         "payments": _records(payments, (
             "id", "company_id", "loan_id", "amount", "currency",
@@ -80,6 +85,13 @@ def local_principal_x_source_revision(
         "cash": _records(cash, (
             "id", "payment_id", "direction", "tendered_amount",
             "applied_amount", "change_amount", "forward_amount",
+            "updated_at",
+        )),
+        "installments": _records(installments, (
+            "id", "loan_id", "renewal_cycle_id", "superseded_by_cycle_id",
+            "is_superseded", "superseded_at", "installment_number",
+            "due_date", "principal_due", "interest_due", "fee_due",
+            "total_due", "paid_amount", "status", "paid_at",
             "updated_at",
         )),
         "allocations": _records(allocations, (
