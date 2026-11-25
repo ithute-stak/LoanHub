@@ -1012,6 +1012,11 @@ def stored_assessment_summary(record: AuditLog) -> dict:
     data = (record.event_data or {}).get("snapshot")
     if not isinstance(data, dict) or data.get("borrower_id") != str(record.record_id):
         raise ValueError("Assessment record integrity check failed")
+    # Never present an incomplete archived result as a successfully completed
+    # assessment. This validator is shared by history and idempotent replay.
+    if any(not isinstance(data.get(field), str) or not data[field].strip()
+           for field in ("reference", "assessed_at", "decision")):
+        raise ValueError("Assessment archive lacks required result metadata")
     return {
         "record_id": str(record.id),
         "reference": data.get("reference"),
