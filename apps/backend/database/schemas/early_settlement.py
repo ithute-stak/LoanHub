@@ -132,6 +132,7 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     treasury_currency_mismatch_rows: int
     treasury_direction_mismatch_rows: int
     treasury_entry_type_mismatch_rows: int
+    duplicate_posted_treasury_payment_rows: int = 0
     voided_linked_treasury_rows: int
     unposted_linked_treasury_rows: int
     missing_posted_treasury_evidence_rows: int
