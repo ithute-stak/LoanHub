@@ -782,3 +782,49 @@ def test_duplicate_cash_evidence_violates_one_record_per_payment(amounts, expect
     )
     assert result.duplicate_cash_payment_count == expected
     assert result.complete is False
+
+
+@pytest.mark.parametrize("same_installment,expected", [(True, 1), (False, 0)])
+def test_duplicate_payment_installment_pair_requires_review(same_installment, expected):
+    payment_id, installment_id = uuid4(), uuid4()
+    payment = SimpleNamespace(
+        id=payment_id, amount=Decimal("100.00"),
+        status=PaymentStatus.SUCCEEDED, purpose=PaymentPurpose.LOAN_REPAYMENT,
+        direction=PaymentDirection.INBOUND,
+    )
+    allocations = [
+        SimpleNamespace(payment_id=payment_id, installment_id=installment_id,
+                        amount=Decimal("40.00")),
+        SimpleNamespace(payment_id=payment_id,
+                        installment_id=installment_id if same_installment else uuid4(),
+                        amount=Decimal("60.00")),
+    ]
+    result = inspect_principal_x_collection_sources(
+        SessionDouble([payment], [], allocations, []),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.duplicate_allocation_pair_count == expected
+    assert result.overallocated_payment_count == 0
+    assert result.complete is False
+
+
+def test_distinct_payments_to_same_installment_are_not_duplicate_pairs():
+    first, second, installment = uuid4(), uuid4(), uuid4()
+    payments = [
+        SimpleNamespace(id=pid, amount=Decimal("50.00"),
+                        status=PaymentStatus.SUCCEEDED,
+                        purpose=PaymentPurpose.LOAN_REPAYMENT,
+                        direction=PaymentDirection.INBOUND)
+        for pid in (first, second)
+    ]
+    allocations = [
+        SimpleNamespace(payment_id=pid, installment_id=installment,
+                        amount=Decimal("50.00"))
+        for pid in (first, second)
+    ]
+    result = inspect_principal_x_collection_sources(
+        SessionDouble(payments, [], allocations, []),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.duplicate_allocation_pair_count == 0
+    assert result.complete is False
