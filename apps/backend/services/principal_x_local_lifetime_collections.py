@@ -1,5 +1,6 @@
 """Unified local lifetime collection diagnostic; never a posting authorization."""
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -20,14 +21,24 @@ class LocalLifetimeCollections:
 
 
 def _money(value):
-    amount = Decimal(str(value))
-    if not amount.is_finite() or amount < 0 or amount != amount.quantize(Decimal("0.01")):
-        raise ValueError("Invalid monetary evidence")
-    return amount
+    try:
+        amount = Decimal(str(value))
+        if not amount.is_finite() or amount < 0 or amount != amount.quantize(Decimal("0.01")):
+            raise ValueError("Invalid monetary evidence")
+        return amount
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise ValueError("Invalid monetary evidence") from exc
+
+
+def _utc(value):
+    if not isinstance(value, datetime):
+        raise ValueError("Invalid payment chronology")
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def compare_local_lifetime_collections(*, company_id: UUID, loan_id: UUID,
-                                       payments, recorded_paid, historical_opening_credit):
+                                       payments, recorded_paid, historical_opening_credit,
+                                       historical_conversion_at=None):
     """One contribution per payment identity; supporting sources are not additive.
 
     A missing historical opening is unknown, not zero. Gross recorded successes
@@ -37,6 +48,9 @@ def compare_local_lifetime_collections(*, company_id: UUID, loan_id: UUID,
         raise ValueError("Verified scope required")
     paid = _money(recorded_paid)
     opening = None if historical_opening_credit is None else _money(historical_opening_credit)
+    cutoff = _utc(historical_conversion_at) if historical_conversion_at is not None else None
+    if opening is not None and opening > 0 and cutoff is None:
+        raise ValueError("Historical credit requires conversion chronology")
     seen = set()
     gross = Decimal("0.00")
     unresolved = 0
@@ -54,7 +68,8 @@ def compare_local_lifetime_collections(*, company_id: UUID, loan_id: UUID,
             continue
         try:
             amount = _money(row.amount)
-            if amount <= 0 or row.currency != "LSL" or row.completed_at is None:
+            completed = _utc(row.completed_at)
+            if amount <= 0 or row.currency != "LSL" or (cutoff is not None and completed <= cutoff):
                 raise ValueError("Incomplete repayment evidence")
         except (ValueError, TypeError, ArithmeticError):
             unresolved += 1
@@ -68,7 +83,8 @@ def compare_local_lifetime_collections(*, company_id: UUID, loan_id: UUID,
 
 
 def inspect_local_lifetime_collections(db, *, company_id: UUID, loan_id: UUID,
-                                       recorded_paid, historical_opening_credit):
+                                       recorded_paid, historical_opening_credit,
+                                       historical_conversion_at=None):
     if not isinstance(company_id, UUID) or not isinstance(loan_id, UUID):
         raise ValueError("Verified scope required")
     payments = db.query(PaymentTransaction).filter(
@@ -78,4 +94,5 @@ def inspect_local_lifetime_collections(db, *, company_id: UUID, loan_id: UUID,
     return compare_local_lifetime_collections(
         company_id=company_id, loan_id=loan_id, payments=payments,
         recorded_paid=recorded_paid, historical_opening_credit=historical_opening_credit,
+        historical_conversion_at=historical_conversion_at,
     )
