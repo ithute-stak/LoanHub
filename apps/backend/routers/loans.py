@@ -80,6 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_local_lifetime_collections import inspect_local_lifetime_collections
 from services.principal_x_gateway_reversal_review import inspect_gateway_reversals
 from services.principal_x_manual_adjustment_review import inspect_manual_adjustments
 from services.principal_x_adjustment_review import inspect_loan_adjustments
@@ -684,6 +685,23 @@ def principal_x_settlement_readiness(
         except ValueError:
             historical_status = "review_required"
             blockers.append("Historical opening capture and contract evidence require review.")
+    lifetime = None
+    try:
+        lifetime = inspect_local_lifetime_collections(
+            db, company_id=loan.company_id, loan_id=loan.id,
+            recorded_paid=loan.amount_paid,
+            historical_opening_credit=(
+                historical.credited_at_migration if historical else
+                None if historical_status != "not_applicable" else Decimal("0.00")
+            ),
+            historical_conversion_at=historical.converted_at if historical else None,
+        )
+        if lifetime.unresolved_payment_count:
+            blockers.append("Lifetime collection comparison contains unresolved payment evidence.")
+        if lifetime.unexplained_difference is not None and lifetime.unexplained_difference != 0:
+            blockers.append("Recorded lifetime credits disagree with the loan paid balance.")
+    except ValueError:
+        blockers.append("Local lifetime collection evidence requires review.")
     if audit.unresolved_payment_ids:
         blockers.append("Payment rows require reconciliation before settlement posting.")
     if audit.refund_payment_count:
@@ -811,6 +829,14 @@ def principal_x_settlement_readiness(
         gateway_reversal_review_complete=False,
         manual_adjustment_review_complete=False,
         adjustment_review_complete=False,
+        lifetime_recorded_successful_repayments=lifetime.recorded_successful_repayments if lifetime else None,
+        lifetime_historical_opening_credit=lifetime.historical_opening_credit if lifetime else None,
+        lifetime_recorded_credit_before_adjustments=lifetime.recorded_credit_before_adjustments if lifetime else None,
+        lifetime_recorded_loan_paid=lifetime.recorded_loan_paid if lifetime else None,
+        lifetime_unexplained_difference=lifetime.unexplained_difference if lifetime else None,
+        lifetime_unresolved_payment_rows=lifetime.unresolved_payment_count if lifetime else None,
+        lifetime_authoritative_net_collected=None,
+        lifetime_reconciled=False,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
         source_coverage=[
