@@ -159,6 +159,11 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     adjustment_inconsistent_completed_rows: int | None = None
     adjustment_duplicate_original_rows: int | None = None
     adjustment_excess_original_rows: int | None = None
+    manual_treasury_rows: int | None = None
+    manual_missing_journal_rows: int | None = None
+    manual_inconsistent_journal_rows: int | None = None
+    manual_write_off_journal_rows: int | None = None
+    manual_adjustment_review_complete: Literal[False] = False
     adjustment_review_complete: Literal[False] = False
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
