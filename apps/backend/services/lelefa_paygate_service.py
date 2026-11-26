@@ -657,6 +657,25 @@ def apply_gateway_resource(
     payment: PaymentTransaction,
     resource: dict[str, Any],
 ) -> PaymentTransaction:
+    # Ordinary repayment callbacks share the loan-first ordering used by
+    # the payment desk. Early settlements and payouts have separate lock
+    # graphs and must be migrated together rather than inverting their locks.
+    if (
+        payment.loan_id
+        and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+        and not (payment.provider_payload or {}).get("early_settlement_id")
+    ):
+        from services.principal_x_financial_lock import lock_financial_loan
+
+        try:
+            lock_financial_loan(db, company_id=payment.company_id, loan_id=payment.loan_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Gateway repayment requires a valid locked loan") from exc
+        # Another callback may have completed or reversed this payment while
+        # we waited. Refresh under the lock before deciding on side effects.
+        db.refresh(payment)
+        if (payment.provider_payload or {}).get("early_settlement_id"):
+            raise HTTPException(status_code=409, detail="Payment settlement linkage changed; retry reconciliation")
     response_id = str(resource.get("public_id") or resource.get("id") or "")
     if response_id and payment.provider_reference.startswith("LPG-PENDING-"):
         payment.provider_reference = response_id
