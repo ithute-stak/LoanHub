@@ -4,6 +4,10 @@ from decimal import Decimal
 import hashlib
 import json
 from uuid import UUID
+from datetime import datetime, timezone
+
+from database.models.enums import PaymentDirection, PaymentPurpose, PaymentStatus
+from database.models.payment import PaymentTransaction
 
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.origination import LoanContract
@@ -14,6 +18,7 @@ class HistoricalOpeningReview:
     credited_at_migration: Decimal
     receipt_book_total: Decimal
     excess_for_review: Decimal
+    converted_at: datetime | None = None
     independently_verified: bool = False
     can_post: bool = False
 
@@ -71,7 +76,7 @@ def review_historical_opening(*, company_id: UUID, loan_id: UUID, capture, contr
     )
     if any(_money(value) != expected for value, expected in checks):
         raise ValueError("Historical opening amounts disagree")
-    return HistoricalOpeningReview(credited, receipts, excess)
+    return HistoricalOpeningReview(credited, receipts, excess, converted_at=capture.converted_at)
 
 
 def inspect_historical_opening(db, *, company_id: UUID, loan_id: UUID):
@@ -88,3 +93,62 @@ def inspect_historical_opening(db, *, company_id: UUID, loan_id: UUID):
         raise ValueError("Historical opening evidence missing")
     return review_historical_opening(company_id=company_id, loan_id=loan_id,
                                      capture=capture, contract=contract)
+
+
+@dataclass(frozen=True)
+class HistoricalLiveComparison:
+    opening_credit: Decimal
+    recorded_live_repayments: Decimal
+    recorded_loan_paid: Decimal
+    difference: Decimal
+    unresolved_rows: int
+    independently_verified: bool = False
+
+
+def _utc(value):
+    if not isinstance(value, datetime):
+        raise ValueError("Missing payment chronology")
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def compare_historical_live_payments(*, opening, recorded_paid, payments, company_id, loan_id):
+    """Gross local comparison only; refunds and reversals are never silently netted."""
+    cutoff = _utc(opening.converted_at)
+    paid = _money(recorded_paid)
+    gross = Decimal("0.00")
+    unresolved = 0
+    seen = set()
+    for row in payments:
+        if row.company_id != company_id or row.loan_id != loan_id:
+            raise ValueError("Payment scope mismatch")
+        if not row.id or row.id in seen:
+            unresolved += 1
+            continue
+        seen.add(row.id)
+        if row.purpose != PaymentPurpose.LOAN_REPAYMENT:
+            unresolved += 1
+            continue
+        if row.status != PaymentStatus.SUCCEEDED or row.direction != PaymentDirection.INBOUND:
+            unresolved += 1
+            continue
+        try:
+            amount = _money(row.amount)
+            if row.currency != "LSL" or amount <= 0 or _utc(row.completed_at) < cutoff:
+                raise ValueError("Unresolved payment evidence")
+        except (ValueError, AttributeError):
+            unresolved += 1
+            continue
+        gross += amount
+    return HistoricalLiveComparison(opening.credited_at_migration, gross, paid,
+        paid - opening.credited_at_migration - gross, unresolved)
+
+
+def inspect_historical_live_payments(db, *, opening, recorded_paid, company_id, loan_id):
+    if not isinstance(company_id, UUID) or not isinstance(loan_id, UUID):
+        raise ValueError("Verified scope required")
+    rows = db.query(PaymentTransaction).filter(
+        PaymentTransaction.company_id == company_id,
+        PaymentTransaction.loan_id == loan_id,
+    ).all()
+    return compare_historical_live_payments(opening=opening, recorded_paid=recorded_paid,
+        payments=rows, company_id=company_id, loan_id=loan_id)
