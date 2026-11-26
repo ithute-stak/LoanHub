@@ -21,6 +21,7 @@ EXPECTED_TABLES = (
     "repayment_installments",
     "loan_rollover_transfers",
     "audit_logs",
+    "principal_x_ledger_reviews",
 )
 
 
@@ -302,3 +303,62 @@ def _certify_migrated_posting(engine):
             record_id=parent_id,
             action="loan.final_installment_receivable_transferred",
         ).count() == 0
+
+
+    # Exercise the actual migrated evidence table with the existing disposable
+    # tenant fixtures. No test-only replacement of triggers or constraints.
+    from sqlalchemy.exc import DBAPIError
+    import json
+    from payment_engine.principal_x_ledger_source_attestation import REQUIRED_SOURCE_FAMILIES
+
+    review_id = uuid4()
+    params = dict(
+        id=review_id, company=good[0], loan=good[1], maker=good[3],
+        checker=tenant[3], reference="CERT-" + uuid4().hex,
+        revision="a" * 64, digest="b" * 64,
+        attestations=json.dumps([
+            dict(source_family=family, complete=True,
+                 evidence_reference="cert:" + family, unresolved_count=0)
+            for family in sorted(REQUIRED_SOURCE_FAMILIES)
+        ]),
+    )
+    insert_review = text("""
+        INSERT INTO principal_x_ledger_reviews
+        (id, company_id, loan_id, maker_user_id, checker_user_id,
+         review_reference, source_revision, evidence_digest,
+         net_collected, reviewed_at, attestations)
+        VALUES (:id, :company, :loan, :maker, :checker, :reference,
+                :revision, :digest, 40.00, now(), CAST(:attestations AS jsonb))
+    """)
+    # This is storage certification only; user membership and evidence
+    # authenticity must be enforced by the future authorized writer.
+    with engine.begin() as conn:
+        conn.execute(insert_review, params)
+    with engine.begin() as conn:
+        for statement in (
+            "UPDATE principal_x_ledger_reviews SET net_collected = 41 WHERE id = :id",
+            "DELETE FROM principal_x_ledger_reviews WHERE id = :id",
+            "TRUNCATE principal_x_ledger_reviews",
+        ):
+            with pytest.raises(DBAPIError, match="append-only"):
+                with conn.begin_nested():
+                    conn.execute(text(statement), {"id": review_id})
+        for overrides, expected in (
+            ({"company": tenant[0]}, "loan scope mismatch"),
+            ({"checker": good[3]}, "ck_px_review_independent"),
+            ({"revision": "invalid"}, "ck_px_review_revision"),
+            ({"digest": "invalid"}, "ck_px_review_digest"),
+            ({"attestations": "[]"}, "ck_px_review_sources"),
+            ({"reference": params["reference"]}, "uq_px_review_reference"),
+        ):
+            invalid = dict(params, id=uuid4(), reference="CERT-" + uuid4().hex)
+            invalid.update(overrides)
+            with pytest.raises(DBAPIError, match=expected):
+                with conn.begin_nested():
+                    conn.execute(insert_review, invalid)
+        assert conn.execute(text(
+            "SELECT net_collected FROM principal_x_ledger_reviews WHERE id = :id"
+        ), {"id": review_id}).scalar_one() == Decimal("40.00")
+        assert conn.execute(text(
+            "SELECT count(*) FROM principal_x_ledger_reviews"
+        )).scalar_one() == 1
