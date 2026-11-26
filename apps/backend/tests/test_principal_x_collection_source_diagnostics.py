@@ -757,3 +757,28 @@ def test_duplicate_posted_treasury_evidence_requires_review(
     )
     assert result.duplicate_posted_treasury_payment_count == expected
     assert result.complete is False
+
+
+@pytest.mark.parametrize("amounts,expected", [
+    (["100.00"], 0),
+    (["60.00", "40.00"], 1),
+    (["60.00", "60.00"], 1),
+    (["100.00", "100.00"], 1),
+])
+def test_duplicate_cash_evidence_violates_one_record_per_payment(amounts, expected):
+    payment_id = uuid4()
+    payment = SimpleNamespace(
+        id=payment_id, amount=Decimal("100.00"),
+        direction=PaymentDirection.INBOUND,
+    )
+    cash = [
+        SimpleNamespace(payment_id=payment_id, applied_amount=Decimal(amount),
+                        direction=PaymentDirection.INBOUND)
+        for amount in amounts
+    ]
+    result = inspect_principal_x_collection_sources(
+        SessionDouble([payment], cash, [], []),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.duplicate_cash_payment_count == expected
+    assert result.complete is False
