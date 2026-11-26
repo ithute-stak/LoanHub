@@ -651,6 +651,12 @@ def principal_x_settlement_readiness(
         blockers.append("Treasury money-in/money-out direction disagrees with the linked payment.")
     if cross_sources.treasury_entry_type_mismatch_count:
         blockers.append("Successful loan repayments are linked to incorrectly classified treasury entries.")
+    if cross_sources.installment_allocation_excess_count:
+        blockers.append("Repayment allocations exceed recorded installment paid balances.")
+    if cross_sources.installment_unexplained_paid_count:
+        blockers.append("Installment paid balances require additional historical or adjustment evidence.")
+    if cross_sources.invalid_installment_balance_count:
+        blockers.append("Invalid installment balances require financial review.")
     if cross_sources.duplicate_allocation_pair_count:
         blockers.append("Duplicate payment-to-installment allocations require review.")
     if cross_sources.duplicate_cash_payment_count:
@@ -697,6 +703,9 @@ def principal_x_settlement_readiness(
         duplicate_posted_treasury_payment_rows=cross_sources.duplicate_posted_treasury_payment_count,
         duplicate_cash_payment_rows=cross_sources.duplicate_cash_payment_count,
         duplicate_allocation_pair_rows=cross_sources.duplicate_allocation_pair_count,
+        installment_allocation_excess_rows=cross_sources.installment_allocation_excess_count,
+        installment_unexplained_paid_rows=cross_sources.installment_unexplained_paid_count,
+        invalid_installment_balance_rows=cross_sources.invalid_installment_balance_count,
         voided_linked_treasury_rows=cross_sources.voided_linked_treasury_count,
         unposted_linked_treasury_rows=cross_sources.unposted_linked_treasury_count,
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
