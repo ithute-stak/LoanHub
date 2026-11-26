@@ -34,7 +34,7 @@ MAX_JS_CURSOR = 9007199254740991
 EXPECTED_REVISION = "dc20261122002"
 # Explicitly reviewed forward successors. The privileged Data Center control
 # remains fail-closed for unknown / divergent or multiple migration heads.
-APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001"}
+APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001", "px20261126001"}
 
 
 class PilotControlBlocked(RuntimeError):
