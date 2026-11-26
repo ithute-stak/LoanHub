@@ -163,6 +163,11 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     manual_missing_journal_rows: int | None = None
     manual_inconsistent_journal_rows: int | None = None
     manual_write_off_journal_rows: int | None = None
+    gateway_reversed_payment_rows: int | None = None
+    gateway_corroborated_payment_rows: int | None = None
+    gateway_missing_evidence_rows: int | None = None
+    gateway_inconsistent_event_rows: int | None = None
+    gateway_reversal_review_complete: Literal[False] = False
     manual_adjustment_review_complete: Literal[False] = False
     adjustment_review_complete: Literal[False] = False
     cross_source_reconciliation_complete: Literal[False] = False
