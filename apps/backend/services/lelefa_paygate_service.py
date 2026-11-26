@@ -537,6 +537,11 @@ def initiate_borrower_gateway_checkout(
             cancel_url=f"{return_url}?checkout=cancelled",
         )
     except LelefaPayGateError as exc:
+        _lock_ordinary_gateway_repayment(db, payment)
+        if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
+            raise HTTPException(
+                status_code=409, detail="Checkout already finalized; refresh payment history",
+            ) from exc
         payment.failure_reason = exc.detail
         payment.status = PaymentStatus.PROCESSING if exc.retryable else PaymentStatus.FAILED
         db.add(payment)
@@ -546,6 +551,11 @@ def initiate_borrower_gateway_checkout(
             detail=f"Could not create LelefaPayGate checkout: {exc.detail}",
         ) from exc
 
+    _lock_ordinary_gateway_repayment(db, payment)
+    if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
+        raise HTTPException(
+            status_code=409, detail="Checkout already finalized; refresh payment history",
+        )
     public_id = str(response.get("public_id") or response.get("id") or "").strip()
     checkout_url = str(response.get("checkout_url") or "").strip()
     parsed = urlparse(checkout_url)
