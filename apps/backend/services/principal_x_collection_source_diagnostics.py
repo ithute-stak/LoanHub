@@ -47,6 +47,7 @@ class CollectionSourceDiagnostics:
     missing_posted_refund_treasury_count: int = 0
     refund_treasury_type_mismatch_count: int = 0
     treasury_entry_type_mismatch_count: int = 0
+    duplicate_posted_treasury_payment_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -242,6 +243,19 @@ def inspect_principal_x_collection_sources(
     # A successful inbound loan repayment with no posted, non-voided
     # treasury link is a gap for review. Historical collections may use
     # different accounting paths; this is NOT proof of a missing payment.
+    # Multiple posted entries for the same payment require review even if
+    # each entry independently matches the payment amount.
+    posted_counts = {}
+    for entry in treasury:
+        if (
+            entry.payment_transaction_id in payment_ids
+            and not getattr(entry, "is_voided", False)
+            and getattr(getattr(entry, "approval_status", None), "value",
+                        getattr(entry, "approval_status", None)) == "posted"
+        ):
+            key = entry.payment_transaction_id
+            posted_counts[key] = posted_counts.get(key, 0) + 1
+    duplicate_posted = sum(1 for count in posted_counts.values() if count > 1)
     posted_treasury_payment_ids = {
         entry.payment_transaction_id for entry in treasury
         if entry.payment_transaction_id in payment_ids
@@ -294,6 +308,7 @@ def inspect_principal_x_collection_sources(
         treasury_currency_mismatch_count=treasury_currency_mismatches,
         treasury_direction_mismatch_count=treasury_direction_mismatches,
         treasury_entry_type_mismatch_count=treasury_entry_type_mismatches,
+        duplicate_posted_treasury_payment_count=duplicate_posted,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
