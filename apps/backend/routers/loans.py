@@ -80,6 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_historical_opening_review import inspect_historical_opening
 from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
@@ -611,6 +612,20 @@ def principal_x_settlement_readiness(
         "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
+    historical = None
+    historical_status = "not_applicable"
+    if getattr(loan, "origination_channel", None) == "legacy_cashout":
+        try:
+            historical = inspect_historical_opening(
+                db, company_id=loan.company_id, loan_id=loan.id,
+            )
+            historical_status = "stored_records_consistent"
+            blockers.append("Historical opening records require independent receipt evidence.")
+            if historical.excess_for_review > 0:
+                blockers.append("Historical excess collections require reconciliation.")
+        except ValueError:
+            historical_status = "review_required"
+            blockers.append("Historical opening capture and contract evidence require review.")
     if audit.unresolved_payment_ids:
         blockers.append("Payment rows require reconciliation before settlement posting.")
     if audit.refund_payment_count:
@@ -711,6 +726,11 @@ def principal_x_settlement_readiness(
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
         missing_posted_refund_treasury_rows=cross_sources.missing_posted_refund_treasury_count,
         refund_treasury_type_mismatch_rows=cross_sources.refund_treasury_type_mismatch_count,
+        historical_opening_review_status=historical_status,
+        historical_opening_credited=historical.credited_at_migration if historical else None,
+        historical_receipt_book_total=historical.receipt_book_total if historical else None,
+        historical_excess_for_review=historical.excess_for_review if historical else None,
+        historical_opening_independently_verified=False,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
         source_coverage=[
