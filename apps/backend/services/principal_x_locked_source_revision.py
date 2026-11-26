@@ -2,13 +2,20 @@
 
 Call only after taking the tenant-scoped loan-row lock in an open PostgreSQL
 transaction. This captures local state, not authoritative external reversals,
-legacy imports, or providers. A matching digest never enables posting.
+independently authenticated legacy receipts, or providers. A matching digest never enables posting.
 """
 import hashlib
 import json
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+
+from database.models.accounting import JournalEntry, JournalLine
+from database.models.governance_control import PaymentAdjustment
+from database.models.legacy_loan_capture import LegacyLoanCapture
+from database.models.origination import LoanContract
+from database.models.lelefa_paygate import LelefaPayGateWebhookEvent
 
 from database.models.cash import CashTransaction
 from database.models.payment import PaymentTransaction
@@ -20,6 +27,8 @@ def _canonical(value):
     """Stable serialization for database identifiers, numbers, enums, times."""
     if value is None:
         return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return str(getattr(value, "value", value))
 
 
@@ -73,8 +82,65 @@ def local_principal_x_source_revision(
                 TreasuryEntry.loan_id == loan_id)
         .all()
     )
+    captures = db.query(LegacyLoanCapture).filter(
+        LegacyLoanCapture.company_id == company_id, LegacyLoanCapture.loan_id == loan_id,
+    ).all()
+    contracts = db.query(LoanContract).filter(
+        LoanContract.company_id == company_id, LoanContract.loan_id == loan_id,
+    ).all()
+    adjustments = db.query(PaymentAdjustment).join(
+        PaymentTransaction, PaymentAdjustment.payment_id == PaymentTransaction.id,
+    ).filter(PaymentAdjustment.company_id == company_id,
+             PaymentTransaction.company_id == company_id,
+             PaymentTransaction.loan_id == loan_id).all()
+    events = db.query(LelefaPayGateWebhookEvent).join(
+        PaymentTransaction, LelefaPayGateWebhookEvent.payment_id == PaymentTransaction.id,
+    ).filter(PaymentTransaction.company_id == company_id,
+             PaymentTransaction.loan_id == loan_id).all()
+    payment_refs = [str(row.id) for row in payments]
+    journals = db.query(JournalEntry).filter(
+        JournalEntry.company_id == company_id,
+        or_(
+            (JournalEntry.reference_type == "treasury_entry") &
+            JournalEntry.reference_id.in_([str(row.id) for row in treasury]),
+            (JournalEntry.reference_type == "loan_write_off") &
+            (JournalEntry.reference_id == str(loan_id)),
+            (JournalEntry.reference_type == "payment_transaction") &
+            JournalEntry.reference_id.in_(payment_refs),
+            (JournalEntry.reference_type == "accounting_reversal") &
+            JournalEntry.reference_id.in_([f"reversal:payment_transaction:{ref}" for ref in payment_refs]),
+        ),
+    ).all()
+    lines = db.query(JournalLine).join(
+        JournalEntry, JournalLine.journal_entry_id == JournalEntry.id,
+    ).filter(JournalEntry.company_id == company_id,
+             JournalLine.journal_entry_id.in_([row.id for row in journals])).all()
     payload = {
-        "version": 2,
+        "version": 3,
+        "historical_captures": _records(captures, (
+            "id", "company_id", "loan_id", "status", "converted_at",
+            "borrowed_amount", "total_repayable", "amount_paid", "conversion_data", "updated_at",
+        )),
+        "historical_contracts": _records(contracts, (
+            "id", "company_id", "loan_id", "status", "contract_number",
+            "contract_hash", "terms_snapshot", "updated_at",
+        )),
+        "adjustments": _records(adjustments, (
+            "id", "company_id", "payment_id", "approval_request_id", "adjustment_type",
+            "amount", "currency", "status", "requested_by_user_id", "approved_by_user_id",
+            "approved_at", "completed_at", "provider_reference", "updated_at",
+        )),
+        "gateway_events": _records(events, (
+            "id", "event_id", "event_type", "payment_id", "payload_hash", "payload",
+            "processing_status", "processing_error", "processed_at",
+        )),
+        "journals": _records(journals, (
+            "id", "company_id", "branch_id", "scope_key", "reference_type", "reference_id",
+            "status", "total_debit", "total_credit", "posted_at", "voided_at", "updated_at",
+        )),
+        "journal_lines": _records(lines, (
+            "id", "journal_entry_id", "account_id", "debit", "credit", "updated_at",
+        )),
         "company_id": str(company_id), "loan_id": str(loan_id),
         "payments": _records(payments, (
             "id", "company_id", "loan_id", "amount", "currency",
