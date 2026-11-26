@@ -80,6 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_adjustment_review import inspect_loan_adjustments
 from services.principal_x_historical_opening_review import inspect_historical_opening, inspect_historical_live_payments
 from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
 from payment_engine.principal_x_policy import PaymentModel
@@ -612,6 +613,21 @@ def principal_x_settlement_readiness(
         "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
+    adjustments = None
+    try:
+        adjustments = inspect_loan_adjustments(
+            db, company_id=loan.company_id, loan_id=loan.id,
+        )
+        if adjustments.unresolved_count:
+            blockers.append("Payment adjustments require independent finality verification.")
+        if adjustments.inconsistent_completed_count:
+            blockers.append("Completed adjustments disagree with original payment or approval evidence.")
+        if adjustments.duplicate_completed_original_count:
+            blockers.append("Multiple completed adjustments reference the same original payment.")
+        if adjustments.excess_adjustment_original_count:
+            blockers.append("Completed adjustment amounts exceed original collections.")
+    except ValueError:
+        blockers.append("Payment adjustment evidence scope or identity requires review.")
     historical = None
     historical_live = None
     historical_status = "not_applicable"
@@ -747,6 +763,14 @@ def principal_x_settlement_readiness(
         historical_recorded_loan_paid=historical_live.recorded_loan_paid if historical_live else None,
         historical_live_difference=historical_live.difference if historical_live else None,
         historical_live_unresolved_rows=historical_live.unresolved_rows if historical_live else None,
+        adjustment_rows_reviewed=adjustments.adjustment_count if adjustments else None,
+        adjustment_completed_rows=adjustments.completed_count if adjustments else None,
+        adjustment_unresolved_rows=adjustments.unresolved_count if adjustments else None,
+        adjustment_locally_consistent_rows=adjustments.locally_consistent_count if adjustments else None,
+        adjustment_inconsistent_completed_rows=adjustments.inconsistent_completed_count if adjustments else None,
+        adjustment_duplicate_original_rows=adjustments.duplicate_completed_original_count if adjustments else None,
+        adjustment_excess_original_rows=adjustments.excess_adjustment_original_count if adjustments else None,
+        adjustment_review_complete=False,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
         source_coverage=[
