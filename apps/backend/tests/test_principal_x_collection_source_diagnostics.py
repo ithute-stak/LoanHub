@@ -726,3 +726,34 @@ def test_pending_refund_does_not_claim_completed_refund_treasury_evidence():
     )
     assert result.missing_posted_refund_treasury_count == 0
     assert result.complete is False
+
+
+@pytest.mark.parametrize("second_status,second_voided,expected", [
+    ("posted", False, 1),
+    ("posted", True, 0),
+    ("pending", False, 0),
+])
+def test_duplicate_posted_treasury_evidence_requires_review(
+    second_status, second_voided, expected,
+):
+    payment_id = uuid4()
+    payment = SimpleNamespace(
+        id=payment_id, amount=Decimal("100.00"), currency="LSL",
+        status=PaymentStatus.SUCCEEDED, purpose=PaymentPurpose.LOAN_REPAYMENT,
+        direction=PaymentDirection.INBOUND,
+    )
+    def entry(status, voided):
+        return SimpleNamespace(
+            payment_transaction_id=payment_id, amount=Decimal("100.00"),
+            currency="LSL", direction=TreasuryDirection.MONEY_IN,
+            entry_type=TreasuryEntryType.LOAN_COLLECTION,
+            approval_status=status, is_voided=voided,
+        )
+    result = inspect_principal_x_collection_sources(
+        SessionDouble([payment], [], [], [
+            entry("posted", False), entry(second_status, second_voided),
+        ]),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.duplicate_posted_treasury_payment_count == expected
+    assert result.complete is False
