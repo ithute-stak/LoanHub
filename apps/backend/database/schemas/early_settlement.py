@@ -152,6 +152,14 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     historical_recorded_loan_paid: Decimal | None = None
     historical_live_difference: Decimal | None = None
     historical_live_unresolved_rows: int | None = None
+    adjustment_rows_reviewed: int | None = None
+    adjustment_completed_rows: int | None = None
+    adjustment_unresolved_rows: int | None = None
+    adjustment_locally_consistent_rows: int | None = None
+    adjustment_inconsistent_completed_rows: int | None = None
+    adjustment_duplicate_original_rows: int | None = None
+    adjustment_excess_original_rows: int | None = None
+    adjustment_review_complete: Literal[False] = False
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
     source_coverage: list[PrincipalXSourceCoverageRead]
