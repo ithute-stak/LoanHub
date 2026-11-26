@@ -30,12 +30,13 @@ class QueryDouble:
 
 
 class SessionDouble:
-    def __init__(self, payments, cash, allocations, treasury):
+    def __init__(self, payments, cash, allocations, treasury, installments=()):
         self.data = {
             "payment_transactions": payments,
             "cash_transactions": cash,
             "payment_allocations": allocations,
             "treasury_entries": treasury,
+            "repayment_installments": installments,
         }
 
     def query(self, model):
@@ -827,4 +828,42 @@ def test_distinct_payments_to_same_installment_are_not_duplicate_pairs():
         company_id=uuid4(), loan_id=uuid4(),
     )
     assert result.duplicate_allocation_pair_count == 0
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("paid,due,allocated,superseded,expected", [
+    ("50.00", "100.00", "50.00", False, (0, 0, 0)),
+    ("40.00", "100.00", "50.00", False, (1, 0, 0)),
+    ("60.00", "100.00", "50.00", False, (0, 1, 0)),
+    ("60.00", "100.00", None, False, (0, 1, 0)),
+    ("101.00", "100.00", "50.00", False, (0, 0, 1)),
+    ("NaN", "100.00", "50.00", False, (0, 0, 1)),
+    ("60.00", "100.00", "50.00", True, (0, 0, 0)),
+])
+def test_installment_paid_balance_is_reconciled_without_inventing_history(
+    paid, due, allocated, superseded, expected,
+):
+    payment_id, installment_id = uuid4(), uuid4()
+    payment = SimpleNamespace(
+        id=payment_id, amount=Decimal("50.00"),
+        status=PaymentStatus.SUCCEEDED, purpose=PaymentPurpose.LOAN_REPAYMENT,
+        direction=PaymentDirection.INBOUND,
+    )
+    allocations = [] if allocated is None else [
+        SimpleNamespace(payment_id=payment_id, installment_id=installment_id,
+                        amount=Decimal(allocated)),
+    ]
+    installment = SimpleNamespace(
+        id=installment_id, paid_amount=Decimal(paid), total_due=Decimal(due),
+        is_superseded=superseded,
+    )
+    result = inspect_principal_x_collection_sources(
+        SessionDouble([payment], [], allocations, [], [installment]),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert (
+        result.installment_allocation_excess_count,
+        result.installment_unexplained_paid_count,
+        result.invalid_installment_balance_count,
+    ) == expected
     assert result.complete is False
