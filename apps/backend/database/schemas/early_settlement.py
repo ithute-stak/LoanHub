@@ -135,6 +135,9 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     duplicate_posted_treasury_payment_rows: int = 0
     duplicate_cash_payment_rows: int = 0
     duplicate_allocation_pair_rows: int = 0
+    installment_allocation_excess_rows: int = 0
+    installment_unexplained_paid_rows: int = 0
+    invalid_installment_balance_rows: int = 0
     voided_linked_treasury_rows: int
     unposted_linked_treasury_rows: int
     missing_posted_treasury_evidence_rows: int
