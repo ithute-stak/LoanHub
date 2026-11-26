@@ -376,6 +376,13 @@ def initiate_gateway_payment(
                 provider=selected_provider,
             )
     except LelefaPayGateError as exc:
+        _lock_ordinary_gateway_repayment(db, payment)
+        if (
+            payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+            and not (payment.provider_payload or {}).get("early_settlement_id")
+            and payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}
+        ):
+            return payment
         payment.failure_reason = exc.detail
         payment.status = PaymentStatus.PROCESSING if exc.retryable else PaymentStatus.FAILED
         db.add(payment)
@@ -386,6 +393,16 @@ def initiate_gateway_payment(
                 status_code=exc.status_code or 502,
                 detail=f"LelefaPayGate rejected the transaction: {exc.detail}",
             ) from exc
+        return payment
+
+    _lock_ordinary_gateway_repayment(db, payment)
+    if (
+        payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+        and not (payment.provider_payload or {}).get("early_settlement_id")
+        and payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}
+    ):
+        # A concurrent webhook already posted or reversed this repayment.
+        # Do not overwrite its terminal status or repeat financial effects.
         return payment
 
     public_id = str(response.get("public_id") or response.get("id") or "").strip()
@@ -652,11 +669,7 @@ def initiate_gateway_loan_disbursement(
     )
 
 
-def apply_gateway_resource(
-    db: Session,
-    payment: PaymentTransaction,
-    resource: dict[str, Any],
-) -> PaymentTransaction:
+def _lock_ordinary_gateway_repayment(db: Session, payment: PaymentTransaction) -> None:
     # Ordinary repayment callbacks share the loan-first ordering used by
     # the payment desk. Early settlements and payouts have separate lock
     # graphs and must be migrated together rather than inverting their locks.
@@ -676,6 +689,14 @@ def apply_gateway_resource(
         db.refresh(payment)
         if (payment.provider_payload or {}).get("early_settlement_id"):
             raise HTTPException(status_code=409, detail="Payment settlement linkage changed; retry reconciliation")
+
+
+def apply_gateway_resource(
+    db: Session,
+    payment: PaymentTransaction,
+    resource: dict[str, Any],
+) -> PaymentTransaction:
+    _lock_ordinary_gateway_repayment(db, payment)
     response_id = str(resource.get("public_id") or resource.get("id") or "")
     if response_id and payment.provider_reference.startswith("LPG-PENDING-"):
         payment.provider_reference = response_id
