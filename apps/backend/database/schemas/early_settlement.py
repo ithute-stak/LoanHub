@@ -170,6 +170,14 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     gateway_reversal_review_complete: Literal[False] = False
     manual_adjustment_review_complete: Literal[False] = False
     adjustment_review_complete: Literal[False] = False
+    lifetime_recorded_successful_repayments: Decimal | None = None
+    lifetime_historical_opening_credit: Decimal | None = None
+    lifetime_recorded_credit_before_adjustments: Decimal | None = None
+    lifetime_recorded_loan_paid: Decimal | None = None
+    lifetime_unexplained_difference: Decimal | None = None
+    lifetime_unresolved_payment_rows: int | None = None
+    lifetime_authoritative_net_collected: Literal[None] = None
+    lifetime_reconciled: Literal[False] = False
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
     source_coverage: list[PrincipalXSourceCoverageRead]
