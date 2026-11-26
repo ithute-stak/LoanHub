@@ -376,7 +376,7 @@ def initiate_gateway_payment(
                 provider=selected_provider,
             )
     except LelefaPayGateError as exc:
-        _lock_ordinary_gateway_repayment(db, payment)
+        _lock_gateway_repayment(db, payment)
         if (
             payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
             and not (payment.provider_payload or {}).get("early_settlement_id")
@@ -395,7 +395,7 @@ def initiate_gateway_payment(
             ) from exc
         return payment
 
-    _lock_ordinary_gateway_repayment(db, payment)
+    _lock_gateway_repayment(db, payment)
     if (
         payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
         and not (payment.provider_payload or {}).get("early_settlement_id")
@@ -549,7 +549,7 @@ def initiate_borrower_gateway_checkout(
             cancel_url=f"{return_url}?checkout=cancelled",
         )
     except LelefaPayGateError as exc:
-        _lock_ordinary_gateway_repayment(db, payment)
+        _lock_gateway_repayment(db, payment)
         if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
             raise HTTPException(
                 status_code=409, detail="Checkout already finalized; refresh payment history",
@@ -563,7 +563,7 @@ def initiate_borrower_gateway_checkout(
             detail=f"Could not create LelefaPayGate checkout: {exc.detail}",
         ) from exc
 
-    _lock_ordinary_gateway_repayment(db, payment)
+    _lock_gateway_repayment(db, payment)
     if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
         raise HTTPException(
             status_code=409, detail="Checkout already finalized; refresh payment history",
@@ -681,26 +681,21 @@ def initiate_gateway_loan_disbursement(
     )
 
 
-def _lock_ordinary_gateway_repayment(db: Session, payment: PaymentTransaction) -> None:
-    # Ordinary repayment callbacks share the loan-first ordering used by
-    # the payment desk. Early settlements and payouts have separate lock
-    # graphs and must be migrated together rather than inverting their locks.
-    if (
-        payment.loan_id
-        and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
-        and not (payment.provider_payload or {}).get("early_settlement_id")
-    ):
+def _lock_gateway_repayment(db: Session, payment: PaymentTransaction) -> None:
+    """Serialize ordinary and settlement repayment responses before mutation."""
+    if payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
         from services.principal_x_financial_lock import lock_financial_loan
 
+        scope = (payment.company_id, payment.loan_id)
+        settlement_id = (payment.provider_payload or {}).get("early_settlement_id")
         try:
-            lock_financial_loan(db, company_id=payment.company_id, loan_id=payment.loan_id)
+            lock_financial_loan(db, company_id=scope[0], loan_id=scope[1])
         except ValueError as exc:
             raise HTTPException(status_code=409, detail="Gateway repayment requires a valid locked loan") from exc
-        # Another callback may have completed or reversed this payment while
-        # we waited. Refresh under the lock before deciding on side effects.
         db.refresh(payment)
-        if (payment.provider_payload or {}).get("early_settlement_id"):
-            raise HTTPException(status_code=409, detail="Payment settlement linkage changed; retry reconciliation")
+        if (payment.company_id, payment.loan_id) != scope or payment.purpose != PaymentPurpose.LOAN_REPAYMENT or (payment.provider_payload or {}).get("early_settlement_id") != settlement_id:
+            raise HTTPException(status_code=409, detail="Payment linkage changed; retry reconciliation")
+
 
 
 def apply_gateway_resource(
@@ -708,7 +703,7 @@ def apply_gateway_resource(
     payment: PaymentTransaction,
     resource: dict[str, Any],
 ) -> PaymentTransaction:
-    _lock_ordinary_gateway_repayment(db, payment)
+    _lock_gateway_repayment(db, payment)
     response_id = str(resource.get("public_id") or resource.get("id") or "")
     if response_id and payment.provider_reference.startswith("LPG-PENDING-"):
         payment.provider_reference = response_id
@@ -720,6 +715,9 @@ def apply_gateway_resource(
             status_code=409,
             detail="Reversed gateway payment cannot be finalized again; use a new authorized disbursement",
         )
+    if payment.status == PaymentStatus.REVERSED:
+        # Late non-success notifications must not reopen a reversed payment.
+        return payment
     payment.provider_payload = {
         **(payment.provider_payload or {}),
         "gateway_status": resource.get("status"),
