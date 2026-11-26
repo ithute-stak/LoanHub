@@ -97,3 +97,79 @@ def test_duplicate_payment_ids_are_unresolved():
     )
     assert result.preview.net_collected is None
     assert "missing_or_duplicate_payment_id" in result.preview.unresolved
+
+
+def test_refund_and_reversal_counts_do_not_certify_ledger():
+    refunded = payment(PaymentPurpose.REFUND, PaymentDirection.OUTBOUND, PaymentStatus.SUCCEEDED)
+    reversed_payment = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.REVERSED)
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([refunded, reversed_payment]),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.refund_payment_count == 1
+    assert result.reversed_payment_count == 1
+    assert result.nonfinal_refund_count == 0
+    assert result.preview.net_collected is None
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("status,direction", [
+    (PaymentStatus.PENDING, PaymentDirection.OUTBOUND),
+    (PaymentStatus.FAILED, PaymentDirection.OUTBOUND),
+    (PaymentStatus.SUCCEEDED, PaymentDirection.INBOUND),
+])
+def test_unfinished_or_wrong_direction_refunds_are_explicitly_counted(status, direction):
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([payment(PaymentPurpose.REFUND, direction, status)]),
+        company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.refund_payment_count == 1
+    assert result.nonfinal_refund_count == 1
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("bad", [
+    "not-a-number", Decimal("NaN"), Decimal("0"), Decimal("-1"), Decimal("1.001"),
+])
+def test_invalid_payment_amount_is_counted_as_unverified(bad):
+    row = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    row.amount = bad
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([row]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_payment_amount_count == 1
+    assert result.preview.net_collected is None
+    assert result.complete is False
+
+
+@pytest.mark.parametrize("currency", ["USD", "", None])
+def test_unsupported_currency_is_counted_as_unverified(currency):
+    row = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    row.currency = currency
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([row]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.unsupported_currency_count == 1
+    assert result.preview.net_collected is None
+    assert result.complete is False
+
+
+def test_valid_lsl_amounts_are_not_reported_as_corrupt():
+    row = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([row]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_payment_amount_count == 0
+    assert result.unsupported_currency_count == 0
+    assert result.complete is False
+
+
+def test_huge_payment_row_does_not_crash_readiness_diagnostics():
+    row = payment(PaymentPurpose.LOAN_REPAYMENT, PaymentDirection.INBOUND, PaymentStatus.SUCCEEDED)
+    row.amount = Decimal("1E+100")
+    result = inspect_loanhub_payment_evidence(
+        FakeSession([row]), company_id=uuid4(), loan_id=uuid4(),
+    )
+    assert result.invalid_payment_amount_count == 1
+    assert result.preview.net_collected is None
+    assert result.complete is False

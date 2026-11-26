@@ -1,3 +1,4 @@
+from services.principal_x_source_coverage import principal_x_source_coverage
 from io import BytesIO
 from datetime import datetime, date, time
 from decimal import Decimal
@@ -52,6 +53,10 @@ from database.schemas.early_settlement import (
     EarlySettlementPaymentResult,
     EarlySettlementQuoteCreate,
     EarlySettlementRead,
+    PrincipalXSettlementPreviewRead,
+    PrincipalXSettlementReadinessRead,
+    PrincipalXSettlementRevalidateRequest,
+    PrincipalXSettlementRevalidateRead,
 )
 from database.schemas.loan import InstallmentDueDateAdjustmentCreate, LoanPaymentSlipRead, LoanRead
 from database.config.config import settings
@@ -68,6 +73,15 @@ from services.early_settlement_service import (
 )
 from services.installment_service import adjust_installment_due_date
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
+from services.settlement_payment_model_gate import require_standard_settlement_model
+from services.loan_payment_model_assignment_service import read_loan_payment_model
+from services.principal_x_settlement_preview_service import (
+    quote_principal_x_for_loan_with_revision,
+    require_unchanged_preview_snapshot,
+)
+from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
+from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
     calculate_micro_loan_totals,
     disburse_cash_loan,
@@ -525,6 +539,224 @@ def collect_cash_repayment(
 
 
 
+@router.post(
+    "/{loan_id}/principal-x-settlements/revalidate",
+    response_model=PrincipalXSettlementRevalidateRead,
+)
+def revalidate_principal_x_settlement(
+    loan_id: UUID,
+    payload: PrincipalXSettlementRevalidateRequest,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only stale-preview check. Not consent, posting, or certification."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Invalid loan payment-model assignment") from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(status_code=409, detail="Loan is not assigned Principal x%")
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        raise HTTPException(status_code=409, detail="Only active or defaulted loans can be revalidated")
+    try:
+        current = quote_principal_x_for_loan_with_revision(
+            db, loan=loan, settlement_date=payload.settlement_date,
+        )
+        require_unchanged_preview_snapshot(
+            expected_revision=payload.snapshot_revision, current=current,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PrincipalXSettlementRevalidateRead(
+        loan_id=loan.id,
+        snapshot_revision=current.snapshot_revision,
+        settlement_date=payload.settlement_date,
+        settlement_amount=current.quote.collectible_due,
+        unchanged=True,
+        payment_enabled=False,
+    )
+
+
+@router.get(
+    "/{loan_id}/principal-x-settlements/readiness",
+    response_model=PrincipalXSettlementReadinessRead,
+)
+def principal_x_settlement_readiness(
+    loan_id: UUID,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Diagnostic only: absence of a certified posting adapter keeps payments off."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Invalid loan payment-model assignment") from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(status_code=409, detail="Loan is not assigned Principal x%")
+    audit = inspect_loanhub_payment_evidence(
+        db, company_id=loan.company_id, loan_id=loan.id,
+    )
+    cross_sources = inspect_principal_x_collection_sources(
+        db, company_id=loan.company_id, loan_id=loan.id,
+    )
+    blockers = [
+        "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
+        "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
+    ]
+    if audit.unresolved_payment_ids:
+        blockers.append("Payment rows require reconciliation before settlement posting.")
+    if audit.refund_payment_count:
+        blockers.append("Refund payments require verified original-collection linkage and external finality.")
+    if audit.reversed_payment_count:
+        blockers.append("Reversed payments require authoritative provider reversal reconciliation.")
+    if audit.nonfinal_refund_count:
+        blockers.append("Refunds are unfinished or have an unexpected payment direction.")
+    if audit.invalid_payment_amount_count:
+        blockers.append("Payment history contains invalid or sub-cent monetary amounts.")
+    if audit.unsupported_currency_count:
+        blockers.append("Payment history contains unsupported settlement currencies.")
+    if cross_sources.orphan_cash_count:
+        blockers.append("Cash transaction links require reconciliation.")
+    if cross_sources.orphan_allocation_count:
+        blockers.append("Loan installment allocations include unlinked payments.")
+    if cross_sources.unlinked_treasury_count:
+        blockers.append("Treasury entries include unlinked payment references.")
+    if cross_sources.missing_cash_evidence_count:
+        blockers.append("Cash payments are missing linked cash transaction evidence.")
+    if cross_sources.overallocated_payment_count:
+        blockers.append("Instalment allocations exceed recorded payment amounts.")
+    if cross_sources.invalid_allocation_count:
+        blockers.append("Invalid installment allocation amounts require investigation.")
+    if cross_sources.nonfinal_allocation_payment_count:
+        blockers.append("Instalment allocations reference unfinished or non-repayment payments.")
+    if cross_sources.cash_overapplied_count:
+        blockers.append("Cash transactions claim more applied cash than the linked payment.")
+    if cross_sources.invalid_cash_amount_count:
+        blockers.append("Cash transactions contain invalid monetary amounts.")
+    if cross_sources.cash_direction_mismatch_count:
+        blockers.append("Cash-in/cash-out direction disagrees with the linked payment.")
+    if cross_sources.treasury_amount_mismatch_count:
+        blockers.append("Treasury payment amounts disagree with linked payment records.")
+    if cross_sources.treasury_currency_mismatch_count:
+        blockers.append("Treasury currency disagrees with the linked payment.")
+    if cross_sources.treasury_direction_mismatch_count:
+        blockers.append("Treasury money-in/money-out direction disagrees with the linked payment.")
+    if cross_sources.treasury_entry_type_mismatch_count:
+        blockers.append("Successful loan repayments are linked to incorrectly classified treasury entries.")
+    if cross_sources.voided_linked_treasury_count:
+        blockers.append("Successful loan repayments reference voided treasury entries.")
+    if cross_sources.unposted_linked_treasury_count:
+        blockers.append("Successful loan repayments reference unposted treasury entries.")
+    if cross_sources.missing_posted_treasury_evidence_count:
+        blockers.append("Successful loan repayments lack a posted, non-voided linked treasury entry; historical accounting must be reviewed.")
+    if cross_sources.missing_posted_refund_treasury_count:
+        blockers.append("Successful refunds lack posted, non-voided treasury entries.")
+    if cross_sources.refund_treasury_type_mismatch_count:
+        blockers.append("Successful refunds are linked to treasury entries not classified as refunds.")
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        blockers.append("Loan is not active or defaulted.")
+    return PrincipalXSettlementReadinessRead(
+        loan_id=loan.id,
+        payment_model=model.value,
+        can_post_settlement=False,
+        payment_rows_reviewed=audit.payment_count,
+        unresolved_payment_rows=len(audit.unresolved_payment_ids),
+        refund_payment_rows=audit.refund_payment_count,
+        reversed_payment_rows=audit.reversed_payment_count,
+        nonfinal_refund_rows=audit.nonfinal_refund_count,
+        invalid_payment_amount_rows=audit.invalid_payment_amount_count,
+        unsupported_payment_currency_rows=audit.unsupported_currency_count,
+        orphan_cash_rows=cross_sources.orphan_cash_count,
+        orphan_allocation_rows=cross_sources.orphan_allocation_count,
+        unlinked_treasury_rows=cross_sources.unlinked_treasury_count,
+        missing_cash_evidence_rows=cross_sources.missing_cash_evidence_count,
+        overallocated_payment_rows=cross_sources.overallocated_payment_count,
+        invalid_allocation_rows=cross_sources.invalid_allocation_count,
+        nonfinal_allocation_payment_rows=cross_sources.nonfinal_allocation_payment_count,
+        cash_overapplied_rows=cross_sources.cash_overapplied_count,
+        invalid_cash_amount_rows=cross_sources.invalid_cash_amount_count,
+        cash_direction_mismatch_rows=cross_sources.cash_direction_mismatch_count,
+        treasury_amount_mismatch_rows=cross_sources.treasury_amount_mismatch_count,
+        treasury_currency_mismatch_rows=cross_sources.treasury_currency_mismatch_count,
+        treasury_direction_mismatch_rows=cross_sources.treasury_direction_mismatch_count,
+        treasury_entry_type_mismatch_rows=cross_sources.treasury_entry_type_mismatch_count,
+        voided_linked_treasury_rows=cross_sources.voided_linked_treasury_count,
+        unposted_linked_treasury_rows=cross_sources.unposted_linked_treasury_count,
+        missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
+        missing_posted_refund_treasury_rows=cross_sources.missing_posted_refund_treasury_count,
+        refund_treasury_type_mismatch_rows=cross_sources.refund_treasury_type_mismatch_count,
+        cross_source_reconciliation_complete=False,
+        blocking_reasons=blockers,
+        source_coverage=[
+            {
+                "source_family": item.source_family,
+                "review_stage": item.review_stage,
+                "authoritatively_verified": False,
+            }
+            for item in principal_x_source_coverage()
+        ],
+    )
+
+
+@router.post(
+    "/{loan_id}/principal-x-settlements/preview",
+    response_model=PrincipalXSettlementPreviewRead,
+)
+def preview_principal_x_settlement(
+    loan_id: UUID,
+    payload: EarlySettlementQuoteCreate,
+    db: Session = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Read-only, tenant-scoped quote; never creates a payable settlement."""
+    require_tenant_roles(context, FINANCE_ROLES)
+    loan = _tenant_loan_or_404(db, context, loan_id)
+    try:
+        model = read_loan_payment_model(
+            db, loan_id=str(loan.id), company_id=str(loan.company_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409, detail="Invalid loan payment-model assignment",
+        ) from exc
+    if model != PaymentModel.PRINCIPAL_X:
+        raise HTTPException(
+            status_code=409,
+            detail="Principal x% preview requires an explicitly assigned Principal x% loan",
+        )
+    if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
+        raise HTTPException(status_code=409, detail="Only active or defaulted loans can be previewed")
+    try:
+        result = quote_principal_x_for_loan_with_revision(
+            db, loan=loan, settlement_date=payload.settlement_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    quote = result.quote
+    return PrincipalXSettlementPreviewRead(
+        loan_id=loan.id,
+        payment_model=model.value,
+        settlement_date=payload.settlement_date,
+        snapshot_revision=result.snapshot_revision,
+        period=quote.period,
+        uncapped_due=quote.uncapped_due,
+        settlement_amount=quote.collectible_due,
+        contractual_remaining=quote.contractual_remaining,
+        lifetime_cap_remaining=quote.lifetime_cap_remaining,
+        total_credited=quote.total_credited,
+        ceiling_reduction=quote.ceiling_reduction,
+        payment_enabled=False,
+    )
+
+
 @router.get("/{loan_id}/early-settlements", response_model=list[EarlySettlementRead])
 def list_early_settlements(
     loan_id: UUID,
@@ -553,6 +785,7 @@ def create_early_settlement_quote(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     return quote_early_settlement(
         db,
         loan=loan,
@@ -575,6 +808,7 @@ def pay_early_settlement(
 ):
     require_tenant_roles(context, FINANCE_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    require_standard_settlement_model(db, loan=loan)
     quote = (
         db.query(LoanEarlySettlement)
         .filter(

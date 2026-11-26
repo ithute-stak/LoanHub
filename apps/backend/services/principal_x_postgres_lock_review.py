@@ -6,6 +6,7 @@ immutable loan assignment. It deliberately refuses to certify reconciled
 collections until provider reversals/refunds have a proven authoritative
 ledger implementation. Never use it to enable live collections.
 """
+from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
@@ -17,6 +18,16 @@ from database.models.loan_payment_model_assignment import LoanPaymentModelAssign
 from database.models.payment import PaymentTransaction
 from payment_engine.principal_x_policy import PaymentModel
 from services.principal_x_transaction_coordinator import LockedLoanSnapshot
+from services.principal_x_locked_source_revision import local_principal_x_source_revision
+from payment_engine.principal_x_scoped_ledger_review import (
+    ScopedLedgerReview, ScopedSourceAttestation, review_scoped_ledger_attestations,
+)
+from services.principal_x_collection_source_diagnostics import (
+    CollectionSourceDiagnostics, inspect_principal_x_collection_sources,
+)
+from services.principal_x_payment_evidence_adapter import (
+    LoanHubPaymentAudit, inspect_loanhub_payment_evidence,
+)
 
 
 def lock_principal_x_loan_for_review(
@@ -77,4 +88,87 @@ def lock_principal_x_loan_for_review(
         authoritative_net_collected=Decimal("0.00"),
         live_policy_enabled=enabled,
         reconciled=False,
+    )
+
+
+@dataclass(frozen=True)
+class LockedCollectionEvidenceReview:
+    """Non-payable diagnostics obtained after a PostgreSQL loan-row lock."""
+    snapshot: LockedLoanSnapshot
+    payment_audit: LoanHubPaymentAudit
+    source_diagnostics: CollectionSourceDiagnostics
+    can_post: bool = False
+
+
+def inspect_principal_x_sources_under_loan_lock(
+    db: Session, *, company_id: UUID, loan_id: UUID,
+) -> LockedCollectionEvidenceReview:
+    """Hold the caller's transaction/loan lock while reading linked sources.
+
+    Caller owns the transaction boundary and must not commit until finished.
+    This does not protect against writers that ignore the loan-row lock or
+    certify external provider, refund, legacy or manual payment sources.
+    """
+    snapshot = lock_principal_x_loan_for_review(
+        db, company_id=company_id, loan_id=loan_id,
+    )
+    audit = inspect_loanhub_payment_evidence(
+        db, company_id=company_id, loan_id=loan_id,
+    )
+    sources = inspect_principal_x_collection_sources(
+        db, company_id=company_id, loan_id=loan_id,
+    )
+    return LockedCollectionEvidenceReview(
+        snapshot=snapshot,
+        payment_audit=audit,
+        source_diagnostics=sources,
+        can_post=False,
+    )
+
+
+
+@dataclass(frozen=True)
+class LockedScopedEvidenceReview:
+    """Read-only locked source diagnostics and unverified scope claims."""
+    financial_sources: LockedCollectionEvidenceReview
+    scope_claims: ScopedLedgerReview
+    can_post: bool = False
+
+
+def inspect_scoped_principal_x_evidence_under_loan_lock(
+    db: Session, *, company_id: UUID, loan_id: UUID,
+    snapshot_revision: str,
+    attestations: tuple[ScopedSourceAttestation, ...],
+) -> LockedScopedEvidenceReview:
+    """Obtain real loan-row lock before validating externally supplied claims.
+
+    Do not expose this as a borrower API or infer a trusted financial snapshot
+    from a user-provided revision. The supplied revision is only a consistency
+    constraint until a server-side canonical evidence snapshot is available.
+    Caller owns the transaction and must not commit/post in this review.
+    """
+    financial = inspect_principal_x_sources_under_loan_lock(
+        db, company_id=company_id, loan_id=loan_id,
+    )
+    # The review revision must come from the database state read under the
+    # same loan lock, not only from a caller's matching attestations.
+    server_revision = local_principal_x_source_revision(
+        db, company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+    )
+    if snapshot_revision != server_revision:
+        raise ValueError("Stale or caller-supplied local source revision")
+    scoped = review_scoped_ledger_attestations(
+        company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+        snapshot_revision=snapshot_revision, attestations=attestations,
+    )
+    final_revision = local_principal_x_source_revision(
+        db, company_id=financial.snapshot.company_id,
+        loan_id=financial.snapshot.loan_id,
+    )
+    if final_revision != server_revision:
+        raise ValueError("Local financial sources changed during locked review")
+    return LockedScopedEvidenceReview(
+        financial_sources=financial, scope_claims=scoped, can_post=False,
     )
