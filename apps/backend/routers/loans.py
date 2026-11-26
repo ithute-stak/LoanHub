@@ -80,6 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_manual_adjustment_review import inspect_manual_adjustments
 from services.principal_x_adjustment_review import inspect_loan_adjustments
 from services.principal_x_historical_opening_review import inspect_historical_opening, inspect_historical_live_payments
 from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
@@ -613,6 +614,21 @@ def principal_x_settlement_readiness(
         "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
+    manual = None
+    try:
+        manual = inspect_manual_adjustments(
+            db, company_id=loan.company_id, loan_id=loan.id,
+        )
+        if manual.treasury_count:
+            blockers.append("Loan-linked manual Treasury entries require independent classification and collection evidence.")
+        if manual.missing_journal_count:
+            blockers.append("Manual Treasury entries lack accounting journals.")
+        if manual.inconsistent_journal_count:
+            blockers.append("Manual Treasury entries disagree with accounting journal evidence.")
+        if manual.write_off_journal_count:
+            blockers.append("Loan write-offs require separate accounting review; they are not cash collections.")
+    except ValueError:
+        blockers.append("Manual financial adjustment evidence scope requires review.")
     adjustments = None
     try:
         adjustments = inspect_loan_adjustments(
@@ -770,6 +786,11 @@ def principal_x_settlement_readiness(
         adjustment_inconsistent_completed_rows=adjustments.inconsistent_completed_count if adjustments else None,
         adjustment_duplicate_original_rows=adjustments.duplicate_completed_original_count if adjustments else None,
         adjustment_excess_original_rows=adjustments.excess_adjustment_original_count if adjustments else None,
+        manual_treasury_rows=manual.treasury_count if manual else None,
+        manual_missing_journal_rows=manual.missing_journal_count if manual else None,
+        manual_inconsistent_journal_rows=manual.inconsistent_journal_count if manual else None,
+        manual_write_off_journal_rows=manual.write_off_journal_count if manual else None,
+        manual_adjustment_review_complete=False,
         adjustment_review_complete=False,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
