@@ -143,6 +143,11 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     missing_posted_treasury_evidence_rows: int
     missing_posted_refund_treasury_rows: int
     refund_treasury_type_mismatch_rows: int
+    historical_opening_review_status: Literal["not_applicable", "stored_records_consistent", "review_required"] = "not_applicable"
+    historical_opening_credited: Decimal | None = None
+    historical_receipt_book_total: Decimal | None = None
+    historical_excess_for_review: Decimal | None = None
+    historical_opening_independently_verified: Literal[False] = False
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
     source_coverage: list[PrincipalXSourceCoverageRead]
