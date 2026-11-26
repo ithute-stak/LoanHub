@@ -50,6 +50,9 @@ class CollectionSourceDiagnostics:
     duplicate_posted_treasury_payment_count: int = 0
     duplicate_cash_payment_count: int = 0
     duplicate_allocation_pair_count: int = 0
+    installment_allocation_excess_count: int = 0
+    installment_unexplained_paid_count: int = 0
+    invalid_installment_balance_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -134,6 +137,54 @@ def inspect_principal_x_collection_sources(
         elif allocated > paid:
             # Monetary records use cents; even M0.01 overage is an issue.
             overallocated += 1
+    installments = (
+        db.query(RepaymentInstallment)
+        .filter(RepaymentInstallment.loan_id == loan_id)
+        .all()
+    )
+    # Compare active schedule balances to successful, scoped allocations.
+    # A paid balance without allocation evidence can be legitimate legacy
+    # history; report it for reconciliation, never manufacture payment rows.
+    by_installment = {}
+    for allocation in allocations:
+        payment = payment_by_id.get(allocation.payment_id)
+        if (
+            payment is None
+            or getattr(payment, "status", None) != PaymentStatus.SUCCEEDED
+            or getattr(payment, "purpose", None) != PaymentPurpose.LOAN_REPAYMENT
+            or getattr(payment, "direction", None) != PaymentDirection.INBOUND
+        ):
+            continue
+        try:
+            amount = Decimal(str(allocation.amount))
+            if not amount.is_finite() or amount <= 0 or amount != amount.quantize(Decimal("0.01")):
+                continue
+        except (ValueError, TypeError, ArithmeticError):
+            continue
+        key = getattr(allocation, "installment_id", None)
+        by_installment[key] = by_installment.get(key, Decimal("0")) + amount
+    installment_excess = unexplained_paid = invalid_balances = 0
+    for installment in installments:
+        if getattr(installment, "is_superseded", False):
+            continue
+        try:
+            paid = Decimal(str(installment.paid_amount))
+            due = Decimal(str(installment.total_due))
+            if (
+                not paid.is_finite() or not due.is_finite()
+                or paid < 0 or due < 0 or paid > due
+                or paid != paid.quantize(Decimal("0.01"))
+                or due != due.quantize(Decimal("0.01"))
+            ):
+                raise ValueError("Invalid installment balance")
+        except (ValueError, TypeError, ArithmeticError, AttributeError):
+            invalid_balances += 1
+            continue
+        allocated = by_installment.get(installment.id, Decimal("0"))
+        if allocated > paid:
+            installment_excess += 1
+        elif paid > allocated:
+            unexplained_paid += 1
     # Cash evidence is corroborating documentation, not an additional
     # collection to sum. Flag records claiming more cash applied than the
     # corresponding payment received, without requiring equality (change,
@@ -325,6 +376,9 @@ def inspect_principal_x_collection_sources(
         duplicate_posted_treasury_payment_count=duplicate_posted,
         duplicate_cash_payment_count=duplicate_cash,
         duplicate_allocation_pair_count=duplicate_allocation_pairs,
+        installment_allocation_excess_count=installment_excess,
+        installment_unexplained_paid_count=unexplained_paid,
+        invalid_installment_balance_count=invalid_balances,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
