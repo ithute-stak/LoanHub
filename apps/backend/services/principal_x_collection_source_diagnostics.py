@@ -48,6 +48,7 @@ class CollectionSourceDiagnostics:
     refund_treasury_type_mismatch_count: int = 0
     treasury_entry_type_mismatch_count: int = 0
     duplicate_posted_treasury_payment_count: int = 0
+    duplicate_cash_payment_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -69,7 +70,12 @@ def inspect_principal_x_collection_sources(
                 PaymentTransaction.loan_id == loan_id)
         .all()
     )
-    cash_payment_ids = {row.payment_id for row in cash}
+    cash_counts = {}
+    for row in cash:
+        if row.payment_id in payment_ids:
+            cash_counts[row.payment_id] = cash_counts.get(row.payment_id, 0) + 1
+    cash_payment_ids = set(cash_counts)
+    duplicate_cash = sum(1 for count in cash_counts.values() if count > 1)
     allocations = (
         db.query(PaymentAllocation)
         .join(RepaymentInstallment,
@@ -309,6 +315,7 @@ def inspect_principal_x_collection_sources(
         treasury_direction_mismatch_count=treasury_direction_mismatches,
         treasury_entry_type_mismatch_count=treasury_entry_type_mismatches,
         duplicate_posted_treasury_payment_count=duplicate_posted,
+        duplicate_cash_payment_count=duplicate_cash,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
