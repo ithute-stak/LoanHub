@@ -148,6 +148,10 @@ class PrincipalXSettlementReadinessRead(BaseModel):
     historical_receipt_book_total: Decimal | None = None
     historical_excess_for_review: Decimal | None = None
     historical_opening_independently_verified: Literal[False] = False
+    historical_live_repayments: Decimal | None = None
+    historical_recorded_loan_paid: Decimal | None = None
+    historical_live_difference: Decimal | None = None
+    historical_live_unresolved_rows: int | None = None
     cross_source_reconciliation_complete: Literal[False] = False
     blocking_reasons: list[str]
     source_coverage: list[PrincipalXSourceCoverageRead]
