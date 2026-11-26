@@ -80,7 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
-from services.principal_x_historical_opening_review import inspect_historical_opening
+from services.principal_x_historical_opening_review import inspect_historical_opening, inspect_historical_live_payments
 from services.principal_x_collection_source_diagnostics import inspect_principal_x_collection_sources
 from payment_engine.principal_x_policy import PaymentModel
 from services.loan_service import (
@@ -613,6 +613,7 @@ def principal_x_settlement_readiness(
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
     historical = None
+    historical_live = None
     historical_status = "not_applicable"
     if getattr(loan, "origination_channel", None) == "legacy_cashout":
         try:
@@ -623,6 +624,17 @@ def principal_x_settlement_readiness(
             blockers.append("Historical opening records require independent receipt evidence.")
             if historical.excess_for_review > 0:
                 blockers.append("Historical excess collections require reconciliation.")
+            try:
+                historical_live = inspect_historical_live_payments(
+                    db, opening=historical, recorded_paid=loan.amount_paid,
+                    company_id=loan.company_id, loan_id=loan.id,
+                )
+                if historical_live.difference != 0:
+                    blockers.append("Historical opening and live repayments disagree with recorded loan paid balance.")
+                if historical_live.unresolved_rows:
+                    blockers.append("Historical live payment evidence includes unresolved records.")
+            except ValueError:
+                blockers.append("Historical live payment comparison requires review.")
         except ValueError:
             historical_status = "review_required"
             blockers.append("Historical opening capture and contract evidence require review.")
@@ -731,6 +743,10 @@ def principal_x_settlement_readiness(
         historical_receipt_book_total=historical.receipt_book_total if historical else None,
         historical_excess_for_review=historical.excess_for_review if historical else None,
         historical_opening_independently_verified=False,
+        historical_live_repayments=historical_live.recorded_live_repayments if historical_live else None,
+        historical_recorded_loan_paid=historical_live.recorded_loan_paid if historical_live else None,
+        historical_live_difference=historical_live.difference if historical_live else None,
+        historical_live_unresolved_rows=historical_live.unresolved_rows if historical_live else None,
         cross_source_reconciliation_complete=False,
         blocking_reasons=blockers,
         source_coverage=[
