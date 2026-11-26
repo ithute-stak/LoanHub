@@ -112,6 +112,47 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
         monkeypatch.setattr(financial_lock, "ClientCompanyLoan", Loan)
         monkeypatch.setattr(service, "_quote_from_payment", lambda db, payment: db.get(Quote, quote_id))
 
+        # A financial writer holding the shared loan lock must exclude the
+        # actual reversal service, even before that service locks its quote.
+        with Session() as writer:
+            locked = financial_lock.lock_financial_loan(
+                writer, company_id=company_id, loan_id=loan_id,
+            )
+            assert locked.amount_paid == Decimal("1000.00")
+            with Session() as competing:
+                competing.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                with pytest.raises(OperationalError) as caught:
+                    service.reverse_early_settlement(competing, payment)
+                assert getattr(caught.value.orig, "sqlstate", getattr(caught.value.orig, "pgcode", None)) == "55P03"
+                competing.rollback()
+            writer.rollback()
+
+        # A wrong-company request must fail closed without modifying the loan.
+        with Session() as wrong_tenant:
+            with pytest.raises(ValueError, match="Scoped financial loan not found"):
+                financial_lock.lock_financial_loan(
+                    wrong_tenant, company_id=uuid4(), loan_id=loan_id,
+                )
+            wrong_tenant.rollback()
+
+        # A session with a stale identity-map row must reload the committed
+        # financial state after acquiring the lock.
+        with Session() as reader:
+            stale = reader.get(Loan, loan_id)
+            assert stale.amount_paid == Decimal("1000.00")
+            with Session.begin() as writer:
+                locked = financial_lock.lock_financial_loan(
+                    writer, company_id=company_id, loan_id=loan_id,
+                )
+                locked.amount_paid = Decimal("1000.01")
+            refreshed = financial_lock.lock_financial_loan(
+                reader, company_id=company_id, loan_id=loan_id,
+            )
+            assert refreshed is stale
+            assert refreshed.amount_paid == Decimal("1000.01")
+            refreshed.amount_paid = Decimal("1000.00")
+            reader.commit()
+
         # Execute the real service, then explicitly commit or roll back the
         # entire transaction. No partially restored financial state may leak.
         with Session() as db:
