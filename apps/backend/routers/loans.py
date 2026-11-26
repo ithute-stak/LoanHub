@@ -80,6 +80,7 @@ from services.principal_x_settlement_preview_service import (
     require_unchanged_preview_snapshot,
 )
 from services.principal_x_payment_evidence_adapter import inspect_loanhub_payment_evidence
+from services.principal_x_gateway_reversal_review import inspect_gateway_reversals
 from services.principal_x_manual_adjustment_review import inspect_manual_adjustments
 from services.principal_x_adjustment_review import inspect_loan_adjustments
 from services.principal_x_historical_opening_review import inspect_historical_opening, inspect_historical_live_payments
@@ -614,6 +615,19 @@ def principal_x_settlement_readiness(
         "No authorized, transactionally locked Principal x% settlement posting adapter is installed.",
         "Authoritative cross-source collection, refund, and reversal reconciliation is not certified.",
     ]
+    gateway = None
+    try:
+        gateway = inspect_gateway_reversals(
+            db, company_id=loan.company_id, loan_id=loan.id,
+        )
+        if gateway.reversed_payment_count:
+            blockers.append("Gateway reversals require independent provider finality verification.")
+        if gateway.missing_evidence_count:
+            blockers.append("Reversed gateway repayments lack complete stored provider evidence.")
+        if gateway.inconsistent_event_count:
+            blockers.append("Stored gateway reversal events contain inconsistent or duplicate evidence.")
+    except ValueError:
+        blockers.append("Gateway reversal evidence scope or identity requires review.")
     manual = None
     try:
         manual = inspect_manual_adjustments(
@@ -790,6 +804,11 @@ def principal_x_settlement_readiness(
         manual_missing_journal_rows=manual.missing_journal_count if manual else None,
         manual_inconsistent_journal_rows=manual.inconsistent_journal_count if manual else None,
         manual_write_off_journal_rows=manual.write_off_journal_count if manual else None,
+        gateway_reversed_payment_rows=gateway.reversed_payment_count if gateway else None,
+        gateway_corroborated_payment_rows=gateway.corroborated_payment_count if gateway else None,
+        gateway_missing_evidence_rows=gateway.missing_evidence_count if gateway else None,
+        gateway_inconsistent_event_rows=gateway.inconsistent_event_count if gateway else None,
+        gateway_reversal_review_complete=False,
         manual_adjustment_review_complete=False,
         adjustment_review_complete=False,
         cross_source_reconciliation_complete=False,
