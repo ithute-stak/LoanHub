@@ -26,6 +26,10 @@ DIAGNOSTIC_SOURCE_FAMILIES = frozenset({
     "cash_collections",
     "repayment_allocations",
     "treasury_collections",
+    "legacy_imports",
+    "provider_reversals",
+    "refunds",
+    "manual_adjustments",
 })
 
 
