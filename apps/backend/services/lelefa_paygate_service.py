@@ -467,8 +467,14 @@ def initiate_borrower_gateway_checkout(
     amount: Decimal,
     idempotency_key: str,
     initiated_by_user_id: UUID,
+    settlement_quote: LoanEarlySettlement | None = None,
 ) -> tuple[PaymentTransaction, str]:
     """Create a LoanHub payment record before opening hosted gateway checkout."""
+    context = {"hosted_checkout": True}
+    if settlement_quote is not None:
+        if settlement_quote.company_id != loan.company_id or settlement_quote.loan_id != loan.id or settlement_quote.status != "processing":
+            raise HTTPException(status_code=409, detail="Invalid settlement checkout linkage")
+        context.update(early_settlement_id=str(settlement_quote.id), settlement_date=settlement_quote.settlement_date.isoformat())
     value = _money(amount)
     if value <= 0:
         raise HTTPException(status_code=422, detail="Payment amount must be greater than zero")
@@ -478,6 +484,8 @@ def initiate_borrower_gateway_checkout(
         .first()
     )
     if existing:
+        if existing.company_id != loan.company_id or existing.loan_id != loan.id or (existing.provider_payload or {}).get("early_settlement_id") != context.get("early_settlement_id") or _money(existing.amount) != value:
+            raise HTTPException(status_code=409, detail="Checkout idempotency scope mismatch")
         checkout_url = str((existing.provider_payload or {}).get("checkout_url") or "")
         if checkout_url:
             return existing, checkout_url
@@ -509,10 +517,14 @@ def initiate_borrower_gateway_checkout(
             resource_type="checkout_session",
             branch_id=loan.branch_id,
             internal_reference=internal_reference,
-            integration_context={"hosted_checkout": True},
+            integration_context=context,
         ),
     )
     db.add(payment)
+    if settlement_quote is not None:
+        db.flush()
+        settlement_quote.payment_id = payment.id
+        db.add(settlement_quote)
     db.commit()
     db.refresh(payment)
 
@@ -572,9 +584,13 @@ def initiate_borrower_gateway_checkout(
         resource_type="checkout_session",
         branch_id=loan.branch_id,
         internal_reference=internal_reference,
-        integration_context={"hosted_checkout": True},
+        integration_context=context,
     )
-    payment.status = _gateway_status(str(response.get("status") or "open"))
+    mapped = _gateway_status(str(response.get("status") or "open"))
+    if mapped == PaymentStatus.SUCCEEDED:
+        finalize_gateway_payment(db, payment)
+    else:
+        payment.status = mapped
     db.add(payment)
     db.commit()
     db.refresh(payment)
@@ -592,9 +608,13 @@ def initiate_borrower_settlement_checkout(
     agreement_reference: str | None,
 ) -> tuple[PaymentTransaction, str]:
     """Open hosted checkout for the exact calculator-backed settlement quote."""
+    from services.early_settlement_service import _lock_settlement_loan
+    loan = _lock_settlement_loan(db, company_id=loan.company_id, loan_id=loan.id)
     locked = (
         db.query(LoanEarlySettlement)
-        .filter(LoanEarlySettlement.id == quote.id, LoanEarlySettlement.loan_id == loan.id)
+        .filter(LoanEarlySettlement.id == quote.id, LoanEarlySettlement.loan_id == loan.id,
+                LoanEarlySettlement.company_id == loan.company_id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
@@ -625,35 +645,17 @@ def initiate_borrower_settlement_checkout(
     locked.agreement_reference = (agreement_reference or "").strip() or None
     locked.status = "processing"
     db.add(locked)
-    db.commit()
-    try:
-        payment, checkout_url = initiate_borrower_gateway_checkout(
-            db,
-            loan=loan,
-            amount=_money(locked.settlement_amount),
-            idempotency_key=idempotency_key,
-            initiated_by_user_id=initiated_by_user_id,
-        )
-    except HTTPException:
-        locked.status = "failed"
-        db.add(locked)
-        db.commit()
-        raise
-
-    payment.provider_payload = {
-        **(payment.provider_payload or {}),
-        "early_settlement_id": str(locked.id),
-        "settlement_date": locked.settlement_date.isoformat(),
-    }
-    locked.payment_id = payment.id
-    db.add(payment)
-    db.add(locked)
-    db.commit()
-    db.refresh(payment)
-    if payment.status == PaymentStatus.SUCCEEDED:
-        finalize_gateway_payment(db, payment)
-        db.commit()
-    return payment, checkout_url
+    # The payment and processing quote are committed together before the
+    # provider can send a callback. Ambiguous provider failures remain
+    # available for reconciliation rather than marking the quote failed.
+    return initiate_borrower_gateway_checkout(
+        db,
+        loan=loan,
+        amount=_money(locked.settlement_amount),
+        idempotency_key=idempotency_key,
+        initiated_by_user_id=initiated_by_user_id,
+        settlement_quote=locked,
+    )
 
 
 def initiate_gateway_loan_disbursement(
