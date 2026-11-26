@@ -5,6 +5,11 @@ from uuid import uuid4
 
 import pytest
 
+from database.models.accounting import JournalEntry, JournalLine
+from database.models.governance_control import PaymentAdjustment
+from database.models.legacy_loan_capture import LegacyLoanCapture
+from database.models.origination import LoanContract
+from database.models.lelefa_paygate import LelefaPayGateWebhookEvent
 from database.models.cash import CashTransaction
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
@@ -35,7 +40,7 @@ class Session:
         }
 
     def query(self, model):
-        return Query(self.data[model])
+        return Query(self.data.get(model, []))
 
 
 def test_empty_local_sources_have_stable_but_non_authoritative_revision():
@@ -159,3 +164,38 @@ def test_installment_row_added_or_removed_invalidates_revision():
         session, company_id=company_id, loan_id=loan_id,
     )
     assert before != after
+
+
+@pytest.mark.parametrize("model,field,old,new", [
+    (LegacyLoanCapture, "amount_paid", Decimal("100"), Decimal("101")),
+    (LegacyLoanCapture, "conversion_data", {"receipt_book_total_paid": "100"}, {"receipt_book_total_paid": "101"}),
+    (LoanContract, "contract_hash", "a", "b"),
+    (LoanContract, "terms_snapshot", {"amount_paid_at_migration": "100"}, {"amount_paid_at_migration": "101"}),
+    (PaymentAdjustment, "status", "processing", "completed"),
+    (PaymentAdjustment, "amount", Decimal("100"), Decimal("101")),
+    (LelefaPayGateWebhookEvent, "processing_status", "received", "processed"),
+    (LelefaPayGateWebhookEvent, "payload", {"data": {"amount": "100"}}, {"data": {"amount": "101"}}),
+    (JournalEntry, "status", "posted", "draft"),
+    (JournalEntry, "total_credit", Decimal("100"), Decimal("101")),
+    (JournalLine, "credit", Decimal("100"), Decimal("101")),
+    (JournalLine, "account_id", "account-a", "account-b"),
+])
+def test_expanded_evidence_change_invalidates_revision(model, field, old, new):
+    company_id, loan_id = uuid4(), uuid4()
+    row = SimpleNamespace(id=uuid4(), **{field: old})
+    session = Session([])
+    session.data[model] = [row]
+    before = local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+    setattr(row, field, new)
+    after = local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+    assert before != after
+
+
+def test_nested_json_key_order_does_not_change_revision():
+    company_id, loan_id = uuid4(), uuid4()
+    row = SimpleNamespace(id=uuid4(), payload={"data": {"amount": "100", "currency": "LSL"}})
+    session = Session([])
+    session.data[LelefaPayGateWebhookEvent] = [row]
+    before = local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+    row.payload = {"data": {"currency": "LSL", "amount": "100"}}
+    assert before == local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
