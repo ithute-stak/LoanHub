@@ -49,6 +49,7 @@ class CollectionSourceDiagnostics:
     treasury_entry_type_mismatch_count: int = 0
     duplicate_posted_treasury_payment_count: int = 0
     duplicate_cash_payment_count: int = 0
+    duplicate_allocation_pair_count: int = 0
 
 
 def inspect_principal_x_collection_sources(
@@ -88,6 +89,13 @@ def inspect_principal_x_collection_sources(
     # amount; never sum allocation totals as separate cash collections.
     payment_by_id = {row.id: row for row in payments}
     allocated_by_payment = {}
+    allocation_pair_counts = {}
+    for allocation in allocations:
+        installment_id = getattr(allocation, "installment_id", None)
+        if allocation.payment_id in payment_ids and installment_id is not None:
+            key = (allocation.payment_id, installment_id)
+            allocation_pair_counts[key] = allocation_pair_counts.get(key, 0) + 1
+    duplicate_allocation_pairs = sum(1 for count in allocation_pair_counts.values() if count > 1)
     invalid_allocations = 0
     for allocation in allocations:
         # Orphans are reported separately; never assume a payment amount.
@@ -316,6 +324,7 @@ def inspect_principal_x_collection_sources(
         treasury_entry_type_mismatch_count=treasury_entry_type_mismatches,
         duplicate_posted_treasury_payment_count=duplicate_posted,
         duplicate_cash_payment_count=duplicate_cash,
+        duplicate_allocation_pair_count=duplicate_allocation_pairs,
         voided_linked_treasury_count=voided_linked_treasury,
         unposted_linked_treasury_count=unposted_linked_treasury,
         missing_posted_treasury_evidence_count=missing_posted_treasury,
