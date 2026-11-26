@@ -651,6 +651,8 @@ def principal_x_settlement_readiness(
         blockers.append("Treasury money-in/money-out direction disagrees with the linked payment.")
     if cross_sources.treasury_entry_type_mismatch_count:
         blockers.append("Successful loan repayments are linked to incorrectly classified treasury entries.")
+    if cross_sources.duplicate_allocation_pair_count:
+        blockers.append("Duplicate payment-to-installment allocations require review.")
     if cross_sources.duplicate_cash_payment_count:
         blockers.append("Multiple cash records reference the same payment; review required.")
     if cross_sources.duplicate_posted_treasury_payment_count:
@@ -694,6 +696,7 @@ def principal_x_settlement_readiness(
         treasury_entry_type_mismatch_rows=cross_sources.treasury_entry_type_mismatch_count,
         duplicate_posted_treasury_payment_rows=cross_sources.duplicate_posted_treasury_payment_count,
         duplicate_cash_payment_rows=cross_sources.duplicate_cash_payment_count,
+        duplicate_allocation_pair_rows=cross_sources.duplicate_allocation_pair_count,
         voided_linked_treasury_rows=cross_sources.voided_linked_treasury_count,
         unposted_linked_treasury_rows=cross_sources.unposted_linked_treasury_count,
         missing_posted_treasury_evidence_rows=cross_sources.missing_posted_treasury_evidence_count,
