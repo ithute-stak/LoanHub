@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -79,3 +79,121 @@ class EarlySettlementRead(BaseModel):
 class EarlySettlementPaymentResult(BaseModel):
     settlement: EarlySettlementRead
     payment: CashPaymentResult
+
+
+
+class PrincipalXSettlementPreviewRead(BaseModel):
+    """Non-payable, non-persisted preview of an approved Principal x% loan."""
+    loan_id: UUID
+    payment_model: str
+    settlement_date: date
+    snapshot_revision: str
+    period: int
+    uncapped_due: Decimal
+    settlement_amount: Decimal
+    contractual_remaining: Decimal
+    lifetime_cap_remaining: Decimal
+    total_credited: Decimal
+    ceiling_reduction: Decimal
+    payment_enabled: bool = False
+
+
+
+class PrincipalXSourceCoverageRead(BaseModel):
+    """Implementation inventory, never authoritative reconciliation proof."""
+    source_family: str
+    review_stage: Literal["diagnostic_only", "authoritative_adapter_missing"]
+    authoritatively_verified: Literal[False] = False
+
+
+class PrincipalXSettlementReadinessRead(BaseModel):
+    """Read-only diagnostics; never authorizes a financial transaction."""
+    loan_id: UUID
+    payment_model: str
+    can_post_settlement: Literal[False] = False
+    payment_rows_reviewed: int
+    unresolved_payment_rows: int
+    refund_payment_rows: int
+    reversed_payment_rows: int
+    nonfinal_refund_rows: int
+    invalid_payment_amount_rows: int
+    unsupported_payment_currency_rows: int
+    orphan_cash_rows: int
+    orphan_allocation_rows: int
+    unlinked_treasury_rows: int
+    missing_cash_evidence_rows: int
+    overallocated_payment_rows: int
+    invalid_allocation_rows: int
+    nonfinal_allocation_payment_rows: int
+    cash_overapplied_rows: int
+    invalid_cash_amount_rows: int
+    cash_direction_mismatch_rows: int
+    treasury_amount_mismatch_rows: int
+    treasury_currency_mismatch_rows: int
+    treasury_direction_mismatch_rows: int
+    treasury_entry_type_mismatch_rows: int
+    duplicate_posted_treasury_payment_rows: int = 0
+    duplicate_cash_payment_rows: int = 0
+    duplicate_allocation_pair_rows: int = 0
+    installment_allocation_excess_rows: int = 0
+    installment_unexplained_paid_rows: int = 0
+    invalid_installment_balance_rows: int = 0
+    voided_linked_treasury_rows: int
+    unposted_linked_treasury_rows: int
+    missing_posted_treasury_evidence_rows: int
+    missing_posted_refund_treasury_rows: int
+    refund_treasury_type_mismatch_rows: int
+    historical_opening_review_status: Literal["not_applicable", "stored_records_consistent", "review_required"] = "not_applicable"
+    historical_opening_credited: Decimal | None = None
+    historical_receipt_book_total: Decimal | None = None
+    historical_excess_for_review: Decimal | None = None
+    historical_opening_independently_verified: Literal[False] = False
+    historical_live_repayments: Decimal | None = None
+    historical_recorded_loan_paid: Decimal | None = None
+    historical_live_difference: Decimal | None = None
+    historical_live_unresolved_rows: int | None = None
+    adjustment_rows_reviewed: int | None = None
+    adjustment_completed_rows: int | None = None
+    adjustment_unresolved_rows: int | None = None
+    adjustment_locally_consistent_rows: int | None = None
+    adjustment_inconsistent_completed_rows: int | None = None
+    adjustment_duplicate_original_rows: int | None = None
+    adjustment_excess_original_rows: int | None = None
+    manual_treasury_rows: int | None = None
+    manual_missing_journal_rows: int | None = None
+    manual_inconsistent_journal_rows: int | None = None
+    manual_write_off_journal_rows: int | None = None
+    gateway_reversed_payment_rows: int | None = None
+    gateway_corroborated_payment_rows: int | None = None
+    gateway_missing_evidence_rows: int | None = None
+    gateway_inconsistent_event_rows: int | None = None
+    gateway_reversal_review_complete: Literal[False] = False
+    manual_adjustment_review_complete: Literal[False] = False
+    adjustment_review_complete: Literal[False] = False
+    lifetime_recorded_successful_repayments: Decimal | None = None
+    lifetime_historical_opening_credit: Decimal | None = None
+    lifetime_recorded_credit_before_adjustments: Decimal | None = None
+    lifetime_recorded_loan_paid: Decimal | None = None
+    lifetime_unexplained_difference: Decimal | None = None
+    lifetime_unresolved_payment_rows: int | None = None
+    lifetime_authoritative_net_collected: Literal[None] = None
+    lifetime_reconciled: Literal[False] = False
+    cross_source_reconciliation_complete: Literal[False] = False
+    blocking_reasons: list[str]
+    source_coverage: list[PrincipalXSourceCoverageRead]
+
+
+class PrincipalXSettlementRevalidateRequest(BaseModel):
+    """Compare a prior non-payable preview against the current source snapshot."""
+    settlement_date: date
+    snapshot_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class PrincipalXSettlementRevalidateRead(BaseModel):
+    """Confirmation of an unchanged preview, NOT settlement authorization."""
+    loan_id: UUID
+    snapshot_revision: str
+    settlement_date: date
+    settlement_amount: Decimal
+    unchanged: Literal[True] = True
+    payment_enabled: Literal[False] = False

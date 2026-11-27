@@ -376,6 +376,13 @@ def initiate_gateway_payment(
                 provider=selected_provider,
             )
     except LelefaPayGateError as exc:
+        _lock_gateway_repayment(db, payment)
+        if (
+            payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+            and not (payment.provider_payload or {}).get("early_settlement_id")
+            and payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}
+        ):
+            return payment
         payment.failure_reason = exc.detail
         payment.status = PaymentStatus.PROCESSING if exc.retryable else PaymentStatus.FAILED
         db.add(payment)
@@ -386,6 +393,16 @@ def initiate_gateway_payment(
                 status_code=exc.status_code or 502,
                 detail=f"LelefaPayGate rejected the transaction: {exc.detail}",
             ) from exc
+        return payment
+
+    _lock_gateway_repayment(db, payment)
+    if (
+        payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+        and not (payment.provider_payload or {}).get("early_settlement_id")
+        and payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}
+    ):
+        # A concurrent webhook already posted or reversed this repayment.
+        # Do not overwrite its terminal status or repeat financial effects.
         return payment
 
     public_id = str(response.get("public_id") or response.get("id") or "").strip()
@@ -450,8 +467,14 @@ def initiate_borrower_gateway_checkout(
     amount: Decimal,
     idempotency_key: str,
     initiated_by_user_id: UUID,
+    settlement_quote: LoanEarlySettlement | None = None,
 ) -> tuple[PaymentTransaction, str]:
     """Create a LoanHub payment record before opening hosted gateway checkout."""
+    context = {"hosted_checkout": True}
+    if settlement_quote is not None:
+        if settlement_quote.company_id != loan.company_id or settlement_quote.loan_id != loan.id or settlement_quote.status != "processing":
+            raise HTTPException(status_code=409, detail="Invalid settlement checkout linkage")
+        context.update(early_settlement_id=str(settlement_quote.id), settlement_date=settlement_quote.settlement_date.isoformat())
     value = _money(amount)
     if value <= 0:
         raise HTTPException(status_code=422, detail="Payment amount must be greater than zero")
@@ -461,6 +484,8 @@ def initiate_borrower_gateway_checkout(
         .first()
     )
     if existing:
+        if existing.company_id != loan.company_id or existing.loan_id != loan.id or (existing.provider_payload or {}).get("early_settlement_id") != context.get("early_settlement_id") or _money(existing.amount) != value:
+            raise HTTPException(status_code=409, detail="Checkout idempotency scope mismatch")
         checkout_url = str((existing.provider_payload or {}).get("checkout_url") or "")
         if checkout_url:
             return existing, checkout_url
@@ -492,10 +517,14 @@ def initiate_borrower_gateway_checkout(
             resource_type="checkout_session",
             branch_id=loan.branch_id,
             internal_reference=internal_reference,
-            integration_context={"hosted_checkout": True},
+            integration_context=context,
         ),
     )
     db.add(payment)
+    if settlement_quote is not None:
+        db.flush()
+        settlement_quote.payment_id = payment.id
+        db.add(settlement_quote)
     db.commit()
     db.refresh(payment)
 
@@ -520,6 +549,11 @@ def initiate_borrower_gateway_checkout(
             cancel_url=f"{return_url}?checkout=cancelled",
         )
     except LelefaPayGateError as exc:
+        _lock_gateway_repayment(db, payment)
+        if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
+            raise HTTPException(
+                status_code=409, detail="Checkout already finalized; refresh payment history",
+            ) from exc
         payment.failure_reason = exc.detail
         payment.status = PaymentStatus.PROCESSING if exc.retryable else PaymentStatus.FAILED
         db.add(payment)
@@ -529,6 +563,11 @@ def initiate_borrower_gateway_checkout(
             detail=f"Could not create LelefaPayGate checkout: {exc.detail}",
         ) from exc
 
+    _lock_gateway_repayment(db, payment)
+    if payment.status in {PaymentStatus.SUCCEEDED, PaymentStatus.REVERSED}:
+        raise HTTPException(
+            status_code=409, detail="Checkout already finalized; refresh payment history",
+        )
     public_id = str(response.get("public_id") or response.get("id") or "").strip()
     checkout_url = str(response.get("checkout_url") or "").strip()
     parsed = urlparse(checkout_url)
@@ -545,9 +584,13 @@ def initiate_borrower_gateway_checkout(
         resource_type="checkout_session",
         branch_id=loan.branch_id,
         internal_reference=internal_reference,
-        integration_context={"hosted_checkout": True},
+        integration_context=context,
     )
-    payment.status = _gateway_status(str(response.get("status") or "open"))
+    mapped = _gateway_status(str(response.get("status") or "open"))
+    if mapped == PaymentStatus.SUCCEEDED:
+        finalize_gateway_payment(db, payment)
+    else:
+        payment.status = mapped
     db.add(payment)
     db.commit()
     db.refresh(payment)
@@ -565,9 +608,13 @@ def initiate_borrower_settlement_checkout(
     agreement_reference: str | None,
 ) -> tuple[PaymentTransaction, str]:
     """Open hosted checkout for the exact calculator-backed settlement quote."""
+    from services.early_settlement_service import _lock_settlement_loan
+    loan = _lock_settlement_loan(db, company_id=loan.company_id, loan_id=loan.id)
     locked = (
         db.query(LoanEarlySettlement)
-        .filter(LoanEarlySettlement.id == quote.id, LoanEarlySettlement.loan_id == loan.id)
+        .filter(LoanEarlySettlement.id == quote.id, LoanEarlySettlement.loan_id == loan.id,
+                LoanEarlySettlement.company_id == loan.company_id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
@@ -598,35 +645,17 @@ def initiate_borrower_settlement_checkout(
     locked.agreement_reference = (agreement_reference or "").strip() or None
     locked.status = "processing"
     db.add(locked)
-    db.commit()
-    try:
-        payment, checkout_url = initiate_borrower_gateway_checkout(
-            db,
-            loan=loan,
-            amount=_money(locked.settlement_amount),
-            idempotency_key=idempotency_key,
-            initiated_by_user_id=initiated_by_user_id,
-        )
-    except HTTPException:
-        locked.status = "failed"
-        db.add(locked)
-        db.commit()
-        raise
-
-    payment.provider_payload = {
-        **(payment.provider_payload or {}),
-        "early_settlement_id": str(locked.id),
-        "settlement_date": locked.settlement_date.isoformat(),
-    }
-    locked.payment_id = payment.id
-    db.add(payment)
-    db.add(locked)
-    db.commit()
-    db.refresh(payment)
-    if payment.status == PaymentStatus.SUCCEEDED:
-        finalize_gateway_payment(db, payment)
-        db.commit()
-    return payment, checkout_url
+    # The payment and processing quote are committed together before the
+    # provider can send a callback. Ambiguous provider failures remain
+    # available for reconciliation rather than marking the quote failed.
+    return initiate_borrower_gateway_checkout(
+        db,
+        loan=loan,
+        amount=_money(locked.settlement_amount),
+        idempotency_key=idempotency_key,
+        initiated_by_user_id=initiated_by_user_id,
+        settlement_quote=locked,
+    )
 
 
 def initiate_gateway_loan_disbursement(
@@ -652,11 +681,29 @@ def initiate_gateway_loan_disbursement(
     )
 
 
+def _lock_gateway_repayment(db: Session, payment: PaymentTransaction) -> None:
+    """Serialize ordinary and settlement repayment responses before mutation."""
+    if payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT:
+        from services.principal_x_financial_lock import lock_financial_loan
+
+        scope = (payment.company_id, payment.loan_id)
+        settlement_id = (payment.provider_payload or {}).get("early_settlement_id")
+        try:
+            lock_financial_loan(db, company_id=scope[0], loan_id=scope[1])
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Gateway repayment requires a valid locked loan") from exc
+        db.refresh(payment)
+        if (payment.company_id, payment.loan_id) != scope or payment.purpose != PaymentPurpose.LOAN_REPAYMENT or (payment.provider_payload or {}).get("early_settlement_id") != settlement_id:
+            raise HTTPException(status_code=409, detail="Payment linkage changed; retry reconciliation")
+
+
+
 def apply_gateway_resource(
     db: Session,
     payment: PaymentTransaction,
     resource: dict[str, Any],
 ) -> PaymentTransaction:
+    _lock_gateway_repayment(db, payment)
     response_id = str(resource.get("public_id") or resource.get("id") or "")
     if response_id and payment.provider_reference.startswith("LPG-PENDING-"):
         payment.provider_reference = response_id
@@ -668,6 +715,9 @@ def apply_gateway_resource(
             status_code=409,
             detail="Reversed gateway payment cannot be finalized again; use a new authorized disbursement",
         )
+    if payment.status == PaymentStatus.REVERSED:
+        # Late non-success notifications must not reopen a reversed payment.
+        return payment
     payment.provider_payload = {
         **(payment.provider_payload or {}),
         "gateway_status": resource.get("status"),

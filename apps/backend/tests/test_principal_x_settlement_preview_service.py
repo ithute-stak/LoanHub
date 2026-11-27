@@ -5,7 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.principal_x_settlement_preview_service import quote_principal_x_for_loan
+from services.principal_x_settlement_preview_service import (
+    quote_principal_x_for_loan, quote_principal_x_for_loan_with_revision,
+    require_unchanged_preview_snapshot,
+)
 
 
 def make_loan():
@@ -32,7 +35,7 @@ def mock_db(payments):
 
 def test_persisted_loan_and_succeeded_payment():
     loan = make_loan()
-    payment = SimpleNamespace(amount=Decimal("464"), completed_at=datetime(2026, 11, 30))
+    payment = SimpleNamespace(id="payment-1", amount=Decimal("464"), completed_at=datetime(2026, 11, 30))
     result = quote_principal_x_for_loan(
         mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15)
     )
@@ -60,3 +63,58 @@ def test_fail_closed_for_legacy_and_renewals():
         quote_principal_x_for_loan(
             mock_db([]), loan=loan, settlement_date=date(2026, 12, 15)
         )
+
+
+def test_snapshot_revision_changes_with_payment_or_schedule():
+    loan = make_loan()
+    payment = SimpleNamespace(
+        id="payment-1", amount=Decimal("464"),
+        completed_at=datetime(2026, 11, 30),
+    )
+    first = quote_principal_x_for_loan_with_revision(
+        mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
+    )
+    same = quote_principal_x_for_loan_with_revision(
+        mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
+    )
+    assert first.quote.collectible_due == Decimal("883.20")
+    assert first.snapshot_revision == same.snapshot_revision
+    assert len(first.snapshot_revision) == 64
+
+    # Changed payment identity must invalidate a prior quote snapshot.
+    other_payment = SimpleNamespace(
+        id="payment-2", amount=Decimal("464"),
+        completed_at=datetime(2026, 11, 30),
+    )
+    changed = quote_principal_x_for_loan_with_revision(
+        mock_db([other_payment]), loan=loan,
+        settlement_date=date(2026, 12, 15),
+    )
+    assert changed.snapshot_revision != first.snapshot_revision
+
+    # Contract schedule edits must also invalidate a prior quote.
+    loan.installments[0].total_due = Decimal("465")
+    loan.installments[1].total_due = Decimal("463")
+    schedule_changed = quote_principal_x_for_loan_with_revision(
+        mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
+    )
+    assert schedule_changed.snapshot_revision != first.snapshot_revision
+
+
+def test_snapshot_revision_preflight_rejects_stale_or_malformed_fingerprints():
+    loan = make_loan()
+    payment = SimpleNamespace(
+        id="payment-1", amount=Decimal("464"),
+        completed_at=datetime(2026, 11, 30),
+    )
+    snapshot = quote_principal_x_for_loan_with_revision(
+        mock_db([payment]), loan=loan, settlement_date=date(2026, 12, 15),
+    )
+    require_unchanged_preview_snapshot(
+        expected_revision=snapshot.snapshot_revision, current=snapshot,
+    )
+    for bad_revision in ("", "not-a-sha", "f" * 64, snapshot.snapshot_revision.upper()):
+        with pytest.raises(ValueError, match="fresh quotation"):
+            require_unchanged_preview_snapshot(
+                expected_revision=bad_revision, current=snapshot,
+            )

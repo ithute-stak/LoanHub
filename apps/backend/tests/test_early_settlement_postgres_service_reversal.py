@@ -17,6 +17,7 @@ from sqlalchemy.exc import OperationalError
 
 from database.models.enums import InstallmentStatus, LoanStatus
 from services import early_settlement_service as service
+from services import principal_x_financial_lock as financial_lock
 
 
 @pytest.mark.parametrize("retained_cents", ["0.08", "0.40"])
@@ -33,6 +34,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
     class Loan(Base):
         __tablename__ = prefix + "_loans"
         id = Column(UUID(as_uuid=True), primary_key=True)
+        company_id = Column(UUID(as_uuid=True), nullable=False)
         status = Column(String, nullable=False)
         total_repayable = Column(Numeric(15, 2))
         amount_paid = Column(Numeric(15, 2))
@@ -58,6 +60,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
         __tablename__ = prefix + "_quotes"
         id = Column(UUID(as_uuid=True), primary_key=True)
         loan_id = Column(UUID(as_uuid=True), nullable=False)
+        company_id = Column(UUID(as_uuid=True), nullable=False)
         status = Column(String, nullable=False)
         original_total_repayable = Column(Numeric(15, 2))
         original_amount_paid = Column(Numeric(15, 2))
@@ -69,13 +72,14 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
         reversed_at = Column(DateTime(timezone=True))
 
     engine = create_engine(url, pool_pre_ping=True)
-    loan_id, installment_id, quote_id = uuid4(), uuid4(), uuid4()
+    company_id, loan_id, installment_id, quote_id = uuid4(), uuid4(), uuid4(), uuid4()
+    payment = SimpleNamespace(company_id=company_id, loan_id=loan_id)
     try:
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine, expire_on_commit=False)
         with Session.begin() as db:
             db.add(Loan(
-                id=loan_id, status="completed", total_repayable=1000,
+                id=loan_id, company_id=company_id, status="completed", total_repayable=1000,
                 amount_paid=1000, balance=0, maturity_date=date(2026, 11, 1),
                 repayment_period=1, installment_amount=1000,
                 calculation_breakdown={"early_settlement": True},
@@ -85,7 +89,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
                 paid_amount=Decimal(retained_cents), is_superseded=True,
             ))
             db.add(Quote(
-                id=quote_id, loan_id=loan_id, status="settled",
+                id=quote_id, loan_id=loan_id, company_id=company_id, status="settled",
                 original_total_repayable=1500, original_amount_paid=500,
                 original_balance=1000, original_maturity_date=date(2027, 1, 15),
                 original_term_months=6,
@@ -105,12 +109,54 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
 
         monkeypatch.setattr(service, "LoanEarlySettlement", Quote)
         monkeypatch.setattr(service, "ClientCompanyLoan", Loan)
+        monkeypatch.setattr(financial_lock, "ClientCompanyLoan", Loan)
         monkeypatch.setattr(service, "_quote_from_payment", lambda db, payment: db.get(Quote, quote_id))
+
+        # A financial writer holding the shared loan lock must exclude the
+        # actual reversal service, even before that service locks its quote.
+        with Session() as writer:
+            locked = financial_lock.lock_financial_loan(
+                writer, company_id=company_id, loan_id=loan_id,
+            )
+            assert locked.amount_paid == Decimal("1000.00")
+            with Session() as competing:
+                competing.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                with pytest.raises(OperationalError) as caught:
+                    service.reverse_early_settlement(competing, payment)
+                assert getattr(caught.value.orig, "sqlstate", getattr(caught.value.orig, "pgcode", None)) == "55P03"
+                competing.rollback()
+            writer.rollback()
+
+        # A wrong-company request must fail closed without modifying the loan.
+        with Session() as wrong_tenant:
+            with pytest.raises(ValueError, match="Scoped financial loan not found"):
+                financial_lock.lock_financial_loan(
+                    wrong_tenant, company_id=uuid4(), loan_id=loan_id,
+                )
+            wrong_tenant.rollback()
+
+        # A session with a stale identity-map row must reload the committed
+        # financial state after acquiring the lock.
+        with Session() as reader:
+            stale = reader.get(Loan, loan_id)
+            assert stale.amount_paid == Decimal("1000.00")
+            with Session.begin() as writer:
+                locked = financial_lock.lock_financial_loan(
+                    writer, company_id=company_id, loan_id=loan_id,
+                )
+                locked.amount_paid = Decimal("1000.01")
+            refreshed = financial_lock.lock_financial_loan(
+                reader, company_id=company_id, loan_id=loan_id,
+            )
+            assert refreshed is stale
+            assert refreshed.amount_paid == Decimal("1000.01")
+            refreshed.amount_paid = Decimal("1000.00")
+            reader.commit()
 
         # Execute the real service, then explicitly commit or roll back the
         # entire transaction. No partially restored financial state may leak.
         with Session() as db:
-            assert service.reverse_early_settlement(db, SimpleNamespace()) is True
+            assert service.reverse_early_settlement(db, payment) is True
             if commit_reversal:
                 # The first reversal still owns the quote row lock. A second
                 # real service invocation on another PostgreSQL connection
@@ -118,7 +164,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
                 with Session() as competing:
                     competing.execute(text("SET LOCAL lock_timeout = '200ms'"))
                     with pytest.raises(OperationalError):
-                        service.reverse_early_settlement(competing, SimpleNamespace())
+                        service.reverse_early_settlement(competing, payment)
                     competing.rollback()
                 db.commit()
             else:
@@ -136,7 +182,7 @@ def test_reversal_service_restores_cents_and_transaction_rollback(monkeypatch, r
                 assert loan.balance == Decimal("1000.00")
                 assert installment.status == InstallmentStatus.PARTIALLY_PAID.value
                 assert installment.is_superseded is False
-                assert service.reverse_early_settlement(db, SimpleNamespace()) is False
+                assert service.reverse_early_settlement(db, payment) is False
             else:
                 assert quote.status == "settled"
                 assert quote.reversed_at is None

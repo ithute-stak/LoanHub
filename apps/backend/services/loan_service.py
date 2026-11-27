@@ -949,6 +949,14 @@ def record_cash_repayment(
     backdated_by_company_owner: bool = False,
 ) -> tuple[PaymentTransaction, CashTransaction | None, dict[str, Any]]:
     """Post a loan repayment through cash or a manually verified channel."""
+    from services.principal_x_financial_lock import lock_financial_loan
+
+    try:
+        loan = lock_financial_loan(db, company_id=loan.company_id, loan_id=loan.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Repayment requires a valid locked loan") from exc
+    # Re-read the schedule after acquiring the lock, not from a pre-lock cache.
+    db.expire(loan, ["installments"])
     if is_legacy_loan_locked(db, loan.company_id, loan.id):
         raise HTTPException(status_code=409, detail="Historical loan is locked for new repayments")
     if payment_method != PaymentMethod.CASH and overpayment_action == "give_change":
@@ -1111,6 +1119,14 @@ def record_installment_repayment(
     later installments. Advance/overpayment workflows remain available through
     the payment desk.
     """
+    from services.principal_x_financial_lock import lock_financial_loan
+
+    try:
+        loan = lock_financial_loan(db, company_id=loan.company_id, loan_id=loan.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Repayment requires a valid locked loan") from exc
+    # Re-read the schedule after acquiring the lock, not from a pre-lock cache.
+    db.expire(loan, ["installments"])
     if is_legacy_loan_locked(db, loan.company_id, loan.id):
         raise HTTPException(status_code=409, detail="Historical loan is locked for new installment repayments")
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:

@@ -27,6 +27,7 @@ from database.models.enums import (
 from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from services.legacy_loan_lock_policy import is_legacy_loan_locked
+from services.settlement_payment_model_gate import require_standard_settlement_model
 from services.interest_calculation_service import (
     calculate_daily_accrued_interest,
     calculate_loan_terms,
@@ -385,6 +386,7 @@ def quote_early_settlement(
 ) -> LoanEarlySettlement:
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="Only an active or defaulted loan can be settled early")
+    require_standard_settlement_model(db, loan=loan)
     today = validate_settlement_date(loan, settlement_date)
     if settlement_date < today and not _is_company_owner(
         db,
@@ -593,6 +595,17 @@ def assert_no_settlement_in_progress(db: Session, loan_id: UUID) -> None:
         )
 
 
+def _lock_settlement_loan(db: Session, *, company_id: UUID, loan_id: UUID):
+    from services.principal_x_financial_lock import lock_financial_loan
+
+    try:
+        loan = lock_financial_loan(db, company_id=company_id, loan_id=loan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Settlement requires a valid locked loan") from exc
+    db.expire(loan, ["installments"])
+    return loan
+
+
 def finalize_early_settlement_payment(
     db: Session,
     payment: PaymentTransaction,
@@ -600,9 +613,15 @@ def finalize_early_settlement_payment(
     referenced_quote = _quote_from_payment(db, payment)
     if not referenced_quote:
         raise HTTPException(status_code=409, detail="Early-settlement payment is missing its quote")
+    if referenced_quote.company_id != payment.company_id or referenced_quote.loan_id != payment.loan_id:
+        raise HTTPException(status_code=409, detail="Settlement payment scope mismatch")
+    loan = _lock_settlement_loan(db, company_id=referenced_quote.company_id, loan_id=referenced_quote.loan_id)
     quote = (
         db.query(LoanEarlySettlement)
-        .filter(LoanEarlySettlement.id == referenced_quote.id)
+        .filter(LoanEarlySettlement.id == referenced_quote.id,
+                LoanEarlySettlement.company_id == loan.company_id,
+                LoanEarlySettlement.loan_id == loan.id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
@@ -613,14 +632,7 @@ def finalize_early_settlement_payment(
     if payment.status != PaymentStatus.SUCCEEDED:
         raise HTTPException(status_code=409, detail="Settlement cannot finalize before confirmed payment success")
 
-    loan = (
-        db.query(ClientCompanyLoan)
-        .filter(ClientCompanyLoan.id == quote.loan_id)
-        .with_for_update()
-        .first()
-    )
-    if not loan:
-        raise HTTPException(status_code=404, detail="Settlement loan was not found")
+    require_standard_settlement_model(db, loan=loan)
     if money(payment.amount) != money(quote.settlement_amount):
         raise HTTPException(status_code=409, detail="Settlement payment does not match the signed quote")
     if money(loan.amount_paid) != money(quote.original_amount_paid):
@@ -700,14 +712,19 @@ def initiate_early_settlement_payment(
     gateway_customer_phone: str | None = None,
 ) -> PaymentTransaction:
     quote_id = quote.id
+    loan = _lock_settlement_loan(db, company_id=quote.company_id, loan_id=quote.loan_id)
     quote = (
         db.query(LoanEarlySettlement)
-        .filter(LoanEarlySettlement.id == quote_id)
+        .filter(LoanEarlySettlement.id == quote_id,
+                LoanEarlySettlement.company_id == loan.company_id,
+                LoanEarlySettlement.loan_id == loan.id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
     if not quote:
         raise HTTPException(status_code=404, detail="Early-settlement quote not found")
+    require_standard_settlement_model(db, loan=loan)
 
     key = idempotency_key or f"early-settlement:{quote.id}"
     existing = (
@@ -743,9 +760,6 @@ def initiate_early_settlement_payment(
     if payment_method not in {PaymentMethod.CASH, PaymentMethod.LELEFAPAYGATE}:
         raise HTTPException(status_code=422, detail="Use Cash or LelefaPayGate for early settlement")
 
-    loan = db.get(ClientCompanyLoan, quote.loan_id)
-    if not loan:
-        raise HTTPException(status_code=404, detail="Settlement loan was not found")
     if is_legacy_loan_locked(db, loan.company_id, loan.id):
         raise HTTPException(
             status_code=409,
@@ -892,21 +906,19 @@ def reverse_early_settlement(
         return False
     # Serialize reversals with settlement finalization on the same quote row.
     # Recheck status under the lock to make repeated reversals idempotent.
+    if referenced_quote.company_id != payment.company_id or referenced_quote.loan_id != payment.loan_id:
+        raise HTTPException(status_code=409, detail="Settlement payment scope mismatch")
+    loan = _lock_settlement_loan(db, company_id=referenced_quote.company_id, loan_id=referenced_quote.loan_id)
     quote = (
         db.query(LoanEarlySettlement)
-        .filter(LoanEarlySettlement.id == referenced_quote.id)
+        .filter(LoanEarlySettlement.id == referenced_quote.id,
+                LoanEarlySettlement.company_id == loan.company_id,
+                LoanEarlySettlement.loan_id == loan.id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
     if not quote or quote.status != "settled":
-        return False
-    loan = (
-        db.query(ClientCompanyLoan)
-        .filter(ClientCompanyLoan.id == quote.loan_id)
-        .with_for_update()
-        .first()
-    )
-    if not loan:
         return False
     snapshot = (quote.calculation_snapshot or {}).get("loan_snapshot", {})
     try:

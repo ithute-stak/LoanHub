@@ -149,12 +149,44 @@ def create_payment_adjustment(payload: PaymentAdjustmentCreate, db: Session = De
     return item
 
 
+def _lock_payment_adjustment(db: Session, *, company_id: UUID, adjustment_id: UUID):
+    """For ordinary loan repayments acquire the loan lock before adjustment lock."""
+    item = db.query(PaymentAdjustment).filter(
+        PaymentAdjustment.id == adjustment_id, PaymentAdjustment.company_id == company_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    payment = db.query(PaymentTransaction).filter(
+        PaymentTransaction.id == item.payment_id, PaymentTransaction.company_id == company_id,
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=409, detail="Adjustment payment scope is invalid")
+    from database.models.enums import PaymentPurpose
+    from services.principal_x_financial_lock import lock_financial_loan
+
+    payment_id = payment.id
+    if (payment.loan_id and payment.purpose == PaymentPurpose.LOAN_REPAYMENT
+        and not (payment.provider_payload or {}).get("early_settlement_id")):
+        try:
+            lock_financial_loan(db, company_id=company_id, loan_id=payment.loan_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Adjustment requires a valid locked loan") from exc
+        db.refresh(payment)
+        if (payment.provider_payload or {}).get("early_settlement_id"):
+            raise HTTPException(status_code=409, detail="Payment settlement linkage changed; retry reconciliation")
+    item = db.query(PaymentAdjustment).filter(
+        PaymentAdjustment.id == adjustment_id, PaymentAdjustment.company_id == company_id,
+        PaymentAdjustment.payment_id == payment_id,
+    ).populate_existing().with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=409, detail="Adjustment linkage changed; retry reconciliation")
+    return item
+
+
 @router.post("/payment-adjustments/{adjustment_id}/approve")
 def approve_adjustment(adjustment_id: UUID, payload: DecisionRequest, db: Session = Depends(get_db), context: TenantContext = Depends(get_tenant_context)):
     require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
-    item = db.query(PaymentAdjustment).filter(PaymentAdjustment.id == adjustment_id, PaymentAdjustment.company_id == context.company_id).with_for_update().first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    item = _lock_payment_adjustment(db, company_id=context.company_id, adjustment_id=adjustment_id)
     approve_payment_adjustment(db, adjustment=item, checker_user_id=context.user.id, reason=payload.reason)
     db.commit()
     db.refresh(item)
@@ -169,12 +201,7 @@ def confirm_adjustment_provider_reversal(
     context: TenantContext = Depends(get_tenant_context),
 ):
     require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
-    item = db.query(PaymentAdjustment).filter(
-        PaymentAdjustment.id == adjustment_id,
-        PaymentAdjustment.company_id == context.company_id,
-    ).with_for_update().first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    item = _lock_payment_adjustment(db, company_id=context.company_id, adjustment_id=adjustment_id)
     confirm_gateway_adjustment(
         db,
         adjustment=item,
@@ -188,9 +215,7 @@ def confirm_adjustment_provider_reversal(
 @router.post("/payment-adjustments/{adjustment_id}/reject")
 def reject_adjustment(adjustment_id: UUID, payload: DecisionRequest, db: Session = Depends(get_db), context: TenantContext = Depends(get_tenant_context)):
     require_tenant_roles(context, FINANCIAL_CONTROL_ROLES)
-    item = db.query(PaymentAdjustment).filter(PaymentAdjustment.id == adjustment_id, PaymentAdjustment.company_id == context.company_id).with_for_update().first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Payment adjustment not found")
+    item = _lock_payment_adjustment(db, company_id=context.company_id, adjustment_id=adjustment_id)
     reject_payment_adjustment(db, adjustment=item, checker_user_id=context.user.id, reason=payload.reason)
     db.commit()
     db.refresh(item)

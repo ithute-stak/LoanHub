@@ -27,6 +27,7 @@ class PaymentEvidence:
 class ReconciliationPreview:
     gross_collected: Decimal
     verified_refunds: Decimal
+    verified_reversals: Decimal
     net_collected: Decimal | None
     unresolved: tuple[str, ...]
     complete: bool = False
@@ -35,11 +36,14 @@ class ReconciliationPreview:
 def _amount(value: Decimal) -> Decimal:
     try:
         amount = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
+        if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
+            raise ValueError("Amounts must be positive finite currency values")
+        # Quantization can raise InvalidOperation for very large finite
+        # Decimals under the active context precision. It must fail closed
+        # as evidence, not abort the settlement-readiness endpoint.
+        return amount.quantize(CENT)
+    except (InvalidOperation, ValueError, TypeError, OverflowError) as exc:
         raise ValueError("Invalid monetary amount") from exc
-    if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
-        raise ValueError("Amounts must be positive finite currency values")
-    return amount.quantize(CENT)
 
 
 def preview_reconciliation(rows: Iterable[PaymentEvidence]) -> ReconciliationPreview:
@@ -52,6 +56,7 @@ def preview_reconciliation(rows: Iterable[PaymentEvidence]) -> ReconciliationPre
     seen: set[str] = set()
     collections: dict[str, Decimal] = {}
     refunds: list[tuple[str, Decimal]] = []
+    reversals: list[tuple[str, Decimal]] = []
     unresolved: list[str] = []
     for row in rows:
         if not row.payment_id or row.payment_id in seen:
@@ -76,24 +81,39 @@ def preview_reconciliation(rows: Iterable[PaymentEvidence]) -> ReconciliationPre
                 unresolved.append(f"{row.payment_id}:missing_original_payment")
             else:
                 refunds.append((row.original_payment_id, amount))
+        elif row.direction == "reversal" and row.status == "completed":
+            if not row.original_payment_id:
+                unresolved.append(f"{row.payment_id}:missing_original_payment")
+            else:
+                reversals.append((row.original_payment_id, amount))
         else:
             unresolved.append(f"{row.payment_id}:unresolved_status_or_direction")
 
-    refunded: dict[str, Decimal] = {}
-    for original_id, amount in refunds:
-        if original_id not in collections:
-            unresolved.append(f"{original_id}:refund_without_verified_collection")
-            continue
-        refunded[original_id] = refunded.get(original_id, Decimal("0.00")) + amount
-        if refunded[original_id] > collections[original_id]:
-            unresolved.append(f"{original_id}:refund_exceeds_collection")
+    # Refunds and provider reversals debit the same original collection.
+    # Individually valid adjustments can still collectively exceed it.
+    deductions: dict[str, Decimal] = {}
+    refunded_total = Decimal("0.00")
+    reversed_total = Decimal("0.00")
+    for kind, entries in (("refund", refunds), ("reversal", reversals)):
+        for original_id, amount in entries:
+            if original_id not in collections:
+                unresolved.append(f"{original_id}:{kind}_without_verified_collection")
+                continue
+            deductions[original_id] = deductions.get(original_id, Decimal("0.00")) + amount
+            if kind == "refund":
+                refunded_total += amount
+            else:
+                reversed_total += amount
+            if deductions[original_id] > collections[original_id]:
+                unresolved.append(f"{original_id}:deductions_exceed_collection")
 
     gross = sum(collections.values(), Decimal("0.00"))
-    total_refunds = sum(refunded.values(), Decimal("0.00"))
+    total_refunds = refunded_total
     return ReconciliationPreview(
         gross_collected=gross,
         verified_refunds=total_refunds,
-        net_collected=gross - total_refunds if not unresolved else None,
+        verified_reversals=reversed_total,
+        net_collected=gross - total_refunds - reversed_total if not unresolved else None,
         unresolved=tuple(unresolved),
         complete=False,
     )

@@ -220,7 +220,7 @@ def test_daily_cash_closing_serializes_against_outgoing_branch_cash():
 def test_privileged_data_center_migration_gate_remains_fail_closed_after_treasury_revision():
     from pathlib import Path
     control = (Path(__file__).resolve().parents[1] / "scripts" / "data_center_pilot_control.py").read_text(encoding="utf-8")
-    assert 'APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001"}' in control
+    assert 'APPROVED_FORWARD_REVISIONS = {EXPECTED_REVISION, "bc20261124001", "px20261126001"}' in control
     assert "len(versions) != 1 or versions[0] not in APPROVED_FORWARD_REVISIONS" in control
 
 

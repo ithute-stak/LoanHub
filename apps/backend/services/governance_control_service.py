@@ -85,6 +85,8 @@ def decide_approval(
     approved: bool,
     reason: str,
 ) -> ApprovalRequest:
+    if approval.action_type == "principal_x_ledger_review" or approval.resource_type == "principal_x_ledger_review":
+        raise HTTPException(status_code=409, detail="Principal x ledger evidence requires the dedicated review workflow")
     if approval.status != "pending":
         raise HTTPException(status_code=409, detail="Approval request has already been decided")
     if approval.requested_by_user_id == user_id:
