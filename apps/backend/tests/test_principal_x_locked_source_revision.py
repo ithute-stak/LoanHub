@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from database.models.accounting import JournalEntry, JournalLine
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.governance_control import PaymentAdjustment
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.origination import LoanContract
@@ -27,6 +28,9 @@ class Query:
     def join(self, *args):
         return self
 
+    def populate_existing(self):
+        return self
+
     def all(self):
         return self.rows
 
@@ -34,6 +38,7 @@ class Query:
 class Session:
     def __init__(self, payments, cash=(), allocations=(), treasury=(), installments=()):
         self.data = {
+            ClientCompanyLoan: [SimpleNamespace()],
             PaymentTransaction: list(payments), CashTransaction: list(cash),
             PaymentAllocation: list(allocations), TreasuryEntry: list(treasury),
             RepaymentInstallment: list(installments),
@@ -199,3 +204,38 @@ def test_nested_json_key_order_does_not_change_revision():
     before = local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
     row.payload = {"data": {"currency": "LSL", "amount": "100"}}
     assert before == local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+
+
+@pytest.mark.parametrize("model,field,old,new", [
+    (ClientCompanyLoan, "principal_amount", Decimal("1500"), Decimal("1600")),
+    (ClientCompanyLoan, "amount_paid", Decimal("696"), Decimal("697")),
+    (ClientCompanyLoan, "balance", Decimal("1392"), Decimal("1391")),
+    (ClientCompanyLoan, "interest_rate", Decimal("20"), Decimal("21")),
+    (ClientCompanyLoan, "processing_fee", Decimal("20"), Decimal("21")),
+    (ClientCompanyLoan, "total_repayable", Decimal("2088"), Decimal("2089")),
+    (ClientCompanyLoan, "repayment_period", 3, 4),
+    (ClientCompanyLoan, "installment_amount", Decimal("696"), Decimal("697")),
+    (ClientCompanyLoan, "status", "active", "completed"),
+    (ClientCompanyLoan, "calculation_breakdown", {"rate": "20"}, {"rate": "21"}),
+    (ClientCompanyLoan, "renewal_cycle_count", 0, 1),
+    (ClientCompanyLoan, "top_up_settlement_amount", Decimal("0"), Decimal("10")),
+    (PaymentTransaction, "provider_payload", {"status": "success"}, {"status": "reversed"}),
+    (PaymentTransaction, "verified_by_user_id", uuid4(), uuid4()),
+    (PaymentTransaction, "provider_operation", "collect", "reverse"),
+])
+def test_v4_financial_fields_invalidate_revision(model, field, old, new):
+    company_id, loan_id = uuid4(), uuid4()
+    session = Session([])
+    row = SimpleNamespace(id=uuid4(), **{field: old})
+    session.data[model] = [row]
+    before = local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+    setattr(row, field, new)
+    assert before != local_principal_x_source_revision(session, company_id=company_id, loan_id=loan_id)
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_missing_or_ambiguous_scoped_loan_rejected(count):
+    session = Session([])
+    session.data[ClientCompanyLoan] = [SimpleNamespace() for _ in range(count)]
+    with pytest.raises(ValueError, match="Scoped financial loan not found"):
+        local_principal_x_source_revision(session, company_id=uuid4(), loan_id=uuid4())
