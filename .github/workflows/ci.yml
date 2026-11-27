@@ -187,7 +187,8 @@ jobs:
             tests/test_principal_x_reviewer_authorization.py \
             tests/test_principal_x_review_lifecycle.py \
             tests/test_principal_x_bound_reconciliation.py \
-            tests/test_principal_x_reconciliation_boundary.py
+            tests/test_principal_x_reconciliation_boundary.py \
+            tests/test_principal_x_locked_source_revision.py
 
       - name: Report Alembic heads for rollover migration review
         working-directory: apps/backend
