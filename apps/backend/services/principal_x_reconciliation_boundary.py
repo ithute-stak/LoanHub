@@ -38,9 +38,11 @@ def reconcile_locked_financial_sources(
     """
     if reader is None:
         raise ValueError("No trusted financial evidence reader configured")
+    # Reject pending changes before populate_existing can overwrite them.
+    if db.new or db.dirty or db.deleted:
+        raise ValueError("Reconciliation requires a clean financial session")
     with db.no_autoflush:
         lock_financial_loan(db, company_id=company_id, loan_id=loan_id)
-        # Refresh any financial records previously loaded into the identity map.
         if db.new or db.dirty or db.deleted:
             raise ValueError("Reconciliation requires a clean financial session")
         db.expire_all()
@@ -52,6 +54,8 @@ def reconcile_locked_financial_sources(
         )
         if not isinstance(review, BoundLedgerReview):
             raise ValueError("Independently verified ledger review unavailable")
+        if db.new or db.dirty or db.deleted:
+            raise ValueError("Trusted reader must not modify financial session")
         db.expire_all()
         current = local_principal_x_source_revision(
             db, company_id=company_id, loan_id=loan_id,
