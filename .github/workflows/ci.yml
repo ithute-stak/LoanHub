@@ -183,7 +183,11 @@ jobs:
           python -m pytest -q \
             tests/test_principal_x_refund_reversal_preview.py \
             tests/test_principal_x_payment_evidence_adapter.py \
-            tests/test_principal_x_collection_source_diagnostics.py
+            tests/test_principal_x_collection_source_diagnostics.py \
+            tests/test_principal_x_reviewer_authorization.py \
+            tests/test_principal_x_review_lifecycle.py \
+            tests/test_principal_x_bound_reconciliation.py \
+            tests/test_principal_x_reconciliation_boundary.py
 
       - name: Report Alembic heads for rollover migration review
         working-directory: apps/backend
