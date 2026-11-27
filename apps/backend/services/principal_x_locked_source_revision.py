@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database.models.accounting import JournalEntry, JournalLine
+from database.models.client_loan_company import ClientCompanyLoan
 from database.models.governance_control import PaymentAdjustment
 from database.models.legacy_loan_capture import LegacyLoanCapture
 from database.models.origination import LoanContract
@@ -51,6 +52,12 @@ def local_principal_x_source_revision(
     """
     if not isinstance(company_id, UUID) or not isinstance(loan_id, UUID):
         raise ValueError("Verified company and loan UUIDs required")
+    loans = db.query(ClientCompanyLoan).filter(
+        ClientCompanyLoan.company_id == company_id,
+        ClientCompanyLoan.id == loan_id,
+    ).populate_existing().all()
+    if len(loans) != 1:
+        raise ValueError("Scoped financial loan not found")
     payments = (
         db.query(PaymentTransaction)
         .filter(PaymentTransaction.company_id == company_id,
@@ -116,7 +123,19 @@ def local_principal_x_source_revision(
     ).filter(JournalEntry.company_id == company_id,
              JournalLine.journal_entry_id.in_([row.id for row in journals])).all()
     payload = {
-        "version": 3,
+        "version": 4,
+        "loan_state": _records(loans, (
+            "id", "company_id", "branch_id", "borrower_id", "parent_loan_id",
+            "principal_amount", "interest_rate", "processing_fee",
+            "total_repayable", "amount_paid", "balance", "status",
+            "repayment_type", "repayment_period", "installment_amount",
+            "calculation_method", "calculation_breakdown",
+            "disbursed_at", "first_payment_due", "maturity_date",
+            "automatic_renewal_enabled", "renewal_cycle_count",
+            "original_maturity_date", "last_renewed_at", "renewal_stopped_at",
+            "is_top_up", "top_up_settlement_amount", "top_up_cash_amount",
+            "updated_at",
+        )),
         "historical_captures": _records(captures, (
             "id", "company_id", "loan_id", "status", "converted_at",
             "borrowed_amount", "total_repayable", "amount_paid", "conversion_data", "updated_at",
@@ -146,7 +165,9 @@ def local_principal_x_source_revision(
             "id", "company_id", "loan_id", "amount", "currency",
             "status", "direction", "purpose", "payment_method",
             "provider", "provider_reference", "proof_reference",
-            "completed_at", "verified_at", "updated_at",
+            "completed_at", "verified_at", "verified_by_user_id", "provider_payload",
+            "provider_operation", "configuration_scope", "idempotency_key",
+            "borrower_id", "company_borrower_account_id", "updated_at",
         )),
         "cash": _records(cash, (
             "id", "payment_id", "direction", "tendered_amount",
