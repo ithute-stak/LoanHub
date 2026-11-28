@@ -1,0 +1,11 @@
+# Explicit opt-in overlay for an isolated LoanHub attendance staging environment.
+# Never apply to production before integration certification.
+services:
+  backend:
+    environment:
+      BATLOKOA_ATTENDANCE_DIRECTORY_ENABLED: ${BATLOKOA_ATTENDANCE_DIRECTORY_ENABLED:-false}
+      BATLOKOA_ATTENDANCE_DIRECTORY_COMPANY_ID: ${BATLOKOA_ATTENDANCE_DIRECTORY_COMPANY_ID:-}
+      BATLOKOA_ATTENDANCE_DIRECTORY_TOKEN: ${BATLOKOA_ATTENDANCE_DIRECTORY_TOKEN:-}
+# Generate a dedicated random service token outside Git and share it securely
+# with the Batlokoa staging gateway and worker. Do not reuse the relay token,
+# JWT keys or staff credentials. Never publish rendered Compose configuration.
